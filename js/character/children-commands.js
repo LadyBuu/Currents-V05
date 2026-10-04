@@ -7,17 +7,14 @@
  *
  * SCOPE:
  *   - recordBirth(motherId, fatherId, birthYear, options)
- *       Create a child character, establish biological parent edges,
- *       record the pregnancy event.
  *   - recordPregnancyAttempt(motherId, fatherId, options)
- *       Roll conception, roll pregnancy outcome, apply consequences.
+ *       Rolls conception, rolls pregnancy outcome, applies consequences.
+ *       Accepts an optional deterministic outcome (options.rolls or
+ *       options.outcome) for replay or explicit recording.
  *   - recordSurrogacyArrangement(intendedParentId, surrogateId, options)
- *       Create a surrogacy arrangement, generate children, establish
- *       parent edges, record the arrangement.
  *   - completeSurrogacyArrangement(arrangementId, options)
  *   - cancelSurrogacyArrangement(arrangementId, options)
  *   - recordAdoptionMetadata(childId, adopterId, options)
- *       Record metadata for a legal parent edge created elsewhere.
  *   - endAdoptionMetadata(adoptionId, options)
  *   - removeAllReferencesTo(characterId)
  *
@@ -27,28 +24,45 @@
  *   - Death transitions          -> character-commands.js (markDeceased)
  *   - Fertility policy           -> children-rules.js
  *   - Persistence mechanics      -> children-state.js + storage.js
- *   - Events beyond childrenChanged -> caller
  *
  * COMPOSITION:
  *   recordBirth is a multi-domain transaction:
- *     1. CharacterCommands.createCharacter (via CharacterCreationCommands)
- *     2. FamilyCommands.setParent for mother (and father, if given)
- *     3. CharacterCommands.assignCharacterReligion for the child
+ *     1. CharacterCreationCommands.createCharacter
+ *     2. FamilyCommands.setParent (mother and father)
+ *     3. CharacterCommands.assignCharacterReligion (non-fatal)
  *     4. ChildrenState._insertPregnancy
  *
- *   If any step fails, the whole operation is rolled back in reverse
- *   order. The child is removed, parent edges are removed, and no
- *   pregnancy record is committed.
+ *   If any step after creation fails, the child is soft-deleted and
+ *   any parent edges created during this command are removed.
  *
- * ADOPTION:
- *   recordAdoptionMetadata does NOT create a legal parent edge. The
- *   caller is responsible for calling FamilyCommands.createAdoption
- *   first, then passing the pair here to record metadata. Removing a
- *   legal edge is likewise the caller's responsibility via
- *   FamilyCommands.removeAdoption.
+ * PREGNANCY ATTEMPT — DETERMINISTIC MODE:
+ *   recordPregnancyAttempt normally rolls every outcome internally with
+ *   Math.random. When options.rolls is supplied, its fields replace the
+ *   internal rolls:
  *
- *   This split exists so the family domain owns kinship and this domain
- *   owns the adoption record. The two are linked by (childId, adopterId).
+ *       options.rolls.conception      0..1
+ *       options.rolls.complication    0..1
+ *       options.rolls.miscarriage     0..1
+ *       options.rolls.stillbirth      0..1
+ *       options.rolls.maternalDeath   0..1
+ *       options.rolls.multipleBirth   0..1
+ *
+ *   When options.outcome is supplied, the entire random process is
+ *   bypassed and the outcome is applied directly:
+ *
+ *       options.outcome = 'no_conception'  → returns without side effects
+ *                       = 'miscarriage'    → inserts a miscarriage pregnancy
+ *                       = 'stillbirth'     → inserts births with isStillborn
+ *                       = 'live_birth'     → inserts live births
+ *
+ *       options.fetusCount    optional, default 1
+ *       options.isMultiple    optional, default false
+ *       options.hasComplications  optional, default false
+ *       options.maternalDeath     optional, default false
+ *
+ *   This mode exists for two callers:
+ *     - the modal's "specify outcome" mode
+ *     - replay of a predetermined simulation result
  *
  * CONTRACT:
  *   - Every public command returns { success, reason?, ... }.
@@ -56,22 +70,20 @@
  *     failure is rolled back.
  *   - One command = one commit = one childrenChanged event.
  *   - No lock. Commands are synchronous. Internal primitives compose.
- *   - No fallback dependencies. Missing CharacterState, CharacterCommands,
- *     CharacterCreationCommands, FamilyCommands, ChildrenState,
- *     ChildrenRules, or ids.js throws at load.
+ *   - No fallback dependencies.
  *
  * DEPENDENCIES (REQUIRED):
- *   - children-state.js:            ChildrenState
- *   - children-rules.js:            ChildrenRules
- *   - character-state.js:           CharacterState
- *   - character-commands.js:        CharacterCommands
+ *   - children-state.js:              ChildrenState
+ *   - children-rules.js:              ChildrenRules
+ *   - character-state.js:             CharacterState
+ *   - character-commands.js:          CharacterCommands
  *   - character-creation-commands.js: CharacterCreationCommands
- *   - family-commands.js:           FamilyCommands
- *   - ids.js:                       generateId
- *   - time.js:                      getCurrentYear, isValidYear
+ *   - family-commands.js:             FamilyCommands
+ *   - ids.js:                         generateId
+ *   - time.js:                        getCurrentYear, isValidYear
  *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
- *   - religion-commands.js:         ReligionCommands
+ *   - religion-commands.js:           ReligionCommands
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -164,6 +176,13 @@
         return v;
     }
 
+    function _isValidRoll(v) {
+        return typeof v === 'number'
+            && Number.isFinite(v)
+            && v >= 0
+            && v < 1;
+    }
+
     function _characterExists(id) {
         if (!_hasId(id)) return false;
         if (typeof CS.hasCharacter === 'function') return CS.hasCharacter(id);
@@ -181,11 +200,6 @@
         }
         var age = year - birthYear;
         return age >= 0 ? age : null;
-    }
-
-    function _pickRandom(arr) {
-        if (!Array.isArray(arr) || arr.length === 0) return null;
-        return arr[Math.floor(Math.random() * arr.length)];
     }
 
     function _roll() {
@@ -274,22 +288,6 @@
     /**
      * Creates a child, establishes biological parent edges, and records
      * the pregnancy event.
-     *
-     * @param {string} motherId
-     * @param {string|null} fatherId
-     * @param {number} birthYear
-     * @param {Object} [options]
-     * @param {string} [options.gender]        'male' | 'female' | undefined (random)
-     * @param {string} [options.name]
-     * @param {string} [options.surname]
-     * @param {string} [options.birthplaceId]
-     * @param {boolean} [options.isStillborn]  default false
-     * @param {string} [options.notes]
-     * @param {number} [options.conceptionYear]
-     * @param {number} [options.attemptNumber]
-     * @param {boolean} [options.hasComplications]
-     * @param {boolean} [options.maternalDeath]
-     * @returns {{ success: boolean, childId?: string, reason?: string }}
      */
     function recordBirth(motherId, fatherId, birthYear, options) {
         if (!_hasId(motherId)) return _fail('motherId is required.');
@@ -335,7 +333,6 @@
             ? options.surname
             : (mother.surname || '');
 
-        // Step 1 — create the child character.
         var childData = {
             name: typeof options.name === 'string' && options.name.trim().length > 0
                 ? options.name
@@ -368,7 +365,6 @@
         var childId = createResult.data.id;
         var parentsEstablished = [];
 
-        // Step 2 — biological parent edges.
         var motherEdge = FC.setParent(childId, motherId, {
             parentType: 'biological',
             parentRole: 'mother',
@@ -399,12 +395,15 @@
             if (!fatherEdge.unchanged) parentsEstablished.push(fatherEdge.edgeId);
         }
 
-        // Step 3 — religion inheritance (non-fatal).
         if (!isStillborn) {
-            _inheritReligionForChild(childId, motherId, _hasId(fatherId) ? fatherId : null, birthYear);
+            _inheritReligionForChild(
+                childId,
+                motherId,
+                _hasId(fatherId) ? fatherId : null,
+                birthYear
+            );
         }
 
-        // Step 4 — pregnancy record.
         var pregnancyId = window.generateId('preg');
         if (!_hasId(pregnancyId)) {
             _rollbackChild(childId, parentsEstablished);
@@ -448,10 +447,6 @@
         });
     }
 
-    /**
-     * Removes a child and any edges created during this command.
-     * Called when a later step in the birth transaction fails.
-     */
     function _rollbackChild(childId, edgeIds) {
         for (var i = edgeIds.length - 1; i >= 0; i--) {
             FC.removeParent(edgeIds[i], { reason: 'birth rollback' });
@@ -465,23 +460,124 @@
     // =========================================================================
     // 6. PREGNANCY ATTEMPT
     // =========================================================================
+    //
+    // Two modes:
+    //   - Random:    all rolls come from _roll()
+    //   - Specify:   options.rolls supplies the rolls
+    //   - Outcome:   options.outcome skips rolling entirely
+    //
+    // The three are mutually exclusive in the sense that if
+    // options.outcome is present, it wins. Otherwise, options.rolls
+    // fills in whichever fields it names and _roll() supplies the rest.
 
-    /**
-     * Rolls conception and pregnancy outcome for a couple. On live
-     * birth, calls recordBirth. On maternal death, calls
-     * CharacterCommands.markDeceased.
-     *
-     * @param {string} motherId
-     * @param {string|null} fatherId
-     * @param {Object} [options]
-     * @param {number} [options.year]
-     * @param {number} [options.attemptNumber]
-     * @param {boolean} [options.forceConception]
-     * @param {boolean} [options.forceSingle]
-     * @param {string} [options.gender]
-     * @param {number} [options.fertilityModifier]
-     * @returns {{ success, outcome, childId?, reason? }}
-     */
+    function _getRoll(options, key) {
+        if (options.rolls && _isValidRoll(options.rolls[key])) {
+            return options.rolls[key];
+        }
+        return _roll();
+    }
+
+    function _applyExplicitOutcome(motherId, fatherId, year, outcome, options, currentYear) {
+        // Outcome modes:
+        //   'no_conception'  → no side effects
+        //   'miscarriage'    → one pregnancy record, no child
+        //   'stillbirth'     → recordBirth with isStillborn for each fetus
+        //   'live_birth'     → recordBirth for each fetus
+
+        if (outcome === 'no_conception') {
+            return _ok({
+                outcome: 'no_conception',
+                childIds: []
+            });
+        }
+
+        var fetusCount = typeof options.fetusCount === 'number'
+            && Number.isInteger(options.fetusCount)
+            && options.fetusCount > 0
+            ? Math.min(3, options.fetusCount)
+            : 1;
+        var isMultiple = options.isMultiple === true || fetusCount > 1;
+        var hasComplications = options.hasComplications === true;
+        var maternalDeath = options.maternalDeath === true;
+
+        var childIds = [];
+        var birthYear = year + 1;
+
+        if (outcome === 'miscarriage') {
+            var pregId = window.generateId('preg');
+            ChS._insertPregnancy({
+                id: pregId,
+                motherId: motherId,
+                fatherId: _hasId(fatherId) ? fatherId : null,
+                childIds: [],
+                conceptionYear: year,
+                birthYear: null,
+                outcome: 'miscarriage',
+                fetusCount: fetusCount,
+                isMultiple: isMultiple,
+                hasComplications: hasComplications,
+                maternalDeath: false,
+                attemptNumber: typeof options.attemptNumber === 'number'
+                    ? options.attemptNumber
+                    : 0,
+                notes: typeof options.notes === 'string' ? options.notes : '',
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            });
+
+            _commitAndNotify('recordPregnancyAttempt', [motherId, fatherId].filter(Boolean));
+
+            return _ok({
+                outcome: 'miscarriage',
+                childIds: [],
+                fetusCount: fetusCount,
+                isMultiple: isMultiple,
+                hasComplications: hasComplications,
+                maternalDeath: false
+            });
+        }
+
+        // stillbirth or live_birth
+        var isStillborn = outcome === 'stillbirth';
+        for (var i = 0; i < fetusCount; i++) {
+            var gender = options.gender === 'male' || options.gender === 'female'
+                ? options.gender
+                : (_roll() < 0.5 ? 'male' : 'female');
+
+            var birthResult = recordBirth(motherId, fatherId, birthYear, {
+                gender: gender,
+                isStillborn: isStillborn,
+                conceptionYear: year,
+                attemptNumber: options.attemptNumber,
+                hasComplications: hasComplications,
+                maternalDeath: maternalDeath,
+                notes: 'Specified outcome: ' + outcome
+                    + (fetusCount > 1 ? ' (' + (i + 1) + ' of ' + fetusCount + ')' : '')
+            });
+            if (birthResult.success) childIds.push(birthResult.childId);
+        }
+
+        if (maternalDeath && !_getCharacter(motherId).isDeceased) {
+            CC.markDeceased(motherId, {
+                deathYear: birthYear,
+                deathCause: 'childbed_fever',
+                deathCauseDetail: 'Childbed fever',
+                deathNotes: 'Died following childbirth'
+            });
+        }
+
+        _commitAndNotify('recordPregnancyAttempt', [motherId, fatherId].filter(Boolean));
+
+        return _ok({
+            outcome: outcome,
+            childIds: childIds,
+            fetusCount: fetusCount,
+            isMultiple: isMultiple,
+            hasComplications: hasComplications,
+            maternalDeath: maternalDeath
+        });
+    }
+
     function recordPregnancyAttempt(motherId, fatherId, options) {
         if (!_hasId(motherId)) return _fail('motherId is required.');
         if (_isMissing(options)) options = {};
@@ -501,9 +597,32 @@
         }
 
         var year = _resolveYear(options.year);
+        var currentYear = window.getCurrentYear();
         var motherAge = _ageAtYear(mother.birthYear, year);
         var fatherAge = father ? _ageAtYear(father.birthYear, year) : null;
 
+        // Explicit outcome mode bypasses all rolling.
+        if (typeof options.outcome === 'string') {
+            var allowed = ['no_conception', 'miscarriage', 'stillbirth', 'live_birth'];
+            if (allowed.indexOf(options.outcome) === -1) {
+                return _fail('options.outcome must be one of: ' + allowed.join(', '));
+            }
+
+            // Sanity check: a live birth still requires a plausible
+            // fertility window. We do not enforce fertility when the
+            // caller has explicitly specified the outcome, because that
+            // would defeat the point of specifying.
+            return _applyExplicitOutcome(
+                motherId,
+                _hasId(fatherId) ? fatherId : null,
+                year,
+                options.outcome,
+                options,
+                currentYear
+            );
+        }
+
+        // Standard mode: roll (or use supplied rolls).
         var canConceive = ChR.canConceive({
             motherAge: motherAge,
             motherGender: mother.gender,
@@ -522,7 +641,7 @@
         });
         if (options.forceConception === true) chance = 1;
 
-        var conceptionRoll = _roll();
+        var conceptionRoll = _getRoll(options, 'conception');
         var conceptionResult = ChR.evaluateConception(
             { conceptionChance: chance },
             conceptionRoll
@@ -542,11 +661,11 @@
                 : 0,
             forceSingle: options.forceSingle === true,
             rolls: {
-                complication: _roll(),
-                miscarriage: _roll(),
-                stillbirth: _roll(),
-                maternalDeath: _roll(),
-                multipleBirth: _roll()
+                complication: _getRoll(options, 'complication'),
+                miscarriage: _getRoll(options, 'miscarriage'),
+                stillbirth: _getRoll(options, 'stillbirth'),
+                maternalDeath: _getRoll(options, 'maternalDeath'),
+                multipleBirth: _getRoll(options, 'multipleBirth')
             }
         });
         if (!outcome.valid) {
@@ -578,15 +697,8 @@
                 });
                 if (!birthResult.success) continue;
                 childIds.push(birthResult.childId);
-
-                // Attach the pregnancy id produced by recordBirth to the
-                // outcome bookkeeping. recordBirth created its own
-                // pregnancy record per child; that is deliberate and
-                // matches the schema (one pregnancy per child).
             }
         } else {
-            // Miscarriage: record a pregnancy event that did not produce
-            // a child.
             ChS._insertPregnancy({
                 id: pregnancyId,
                 motherId: motherId,
@@ -608,8 +720,6 @@
             });
         }
 
-        // Maternal death transition. Handled after birth/miscarriage so
-        // the pregnancy is already committed.
         if (outcome.maternalDeath === true && !mother.isDeceased) {
             CC.markDeceased(motherId, {
                 deathYear: birthYear,
@@ -635,22 +745,6 @@
     // 7. SURROGACY
     // =========================================================================
 
-    /**
-     * Records a surrogacy arrangement and generates the resulting
-     * children.
-     *
-     * @param {string} intendedParentId
-     * @param {string} surrogateId
-     * @param {Object} [options]
-     * @param {string} [options.intendedPartnerId]
-     * @param {string} [options.spermDonorId]
-     * @param {string} [options.eggDonorId]
-     * @param {string} [options.type]           'traditional' | 'gestational'
-     * @param {number} [options.childCount]     default 1
-     * @param {number} [options.birthYear]
-     * @param {string} [options.notes]
-     * @returns {{ success, arrangementId?, childIds?, reason? }}
-     */
     function recordSurrogacyArrangement(intendedParentId, surrogateId, options) {
         if (!_hasId(intendedParentId)) return _fail('intendedParentId is required.');
         if (!_hasId(surrogateId)) return _fail('surrogateId is required.');
@@ -723,7 +817,6 @@
 
             var childId = createResult.data.id;
 
-            // Legal parent edges for the intended parent(s).
             var legalRole = intendedParent.gender === 'female' ? 'mother' : 'father';
             var intendedEdge = FC.setParent(childId, intendedParentId, {
                 parentType: 'legal',
@@ -748,7 +841,6 @@
                 }
             }
 
-            // Genetic parents as biological edges, if distinct.
             if (_hasId(options.spermDonorId)
                 && options.spermDonorId !== intendedParentId
                 && options.spermDonorId !== options.intendedPartnerId) {
@@ -822,9 +914,6 @@
         });
     }
 
-    /**
-     * Marks a surrogacy arrangement as completed.
-     */
     function completeSurrogacyArrangement(arrangementId, options) {
         if (!_hasId(arrangementId)) return _fail('arrangementId is required.');
         if (_isMissing(options)) options = {};
@@ -877,18 +966,6 @@
     // 8. ADOPTION METADATA
     // =========================================================================
 
-    /**
-     * Records metadata for an adoption. Does NOT create a legal parent
-     * edge; the caller is responsible for calling
-     * FamilyCommands.createAdoption first.
-     *
-     * @param {string} childId
-     * @param {string} adopterId
-     * @param {Object} [options]
-     * @param {string} [options.type]    'legal' | 'guardianship' | 'foster'
-     * @param {number} [options.year]
-     * @param {string} [options.notes]
-     */
     function recordAdoptionMetadata(childId, adopterId, options) {
         if (!_hasId(childId)) return _fail('childId is required.');
         if (!_hasId(adopterId)) return _fail('adopterId is required.');
@@ -938,10 +1015,6 @@
         return _ok({ adoptionId: adoptionId });
     }
 
-    /**
-     * Ends an adoption metadata record. Does NOT remove the legal parent
-     * edge; the caller is responsible for FamilyCommands.removeAdoption.
-     */
     function endAdoptionMetadata(adoptionId, options) {
         if (!_hasId(adoptionId)) return _fail('adoptionId is required.');
         if (_isMissing(options)) options = {};
@@ -967,16 +1040,6 @@
     // 9. REFERENCE CLEANUP
     // =========================================================================
 
-    /**
-     * Removes every children-domain reference to a character:
-     *   - pregnancy records where they are mother or father
-     *   - surrogacy arrangements where they are intended parent,
-     *     intended partner, surrogate, or donor
-     *   - adoption metadata where they are child or adopter
-     *
-     * The children produced by these records are NOT deleted. Their
-     * deletion is CharacterCommands' responsibility.
-     */
     function removeAllReferencesTo(characterId) {
         if (!_hasId(characterId)) {
             return _fail('characterId is required.');
@@ -984,13 +1047,11 @@
 
         var removed = 0;
 
-        // Pregnancies by mother.
         var motherPregnancies = ChS.pregnancyIdsForMother(characterId);
         for (var i = 0; i < motherPregnancies.length; i++) {
             if (ChS._removePregnancy(motherPregnancies[i])) removed++;
         }
 
-        // Pregnancies by father.
         var allPregIds = ChS.allPregnancyIds();
         for (var j = 0; j < allPregIds.length; j++) {
             var p = ChS.getPregnancyCopy(allPregIds[j]);
@@ -1000,19 +1061,16 @@
             }
         }
 
-        // Surrogacy by intended parent.
         var surrIntended = ChS.surrogacyIdsForIntendedParent(characterId);
         for (var k = 0; k < surrIntended.length; k++) {
             if (ChS._removeSurrogacy(surrIntended[k])) removed++;
         }
 
-        // Surrogacy by surrogate.
         var surrSurrogate = ChS.surrogacyIdsForSurrogate(characterId);
         for (var m = 0; m < surrSurrogate.length; m++) {
             if (ChS._removeSurrogacy(surrSurrogate[m])) removed++;
         }
 
-        // Surrogacy by donors.
         var allSurrIds = ChS.allSurrogacyIds();
         for (var n = 0; n < allSurrIds.length; n++) {
             var s = ChS.getSurrogacyCopy(allSurrIds[n]);
@@ -1022,13 +1080,11 @@
             }
         }
 
-        // Adoption metadata by child.
         var adoptionsAsChild = ChS.adoptionIdsForChild(characterId);
         for (var a = 0; a < adoptionsAsChild.length; a++) {
             if (ChS._removeAdoption(adoptionsAsChild[a])) removed++;
         }
 
-        // Adoption metadata by adopter.
         var adoptionsAsAdopter = ChS.adoptionIdsForAdopter(characterId);
         for (var b = 0; b < adoptionsAsAdopter.length; b++) {
             if (ChS._removeAdoption(adoptionsAsAdopter[b])) removed++;
