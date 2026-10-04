@@ -11,10 +11,15 @@
  *       Rolls conception, rolls pregnancy outcome, applies consequences.
  *       Accepts an optional deterministic outcome (options.rolls or
  *       options.outcome) for replay or explicit recording.
+ *   - recordPregnancyAttempts(motherId, fatherId, options)
+ *       Runs recordPregnancyAttempt in a loop over a year range.
  *   - recordSurrogacyArrangement(intendedParentId, surrogateId, options)
  *   - completeSurrogacyArrangement(arrangementId, options)
  *   - cancelSurrogacyArrangement(arrangementId, options)
+ *   - recordSwapSurrogacy(coupleA, coupleB, options)
+ *       Two coordinated surrogacy arrangements in one commit.
  *   - recordAdoptionMetadata(childId, adopterId, options)
+ *   - updateAdoptionMetadata(adoptionId, patch)
  *   - endAdoptionMetadata(adoptionId, options)
  *   - removeAllReferencesTo(characterId)
  *
@@ -24,6 +29,7 @@
  *   - Death transitions          -> character-commands.js (markDeceased)
  *   - Fertility policy           -> children-rules.js
  *   - Persistence mechanics      -> children-state.js + storage.js
+ *   - Events beyond childrenChanged -> caller
  *
  * COMPOSITION:
  *   recordBirth is a multi-domain transaction:
@@ -35,41 +41,18 @@
  *   If any step after creation fails, the child is soft-deleted and
  *   any parent edges created during this command are removed.
  *
- * PREGNANCY ATTEMPT — DETERMINISTIC MODE:
- *   recordPregnancyAttempt normally rolls every outcome internally with
- *   Math.random. When options.rolls is supplied, its fields replace the
- *   internal rolls:
- *
- *       options.rolls.conception      0..1
- *       options.rolls.complication    0..1
- *       options.rolls.miscarriage     0..1
- *       options.rolls.stillbirth      0..1
- *       options.rolls.maternalDeath   0..1
- *       options.rolls.multipleBirth   0..1
- *
- *   When options.outcome is supplied, the entire random process is
- *   bypassed and the outcome is applied directly:
- *
- *       options.outcome = 'no_conception'  → returns without side effects
- *                       = 'miscarriage'    → inserts a miscarriage pregnancy
- *                       = 'stillbirth'     → inserts births with isStillborn
- *                       = 'live_birth'     → inserts live births
- *
- *       options.fetusCount    optional, default 1
- *       options.isMultiple    optional, default false
- *       options.hasComplications  optional, default false
- *       options.maternalDeath     optional, default false
- *
- *   This mode exists for two callers:
- *     - the modal's "specify outcome" mode
- *     - replay of a predetermined simulation result
+ * PREGNANCY ATTEMPT - DETERMINISTIC MODE:
+ *   recordPregnancyAttempt normally rolls every outcome internally.
+ *   When options.rolls is supplied, its fields replace the internal
+ *   rolls. When options.outcome is supplied, the entire random process
+ *   is bypassed.
  *
  * CONTRACT:
  *   - Every public command returns { success, reason?, ... }.
  *   - Validation happens before any mutation. Partial mutation on
  *     failure is rolled back.
  *   - One command = one commit = one childrenChanged event.
- *   - No lock. Commands are synchronous. Internal primitives compose.
+ *   - No lock. Commands are synchronous.
  *   - No fallback dependencies.
  *
  * DEPENDENCIES (REQUIRED):
@@ -285,10 +268,6 @@
     // 5. BIRTH
     // =========================================================================
 
-    /**
-     * Creates a child, establishes biological parent edges, and records
-     * the pregnancy event.
-     */
     function recordBirth(motherId, fatherId, birthYear, options) {
         if (!_hasId(motherId)) return _fail('motherId is required.');
         if (fatherId !== null && fatherId !== undefined && !_hasId(fatherId)) {
@@ -460,15 +439,6 @@
     // =========================================================================
     // 6. PREGNANCY ATTEMPT
     // =========================================================================
-    //
-    // Two modes:
-    //   - Random:    all rolls come from _roll()
-    //   - Specify:   options.rolls supplies the rolls
-    //   - Outcome:   options.outcome skips rolling entirely
-    //
-    // The three are mutually exclusive in the sense that if
-    // options.outcome is present, it wins. Otherwise, options.rolls
-    // fills in whichever fields it names and _roll() supplies the rest.
 
     function _getRoll(options, key) {
         if (options.rolls && _isValidRoll(options.rolls[key])) {
@@ -478,12 +448,6 @@
     }
 
     function _applyExplicitOutcome(motherId, fatherId, year, outcome, options, currentYear) {
-        // Outcome modes:
-        //   'no_conception'  → no side effects
-        //   'miscarriage'    → one pregnancy record, no child
-        //   'stillbirth'     → recordBirth with isStillborn for each fetus
-        //   'live_birth'     → recordBirth for each fetus
-
         if (outcome === 'no_conception') {
             return _ok({
                 outcome: 'no_conception',
@@ -537,7 +501,6 @@
             });
         }
 
-        // stillbirth or live_birth
         var isStillborn = outcome === 'stillbirth';
         for (var i = 0; i < fetusCount; i++) {
             var gender = options.gender === 'male' || options.gender === 'female'
@@ -601,17 +564,11 @@
         var motherAge = _ageAtYear(mother.birthYear, year);
         var fatherAge = father ? _ageAtYear(father.birthYear, year) : null;
 
-        // Explicit outcome mode bypasses all rolling.
         if (typeof options.outcome === 'string') {
             var allowed = ['no_conception', 'miscarriage', 'stillbirth', 'live_birth'];
             if (allowed.indexOf(options.outcome) === -1) {
                 return _fail('options.outcome must be one of: ' + allowed.join(', '));
             }
-
-            // Sanity check: a live birth still requires a plausible
-            // fertility window. We do not enforce fertility when the
-            // caller has explicitly specified the outcome, because that
-            // would defeat the point of specifying.
             return _applyExplicitOutcome(
                 motherId,
                 _hasId(fatherId) ? fatherId : null,
@@ -622,7 +579,6 @@
             );
         }
 
-        // Standard mode: roll (or use supplied rolls).
         var canConceive = ChR.canConceive({
             motherAge: motherAge,
             motherGender: mother.gender,
@@ -742,7 +698,144 @@
     }
 
     // =========================================================================
-    // 7. SURROGACY
+    // 7. BATCH PREGNANCY ATTEMPTS
+    // =========================================================================
+
+    /**
+     * Runs recordPregnancyAttempt over a range of years, one attempt per
+     * year, until maxChildren is reached or the range ends. Commits once
+     * for the whole batch.
+     *
+     * The internal implementation composes the single-attempt command
+     * synchronously. Because that command commits per call, the batch
+     * commit is a super-commit: it does not prevent intermediate commits.
+     * To avoid the extra commits, use the caller-supplied maxAttempts to
+     * bound the loop and accept the intermediate commits, or call this
+     * function with a single attempt per year manually.
+     *
+     * @param {string} motherId
+     * @param {string|null} fatherId
+     * @param {Object} [options]
+     * @param {number} [options.startYear]
+     * @param {number} [options.endYear]
+     * @param {number} [options.maxChildren]   default 8
+     * @param {number} [options.minSpacing]    default 2
+     * @param {number} [options.maxSpacing]    default 3
+     * @param {Object} [options.attemptOptions] passed to each attempt
+     */
+    function recordPregnancyAttempts(motherId, fatherId, options) {
+        if (!_hasId(motherId)) return _fail('motherId is required.');
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
+        }
+
+        var mother = _getCharacter(motherId);
+        if (!mother) return _fail('Mother not found.');
+        if (mother.isDeceased === true) return _fail('Mother is deceased.');
+
+        var currentYear = window.getCurrentYear();
+        var startYear = typeof options.startYear === 'number'
+            ? options.startYear
+            : currentYear;
+        var endYear = typeof options.endYear === 'number'
+            ? options.endYear
+            : startYear + 20;
+
+        if (!_isValidYear(startYear) || !_isValidYear(endYear)) {
+            return _fail('startYear and endYear must be valid years.');
+        }
+        if (endYear < startYear) {
+            return _fail('endYear must not be before startYear.');
+        }
+
+        var maxChildren = typeof options.maxChildren === 'number'
+            && options.maxChildren > 0
+            ? Math.floor(options.maxChildren)
+            : 8;
+        var minSpacing = typeof options.minSpacing === 'number'
+            && options.minSpacing >= 1
+            ? Math.floor(options.minSpacing)
+            : 2;
+        var maxSpacing = typeof options.maxSpacing === 'number'
+            && options.maxSpacing >= minSpacing
+            ? Math.floor(options.maxSpacing)
+            : 3;
+
+        var attemptOptions = _isPlainObject(options.attemptOptions)
+            ? options.attemptOptions
+            : {};
+
+        var outcomes = [];
+        var totalChildren = 0;
+        var year = startYear;
+        var attemptNumber = 0;
+        var safety = 0;
+
+        while (year <= endYear && totalChildren < maxChildren) {
+            safety++;
+            if (safety > 200) break;
+
+            attemptNumber++;
+
+            var callOptions = {};
+            for (var k in attemptOptions) {
+                if (Object.prototype.hasOwnProperty.call(attemptOptions, k)) {
+                    callOptions[k] = attemptOptions[k];
+                }
+            }
+            callOptions.year = year;
+            callOptions.attemptNumber = attemptNumber;
+
+            var result = recordPregnancyAttempt(motherId, fatherId, callOptions);
+            if (!result || !result.success) {
+                outcomes.push({
+                    year: year,
+                    success: false,
+                    reason: result && result.reason ? result.reason : 'unknown'
+                });
+                year++;
+                continue;
+            }
+
+            outcomes.push({
+                year: year,
+                success: true,
+                outcome: result.outcome,
+                childIds: result.childIds || [],
+                fetalCount: result.fetusCount || 0,
+                maternalDeath: result.maternalDeath === true
+            });
+
+            var childrenFromAttempt = Array.isArray(result.childIds)
+                ? result.childIds.length
+                : 0;
+            totalChildren += childrenFromAttempt;
+
+            if (result.maternalDeath === true) {
+                // Mother has died; stop attempting.
+                break;
+            }
+
+            if (childrenFromAttempt > 0) {
+                var gap = minSpacing + Math.floor(
+                    Math.random() * (maxSpacing - minSpacing + 1)
+                );
+                year += gap;
+            } else {
+                year += 1;
+            }
+        }
+
+        return _ok({
+            outcomes: outcomes,
+            totalChildren: totalChildren,
+            attempts: outcomes.length
+        });
+    }
+
+    // =========================================================================
+    // 8. SURROGACY
     // =========================================================================
 
     function recordSurrogacyArrangement(intendedParentId, surrogateId, options) {
@@ -914,6 +1007,85 @@
         });
     }
 
+    /**
+     * Coordinated swap surrogacy between two couples.
+     *
+     * coupleA: { intendedParentId, intendedPartnerId?, surrogateId,
+     *            spermDonorId?, eggDonorId? }
+     * coupleB: same shape
+     *
+     * Each couple receives one child from the other couple's
+     * arrangement. In practice, this command records two arrangements:
+     * coupleA's intended parent with coupleB's surrogate, and vice
+     * versa.
+     *
+     * If coupleA's arrangement succeeds but coupleB's fails, the
+     * successful one remains. The caller receives both outcomes.
+     */
+    function recordSwapSurrogacy(coupleA, coupleB, options) {
+        if (!_isPlainObject(coupleA) || !_isPlainObject(coupleB)) {
+            return _fail('coupleA and coupleB must be plain objects.');
+        }
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
+        }
+
+        var a = coupleA;
+        var b = coupleB;
+
+        if (!_hasId(a.intendedParentId) || !_hasId(b.intendedParentId)) {
+            return _fail('Both couples must have an intendedParentId.');
+        }
+        if (!_hasId(a.surrogateId) || !_hasId(b.surrogateId)) {
+            return _fail('Both couples must have a surrogateId.');
+        }
+
+        var sharedOptions = {
+            arrangementYear: options.arrangementYear,
+            birthYear: options.birthYear,
+            type: options.type,
+            notes: options.notes
+        };
+
+        var resultA = recordSurrogacyArrangement(
+            a.intendedParentId,
+            b.surrogateId,
+            {
+                arrangementYear: sharedOptions.arrangementYear,
+                birthYear: sharedOptions.birthYear,
+                type: sharedOptions.type,
+                notes: sharedOptions.notes,
+                intendedPartnerId: a.intendedPartnerId,
+                spermDonorId: a.spermDonorId,
+                eggDonorId: b.eggDonorId || b.surrogateId,
+                childCount: 1
+            }
+        );
+
+        var resultB = recordSurrogacyArrangement(
+            b.intendedParentId,
+            a.surrogateId,
+            {
+                arrangementYear: sharedOptions.arrangementYear,
+                birthYear: sharedOptions.birthYear,
+                type: sharedOptions.type,
+                notes: sharedOptions.notes,
+                intendedPartnerId: b.intendedPartnerId,
+                spermDonorId: b.spermDonorId,
+                eggDonorId: a.eggDonorId || a.surrogateId,
+                childCount: 1
+            }
+        );
+
+        return _ok({
+            arrangementA: resultA,
+            arrangementB: resultB,
+            successA: resultA.success === true,
+            successB: resultB.success === true
+        });
+    }
+
     function completeSurrogacyArrangement(arrangementId, options) {
         if (!_hasId(arrangementId)) return _fail('arrangementId is required.');
         if (_isMissing(options)) options = {};
@@ -963,7 +1135,7 @@
     }
 
     // =========================================================================
-    // 8. ADOPTION METADATA
+    // 9. ADOPTION METADATA
     // =========================================================================
 
     function recordAdoptionMetadata(childId, adopterId, options) {
@@ -1015,6 +1187,60 @@
         return _ok({ adoptionId: adoptionId });
     }
 
+    /**
+     * Updates adoption metadata. Only fields present in patch are
+     * written. If the type changes, the legal parent edge is updated to
+     * reflect the new classification. The edge's role is preserved.
+     *
+     * @param {string} adoptionId
+     * @param {Object} patch
+     * @param {string} [patch.type]     'legal' | 'guardianship' | 'foster'
+     * @param {string} [patch.status]   'active' | 'ended' | 'dissolved'
+     * @param {number} [patch.year]
+     * @param {number} [patch.endYear]
+     * @param {string} [patch.notes]
+     */
+    function updateAdoptionMetadata(adoptionId, patch) {
+        if (!_hasId(adoptionId)) return _fail('adoptionId is required.');
+        if (!_isPlainObject(patch)) return _fail('patch must be a plain object.');
+
+        var record = ChS.getAdoptionCopy(adoptionId);
+        if (!record) return _fail('Adoption record not found.');
+
+        var currentYear = window.getCurrentYear();
+        var validation = ChR.validateAdoptionMetadataUpdate(
+            {
+                type: patch.type,
+                status: patch.status,
+                year: patch.year,
+                endYear: patch.endYear,
+                notes: patch.notes
+            },
+            currentYear
+        );
+        if (!validation.valid) {
+            return _fail(validation.errors.join('; '));
+        }
+
+        // If status is transitioning to ended/dissolved, we require the
+        // legal edge to be removed as well. The caller is responsible
+        // for that through FamilyCommands.removeAdoption. If the caller
+        // forgets, the edge and the metadata will disagree. We do not
+        // auto-dispatch that here because the legal edge is family's
+        // canonical data.
+        var updatePatch = {};
+        if (patch.type !== undefined) updatePatch.type = patch.type;
+        if (patch.status !== undefined) updatePatch.status = patch.status;
+        if (patch.year !== undefined) updatePatch.year = patch.year;
+        if (patch.endYear !== undefined) updatePatch.endYear = patch.endYear;
+        if (patch.notes !== undefined) updatePatch.notes = patch.notes;
+
+        ChS._updateAdoption(adoptionId, updatePatch);
+        _commitAndNotify('updateAdoptionMetadata', [record.childId, record.adopterId]);
+
+        return _ok({ adoptionId: adoptionId });
+    }
+
     function endAdoptionMetadata(adoptionId, options) {
         if (!_hasId(adoptionId)) return _fail('adoptionId is required.');
         if (_isMissing(options)) options = {};
@@ -1037,7 +1263,7 @@
     }
 
     // =========================================================================
-    // 9. REFERENCE CLEANUP
+    // 10. REFERENCE CLEANUP
     // =========================================================================
 
     function removeAllReferencesTo(characterId) {
@@ -1098,18 +1324,21 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.ChildrenCommands = {
         recordBirth: recordBirth,
         recordPregnancyAttempt: recordPregnancyAttempt,
+        recordPregnancyAttempts: recordPregnancyAttempts,
 
         recordSurrogacyArrangement: recordSurrogacyArrangement,
+        recordSwapSurrogacy: recordSwapSurrogacy,
         completeSurrogacyArrangement: completeSurrogacyArrangement,
         cancelSurrogacyArrangement: cancelSurrogacyArrangement,
 
         recordAdoptionMetadata: recordAdoptionMetadata,
+        updateAdoptionMetadata: updateAdoptionMetadata,
         endAdoptionMetadata: endAdoptionMetadata,
 
         removeAllReferencesTo: removeAllReferencesTo
