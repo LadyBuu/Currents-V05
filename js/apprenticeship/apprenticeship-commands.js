@@ -9,8 +9,7 @@
  *   1. Reads facts via Queries
  *   2. Validates via Rules
  *   3. Applies mutations
- *   4. Commits ONE transaction (via ProfessionalCommands, which commits
- *      the underlying relationship edge)
+ *   4. Commits ONE transaction
  *   5. Dispatches ONE notification
  *   6. Returns a structured result
  *
@@ -21,25 +20,13 @@
  *
  * OWNERSHIP
  *
- *   This module owns the apprenticeship lifecycle: its creation, its
- *   progression, its teaching, its completion, and its termination. It
- *   does NOT own:
+ *   This module owns the apprenticeship lifecycle. It does NOT own:
  *
  *     character.professions       → CharacterCommands
- *     relationship edges          → ProfessionalCommands (thin wrapper
- *                                    over RelationshipCommands)
+ *     relationship edges          → ProfessionalCommands
  *     role catalogue              → RoleState / RoleQueries
  *     specialization membership   → RoleRules.validateSpecialization
  *     teaching policy             → ApprenticeshipRules
- *     edge read projections       → ApprenticeshipQueries / ProfessionalQueries
- *
- *   Skill progression and profession updates are written through
- *   CharacterCommands.updateProfession and CharacterCommands.addProfession.
- *
- *   Edge creation, metadata updates, and edge termination are written
- *   through ProfessionalCommands.createEdge, updateEdgeMetadata, endEdge.
- *
- *   ApprenticeshipCommands orchestrates; the owning modules write the data.
  *
  * METADATA SHAPE (owned by this module)
  *
@@ -47,36 +34,25 @@
  *     roleId: string,
  *     roleName: string,
  *     startSkill: number,
- *     stage: string,                    // stage id, refreshed on write
+ *     stage: string,
  *     teachingHistory: Array,
  *     notes: string
  *   }
  *
- *   Note: there is NO metadata.skillLevel. The canonical skill lives on
- *   the profession record (character.professions[i].skillLevel) and is
- *   read via CharacterCommands.getProfession. There is also NO
- *   metadata.specializationsTaught. Specializations learned are stored
- *   on the profession record as `profession.specs`, owned by
- *   CharacterCommands.
- *
- * NOT PERMITTED in this file:
- *   - window.masterData direct manipulation
- *   - Direct writes to character.professions
- *   - Direct writes to RelationshipState
- *   - Math.random() (roll is injected from a canonical RNG)
- *   - Fallback dependencies
+ *   startYear is an EDGE field, not metadata. It is patched through
+ *   ProfessionalCommands.updateEdgeFields.
  *
  * DEPENDENCIES (must be loaded first):
- *   - apprenticeship-constants.js    (APPRENTICESHIP_STAGES, APPRENTICESHIP_STATUS, TEACHING_CONSTANTS)
- *   - apprenticeship-rules.js        (ApprenticeshipRules)
- *   - apprenticeship-queries.js      (ApprenticeshipQueries)
- *   - professional-commands.js       (ProfessionalCommands)
- *   - role-rules.js                  (RoleRules.validateSpecialization)
- *   - character-commands.js          (CharacterCommands)
- *   - accessors.js                   (getCharacterById, getRoleById)
- *   - time.js                        (getCurrentYearSafe)
- *   - storage.js                     (saveMasterData)
- *   - relationship-types.js          (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
+ *   - apprenticeship-constants.js
+ *   - apprenticeship-rules.js
+ *   - apprenticeship-queries.js
+ *   - professional-commands.js
+ *   - role-rules.js
+ *   - character-commands.js
+ *   - accessors.js
+ *   - time.js
+ *   - storage.js
+ *   - relationship-types.js
  *
  * =============================================================================
  */
@@ -102,11 +78,12 @@
     if (!window.ProfessionalCommands ||
         typeof window.ProfessionalCommands.createEdge !== 'function' ||
         typeof window.ProfessionalCommands.updateEdgeMetadata !== 'function' ||
+        typeof window.ProfessionalCommands.updateEdgeFields !== 'function' ||
         typeof window.ProfessionalCommands.endEdge !== 'function' ||
         typeof window.ProfessionalCommands.removeEdge !== 'function') {
         throw new Error(
             'apprenticeship-commands.js requires professional-commands.js ' +
-            '(ProfessionalCommands.createEdge/updateEdgeMetadata/endEdge/removeEdge) first.'
+            '(createEdge/updateEdgeMetadata/updateEdgeFields/endEdge/removeEdge) first.'
         );
     }
     if (!window.RoleRules ||
@@ -218,24 +195,14 @@
     // 5. SHARED HELPERS
     // =========================================================================
 
-    /**
-     * Reads the canonical skill for (characterId, roleId). Returns null if
-     * the character does not hold the role.
-     */
     function _getSkill(characterId, roleId) {
         return _queries().getSkillLevel(characterId, roleId);
     }
 
-    /**
-     * Reads the profession record for (characterId, roleId), or null.
-     */
     function _getProfession(characterId, roleId) {
         return _characterCommands().getProfession(characterId, roleId);
     }
 
-    /**
-     * Returns the metadata of an apprenticeship, with defaults applied.
-     */
     function _readMetadata(rel) {
         var meta = rel && rel.metadata ? rel.metadata : {};
         return {
@@ -250,10 +217,6 @@
         };
     }
 
-    /**
-     * Ensures the apprentice holds the role at the given skill level.
-     * If they hold it at a higher level, leaves it alone. Never downgrades.
-     */
     function _ensureProfession(characterId, roleId, roleName, skillLevel, startYear, notes) {
         var CC = _characterCommands();
         var existing = CC.getProfession(characterId, roleId);
@@ -308,15 +271,6 @@
     // 6. CREATE
     // =========================================================================
 
-    /**
-     * @param {Object} args
-     * @param {string} args.masterId
-     * @param {string} args.apprenticeId
-     * @param {string} args.roleId
-     * @param {number} [args.startYear]
-     * @param {number} [args.initialSkill]
-     * @param {string} [args.notes]
-     */
     function createApprenticeship(args) {
         args = args || {};
 
@@ -366,7 +320,6 @@
         var startYear = args.startYear != null ? args.startYear : _getCurrentYear();
         var initialStage = _rules().getStageForSkill(resolvedInitialSkill);
 
-        // ---- Cross-domain: ensure the apprentice holds the profession ----
         var ensure = _ensureProfession(
             apprentice.id,
             role.id,
@@ -380,7 +333,6 @@
             return fail('PROFESSION_WRITE_FAILED', ensure.reason);
         }
 
-        // ---- Relationship edge ----
         var edge = _professionalCommands().createEdge({
             archetype: 'apprenticeship',
             participantA: master.id,
@@ -396,7 +348,8 @@
             }
         });
         if (!edge.success) {
-            return fail(edge.code || 'EDGE_CREATE_FAILED', edge.message || 'Failed to create apprenticeship');
+            return fail(edge.code || 'EDGE_CREATE_FAILED',
+                edge.message || 'Failed to create apprenticeship');
         }
 
         _commitAndNotify({
@@ -416,19 +369,17 @@
     }
 
     // =========================================================================
-    // 7. UPDATE (details only — not progression)
+    // 7. UPDATE
     // =========================================================================
+    //
+    // Two write paths are used here:
+    //
+    //   1. metadata (skill-derived stage, notes) → updateEdgeMetadata
+    //   2. edge-level fields (startYear)          → updateEdgeFields
+    //
+    // Skill changes go through CharacterCommands.updateProfession.
+    // Status changes go through endEdge (see terminate/complete/cancel).
 
-    /**
-     * @param {string} masterId
-     * @param {string} apprenticeId
-     * @param {Object} updates
-     * @param {string} updates.roleId    REQUIRED
-     * @param {string} [updates.status]
-     * @param {number} [updates.startYear]
-     * @param {number} [updates.skillLevel]
-     * @param {string} [updates.notes]
-     */
     function updateApprenticeship(masterId, apprenticeId, updates) {
         updates = updates || {};
 
@@ -450,6 +401,7 @@
             if (!transition.valid) return fail(transition.code, transition.reason);
         }
 
+        // ---- Skill ----
         if (updates.skillLevel !== undefined) {
             if (!_rules().isSkillInRange(updates.skillLevel)) {
                 return fail('INVALID_SKILL', 'Skill must be 0-100');
@@ -466,15 +418,34 @@
             meta.stage = _rules().getStageForSkill(updates.skillLevel).id;
         }
 
+        // ---- Notes ----
         if (typeof updates.notes === 'string') meta.notes = updates.notes;
 
-        // Edge metadata patch. startYear/status are edge-level, not metadata.
+        // ---- Edge-level fields (startYear) ----
+        if (updates.startYear !== undefined &&
+            updates.startYear !== rel.startYear) {
+
+            if (typeof updates.startYear !== 'number' || !isFinite(updates.startYear)) {
+                return fail('INVALID_START_YEAR', 'startYear must be a finite number');
+            }
+
+            var fieldResult = _professionalCommands().updateEdgeFields(rel.id, {
+                startYear: updates.startYear
+            });
+            if (!fieldResult.success) {
+                return fail(fieldResult.code || 'START_YEAR_UPDATE_FAILED',
+                    fieldResult.message || 'Failed to update start year');
+            }
+        }
+
+        // ---- Metadata (one call, after all metadata changes are staged) ----
         var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
         if (!metaResult.success) {
             return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
                 metaResult.message || 'Failed to update apprenticeship metadata');
         }
 
+        // ---- Status ----
         if (updates.status) {
             var statusResult = _professionalCommands().endEdge(
                 rel.id, _getCurrentYear(), updates.status
@@ -483,13 +454,6 @@
                 return fail(statusResult.code || 'STATUS_UPDATE_FAILED',
                     statusResult.message || 'Failed to update apprenticeship status');
             }
-        } else if (updates.startYear !== undefined) {
-            // startYear is edge-level; not currently exposed by ProfessionalCommands.
-            // Leaving the caller's intent silently unmet is worse than failing.
-            return fail(
-                'START_YEAR_NOT_UPDATABLE',
-                'startYear cannot be changed on an existing apprenticeship'
-            );
         }
 
         _commitAndNotify({
@@ -508,7 +472,7 @@
     }
 
     // =========================================================================
-    // 8. PROGRESS (skill +N)
+    // 8. PROGRESS
     // =========================================================================
 
     function progressApprenticeship(masterId, apprenticeId, amount) {
@@ -568,7 +532,7 @@
     }
 
     // =========================================================================
-    // 9. TEACH (single method application — roll is injected)
+    // 9. TEACH
     // =========================================================================
 
     function teachSkill(masterId, apprenticeId, methodId) {
@@ -690,7 +654,6 @@
             relationshipId: rel.id
         });
 
-        // Return the current list from the profession record (canonical).
         var profession = _getProfession(apprenticeId, meta.roleId);
         return ok({
             specialization: specialization,
@@ -723,6 +686,12 @@
         if (!canComplete.valid) return fail(canComplete.code, canComplete.reason);
 
         meta.stage = _rules().getStageForSkill(currentSkill).id;
+
+        var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
+        if (!metaResult.success) {
+            return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
+                metaResult.message || 'Failed to update apprenticeship metadata');
+        }
 
         var endResult = _professionalCommands().endEdge(
             rel.id, _getCurrentYear(), 'completed'
@@ -792,9 +761,6 @@
             return ok({ cancelled: true, alreadyCancelled: true });
         }
 
-        // CANCELLED is a status value; the relationship registry may not
-        // accept it directly. Fall back to endEdge with a reason that
-        // records the intent. The status itself is set by the registry.
         var endResult = _professionalCommands().endEdge(
             rel.id, _getCurrentYear(), reason || 'Cancelled'
         );
@@ -818,12 +784,6 @@
     // 13. BATCH CLEANUP
     // =========================================================================
 
-    /**
-     * Removes every apprenticeship edge referencing the character, whether
-     * as master or apprentice. Used by delete-cleanup. Emits one commit.
-     *
-     * @param {string} characterId
-     */
     function removeAllReferencesTo(characterId) {
         if (typeof characterId !== 'string' || characterId.length === 0) {
             return fail('MISSING_ID', 'characterId is required');
@@ -855,17 +815,9 @@
     }
 
     // =========================================================================
-    // 14. ANNUAL ADVANCEMENT (batch)
+    // 14. ANNUAL ADVANCEMENT
     // =========================================================================
 
-    /**
-     * Advance every active apprenticeship by one year of training.
-     *
-     * Each skill write goes through CharacterCommands.updateProfession.
-     * The relationship metadata is updated once per apprenticeship via
-     * ProfessionalCommands.updateEdgeMetadata. The commit fires once at
-     * the end of the batch.
-     */
     function advanceApprenticeshipSkills(year) {
         year = year != null ? year : _getCurrentYear();
         var active = _queries().getActiveApprenticeships();
@@ -933,9 +885,6 @@
     // =========================================================================
     // 15. CROSS-DOMAIN LISTENER
     // =========================================================================
-    //
-    // When a role is deleted, every apprenticeship referencing that role
-    // must be cancelled. RoleCommands dispatches 'roleDeleted'. We listen.
 
     function _handleRoleDeleted(event) {
         var roleId = event && event.detail && event.detail.roleId;
@@ -945,7 +894,6 @@
         try {
             active = _queries().getApprenticeshipsByRole(roleId);
         } catch (err) {
-            // A query failure here must not silently skip the cleanup.
             if (window.console && typeof window.console.error === 'function') {
                 window.console.error(
                     'apprenticeship-commands: roleDeleted handler failed to ' +
@@ -958,8 +906,6 @@
         for (var i = 0; i < active.length; i++) {
             var a = active[i];
             if (a.status !== STATUS.ONGOING) continue;
-            // Each cancel commits and notifies. Acceptable for now; batch
-            // later if the notification volume becomes a problem.
             cancelApprenticeship(
                 a.masterId,
                 a.apprenticeId,
