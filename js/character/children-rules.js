@@ -3,8 +3,8 @@
  * STILL WATERS - CHILDREN RULES (js/character/children-rules.js)
  * =============================================================================
  *
- * Pure policy for fertility, pregnancy, birth, surrogacy, and adoption
- * metadata.
+ * Pure policy for fertility, pregnancy, birth, surrogacy, adoption
+ * metadata, and child-count heuristics.
  *
  * RESPONSIBILITIES:
  *   - Fertility age eligibility
@@ -16,6 +16,9 @@
  *   - Surrogacy arrangement validation
  *   - Adoption metadata validation (type, year, status)
  *   - Birth record validation
+ *   - Expected-children estimation (heuristic)
+ *   - Child-spacing estimation (heuristic)
+ *   - Remaining-children estimation (heuristic)
  *
  * DOES NOT:
  *   - Read CharacterState, ChildrenState, or masterData
@@ -29,9 +32,15 @@
  * against supplied policy.
  *
  * LEGITIMIZATION:
- *   Legitimization is deliberately absent. It requires canonical
- *   legitimacy state this codebase does not define. When legitimacy state
- *   exists, it gets its own rules module.
+ *   Deliberately absent. See the header of family-rules.js for the
+ *   rationale. Legitimacy is not a children concern.
+ *
+ * CHILD-COUNT HEURISTICS:
+ *   The estimation functions are pure policy over explicit facts. They do
+ *   not read state and do not roll randomness. They estimate how many
+ *   children a couple is likely to produce over their fertile years, and
+ *   how much time typically separates successive children. Callers
+ *   supply the fertile-window length and existing child count as facts.
  *
  * DEPENDENCIES (REQUIRED): None.
  *   This module is pure and can load before any other module in the
@@ -89,6 +98,10 @@
         LIVE_BIRTH: 'live_birth'
     };
 
+    // Default spacing between successive children, in years.
+    var DEFAULT_MIN_CHILD_SPACING = 2;
+    var DEFAULT_MAX_CHILD_SPACING = 3;
+
     // =========================================================================
     // 2. HELPERS
     // =========================================================================
@@ -143,15 +156,6 @@
         return 1.0;
     }
 
-    /**
-     * facts:
-     * {
-     *   motherAge, motherGender, motherIsDeceased,
-     *   fatherAge, fatherGender,
-     *   baseChance,          optional; default 0.20
-     *   modifier             optional; caller-supplied fertility modifier
-     * }
-     */
     function canConceive(facts) {
         var errors = [];
         if (!facts || typeof facts !== 'object') {
@@ -180,11 +184,6 @@
         return { valid: errors.length === 0, errors: errors };
     }
 
-    /**
-     * Computes conception chance. Caller supplies the mother's age,
-     * father's age, and a fertility modifier from external sources
-     * (traits, world state). No randomness.
-     */
     function getConceptionChance(facts) {
         if (!facts || typeof facts !== 'object') return null;
         if (typeof facts.motherAge !== 'number') return null;
@@ -217,10 +216,6 @@
     // 4. PREGNANCY OUTCOME EVALUATION
     // =========================================================================
 
-    /**
-     * Evaluates a supplied conception roll.
-     * No randomness occurs here.
-     */
     function evaluateConception(facts, roll) {
         if (!facts || typeof facts !== 'object') {
             return { valid: false, conceived: false, errors: ['missing_facts'] };
@@ -238,14 +233,6 @@
         };
     }
 
-    /**
-     * facts:
-     * {
-     *   motherAge,
-     *   pregnancyNumber   optional, default 0
-     * }
-     * Returns a chance in [0, 1]. Caller rolls against it.
-     */
     function getComplicationChance(facts) {
         if (!facts || typeof facts !== 'object') return 0;
         var chance = 0.10;
@@ -297,14 +284,6 @@
         return chance;
     }
 
-    /**
-     * facts:
-     * {
-     *   multipleBirthRoll,
-     *   forceSingle       optional boolean
-     * }
-     * Returns { fetusCount, isMultiple }.
-     */
     function resolveFetusCount(facts) {
         if (!facts || typeof facts !== 'object') {
             return { fetusCount: 1, isMultiple: false };
@@ -325,32 +304,6 @@
         return { fetusCount: 1, isMultiple: false };
     }
 
-    /**
-     * fullFacts:
-     * {
-     *   motherAge,
-     *   pregnancyNumber,
-     *   forceSingle,
-     *   rolls: {
-     *     complication,
-     *     miscarriage,
-     *     stillbirth,
-     *     maternalDeath,
-     *     multipleBirth
-     *   }
-     * }
-     *
-     * Returns:
-     * {
-     *   valid,
-     *   errors,
-     *   outcome,          PREGNANCY_OUTCOME
-     *   fetusCount,
-     *   isMultiple,
-     *   hasComplications,
-     *   maternalDeath
-     * }
-     */
     function resolvePregnancyOutcome(fullFacts) {
         var errors = [];
         if (!fullFacts || typeof fullFacts !== 'object') {
@@ -390,7 +343,6 @@
             maternalDeath = rolls.maternalDeath < maternalDeathChance;
         }
 
-        // Miscarriage short-circuits stillbirth and live birth.
         if (_isValidRoll(rolls.miscarriage)
             && rolls.miscarriage < miscarriageChance) {
             return {
@@ -438,16 +390,6 @@
             || status === ADOPTION_STATUS.DISSOLVED;
     }
 
-    /**
-     * facts:
-     * {
-     *   childId,
-     *   adopterId,
-     *   year,
-     *   type,
-     *   currentYear
-     * }
-     */
     function validateAdoptionMetadata(facts) {
         var errors = [];
         if (!facts || typeof facts !== 'object') {
@@ -462,6 +404,56 @@
             && facts.year > facts.currentYear) {
             errors.push('adoption_after_current_year');
         }
+        return { valid: errors.length === 0, errors: errors };
+    }
+
+    /**
+     * Validates a metadata update. Only the fields present in `patch`
+     * are checked. Fields absent from the patch are left alone by the
+     * caller.
+     *
+     * patch:
+     *   {
+     *     type,      optional; must be a valid type
+     *     status,    optional; must be a valid status
+     *     year,      optional; must be a valid year <= currentYear
+     *     endYear,   optional; must be a valid year >= year
+     *     notes      optional; must be a string
+     *   }
+     */
+    function validateAdoptionMetadataUpdate(patch, currentYear) {
+        var errors = [];
+        if (!patch || typeof patch !== 'object') {
+            return { valid: false, errors: ['missing_patch'] };
+        }
+
+        if (patch.type !== undefined && !isValidAdoptionType(patch.type)) {
+            errors.push('invalid_adoption_type');
+        }
+        if (patch.status !== undefined && !isValidAdoptionStatus(patch.status)) {
+            errors.push('invalid_adoption_status');
+        }
+        if (patch.year !== undefined) {
+            if (!_isValidYear(patch.year)) {
+                errors.push('invalid_year');
+            } else if (_isValidYear(currentYear) && patch.year > currentYear) {
+                errors.push('adoption_after_current_year');
+            }
+        }
+        if (patch.endYear !== undefined) {
+            if (patch.endYear !== null && !_isValidYear(patch.endYear)) {
+                errors.push('invalid_end_year');
+            }
+            if (_isValidYear(patch.endYear)
+                && _isValidYear(patch.year)
+                && patch.endYear < patch.year) {
+                errors.push('end_before_start');
+            }
+        }
+        if (patch.notes !== undefined && typeof patch.notes !== 'string') {
+            errors.push('invalid_notes');
+        }
+
         return { valid: errors.length === 0, errors: errors };
     }
 
@@ -480,19 +472,6 @@
             || status === SURROGACY_STATUS.CANCELLED;
     }
 
-    /**
-     * facts:
-     * {
-     *   intendedParentId,
-     *   surrogateId,
-     *   surrogateGender,
-     *   surrogateAge,
-     *   surrogateIsDeceased,
-     *   arrangementYear,
-     *   currentYear,
-     *   type
-     * }
-     */
     function validateSurrogacyArrangement(facts) {
         var errors = [];
         if (!facts || typeof facts !== 'object') {
@@ -527,16 +506,6 @@
     // 7. BIRTH VALIDATION
     // =========================================================================
 
-    /**
-     * facts:
-     * {
-     *   motherId,
-     *   fatherId,          optional; may be null
-     *   birthYear,
-     *   currentYear,
-     *   gender             optional
-     * }
-     */
     function validateBirth(facts) {
         var errors = [];
         if (!facts || typeof facts !== 'object') {
@@ -557,12 +526,151 @@
             && facts.birthYear > facts.currentYear) {
             errors.push('birth_after_current_year');
         }
-        if (!_isValidYear(facts.birthYear)) errors.push('invalid_birth_year');
         return { valid: errors.length === 0, errors: errors };
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 8. CHILD-COUNT HEURISTICS
+    // =========================================================================
+    //
+    // These are pure heuristics over explicit facts. They do not read
+    // state and do not roll randomness. Callers supply the fertile-window
+    // length, the mother's age, and any existing children count.
+    //
+    // They are intended to answer questions like:
+    //   "how many children would this couple plausibly have?"
+    //   "how long is the typical gap between successive children?"
+    //   "how many more children might they have?"
+    //
+    // The heuristics are conservative and match the shape of the old
+    // children-lifecycle.js estimates.
+
+    /**
+     * Estimates the total children count for a couple.
+     *
+     * facts:
+     *   {
+     *     fertileYears,      number; length of the couple's fertile window
+     *     motherAgeAtStart,  optional; mother's age at window start
+     *     modifier           optional; scalar multiplier (default 1)
+     *   }
+     *
+     * Returns a number. Never negative. Never above 8.
+     */
+    function calculateExpectedChildren(facts) {
+        if (!facts || typeof facts !== 'object') return 0;
+        var fertileYears = typeof facts.fertileYears === 'number'
+            && Number.isFinite(facts.fertileYears)
+            && facts.fertileYears > 0
+            ? facts.fertileYears
+            : 0;
+        if (fertileYears === 0) return 0;
+
+        var expected;
+        if (fertileYears >= 20) expected = 5 + 2;    // 5..7
+        else if (fertileYears >= 15) expected = 4 + 1;
+        else if (fertileYears >= 10) expected = 3 + 1;
+        else if (fertileYears >= 5) expected = 2 + 0.5;
+        else expected = 1 + 0.5;
+
+        var modifier = typeof facts.modifier === 'number'
+            && Number.isFinite(facts.modifier)
+            && facts.modifier >= 0
+            ? facts.modifier
+            : 1.0;
+
+        expected = expected * modifier;
+        if (expected < 0) expected = 0;
+        if (expected > 8) expected = 8;
+        return expected;
+    }
+
+    /**
+     * Estimates the remaining children a couple might still produce.
+     *
+     * facts:
+     *   {
+     *     expectedChildren,  number
+     *     existingChildren,  number
+     *   }
+     */
+    function getExpectedRemainingChildren(facts) {
+        if (!facts || typeof facts !== 'object') return 0;
+        var expected = typeof facts.expectedChildren === 'number'
+            ? facts.expectedChildren
+            : 0;
+        var existing = typeof facts.existingChildren === 'number'
+            ? facts.existingChildren
+            : 0;
+        var remaining = expected - existing;
+        return remaining > 0 ? remaining : 0;
+    }
+
+    /**
+     * Estimates a reasonable spacing between successive births, in years.
+     *
+     * facts:
+     *   {
+     *     existingBirthYears,  optional array of years
+     *     currentYear,         optional; used to detect recent births
+     *     minSpacing,          optional; default 2
+     *     maxSpacing,          optional; default 3
+     *   }
+     *
+     * Returns an integer. Deterministic.
+     */
+    function calculateChildSpacing(facts) {
+        if (!facts || typeof facts !== 'object') {
+            return DEFAULT_MIN_CHILD_SPACING;
+        }
+
+        var minSpacing = typeof facts.minSpacing === 'number'
+            && facts.minSpacing >= 1
+            ? Math.floor(facts.minSpacing)
+            : DEFAULT_MIN_CHILD_SPACING;
+        var maxSpacing = typeof facts.maxSpacing === 'number'
+            && facts.maxSpacing >= minSpacing
+            ? Math.floor(facts.maxSpacing)
+            : DEFAULT_MAX_CHILD_SPACING;
+
+        if (maxSpacing < minSpacing) maxSpacing = minSpacing;
+
+        var years = Array.isArray(facts.existingBirthYears)
+            ? facts.existingBirthYears
+            : null;
+        if (!years || years.length === 0) {
+            // Midpoint of the default range.
+            return Math.floor((minSpacing + maxSpacing) / 2);
+        }
+
+        var lastYear = null;
+        for (var i = 0; i < years.length; i++) {
+            if (typeof years[i] === 'number') {
+                if (lastYear === null || years[i] > lastYear) {
+                    lastYear = years[i];
+                }
+            }
+        }
+        if (lastYear === null) {
+            return Math.floor((minSpacing + maxSpacing) / 2);
+        }
+
+        var currentYear = typeof facts.currentYear === 'number'
+            ? facts.currentYear
+            : null;
+        if (currentYear !== null) {
+            var sinceLast = currentYear - lastYear;
+            if (sinceLast < 2) {
+                // Space further out.
+                return minSpacing + 1;
+            }
+        }
+
+        return Math.floor((minSpacing + maxSpacing) / 2);
+    }
+
+    // =========================================================================
+    // 9. EXPORTS
     // =========================================================================
 
     window.ChildrenRules = {
@@ -572,6 +680,9 @@
         SURROGACY_TYPE: SURROGACY_TYPE,
         SURROGACY_STATUS: SURROGACY_STATUS,
         PREGNANCY_OUTCOME: PREGNANCY_OUTCOME,
+
+        DEFAULT_MIN_CHILD_SPACING: DEFAULT_MIN_CHILD_SPACING,
+        DEFAULT_MAX_CHILD_SPACING: DEFAULT_MAX_CHILD_SPACING,
 
         getFertilityAgeModifier: getFertilityAgeModifier,
         getFatherAgeModifier: getFatherAgeModifier,
@@ -590,12 +701,17 @@
         isValidAdoptionType: isValidAdoptionType,
         isValidAdoptionStatus: isValidAdoptionStatus,
         validateAdoptionMetadata: validateAdoptionMetadata,
+        validateAdoptionMetadataUpdate: validateAdoptionMetadataUpdate,
 
         isValidSurrogacyType: isValidSurrogacyType,
         isValidSurrogacyStatus: isValidSurrogacyStatus,
         validateSurrogacyArrangement: validateSurrogacyArrangement,
 
-        validateBirth: validateBirth
+        validateBirth: validateBirth,
+
+        calculateExpectedChildren: calculateExpectedChildren,
+        getExpectedRemainingChildren: getExpectedRemainingChildren,
+        calculateChildSpacing: calculateChildSpacing
     };
 
     if (typeof module !== 'undefined' && module.exports) {
