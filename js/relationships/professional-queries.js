@@ -2,31 +2,51 @@
  * professional-queries.js
  *
  * Semantic reads for professional relationships.
- * Returns defensive projections. Never live entities.
- * No policy, no mutation, no persistence.
  *
- * DIRECTION:
- *   APPRENTICESHIP  participantA = master,   participantB = apprentice
- *   MASTERSHIP      participantA = master,   participantB = expert
- *   EMPLOYMENT      participantA = employer, participantB = employee
- *   GUILD_MEMBERSHIP participantA = guild,   participantB = member
+ * DIRECTION
+ *   apprenticeship    participantA = master,   participantB = apprentice
+ *   mastership        participantA = master,   participantB = expert
+ *   employment        participantA = employer, participantB = employee
+ *   guild_membership  participantA = guild,    participantB = member
  *
- * SKILL PROVIDER (required):
- *   window.SkillQueries.getSkillLevel(characterId, roleId) -> number
- *   window.SkillQueries.getRoleName(roleId) -> string
- *   These must exist; this module never reaches into character records.
+ * Owns:
+ *   - projections of professional relationships from the perspective
+ *     of either participant
+ *   - lookups: masters of, apprentices of, employers of, employees of,
+ *     guilds of, members of
+ *   - existence checks
+ *   - statistics
+ *
+ * Depends on:
+ *   - RelationshipQueries for raw edge reads
+ *   - ProfessionalRules for tier classification
+ *   - SkillQueries for skill level reads (professional is the domain
+ *     allowed to interpret skill data on relationship projections)
+ *
+ * Does NOT own:
+ *   - state access (goes through RelationshipQueries)
+ *   - mutation
+ *   - persistence
+ *   - randomness
+ *   - skill writes (SkillCommands / CharacterCommands own them)
+ *
+ * Every returned value is a defensive projection. Never a live record.
+ * Unknown inputs return null or []. No fabrication.
+ *
+ * Load order: after relationship-queries.js and professional-rules.js.
  */
 
 (function() {
     'use strict';
 
     var RQ = window.RelationshipQueries;
-    var A  = window.RELATIONSHIP_ARCHETYPES;
-    var STATUS = window.RELATIONSHIP_STATUS;
     var PR = window.ProfessionalRules;
 
-    if (!RQ || !A || !STATUS || !PR) {
-        throw new Error('professional-queries.js: relationship-queries.js, relationship-types.js, professional-rules.js must load first');
+    var A = window.RELATIONSHIP_ARCHETYPES;
+    var STATUS = window.RELATIONSHIP_STATUS;
+
+    if (!RQ || !PR || !A || !STATUS) {
+        throw new Error('professional-queries.js: relationship-queries.js and professional-rules.js must load first');
     }
 
     var APPRENTICESHIP   = A.APPRENTICESHIP;
@@ -35,7 +55,10 @@
     var GUILD_MEMBERSHIP = A.GUILD_MEMBERSHIP;
 
     // -------------------------------------------------------------------------
-    // SKILL PROVIDER (required)
+    // SKILL PROVIDER (required for skill-aware projections)
+    //
+    // Skill data lives on the character record. This module never reads
+    // it directly; it goes through SkillQueries, which must exist.
     // -------------------------------------------------------------------------
 
     function _skillProvider() {
@@ -45,132 +68,339 @@
         return window.SkillQueries;
     }
 
+    function _skillLevel(characterId, roleId) {
+        if (!roleId) return null;
+        var sp = _skillProvider();
+        if (typeof sp.getSkillLevel !== 'function') {
+            throw new Error('professional-queries.js: SkillQueries.getSkillLevel required');
+        }
+        var level = sp.getSkillLevel(characterId, roleId);
+        return (typeof level === 'number') ? level : null;
+    }
+
     function _roleName(roleId) {
         if (!roleId) return null;
         var sp = _skillProvider();
         if (typeof sp.getRoleName !== 'function') return roleId;
-        return sp.getRoleName(roleId) || roleId;
-    }
-
-    function _skillLevel(characterId, roleId) {
-        var sp = _skillProvider();
-        if (typeof sp.getSkillLevel !== 'function') return 0;
-        return sp.getSkillLevel(characterId, roleId) || 0;
+        var name = sp.getRoleName(roleId);
+        return (typeof name === 'string' && name.length > 0) ? name : roleId;
     }
 
     // -------------------------------------------------------------------------
-    // APPRENTICESHIP
+    // INTERNAL HELPERS
     // -------------------------------------------------------------------------
 
-    function getMasterRelationships(apprenticeId, options) {
-        options = options || {};
-        var opts = { type: APPRENTICESHIP };
-        if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-        var rels = RQ.getForCharacter(apprenticeId, opts);
-        var out = [];
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].participantB !== apprenticeId) continue;
-            out.push(rels[i]);
-        }
-        return out;
+    function _otherId(record, characterId) {
+        if (record.participantA === characterId) return record.participantB;
+        if (record.participantB === characterId) return record.participantA;
+        return null;
     }
 
-    function getMasterIds(apprenticeId, options) {
-        var rels = getMasterRelationships(apprenticeId, options);
-        var ids = [];
-        for (var i = 0; i < rels.length; i++) ids.push(rels[i].participantA);
-        return ids;
+    function _meta(record, key, fallback) {
+        if (!record.metadata) return fallback;
+        var v = record.metadata[key];
+        return (v === undefined) ? fallback : v;
     }
 
-    function getMaster(apprenticeId, options) {
-        var ids = getMasterIds(apprenticeId, options);
-        return ids.length > 0 ? ids[0] : null;
+    function _sortByStartDesc(a, b) {
+        var ay = typeof a.startYear === 'number' ? a.startYear : -Infinity;
+        var by = typeof b.startYear === 'number' ? b.startYear : -Infinity;
+        return by - ay;
     }
 
-    function isApprentice(characterId) {
-        return getMasterIds(characterId).length > 0;
+    // -------------------------------------------------------------------------
+    // APPRENTICESHIP PROJECTIONS
+    // -------------------------------------------------------------------------
+
+    function _projectApprenticeshipForMaster(record) {
+        var apprenticeId = record.participantB;
+        var roleId = _meta(record, 'roleId', null);
+        var skill = _skillLevel(apprenticeId, roleId);
+        var tier = (skill !== null) ? PR.skillTier(skill) : null;
+
+        return {
+            relationshipId: record.id,
+            type: APPRENTICESHIP,
+            status: record.status,
+            masterId: record.participantA,
+            apprenticeId: apprenticeId,
+            roleId: roleId,
+            roleName: _roleName(roleId),
+            skillLevel: skill,
+            tier: tier,
+            specializationsTaught: Array.isArray(_meta(record, 'specializationsTaught', []))
+                ? _meta(record, 'specializationsTaught', []).slice()
+                : [],
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
+    }
+
+    function _projectApprenticeshipForApprentice(record) {
+        var masterId = record.participantA;
+        var roleId = _meta(record, 'roleId', null);
+        var skill = _skillLevel(record.participantB, roleId);
+        var tier = (skill !== null) ? PR.skillTier(skill) : null;
+
+        return {
+            relationshipId: record.id,
+            type: APPRENTICESHIP,
+            status: record.status,
+            masterId: masterId,
+            apprenticeId: record.participantB,
+            roleId: roleId,
+            roleName: _roleName(roleId),
+            skillLevel: skill,
+            tier: tier,
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
     }
 
     /**
-     * Returns projections of apprentices for a master.
+     * Returns active apprenticeships where the character is master.
+     * options: { includeEnded?: boolean }
      */
-    function getApprentices(masterId, options) {
+    function getApprentices(characterId, options) {
         options = options || {};
         var opts = { type: APPRENTICESHIP };
-        if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-        var rels = RQ.getForCharacter(masterId, opts);
-        var out = [];
-        for (var i = 0; i < rels.length; i++) {
-            var rel = rels[i];
-            if (rel.participantA !== masterId) continue;
-            var apprenticeId = rel.participantB;
-            var meta = rel.metadata || {};
-            var roleId = meta.roleId || null;
-            var skill = roleId ? _skillLevel(apprenticeId, roleId) : (meta.skillLevel || 0);
+        if (!options.includeEnded) opts.activeOnly = true;
 
-            out.push({
-                relationshipId: rel.id,
-                apprenticeId: apprenticeId,
-                roleId: roleId,
-                roleName: _roleName(roleId),
-                skillLevel: skill,
-                tier: PR.skillTier(skill),
-                startYear: rel.startYear,
-                endYear: rel.endYear,
-                status: rel.status,
-                specializationsTaught: meta.specializationsTaught || []
-            });
+        var records = RQ.getForCharacter(characterId, opts);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantA !== characterId) continue;
+            out.push(_projectApprenticeshipForMaster(records[i]));
         }
-        out.sort(function(a, b) { return b.skillLevel - a.skillLevel; });
+        out.sort(_sortByStartDesc);
+        return out;
+    }
+
+    function getApprenticeIds(characterId, options) {
+        var list = getApprentices(characterId, options);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(list[i].apprenticeId);
         return out;
     }
 
     function isMaster(characterId) {
-        return getApprentices(characterId, { activeOnly: true }).length > 0;
+        return getApprentices(characterId).length > 0;
     }
 
+    function getApprenticeCount(characterId) {
+        return getApprentices(characterId).length;
+    }
+
+    /**
+     * Returns active apprenticeships where the character is apprentice.
+     * options: { includeEnded?: boolean }
+     */
+    function getMasterRelationships(characterId, options) {
+        options = options || {};
+        var opts = { type: APPRENTICESHIP };
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(characterId, opts);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantB !== characterId) continue;
+            out.push(_projectApprenticeshipForApprentice(records[i]));
+        }
+        out.sort(_sortByStartDesc);
+        return out;
+    }
+
+    function getMasterIds(characterId, options) {
+        var list = getMasterRelationships(characterId, options);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(list[i].masterId);
+        return out;
+    }
+
+    function getMaster(characterId, options) {
+        var ids = getMasterIds(characterId, options);
+        return ids.length > 0 ? ids[0] : null;
+    }
+
+    function isApprentice(characterId) {
+        return getMasterRelationships(characterId).length > 0;
+    }
+
+    /**
+     * Returns the active apprenticeship between master and apprentice
+     * if it exists, or null. Uses master's perspective.
+     */
     function getApprenticeshipBetween(masterId, apprenticeId) {
-        var rels = RQ.getBetweenOfType(masterId, apprenticeId, APPRENTICESHIP);
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].participantA === masterId &&
-                rels[i].participantB === apprenticeId) {
-                return rels[i];
+        if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') return null;
+        if (masterId === apprenticeId) return null;
+
+        var records = RQ.getActiveBetweenOfType(masterId, apprenticeId, APPRENTICESHIP);
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantA === masterId &&
+                records[i].participantB === apprenticeId) {
+                return _projectApprenticeshipForMaster(records[i]);
             }
         }
         return null;
     }
 
-    function getApprenticeshipRoleId(apprenticeId) {
-        var rels = getMasterRelationships(apprenticeId, { activeOnly: true });
+    /**
+     * Returns the active roleId of the character's apprenticeship, or
+     * null if not apprenticed.
+     */
+    function getApprenticeshipRoleId(characterId) {
+        var rels = getMasterRelationships(characterId);
         for (var i = 0; i < rels.length; i++) {
-            var meta = rels[i].metadata || {};
-            if (meta.roleId) return meta.roleId;
+            if (rels[i].roleId) return rels[i].roleId;
         }
         return null;
     }
 
     // -------------------------------------------------------------------------
-    // EMPLOYMENT
+    // MASTERSHIP PROJECTIONS
+    //
+    // A mastership is a distinct archetype: A = master, B = expert.
     // -------------------------------------------------------------------------
+
+    function _projectMastershipForMaster(record) {
+        return {
+            relationshipId: record.id,
+            type: MASTERSHIP,
+            status: record.status,
+            masterId: record.participantA,
+            expertId: record.participantB,
+            roleId: _meta(record, 'roleId', null),
+            roleName: _roleName(_meta(record, 'roleId', null)),
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
+    }
+
+    function getExperts(characterId, options) {
+        options = options || {};
+        var opts = { type: MASTERSHIP };
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(characterId, opts);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantA !== characterId) continue;
+            out.push(_projectMastershipForMaster(records[i]));
+        }
+        out.sort(_sortByStartDesc);
+        return out;
+    }
+
+    function getMasterships(characterId, options) {
+        options = options || {};
+        var opts = { type: MASTERSHIP };
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(characterId, opts);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantB !== characterId) continue;
+            out.push({
+                relationshipId: records[i].id,
+                type: MASTERSHIP,
+                status: records[i].status,
+                masterId: records[i].participantA,
+                expertId: records[i].participantB,
+                roleId: _meta(records[i], 'roleId', null),
+                roleName: _roleName(_meta(records[i], 'roleId', null)),
+                startYear: records[i].startYear,
+                endYear: records[i].endYear
+            });
+        }
+        out.sort(_sortByStartDesc);
+        return out;
+    }
+
+    // -------------------------------------------------------------------------
+    // EMPLOYMENT PROJECTIONS
+    // -------------------------------------------------------------------------
+
+    function _projectEmploymentForEmployer(record) {
+        var wages = _meta(record, 'wages', null);
+        return {
+            relationshipId: record.id,
+            type: EMPLOYMENT,
+            status: record.status,
+            employerId: record.participantA,
+            employeeId: record.participantB,
+            role: _meta(record, 'role', null),
+            wages: (typeof wages === 'number') ? wages : null,
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
+    }
+
+    function _projectEmploymentForEmployee(record) {
+        var wages = _meta(record, 'wages', null);
+        return {
+            relationshipId: record.id,
+            type: EMPLOYMENT,
+            status: record.status,
+            employerId: record.participantA,
+            employeeId: record.participantB,
+            role: _meta(record, 'role', null),
+            wages: (typeof wages === 'number') ? wages : null,
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
+    }
+
+    function getEmployees(employerId, options) {
+        options = options || {};
+        var opts = { type: EMPLOYMENT };
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(employerId, opts);
+        var out = [];
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantA !== employerId) continue;
+            out.push(_projectEmploymentForEmployer(records[i]));
+        }
+        out.sort(_sortByStartDesc);
+        return out;
+    }
+
+    function getEmployeeIds(employerId, options) {
+        var list = getEmployees(employerId, options);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(list[i].employeeId);
+        return out;
+    }
+
+    function isEmployer(characterId) {
+        return getEmployees(characterId).length > 0;
+    }
 
     function getEmployerRelationships(employeeId, options) {
         options = options || {};
         var opts = { type: EMPLOYMENT };
-        if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-        var rels = RQ.getForCharacter(employeeId, opts);
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(employeeId, opts);
         var out = [];
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].participantB !== employeeId) continue;
-            out.push(rels[i]);
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantB !== employeeId) continue;
+            out.push(_projectEmploymentForEmployee(records[i]));
         }
+        out.sort(_sortByStartDesc);
         return out;
     }
 
     function getEmployerIds(employeeId, options) {
-        var rels = getEmployerRelationships(employeeId, options);
-        var ids = [];
-        for (var i = 0; i < rels.length; i++) ids.push(rels[i].participantA);
-        return ids;
+        var list = getEmployerRelationships(employeeId, options);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(list[i].employerId);
+        return out;
     }
 
     function getEmployer(employeeId, options) {
@@ -179,120 +409,107 @@
     }
 
     function isEmployed(characterId) {
-        return getEmployerIds(characterId).length > 0;
-    }
-
-    function getEmployees(employerId, options) {
-        options = options || {};
-        var opts = { type: EMPLOYMENT };
-        if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-        var rels = RQ.getForCharacter(employerId, opts);
-        var out = [];
-        for (var i = 0; i < rels.length; i++) {
-            var rel = rels[i];
-            if (rel.participantA !== employerId) continue;
-            var meta = rel.metadata || {};
-            out.push({
-                relationshipId: rel.id,
-                employeeId: rel.participantB,
-                role: meta.role || null,
-                wages: (typeof meta.wages === 'number') ? meta.wages : null,
-                startYear: rel.startYear,
-                endYear: rel.endYear,
-                status: rel.status,
-                notes: meta.notes || ''
-            });
-        }
-        return out;
+        return getEmployerRelationships(characterId).length > 0;
     }
 
     function getEmploymentBetween(employerId, employeeId) {
-        var rels = RQ.getBetweenOfType(employerId, employeeId, EMPLOYMENT);
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].participantA === employerId &&
-                rels[i].participantB === employeeId) {
-                return rels[i];
+        if (typeof employerId !== 'string' || typeof employeeId !== 'string') return null;
+        if (employerId === employeeId) return null;
+
+        var records = RQ.getActiveBetweenOfType(employerId, employeeId, EMPLOYMENT);
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantA === employerId &&
+                records[i].participantB === employeeId) {
+                return _projectEmploymentForEmployer(records[i]);
             }
         }
         return null;
     }
 
     // -------------------------------------------------------------------------
-    // GUILD MEMBERSHIP
+    // GUILD MEMBERSHIP PROJECTIONS
     // -------------------------------------------------------------------------
+
+    function _projectGuildForMember(record) {
+        return {
+            relationshipId: record.id,
+            type: GUILD_MEMBERSHIP,
+            status: record.status,
+            guildId: record.participantA,
+            memberId: record.participantB,
+            rank: _meta(record, 'rank', null),
+            startYear: record.startYear,
+            endYear: record.endYear,
+            notes: _meta(record, 'notes', '')
+        };
+    }
 
     function getGuildMembers(guildId, options) {
         options = options || {};
         var opts = { type: GUILD_MEMBERSHIP };
-        if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-        var rels = RQ.getForCharacter(guildId, opts);
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(guildId, opts);
         var out = [];
-        for (var i = 0; i < rels.length; i++) {
-            var rel = rels[i];
-            if (rel.participantA !== guildId) continue;
-            var meta = rel.metadata || {};
-            out.push({
-                relationshipId: rel.id,
-                memberId: rel.participantB,
-                rank: meta.rank || null,
-                startYear: rel.startYear,
-                endYear: rel.endYear,
-                status: rel.status,
-                notes: meta.notes || ''
-            });
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantA !== guildId) continue;
+            out.push(_projectGuildForMember(records[i]));
         }
         return out;
     }
 
-    function getGuildMembershipsForCharacter(characterId, options) {
+    function getGuildMemberIds(guildId, options) {
+        var list = getGuildMembers(guildId, options);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(list[i].memberId);
+        return out;
+    }
+
+    function getGuildMemberships(characterId, options) {
         options = options || {};
         var opts = { type: GUILD_MEMBERSHIP };
-        if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-        var rels = RQ.getForCharacter(characterId, opts);
+        if (!options.includeEnded) opts.activeOnly = true;
+
+        var records = RQ.getForCharacter(characterId, opts);
         var out = [];
-        for (var i = 0; i < rels.length; i++) {
-            var rel = rels[i];
-            if (rel.participantB !== characterId) continue;
-            var meta = rel.metadata || {};
-            out.push({
-                relationshipId: rel.id,
-                guildId: rel.participantA,
-                rank: meta.rank || null,
-                startYear: rel.startYear,
-                endYear: rel.endYear,
-                status: rel.status,
-                notes: meta.notes || ''
-            });
+        for (var i = 0; i < records.length; i++) {
+            if (records[i].participantB !== characterId) continue;
+            out.push(_projectGuildForMember(records[i]));
         }
+        return out;
+    }
+
+    function getGuildIds(characterId, options) {
+        var list = getGuildMemberships(characterId, options);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(list[i].guildId);
         return out;
     }
 
     function isInGuild(characterId, guildId) {
-        var rels = RQ.getBetweenOfType(characterId, guildId, GUILD_MEMBERSHIP, { status: STATUS.ONGOING });
-        if (!guildId) return rels.length > 0;
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].participantA === guildId &&
-                rels[i].participantB === characterId) {
-                return true;
-            }
+        if (typeof characterId !== 'string' || characterId.length === 0) return false;
+        var memberships = getGuildMemberships(characterId);
+        if (typeof guildId !== 'string' || guildId.length === 0) {
+            return memberships.length > 0;
+        }
+        for (var i = 0; i < memberships.length; i++) {
+            if (memberships[i].guildId === guildId) return true;
         }
         return false;
     }
 
     function getGuildMembership(characterId, guildId) {
-        var rels = RQ.getBetweenOfType(characterId, guildId, GUILD_MEMBERSHIP, { status: STATUS.ONGOING });
-        for (var i = 0; i < rels.length; i++) {
-            if (rels[i].participantA === guildId &&
-                rels[i].participantB === characterId) {
-                return rels[i];
-            }
+        if (typeof characterId !== 'string' || typeof guildId !== 'string') return null;
+        var memberships = getGuildMemberships(characterId);
+        for (var i = 0; i < memberships.length; i++) {
+            if (memberships[i].guildId === guildId) return memberships[i];
         }
         return null;
     }
 
     function getGuildRank(characterId, guildId) {
         var m = getGuildMembership(characterId, guildId);
-        return m && m.metadata ? (m.metadata.rank || null) : null;
+        return m ? m.rank : null;
     }
 
     // -------------------------------------------------------------------------
@@ -301,66 +518,121 @@
 
     function getProfessionalRelationships(characterId, options) {
         options = options || {};
-        var types = [APPRENTICESHIP, MASTERSHIP, EMPLOYMENT, GUILD_MEMBERSHIP];
-        if (options.type) types = [options.type];
+        var types = options.type
+            ? [options.type]
+            : [APPRENTICESHIP, MASTERSHIP, EMPLOYMENT, GUILD_MEMBERSHIP];
 
-        var result = [];
+        var out = [];
         for (var t = 0; t < types.length; t++) {
             var opts = { type: types[t] };
-            if (options.activeOnly !== false) opts.status = STATUS.ONGOING;
-            var rels = RQ.getForCharacter(characterId, opts);
-            for (var i = 0; i < rels.length; i++) result.push(rels[i]);
+            if (!options.includeEnded) opts.activeOnly = true;
+            var records = RQ.getForCharacter(characterId, opts);
+            for (var i = 0; i < records.length; i++) {
+                out.push({
+                    relationshipId: records[i].id,
+                    type: records[i].type,
+                    status: records[i].status,
+                    participantA: records[i].participantA,
+                    participantB: records[i].participantB,
+                    otherId: _otherId(records[i], characterId),
+                    startYear: records[i].startYear,
+                    endYear: records[i].endYear
+                });
+            }
         }
-        return result;
+        return out;
     }
 
     function getProfessionalRelationshipsBetween(aId, bId, options) {
         options = options || {};
-        var types = [APPRENTICESHIP, MASTERSHIP, EMPLOYMENT, GUILD_MEMBERSHIP];
-        if (options.type) types = [options.type];
+        if (typeof aId !== 'string' || typeof bId !== 'string') return [];
+        if (aId === bId) return [];
 
-        var result = [];
+        var types = options.type
+            ? [options.type]
+            : [APPRENTICESHIP, MASTERSHIP, EMPLOYMENT, GUILD_MEMBERSHIP];
+
+        var out = [];
         for (var t = 0; t < types.length; t++) {
-            var rels = RQ.getBetweenOfType(aId, bId, types[t]);
-            for (var i = 0; i < rels.length; i++) {
-                if (options.activeOnly !== false && rels[i].status !== STATUS.ONGOING) continue;
-                result.push(rels[i]);
+            var records = RQ.getBetweenOfType(aId, bId, types[t]);
+            for (var i = 0; i < records.length; i++) {
+                if (!options.includeEnded && records[i].status !== STATUS.ONGOING) continue;
+                out.push({
+                    relationshipId: records[i].id,
+                    type: records[i].type,
+                    status: records[i].status,
+                    participantA: records[i].participantA,
+                    participantB: records[i].participantB,
+                    startYear: records[i].startYear,
+                    endYear: records[i].endYear
+                });
             }
         }
-        return result;
+        return out;
     }
 
+    function getProfessionalStats(characterId) {
+        var all = getProfessionalRelationships(characterId, { includeEnded: true });
+        var active = 0;
+        var counts = {};
+
+        for (var i = 0; i < all.length; i++) {
+            var t = all[i].type;
+            counts[t] = (counts[t] || 0) + 1;
+            if (all[i].status === STATUS.ONGOING) active++;
+        }
+
+        return {
+            totalRelationships: all.length,
+            activeRelationships: active,
+            byType: counts
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
     // -------------------------------------------------------------------------
 
     window.ProfessionalQueries = {
         // Apprenticeship
+        getApprentices: getApprentices,
+        getApprenticeIds: getApprenticeIds,
+        isMaster: isMaster,
+        getApprenticeCount: getApprenticeCount,
         getMasterRelationships: getMasterRelationships,
         getMasterIds: getMasterIds,
         getMaster: getMaster,
         isApprentice: isApprentice,
-        getApprentices: getApprentices,
-        isMaster: isMaster,
         getApprenticeshipBetween: getApprenticeshipBetween,
         getApprenticeshipRoleId: getApprenticeshipRoleId,
 
+        // Mastership
+        getExperts: getExperts,
+        getMasterships: getMasterships,
+
         // Employment
+        getEmployees: getEmployees,
+        getEmployeeIds: getEmployeeIds,
+        isEmployer: isEmployer,
         getEmployerRelationships: getEmployerRelationships,
         getEmployerIds: getEmployerIds,
         getEmployer: getEmployer,
         isEmployed: isEmployed,
-        getEmployees: getEmployees,
         getEmploymentBetween: getEmploymentBetween,
 
         // Guild
         getGuildMembers: getGuildMembers,
-        getGuildMembershipsForCharacter: getGuildMembershipsForCharacter,
+        getGuildMemberIds: getGuildMemberIds,
+        getGuildMemberships: getGuildMemberships,
+        getGuildIds: getGuildIds,
         isInGuild: isInGuild,
         getGuildMembership: getGuildMembership,
         getGuildRank: getGuildRank,
 
         // General
         getProfessionalRelationships: getProfessionalRelationships,
-        getProfessionalRelationshipsBetween: getProfessionalRelationshipsBetween
+        getProfessionalRelationshipsBetween: getProfessionalRelationshipsBetween,
+        getProfessionalStats: getProfessionalStats
     };
 
 })();
