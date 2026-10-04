@@ -2,17 +2,39 @@
  * jealousy-rules.js
  *
  * Pure policy for jealousy and confrontation.
- * All calculations operate on explicit facts.
- * Randomness is passed in as a roll value; this module never rolls.
+ *
+ * Owns:
+ *   - jealousy type vocabulary
+ *   - trigger vocabulary and base weights
+ *   - jealousy computation from facts
+ *   - trait-based confrontation-level adjustment
+ *   - consequence determination from a level
+ *   - annual confrontation roll evaluation
+ *   - rivalry creation predicate
+ *
+ * Does NOT own:
+ *   - state access
+ *   - mutation
+ *   - persistence
+ *   - randomness (every roll is caller-supplied)
+ *   - jealousy history storage (v1 does not persist it; see docs)
+ *   - any knowledge of the relationship graph
+ *
+ * All facts are explicit. Nothing reads the graph. Every function is
+ * deterministic. Validators return { valid, errors } or
+ * { valid, reason }.
+ *
+ * Load order: after relationship-types.js and relationship-utils.js.
  */
 
 (function() {
     'use strict';
 
+    var A = window.RELATIONSHIP_ARCHETYPES;
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
-    var A    = window.RELATIONSHIP_ARCHETYPES;
+    var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!ATTR || !A) {
+    if (!A || !ATTR || !STATUS) {
         throw new Error('jealousy-rules.js: relationship-types.js must load first');
     }
 
@@ -29,6 +51,9 @@
 
     // -------------------------------------------------------------------------
     // TRIGGERS
+    //
+    // Each trigger has a base weight in [0, 1]. Multiple triggers combine
+    // additively, then the total is clamped to [0, 1].
     // -------------------------------------------------------------------------
 
     var TRIGGER = {
@@ -54,16 +79,19 @@
 
     // -------------------------------------------------------------------------
     // CONSEQUENCES
+    //
+    // Ordered from most severe to least. determineConsequence walks the
+    // list and returns the first whose minLevel is met.
     // -------------------------------------------------------------------------
 
     var CONSEQUENCE = {
-        NONE:           'none',
-        CONFRONTATION:  'confrontation',
-        RUMORS:         'rumors',
-        FIGHT:          'fight',
-        SABOTAGE:       'sabotage',
-        SELF_DESTRUCT:  'self_destruct',
-        MURDER:         'murder'
+        NONE:          'none',
+        RUMORS:        'rumors',
+        CONFRONTATION: 'confrontation',
+        FIGHT:         'fight',
+        SABOTAGE:      'sabotage',
+        SELF_DESTRUCT: 'self_destruct',
+        MURDER:        'murder'
     };
 
     var CONSEQUENCE_THRESHOLDS = [
@@ -76,10 +104,13 @@
     ];
 
     // -------------------------------------------------------------------------
-    // TRAIT ADJUSTMENTS (jealous character)
+    // TRAIT MODIFIERS
+    //
+    // Applied to jealousy levels when deciding confrontation level.
+    // Traits are on the jealous character.
     // -------------------------------------------------------------------------
 
-    var JEALOUS_TRAIT_MODIFIER = {
+    var TRAIT_MODIFIERS = {
         'violent':     +0.10,
         'hot_headed':  +0.15,
         'cowardly':    -0.20,
@@ -94,13 +125,11 @@
     // -------------------------------------------------------------------------
 
     /**
-     * Computes jealousy from explicit facts.
-     *
      * facts: {
      *   romantic: {
      *     subjectRelationship: { type, status, attributes } | null,
      *     targetRelationship:  { type, status, attributes } | null
-     *   },
+     *   } | null,
      *   professional: {
      *     subjectRankPriority: number,
      *     targetRankPriority:  number
@@ -109,60 +138,73 @@
      *   traits: string[]
      * }
      *
-     * Returns { level, triggers: [triggerId], type }
+     * Returns { level, triggers: [triggerId], type }.
+     *   level ∈ [0, 1]
+     *   type  = dominant jealousy type, or null
      */
     function calculateJealousy(facts) {
-        if (!facts) return { level: 0, triggers: [], type: null };
+        if (!facts || typeof facts !== 'object') {
+            return { level: 0, triggers: [], type: null };
+        }
 
         var level = 0;
         var triggers = [];
-        var types = { romantic: 0, professional: 0, social: 0 };
+        var typeScores = { romantic: 0, professional: 0, social: 0 };
 
-        // Romantic jealousy
-        if (facts.romantic && facts.romantic.subjectRelationship && facts.romantic.targetRelationship) {
+        // Romantic
+        if (facts.romantic &&
+            facts.romantic.subjectRelationship &&
+            facts.romantic.targetRelationship) {
+
             var subj = facts.romantic.subjectRelationship;
             var targ = facts.romantic.targetRelationship;
-            var targActive = targ.status === 'ongoing';
-            var subjCommitted = subj.type === A.COMMITTED || subj.type === A.CASUAL_DATING;
+
+            var targActive = targ.status === STATUS.ONGOING;
+            var subjCommitted = subj.type === A.COMMITTED ||
+                                subj.type === A.CASUAL_DATING;
 
             if (subjCommitted && targActive) {
-                var targAttrs = targ.attributes || [];
+                var targAttrs = Array.isArray(targ.attributes) ? targ.attributes : [];
                 var isPoly = targAttrs.indexOf(ATTR.POLYAMOROUS) !== -1;
                 var isSecret = targAttrs.indexOf(ATTR.SECRET) !== -1;
 
                 if (targ.type === A.ONE_NIGHT_STAND) {
                     level += TRIGGER_BASE[TRIGGER.ONE_NIGHT_STAND];
                     triggers.push(TRIGGER.ONE_NIGHT_STAND);
-                    types.romantic += TRIGGER_BASE[TRIGGER.ONE_NIGHT_STAND];
+                    typeScores.romantic += TRIGGER_BASE[TRIGGER.ONE_NIGHT_STAND];
                 } else if (isSecret && !isPoly) {
                     level += TRIGGER_BASE[TRIGGER.SPOUSE_AFFAIR];
                     triggers.push(TRIGGER.SPOUSE_AFFAIR);
-                    types.romantic += TRIGGER_BASE[TRIGGER.SPOUSE_AFFAIR];
+                    typeScores.romantic += TRIGGER_BASE[TRIGGER.SPOUSE_AFFAIR];
                 } else if (isPoly) {
                     level += TRIGGER_BASE[TRIGGER.POLYAMOROUS];
                     triggers.push(TRIGGER.POLYAMOROUS);
-                    types.romantic += TRIGGER_BASE[TRIGGER.POLYAMOROUS];
+                    typeScores.romantic += TRIGGER_BASE[TRIGGER.POLYAMOROUS];
                 } else if (targ.type === A.COMMITTED) {
                     level += TRIGGER_BASE[TRIGGER.PARTNER_WITH_OTHER];
                     triggers.push(TRIGGER.PARTNER_WITH_OTHER);
-                    types.romantic += TRIGGER_BASE[TRIGGER.PARTNER_WITH_OTHER];
+                    typeScores.romantic += TRIGGER_BASE[TRIGGER.PARTNER_WITH_OTHER];
                 } else if (targ.type === A.CASUAL_DATING) {
                     level += 0.3;
                     triggers.push(TRIGGER.PARTNER_WITH_OTHER);
-                    types.romantic += 0.3;
+                    typeScores.romantic += 0.3;
                 }
             }
         }
 
-        // Professional jealousy (rank advancement)
-        if (facts.professional) {
-            var sp = facts.professional.subjectRankPriority || 5;
-            var tp = facts.professional.targetRankPriority || 5;
+        // Professional (rank advancement)
+        if (facts.professional &&
+            typeof facts.professional.subjectRankPriority === 'number' &&
+            typeof facts.professional.targetRankPriority === 'number') {
+
+            var sp = facts.professional.subjectRankPriority;
+            var tp = facts.professional.targetRankPriority;
             if (tp < sp) {
-                var j = Math.min(0.5, (sp - tp) * 0.1);
-                level += j;
+                var delta = sp - tp;
+                var contribution = Math.min(0.5, delta * 0.1);
+                level += contribution;
                 triggers.push(TRIGGER.RIVAL_ADVANCEMENT);
-                types.professional += j;
+                typeScores.professional += contribution;
             }
         }
 
@@ -170,56 +212,65 @@
         if (facts.rivalry && facts.rivalry.exists) {
             level += TRIGGER_BASE[TRIGGER.EXISTING_RIVALRY];
             triggers.push(TRIGGER.EXISTING_RIVALRY);
-            types.social += TRIGGER_BASE[TRIGGER.EXISTING_RIVALRY];
+            typeScores.social += TRIGGER_BASE[TRIGGER.EXISTING_RIVALRY];
         }
 
-        // Personality modifiers
-        var traits = facts.traits || [];
+        // Trait modifiers
+        var traits = Array.isArray(facts.traits) ? facts.traits : [];
         for (var i = 0; i < traits.length; i++) {
-            var mod = JEALOUS_TRAIT_MODIFIER[traits[i]];
+            var mod = TRAIT_MODIFIERS[traits[i]];
             if (typeof mod === 'number') level += mod;
         }
 
-        level = Math.max(0, Math.min(1, level));
+        if (level < 0) level = 0;
+        if (level > 1) level = 1;
 
         return {
             level: level,
             triggers: triggers,
-            type: dominantType(types)
+            type: dominantType(typeScores)
         };
     }
 
-    function dominantType(types) {
+    function dominantType(scores) {
+        if (!scores || typeof scores !== 'object') return null;
         var best = null;
         var bestVal = 0;
-        for (var k in types) {
-            if (types[k] > bestVal) {
-                bestVal = types[k];
+        for (var k in scores) {
+            if (!Object.prototype.hasOwnProperty.call(scores, k)) continue;
+            if (scores[k] > bestVal) {
+                bestVal = scores[k];
                 best = k;
             }
         }
         return best;
     }
 
-    /**
-     * Applies trait-based adjustment to a jealousy level for
-     * confrontation selection.
-     * traits: string[]
-     */
-    function adjustConfrontationLevel(level, traits) {
-        var adjusted = level;
-        var t = traits || [];
-        for (var i = 0; i < t.length; i++) {
-            var mod = JEALOUS_TRAIT_MODIFIER[t[i]];
-            if (typeof mod === 'number') adjusted += mod;
+    // -------------------------------------------------------------------------
+    // CONFRONTATION LEVEL
+    //
+    // facts: { level, traits }
+    // -------------------------------------------------------------------------
+
+    function adjustConfrontationLevel(facts) {
+        if (!facts || typeof facts !== 'object') return 0;
+        var level = (typeof facts.level === 'number') ? facts.level : 0;
+        var traits = Array.isArray(facts.traits) ? facts.traits : [];
+        for (var i = 0; i < traits.length; i++) {
+            var mod = TRAIT_MODIFIERS[traits[i]];
+            if (typeof mod === 'number') level += mod;
         }
-        return Math.max(0, Math.min(1, adjusted));
+        if (level < 0) level = 0;
+        if (level > 1) level = 1;
+        return level;
     }
 
-    /**
-     * Determines the consequence id given an adjusted level.
-     */
+    // -------------------------------------------------------------------------
+    // CONSEQUENCE
+    // -------------------------------------------------------------------------
+
     function determineConsequence(level) {
+        if (typeof level !== 'number' || isNaN(level)) return CONSEQUENCE.NONE;
         for (var i = 0; i < CONSEQUENCE_THRESHOLDS.length; i++) {
             if (level >= CONSEQUENCE_THRESHOLDS[i].minLevel) {
                 return CONSEQUENCE_THRESHOLDS[i].id;
@@ -229,38 +280,66 @@
     }
 
     /**
-     * Annual confrontation roll. Caller supplies the random roll in [0,1).
-     * Returns { triggered, chance }.
-     *
-     * facts: { jealousyLevel, traits }
+     * facts: { jealousyLevel, traits, roll }
+     * Returns { triggered, chance, roll }.
      */
     function shouldConfrontAnnually(facts) {
-        if (!facts) return { triggered: false, chance: 0 };
-        var level = facts.jealousyLevel || 0;
-        if (level < 0.6) return { triggered: false, chance: 0 };
+        if (!facts || typeof facts !== 'object') {
+            return { triggered: false, chance: 0, roll: null };
+        }
+
+        var level = (typeof facts.jealousyLevel === 'number') ? facts.jealousyLevel : 0;
+        if (level < 0.6) {
+            return { triggered: false, chance: 0, roll: null };
+        }
 
         var chance = level * 0.3;
-        var traits = facts.traits || [];
+        var traits = Array.isArray(facts.traits) ? facts.traits : [];
         if (traits.indexOf('hot_headed') !== -1) chance += 0.2;
         if (traits.indexOf('patient') !== -1) chance -= 0.15;
         if (traits.indexOf('violent') !== -1) chance += 0.1;
-        chance = Math.max(0, Math.min(1, chance));
+        if (chance < 0) chance = 0;
+        if (chance > 1) chance = 1;
 
+        var roll = (typeof facts.roll === 'number') ? facts.roll : null;
+        if (roll === null) {
+            return { triggered: false, chance: chance, roll: null };
+        }
         return {
-            triggered: (facts.roll !== undefined) ? (facts.roll < chance) : false,
-            chance: chance
+            triggered: roll < chance,
+            chance: chance,
+            roll: roll
         };
     }
 
-    /**
-     * Whether a consequence should create a rivalry between the two parties.
-     */
+    // -------------------------------------------------------------------------
+    // RIVALRY CREATION PREDICATE
+    // -------------------------------------------------------------------------
+
     function consequenceCreatesRivalry(consequenceId) {
         return consequenceId === CONSEQUENCE.FIGHT ||
                consequenceId === CONSEQUENCE.MURDER ||
                consequenceId === CONSEQUENCE.SABOTAGE;
     }
 
+    // -------------------------------------------------------------------------
+    // CONSEQUENCE INTENSITY
+    //
+    // Numeric weight for a consequence, useful for rivalry metadata.
+    // -------------------------------------------------------------------------
+
+    function consequenceIntensity(consequenceId) {
+        if (consequenceId === CONSEQUENCE.MURDER)        return 1.0;
+        if (consequenceId === CONSEQUENCE.SELF_DESTRUCT) return 0.9;
+        if (consequenceId === CONSEQUENCE.SABOTAGE)      return 0.8;
+        if (consequenceId === CONSEQUENCE.FIGHT)         return 0.7;
+        if (consequenceId === CONSEQUENCE.CONFRONTATION) return 0.5;
+        if (consequenceId === CONSEQUENCE.RUMORS)        return 0.3;
+        return 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // EXPORTS
     // -------------------------------------------------------------------------
 
     window.JealousyRules = {
@@ -269,13 +348,15 @@
         TRIGGER_BASE: TRIGGER_BASE,
         CONSEQUENCE: CONSEQUENCE,
         CONSEQUENCE_THRESHOLDS: CONSEQUENCE_THRESHOLDS,
+        TRAIT_MODIFIERS: TRAIT_MODIFIERS,
 
         calculateJealousy: calculateJealousy,
+        dominantType: dominantType,
         adjustConfrontationLevel: adjustConfrontationLevel,
         determineConsequence: determineConsequence,
         shouldConfrontAnnually: shouldConfrontAnnually,
         consequenceCreatesRivalry: consequenceCreatesRivalry,
-        dominantType: dominantType
+        consequenceIntensity: consequenceIntensity
     };
 
 })();
