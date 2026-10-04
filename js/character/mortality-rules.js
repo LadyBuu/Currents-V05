@@ -13,6 +13,9 @@
  *   - Determine age-at-death from explicit years
  *   - Validate cause-specific eligibility
  *   - Classify mortality circumstances
+ *   - Provide a default death-cause catalogue
+ *   - Provide a default age-banded mortality rate table
+ *   - Pick a death cause from the catalogue, deterministically given a roll
  *
  * DOES NOT:
  *   - Read CharacterState
@@ -21,21 +24,22 @@
  *   - Mutate characters
  *   - Generate random numbers
  *   - Dispatch events
- *   - Choose a death cause by itself
- *
- * Randomness belongs to the caller. This module evaluates a supplied
- * random roll against supplied mortality policy.
+ *   - Choose a death cause by itself (it always receives a roll)
  *
  * DEATH CAUSE VOCABULARY (closed set):
- *   natural         — old age, peaceful death, unspecified natural
- *   disease         — fever, plague, pneumonia, infection, etc.
- *   accident        — fall, drowning, fire, animal attack, war, suicide
- *   murder          — killed by another character
- *   execution       — judicial killing
- *   childbed_fever  — maternal death in childbirth
- *   unknown         — explicit "we don't know"
+ *   natural, disease, accident, murder, execution, childbed_fever, unknown
  *
  * The specific free-text cause lives in deathCauseDetail on the record.
+ *
+ * DEFAULT CAUSE CATALOGUE:
+ *   The catalogue below describes plausible causes with weights and
+ *   eligibility (age bands, gender). It is the default used by
+ *   pickRandomCause when the caller does not supply its own catalogue.
+ *   The caller may supply a different catalogue.
+ *
+ * DEFAULT RATE TABLE:
+ *   The table below is a reasonable age-banded annual mortality rate.
+ *   The caller may supply its own rate table through getMortalityRate.
  *
  * DEPENDENCIES (REQUIRED): None.
  *   This module is pure and can load before any other module in the
@@ -77,7 +81,79 @@
     };
 
     // =========================================================================
-    // 2. HELPERS
+    // 2. DEFAULT CAUSE CATALOGUE
+    // =========================================================================
+    //
+    // Each entry:
+    //   {
+    //     cause:        stable id from DEATH_CAUSE
+    //     detail:       display string, e.g. 'Fever'
+    //     weight:       relative selection weight
+    //     minAge:       optional, inclusive
+    //     maxAge:       optional, inclusive
+    //     requiresFemale: optional, only eligible for female characters
+    //   }
+    //
+    // The weight is used by pickRandomCause. Higher = more likely.
+    // The catalogue is intentionally conservative; a caller with its own
+    // world model may supply a different one.
+
+    var DEFAULT_DEATH_CAUSES = [
+        // Natural
+        { cause: DEATH_CAUSE.NATURAL, detail: 'Old age', weight: 30, minAge: 60 },
+        { cause: DEATH_CAUSE.NATURAL, detail: 'Natural causes', weight: 20, minAge: 45 },
+        { cause: DEATH_CAUSE.NATURAL, detail: 'Heart failure', weight: 8, minAge: 30 },
+        { cause: DEATH_CAUSE.NATURAL, detail: 'Stroke', weight: 6, minAge: 40 },
+
+        // Disease
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Fever', weight: 12 },
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Consumption', weight: 10 },
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Pneumonia', weight: 8 },
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Infection', weight: 6 },
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Dysentery', weight: 5 },
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Smallpox', weight: 4 },
+        { cause: DEATH_CAUSE.DISEASE, detail: 'Plague', weight: 3 },
+
+        // Accident / misadventure
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Drowning', weight: 5 },
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Fell from a height', weight: 4 },
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Hunting accident', weight: 3 },
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Fire', weight: 3 },
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Crushed by falling object', weight: 2 },
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Animal attack', weight: 3 },
+        { cause: DEATH_CAUSE.ACCIDENT, detail: 'Killed in battle', weight: 4, minAge: 16 },
+
+        // Childbed fever
+        {
+            cause: DEATH_CAUSE.CHILDBED_FEVER,
+            detail: 'Childbed fever',
+            weight: 4,
+            minAge: 14,
+            maxAge: 50,
+            requiresFemale: true
+        }
+    ];
+
+    // =========================================================================
+    // 3. DEFAULT MORTALITY RATE TABLE
+    // =========================================================================
+    //
+    // Annual mortality risk per age band. This is simulation policy,
+    // not a universal truth. Callers may supply their own.
+
+    var DEFAULT_MORTALITY_RATE_BANDS = [
+        { minAge: 0,  maxAge: 0,  rate: 0.02 },
+        { minAge: 1,  maxAge: 4,  rate: 0.01 },
+        { minAge: 5,  maxAge: 17, rate: 0.005 },
+        { minAge: 18, maxAge: 44, rate: 0.01 },
+        { minAge: 45, maxAge: 59, rate: 0.02 },
+        { minAge: 60, maxAge: 74, rate: 0.05 },
+        { minAge: 75, maxAge: 89, rate: 0.10 },
+        { minAge: 90, maxAge: Infinity, rate: 0.20 }
+    ];
+
+    // =========================================================================
+    // 4. HELPERS
     // =========================================================================
 
     function _isValidYear(value) {
@@ -90,8 +166,15 @@
         return typeof value === 'string' && value.length > 0;
     }
 
+    function _isValidRoll(v) {
+        return typeof v === 'number'
+            && Number.isFinite(v)
+            && v >= 0
+            && v < 1;
+    }
+
     // =========================================================================
-    // 3. AGE
+    // 5. AGE
     // =========================================================================
 
     function calculateAgeAtYear(birthYear, year) {
@@ -102,7 +185,7 @@
     }
 
     // =========================================================================
-    // 4. YEAR VALIDATION
+    // 6. YEAR VALIDATION
     // =========================================================================
 
     function validateDeathYear(facts) {
@@ -131,7 +214,7 @@
     }
 
     // =========================================================================
-    // 5. LIFE-STATE TRANSITION
+    // 7. LIFE-STATE TRANSITION
     // =========================================================================
 
     function canDie(facts) {
@@ -153,7 +236,7 @@
     }
 
     // =========================================================================
-    // 6. DEATH CAUSE
+    // 8. DEATH CAUSE
     // =========================================================================
 
     function isValidDeathCause(cause) {
@@ -183,26 +266,9 @@
     }
 
     // =========================================================================
-    // 7. FULL DEATH VALIDATION
+    // 9. FULL DEATH VALIDATION
     // =========================================================================
 
-    /**
-     * Validates a full set of death facts.
-     *
-     * facts:
-     * {
-     *   characterId,
-     *   isDeceased,       boolean; must not be true
-     *   birthYear,        number; required
-     *   deathYear,        number; required
-     *   currentYear,      number; required
-     *   deathCause,       string; required, must be a valid cause
-     *   isMurder,         boolean | undefined
-     *   killerId,         string | null | undefined
-     *   isExecution,      boolean | undefined
-     *   executionReason,  string | null | undefined
-     * }
-     */
     function validateDeath(facts) {
         var errors = [];
 
@@ -239,31 +305,27 @@
     }
 
     // =========================================================================
-    // 8. CAUSE ELIGIBILITY
+    // 10. CAUSE ELIGIBILITY
     // =========================================================================
 
     /**
      * Evaluates whether a particular cause is eligible for a character,
      * given explicit policy facts.
      *
+     * If policy is undefined, the default policy derived from
+     * DEFAULT_DEATH_CAUSES is used. Callers may supply their own.
+     *
      * facts:
-     * {
-     *   gender,
-     *   age,
-     *   isPregnant,
-     *   isChildbirthRelated
-     * }
+     *   { gender, age, isPregnant, isChildbirthRelated }
      *
      * policy:
-     * {
-     *   requiresFemale,       boolean
-     *   minAge,               number
-     *   maxAge,               number
-     *   requiresPregnancy,    boolean
-     *   requiresChildbirth,   boolean
-     * }
-     *
-     * No hard-coded biological assumptions here. Callers supply the policy.
+     *   {
+     *     requiresFemale,
+     *     minAge,
+     *     maxAge,
+     *     requiresPregnancy,
+     *     requiresChildbirth
+     *   }
      */
     function isCauseEligible(facts, policy) {
         var errors = [];
@@ -271,8 +333,11 @@
         if (!facts || typeof facts !== 'object') {
             return { valid: false, errors: ['missing_facts'] };
         }
-        if (!policy || typeof policy !== 'object') {
-            return { valid: false, errors: ['missing_cause_policy'] };
+        if (policy === undefined || policy === null) {
+            policy = {};
+        }
+        if (typeof policy !== 'object') {
+            return { valid: false, errors: ['invalid_cause_policy'] };
         }
 
         if (policy.requiresFemale === true && facts.gender !== 'female') {
@@ -300,16 +365,9 @@
     }
 
     // =========================================================================
-    // 9. MORTALITY ROLL
+    // 11. MORTALITY ROLL
     // =========================================================================
 
-    /**
-     * Evaluates a supplied mortality roll. The caller supplies the rate
-     * and the roll. No randomness occurs here.
-     *
-     * facts: { age, mortalityRate }
-     * roll:  number in [0, 1)
-     */
     function evaluateMortalityRoll(facts, roll) {
         if (!facts || typeof facts !== 'object') {
             return { valid: false, dies: false, errors: ['missing_facts'] };
@@ -322,10 +380,7 @@
             return { valid: false, dies: false, errors: ['invalid_mortality_rate'] };
         }
 
-        if (typeof roll !== 'number'
-            || !Number.isFinite(roll)
-            || roll < 0
-            || roll >= 1) {
+        if (!_isValidRoll(roll)) {
             return { valid: false, dies: false, errors: ['invalid_roll'] };
         }
 
@@ -337,17 +392,16 @@
     }
 
     // =========================================================================
-    // 10. MORTALITY RATE LOOKUP
+    // 12. MORTALITY RATE LOOKUP
     // =========================================================================
 
     /**
      * Looks up a mortality rate from explicit age bands.
-     *
-     * bands: [{ minAge, maxAge, rate }, ...]
+     * When bands is not supplied, DEFAULT_MORTALITY_RATE_BANDS is used.
      */
     function getMortalityRate(age, bands) {
         if (typeof age !== 'number' || !Number.isFinite(age)) return null;
-        if (!Array.isArray(bands)) return null;
+        if (!Array.isArray(bands)) bands = DEFAULT_MORTALITY_RATE_BANDS;
 
         for (var i = 0; i < bands.length; i++) {
             var band = bands[i];
@@ -364,14 +418,100 @@
         return null;
     }
 
+    function getDefaultMortalityRate(age) {
+        return getMortalityRate(age, DEFAULT_MORTALITY_RATE_BANDS);
+    }
+
     // =========================================================================
-    // 11. DEATH RECORD PROJECTION VALIDATION
+    // 13. CAUSE CATALOGUE
     // =========================================================================
 
+    function getDefaultCauseCatalogue() {
+        // Return a deep copy so callers cannot mutate the canonical list.
+        var out = [];
+        for (var i = 0; i < DEFAULT_DEATH_CAUSES.length; i++) {
+            var e = DEFAULT_DEATH_CAUSES[i];
+            out.push({
+                cause: e.cause,
+                detail: e.detail,
+                weight: e.weight,
+                minAge: typeof e.minAge === 'number' ? e.minAge : undefined,
+                maxAge: typeof e.maxAge === 'number' ? e.maxAge : undefined,
+                requiresFemale: e.requiresFemale === true
+            });
+        }
+        return out;
+    }
+
     /**
-     * Validates a death record projection produced by MortalityQueries.
-     * Used to catch corrupted records before consumers rely on them.
+     * Returns the entries in a catalogue eligible for the given facts.
+     * facts: { age, gender }
      */
+    function getEligibleCauses(facts, catalogue) {
+        if (!facts || typeof facts !== 'object') return [];
+        var list = Array.isArray(catalogue) ? catalogue : DEFAULT_DEATH_CAUSES;
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var e = list[i];
+            if (!e) continue;
+            if (typeof e.weight !== 'number' || e.weight <= 0) continue;
+            if (typeof e.minAge === 'number'
+                && (typeof facts.age !== 'number' || facts.age < e.minAge)) {
+                continue;
+            }
+            if (typeof e.maxAge === 'number'
+                && (typeof facts.age !== 'number' || facts.age > e.maxAge)) {
+                continue;
+            }
+            if (e.requiresFemale === true && facts.gender !== 'female') {
+                continue;
+            }
+            out.push(e);
+        }
+        return out;
+    }
+
+    /**
+     * Picks a death cause from the eligible set, deterministically given
+     * a supplied roll in [0, 1). No randomness occurs here.
+     *
+     * facts:     { age, gender }
+     * roll:      number in [0, 1)
+     * catalogue: optional array; defaults to DEFAULT_DEATH_CAUSES
+     *
+     * Returns { cause, detail } or null.
+     */
+    function pickRandomCause(facts, roll, catalogue) {
+        if (!_isValidRoll(roll)) return null;
+        var eligible = getEligibleCauses(facts, catalogue);
+        if (eligible.length === 0) return null;
+
+        var total = 0;
+        for (var i = 0; i < eligible.length; i++) total += eligible[i].weight;
+        if (total <= 0) return null;
+
+        var target = roll * total;
+        var acc = 0;
+        for (var j = 0; j < eligible.length; j++) {
+            acc += eligible[j].weight;
+            if (target < acc) {
+                return {
+                    cause: eligible[j].cause,
+                    detail: eligible[j].detail
+                };
+            }
+        }
+        // Floating-point safety: last entry.
+        return {
+            cause: eligible[eligible.length - 1].cause,
+            detail: eligible[eligible.length - 1].detail
+        };
+    }
+
+    // =========================================================================
+    // 14. DEATH RECORD PROJECTION VALIDATION
+    // =========================================================================
+
     function validateDeathRecord(record) {
         var errors = [];
 
@@ -397,13 +537,15 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.MortalityRules = {
         DEATH_CAUSE: DEATH_CAUSE,
         MORTALITY_STATUS: MORTALITY_STATUS,
         DEATH_CATEGORY: DEATH_CATEGORY,
+
+        DEFAULT_MORTALITY_RATE_BANDS: DEFAULT_MORTALITY_RATE_BANDS,
 
         calculateAgeAtYear: calculateAgeAtYear,
         validateDeathYear: validateDeathYear,
@@ -417,6 +559,11 @@
 
         evaluateMortalityRoll: evaluateMortalityRoll,
         getMortalityRate: getMortalityRate,
+        getDefaultMortalityRate: getDefaultMortalityRate,
+
+        getDefaultCauseCatalogue: getDefaultCauseCatalogue,
+        getEligibleCauses: getEligibleCauses,
+        pickRandomCause: pickRandomCause,
 
         validateDeathRecord: validateDeathRecord
     };
