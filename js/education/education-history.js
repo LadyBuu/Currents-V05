@@ -3,6 +3,25 @@
  * Append-only event ledger embedded on each institution (`institution.history`).
  * Structured events only. No persistence, no formatting, no character lookups
  * beyond snapshotting a name at event time.
+ *
+ * CANONICAL VS CLONE
+ *
+ *   addEvent writes to the CANONICAL institution record. It reaches the
+ *   record via EducationState._getInstitutionCanonical(id) when given an id,
+ *   or uses the object directly when given one. Passing a cloned record (the
+ *   kind EducationState.getInstitution returns) will write to the clone and
+ *   silently lose the event.
+ *
+ *   Read paths (getInstitutionHistory, the recorders) use the cloned record
+ *   because they only read.
+ *
+ * EVENT SHAPE
+ *
+ *   { id, type, year, entityId, entityName, details, reason,
+ *     previousValue, newValue, metadata, timestamp }
+ *
+ *   type must be a value of HISTORY_EVENT_TYPES. Unknown types throw.
+ *   metadata is a flat object. Nested mutation of metadata is not protected.
  */
 
 (function() {
@@ -15,6 +34,14 @@
     }
 
     // --- Dependencies: no fallbacks. Missing dependency = broken load order. ---
+
+    function _getInstitutionCanonical(id) {
+        if (typeof window.EducationState === 'undefined' ||
+            typeof window.EducationState._getInstitutionCanonical !== 'function') {
+            throw new Error('education-history.js requires EducationState._getInstitutionCanonical');
+        }
+        return window.EducationState._getInstitutionCanonical(id);
+    }
 
     function _getInstitution(id) {
         if (typeof window.EducationState === 'undefined' ||
@@ -96,19 +123,26 @@
 
     /**
      * Append an event to an institution's history.
-     * Mutates the canonical institution object. Caller owns persistence.
      *
-     * @param {Object|string} institutionOrId - Canonical institution object or its id.
+     * Writes to the canonical institution record. Caller owns persistence.
+     *
+     * @param {Object|string} institutionOrId
+     *        A canonical institution object, or its id. Passing a cloned
+     *        record (the kind EducationState.getInstitution returns) writes
+     *        to the clone and loses the event. Passing a string id routes
+     *        through EducationState._getInstitutionCanonical.
+     *
      * @param {Object} event
-     * @param {string} event.type        - Must be in HISTORY_EVENT_TYPES.
-     * @param {number} [event.year]      - Defaults to current year.
-     * @param {string} [event.entityId]  - Character or entity involved.
-     * @param {string} [event.entityName]- Snapshot of the entity's name at event time.
-     * @param {string} [event.details]   - Human-readable description.
-     * @param {string} [event.reason]    - Reason or context.
+     * @param {string} event.type         Must be in HISTORY_EVENT_TYPES.
+     * @param {number} [event.year]       Defaults to current year.
+     * @param {string} [event.entityId]   Character or entity involved.
+     * @param {string} [event.entityName] Snapshot of the entity's name at event time.
+     * @param {string} [event.details]    Human-readable description.
+     * @param {string} [event.reason]     Reason or context.
      * @param {*}      [event.previousValue]
      * @param {*}      [event.newValue]
-     * @param {Object} [event.metadata]  - Structured extra data (subject id, etc.).
+     * @param {Object} [event.metadata]   Flat structured extra data.
+     *
      * @returns {Object} The stored event (frozen copy).
      */
     function addEvent(institutionOrId, event) {
@@ -118,9 +152,12 @@
 
         _validateEventType(event.type);
 
-        var institution = (typeof institutionOrId === 'string')
-            ? _getInstitution(institutionOrId)
-            : institutionOrId;
+        var institution;
+        if (typeof institutionOrId === 'string') {
+            institution = _getInstitutionCanonical(institutionOrId);
+        } else {
+            institution = institutionOrId;
+        }
 
         if (!institution) {
             throw new Error('addEvent: institution not found');
@@ -265,6 +302,8 @@
 
     // --- Event recorders ---
     // Commands call these during their mutation. They do not persist.
+    // They use the cloned institution record because they only read from it
+    // and then hand it to addEvent, which resolves the canonical record.
 
     function recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes) {
         var institution = _getInstitution(institutionId);
@@ -277,7 +316,7 @@
             if (curriculum[i].id === subjectId) { subjectName = curriculum[i].name; break; }
         }
 
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.TEACHER_HIRED,
             year: year,
             entityId: teacherId,
@@ -296,7 +335,7 @@
         var teacher = _getCharacterById(teacherId);
         if (!institution || !teacher) return null;
 
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.TEACHER_DEPARTED,
             year: year,
             entityId: teacherId,
@@ -311,7 +350,7 @@
         var student = _getCharacterById(studentId);
         if (!institution || !student) return null;
 
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.STUDENT_ENROLLED,
             year: year,
             entityId: studentId,
@@ -326,7 +365,7 @@
         var student = _getCharacterById(studentId);
         if (!institution || !student) return null;
 
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.STUDENT_GRADUATED,
             year: year,
             entityId: studentId,
@@ -341,7 +380,7 @@
         var student = _getCharacterById(studentId);
         if (!institution || !student) return null;
 
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.STUDENT_WITHDREW,
             year: year,
             entityId: studentId,
@@ -357,7 +396,7 @@
         if (!institution || !character) return null;
 
         var displayTitle = title || 'Headmaster';
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.HEADMASTER_APPOINTED,
             year: year,
             entityId: characterId,
@@ -373,7 +412,7 @@
         var character = _getCharacterById(characterId);
         if (!institution || !character) return null;
 
-        return addEvent(institution, {
+        return addEvent(institutionId, {
             type: HISTORY.HEADMASTER_ENDED,
             year: year,
             entityId: characterId,

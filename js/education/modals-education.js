@@ -3,6 +3,15 @@
  * UI modals for education management. Reads via EducationQueries, writes via
  * EducationCommands, persists once per successful mutation batch, surfaces
  * command results to the user. No state, no policy, no toasts from Commands.
+ *
+ * CONTRACT
+ *
+ *   - Every modal reads via EducationQueries.
+ *   - Every modal writes via EducationCommands and checks .success.
+ *   - Every successful mutation batch calls EducationCommands.persist() once.
+ *   - Failures surface .reason via _showToast.
+ *   - No direct EducationState access.
+ *   - No layout that polls or stashes state on window.
  */
 
 (function() {
@@ -33,15 +42,25 @@
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
-        else if (typeof window._closeTopModal === 'function') window._closeTopModal();
+        if (typeof window.closeTopModal === 'function') {
+            window.closeTopModal();
+        } else if (typeof window._closeTopModal === 'function') {
+            window._closeTopModal();
+        }
     }
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') return window.confirmDialog(message, title, onConfirm, onCancel);
-        if (typeof window._confirmDialog === 'function') return window._confirmDialog(message, title, onConfirm, onCancel);
-        if (window.confirm(message)) { if (onConfirm) onConfirm(); }
-        else { if (onCancel) onCancel(); }
+        if (typeof window.confirmDialog === 'function') {
+            return window.confirmDialog(message, title, onConfirm, onCancel);
+        }
+        if (typeof window._confirmDialog === 'function') {
+            return window._confirmDialog(message, title, onConfirm, onCancel);
+        }
+        if (window.confirm(message)) {
+            if (onConfirm) onConfirm();
+        } else {
+            if (onCancel) onCancel();
+        }
     }
 
     function _escapeHtml(str) {
@@ -57,8 +76,11 @@
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') window._showToast(message, type);
-        else if (typeof window.showToast === 'function') window.showToast(message, type);
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
+        }
     }
 
     function _getIcon(name) {
@@ -81,13 +103,6 @@
         return window.getPlaces();
     }
 
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById !== 'function') {
-            throw new Error('modals-education.js requires getPlaceById');
-        }
-        return window.getPlaceById(id);
-    }
-
     function _getCharacterById(id) {
         if (typeof window.getCharacterById !== 'function') return null;
         return window.getCharacterById(id);
@@ -104,15 +119,19 @@
     }
 
     function _getRoleById(roleId) {
-        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getRole === 'function') {
+        if (typeof window.RoleState !== 'undefined' &&
+            typeof window.RoleState.getRole === 'function') {
             return window.RoleState.getRole(roleId);
         }
-        if (typeof window.getRoleById === 'function') return window.getRoleById(roleId);
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(roleId);
+        }
         return null;
     }
 
     function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getAllRoles === 'function') {
+        if (typeof window.RoleState !== 'undefined' &&
+            typeof window.RoleState.getAllRoles === 'function') {
             return window.RoleState.getAllRoles();
         }
         if (typeof window.getRoles === 'function') return window.getRoles();
@@ -120,14 +139,16 @@
     }
 
     function _getReligionById(religionId) {
-        if (typeof window.ReligionState !== 'undefined' && typeof window.ReligionState.getReligion === 'function') {
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getReligion === 'function') {
             return window.ReligionState.getReligion(religionId);
         }
         return null;
     }
 
     function _getAllReligions() {
-        if (typeof window.ReligionState !== 'undefined' && typeof window.ReligionState.getAllReligions === 'function') {
+        if (typeof window.ReligionState !== 'undefined' &&
+            typeof window.ReligionState.getAllReligions === 'function') {
             return window.ReligionState.getAllReligions();
         }
         return [];
@@ -161,10 +182,18 @@
 
     function _openHouseholdSelector(title, onSelect) {
         if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector({ title: title, targetId: null, onSelect: onSelect });
+            return window.openHouseholdSelector({
+                title: title,
+                targetId: null,
+                onSelect: onSelect
+            });
         }
         if (typeof window._openHouseholdSelector === 'function') {
-            return window._openHouseholdSelector({ title: title, targetId: null, onSelect: onSelect });
+            return window._openHouseholdSelector({
+                title: title,
+                targetId: null,
+                onSelect: onSelect
+            });
         }
         _showToast('Household selector not available', 'error');
         return null;
@@ -176,6 +205,12 @@
         var TYPES = window.INSTITUTION_TYPES;
         if (!TYPES) throw new Error('modals-education.js requires INSTITUTION_TYPES');
         return TYPES;
+    }
+
+    function _subjectsById() {
+        var S = window.SUBJECTS_BY_ID;
+        if (!S) throw new Error('modals-education.js requires SUBJECTS_BY_ID');
+        return S;
     }
 
     function _subjects() {
@@ -209,25 +244,22 @@
             var currentYear = _getCurrentYear();
             var types = _institutionTypes();
 
-            // Type options from canonical constants
             var typeOptions = '';
             for (var k in types) {
-                if (!types.hasOwnProperty(k)) continue;
+                if (!Object.prototype.hasOwnProperty.call(types, k)) continue;
                 var t = types[k];
                 var selected = (t.id === defaultData.typeId) ? ' selected' : '';
                 typeOptions += '<option value="' + _escapeHtml(t.id) + '"' + selected + '>' +
                     _escapeHtml(t.name) + '</option>';
             }
 
-            // Place options
             var placeOptions = '<option value="">No location</option>';
             for (var i = 0; i < places.length; i++) {
-                var selected = (places[i].id === defaultData.locationId) ? ' selected' : '';
-                placeOptions += '<option value="' + _escapeHtml(places[i].id) + '"' + selected + '>' +
-                    _escapeHtml(places[i].displayName) + '</option>';
+                var placeSel = (places[i].id === defaultData.locationId) ? ' selected' : '';
+                placeOptions += '<option value="' + _escapeHtml(places[i].id) + '"' +
+                    placeSel + '>' + _escapeHtml(places[i].displayName) + '</option>';
             }
 
-            // Religions
             var religions = _getAllReligions();
             var religionOptions = '<option value="">None</option>';
             for (var i = 0; i < religions.length; i++) {
@@ -241,7 +273,9 @@
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
-                '<input type="text" id="createInstName" value="' + _escapeHtml(defaultData.name || '') + '" placeholder="e.g., Oxford Academy" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="text" id="createInstName" value="' +
+                _escapeHtml(defaultData.name || '') +
+                '" placeholder="e.g., Oxford Academy" autofocus style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
@@ -266,14 +300,12 @@
                 '</select>' +
                 '</div>' +
 
-                // Religion section (visible when ownership is religious)
                 '<div id="createInstReligionSection" style="display:none;margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                 '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Religion</label>' +
                 '<select id="createInstReligion" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);">' +
                 religionOptions + '</select>' +
                 '</div>' +
 
-                // Owner section (visible when ownership is private)
                 '<div id="createInstOwnerSection" style="display:none;margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                 '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
@@ -297,6 +329,12 @@
 
                 '</div>';
 
+            // Closure-scoped form state. No polling, no window globals.
+            var ownerState = {
+                id: null,
+                type: 'character'
+            };
+
             _openModal({
                 title: _getIcon('GEAR') + ' Create Educational Institution',
                 content: modalContent,
@@ -310,14 +348,16 @@
                     var ownerSection = document.getElementById('createInstOwnerSection');
 
                     function updateTypeHint() {
-                        var types = _institutionTypes();
-                        for (var k in types) {
-                            if (types[k].id === typeSel.value) {
-                                var t = types[k];
-                                typeHint.textContent = 'Capacity: ' + t.maxStudents +
-                                    ' · Min pop: ' + t.minPopulation +
-                                    ' · Tuition base: ' + t.baseTuition +
-                                    ' · Reputation: ' + t.baseReputation;
+                        var typesNow = _institutionTypes();
+                        for (var kk in typesNow) {
+                            if (!Object.prototype.hasOwnProperty.call(typesNow, kk)) continue;
+                            if (typesNow[kk].id === typeSel.value) {
+                                var tt = typesNow[kk];
+                                typeHint.textContent =
+                                    'Capacity: ' + tt.maxStudents +
+                                    ' · Min pop: ' + tt.minPopulation +
+                                    ' · Tuition base: ' + tt.baseTuition +
+                                    ' · Reputation: ' + tt.baseReputation;
                                 return;
                             }
                         }
@@ -326,8 +366,10 @@
 
                     function updateOwnershipSections() {
                         var v = ownershipSel.value;
-                        religionSection.style.display = (v === 'religious') ? 'block' : 'none';
-                        ownerSection.style.display = (v === 'private') ? 'block' : 'none';
+                        religionSection.style.display =
+                            (v === 'religious') ? 'block' : 'none';
+                        ownerSection.style.display =
+                            (v === 'private') ? 'block' : 'none';
                     }
 
                     typeSel.addEventListener('change', updateTypeHint);
@@ -335,47 +377,38 @@
                     updateTypeHint();
                     updateOwnershipSections();
 
-                    var ownerName = document.getElementById('createInstOwnerName');
-                    var ownerId = null;
-
+                    var ownerNameInput = document.getElementById('createInstOwnerName');
                     var selectBtn = document.getElementById('createInstSelectOwnerBtn');
                     var clearBtn = document.getElementById('createInstClearOwnerBtn');
 
                     selectBtn.onclick = function() {
-                        var choice = document.querySelector('input[name="createInstOwnerType"]:checked');
+                        var choice = document.querySelector(
+                            'input[name="createInstOwnerType"]:checked'
+                        );
                         var type = choice ? choice.value : 'character';
                         if (type === 'character') {
                             _openCharacterSelector('Select Owner', function(character) {
                                 if (!character) return;
-                                ownerId = character.id;
-                                ownerName.value = character.name + (character.surname ? ' ' + character.surname : '');
-                                ownerName.dataset.ownerType = 'character';
+                                ownerState.id = character.id;
+                                ownerState.type = 'character';
+                                ownerNameInput.value = character.name +
+                                    (character.surname ? ' ' + character.surname : '');
                             });
                         } else {
                             _openHouseholdSelector('Select Owner', function(household) {
                                 if (!household) return;
-                                ownerId = household.id;
-                                ownerName.value = household.name;
-                                ownerName.dataset.ownerType = 'household';
+                                ownerState.id = household.id;
+                                ownerState.type = 'household';
+                                ownerNameInput.value = household.name;
                             });
                         }
                     };
 
                     clearBtn.onclick = function() {
-                        ownerId = null;
-                        ownerName.value = '';
-                        ownerName.dataset.ownerType = '';
+                        ownerState.id = null;
+                        ownerState.type = 'character';
+                        ownerNameInput.value = '';
                     };
-
-                    // Store on window-scoped closure via dataset for reading at confirm
-                    ownerName.dataset.ownerId = '';
-                    var observer = setInterval(function() {
-                        ownerName.dataset.ownerId = ownerId || '';
-                    }, 100);
-
-                    // Cleanup when modal closes
-                    var cancelObserver = function() { clearInterval(observer); };
-                    window._createInstObserverCleanup = cancelObserver;
                 },
                 onConfirm: function() {
                     var name = document.getElementById('createInstName').value.trim();
@@ -396,17 +429,22 @@
                     var ownerId = null;
                     var ownerType = null;
                     if (ownership === 'private') {
-                        var ownerNameEl = document.getElementById('createInstOwnerName');
-                        ownerId = ownerNameEl.dataset.ownerId || null;
-                        ownerType = ownerNameEl.dataset.ownerType || null;
+                        ownerId = ownerState.id;
+                        ownerType = ownerState.type;
                         if (!ownerId) {
                             _showToast('Please select an owner', 'error');
                             return false;
                         }
                     }
 
-                    if (!name) { _showToast('Name is required', 'error'); return false; }
-                    if (!locationId) { _showToast('Location is required', 'error'); return false; }
+                    if (!name) {
+                        _showToast('Name is required', 'error');
+                        return false;
+                    }
+                    if (!locationId) {
+                        _showToast('Location is required', 'error');
+                        return false;
+                    }
 
                     var data = {
                         name: name,
@@ -429,26 +467,19 @@
                     _persist();
                     _showToast('Institution created: ' + name, 'success');
                     _processingModal = false;
-                    if (window._createInstObserverCleanup) {
-                        window._createInstObserverCleanup();
-                        window._createInstObserverCleanup = null;
-                    }
                     _closeTopModal();
                     if (onSuccess) onSuccess(result.institutionId);
                     return true;
                 },
                 onCancel: function() {
                     _processingModal = false;
-                    if (window._createInstObserverCleanup) {
-                        window._createInstObserverCleanup();
-                        window._createInstObserverCleanup = null;
-                    }
                 }
             });
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening create institution modal: ' + (e.message || 'unknown'), 'error');
+            _showToast('Error opening create institution modal: ' +
+                (e.message || 'unknown'), 'error');
         }
     }
 
@@ -474,7 +505,7 @@
 
             var typeOptions = '';
             for (var k in types) {
-                if (!types.hasOwnProperty(k)) continue;
+                if (!Object.prototype.hasOwnProperty.call(types, k)) continue;
                 var t = types[k];
                 var selected = (t.id === s.type) ? ' selected' : '';
                 typeOptions += '<option value="' + _escapeHtml(t.id) + '"' + selected + '>' +
@@ -483,9 +514,9 @@
 
             var placeOptions = '<option value="">No location</option>';
             for (var i = 0; i < places.length; i++) {
-                var selected = (places[i].id === s.locationId) ? ' selected' : '';
-                placeOptions += '<option value="' + _escapeHtml(places[i].id) + '"' + selected + '>' +
-                    _escapeHtml(places[i].displayName) + '</option>';
+                var placeSel = (places[i].id === s.locationId) ? ' selected' : '';
+                placeOptions += '<option value="' + _escapeHtml(places[i].id) + '"' +
+                    placeSel + '>' + _escapeHtml(places[i].displayName) + '</option>';
             }
 
             var modalContent =
@@ -496,7 +527,9 @@
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
-                '<input type="text" id="editInstName" value="' + _escapeHtml(s.name) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="text" id="editInstName" value="' +
+                _escapeHtml(s.name) +
+                '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
@@ -519,7 +552,9 @@
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Max Students</label>' +
-                '<input type="number" id="editInstMaxStudents" value="' + s.maxStudents + '" min="1" max="5000" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="number" id="editInstMaxStudents" value="' +
+                s.maxStudents +
+                '" min="1" max="5000" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
                 '</div>';
@@ -534,10 +569,18 @@
                     var type = document.getElementById('editInstType').value;
                     var locationId = document.getElementById('editInstLocation').value || null;
                     var description = document.getElementById('editInstDescription').value.trim();
-                    var maxStudents = parseInt(document.getElementById('editInstMaxStudents').value, 10);
+                    var maxStudents = parseInt(
+                        document.getElementById('editInstMaxStudents').value, 10
+                    );
 
-                    if (!name) { _showToast('Name is required', 'error'); return false; }
-                    if (isNaN(maxStudents) || maxStudents < 1) { _showToast('Invalid capacity', 'error'); return false; }
+                    if (!name) {
+                        _showToast('Name is required', 'error');
+                        return false;
+                    }
+                    if (isNaN(maxStudents) || maxStudents < 1) {
+                        _showToast('Invalid capacity', 'error');
+                        return false;
+                    }
 
                     var result = _commands().updateInstitution(institutionId, {
                         name: name,
@@ -608,8 +651,11 @@
                     var st = details.students[i];
                     studentsHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
                         '<span>' + _escapeHtml(st.studentName || 'Unknown') + '</span>' +
-                        '<span style="color:var(--dim);">' + (st.age !== null ? st.age + 'y' : '?') +
-                        ' · Enrolled ' + (st.enrollmentYear !== null ? st.enrollmentYear : '?') + '</span>' +
+                        '<span style="color:var(--dim);">' +
+                        (st.age !== null ? st.age + 'y' : '?') +
+                        ' · Enrolled ' +
+                        (st.enrollmentYear !== null ? st.enrollmentYear : '?') +
+                        '</span>' +
                         '</div>';
                 }
                 if (details.students.length > 10) {
@@ -628,8 +674,11 @@
                     var t = details.teachers[i];
                     teachersHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
                         '<span>' + _escapeHtml(t.teacherName || 'Unknown') +
-                        ' <span style="color:var(--accent);font-size:0.5rem;">(' + _escapeHtml(t.subjectName || '?') + ')</span></span>' +
-                        '<span style="color:var(--dim);">' + (t.hiredYear !== null ? t.hiredYear : '?') + '</span>' +
+                        ' <span style="color:var(--accent);font-size:0.5rem;">(' +
+                        _escapeHtml(t.subjectName || '?') + ')</span></span>' +
+                        '<span style="color:var(--dim);">' +
+                        (t.hiredYear !== null ? t.hiredYear : '?') +
+                        '</span>' +
                         '</div>';
                 }
                 if (details.teachers.length > 10) {
@@ -640,7 +689,9 @@
             }
 
             var headmasterLine = details.headmaster
-                ? _escapeHtml(details.headmaster.name || 'Unknown') + ' (' + _escapeHtml(details.headmaster.title || 'Headmaster') + ' since ' + (details.headmaster.startYear || '?') + ')'
+                ? _escapeHtml(details.headmaster.name || 'Unknown') + ' (' +
+                  _escapeHtml(details.headmaster.title || 'Headmaster') +
+                  ' since ' + (details.headmaster.startYear || '?') + ')'
                 : '<span style="color:var(--dim);">None</span>';
 
             var modalContent =
@@ -649,9 +700,12 @@
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Institution</div>' +
-                '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(s.name) + '</div>' +
-                '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(s.typeName || 'Unknown') + '</div>' +
-                '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(s.locationName) + '</div>' +
+                '<div style="font-size:0.9rem;font-weight:bold;">' +
+                _escapeHtml(s.name) + '</div>' +
+                '<div style="font-size:0.65rem;color:var(--dim);">' +
+                _escapeHtml(s.typeName || 'Unknown') + '</div>' +
+                '<div style="font-size:0.65rem;color:var(--dim);">' +
+                _escapeHtml(s.locationName) + '</div>' +
                 '</div>' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Statistics</div>' +
@@ -666,9 +720,16 @@
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Ownership</div>' +
-                '<div style="font-size:0.75rem;font-weight:bold;">' + _escapeHtml(s.ownershipType || 'public') + '</div>' +
-                (s.ownerName ? '<div style="font-size:0.6rem;color:var(--dim);">Owner: ' + _escapeHtml(s.ownerName) + '</div>' : '') +
-                (s.religionName ? '<div style="font-size:0.6rem;color:#4a9e6a;">' + _escapeHtml(s.religionName) + '</div>' : '') +
+                '<div style="font-size:0.75rem;font-weight:bold;">' +
+                _escapeHtml(s.ownershipType || 'public') + '</div>' +
+                (s.ownerName
+                    ? '<div style="font-size:0.6rem;color:var(--dim);">Owner: ' +
+                      _escapeHtml(s.ownerName) + '</div>'
+                    : '') +
+                (s.religionName
+                    ? '<div style="font-size:0.6rem;color:#4a9e6a;">' +
+                      _escapeHtml(s.religionName) + '</div>'
+                    : '') +
                 '</div>' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
                 '<div style="font-size:0.6rem;color:var(--dim);">Headmaster</div>' +
@@ -678,22 +739,25 @@
 
                 '<div style="margin-bottom:12px;">' +
                 '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Curriculum</div>' +
-                '<div style="background:var(--bg3);padding:8px;border-radius:6px;min-height:30px;">' + curriculumHtml + '</div>' +
+                '<div style="background:var(--bg3);padding:8px;border-radius:6px;min-height:30px;">' +
+                curriculumHtml + '</div>' +
                 '</div>' +
 
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Students (' + details.students.length + ')</div>' +
-                studentsHtml +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Students (' +
+                details.students.length + ')</div>' + studentsHtml +
                 '</div>' +
                 '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Teachers (' + details.teachers.length + ')</div>' +
-                teachersHtml +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Teachers (' +
+                details.teachers.length + ')</div>' + teachersHtml +
                 '</div>' +
                 '</div>' +
 
-                (details.description ? '<div style="font-size:0.55rem;color:var(--dim);padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:12px;">' +
-                    _escapeHtml(details.description) + '</div>' : '') +
+                (details.description
+                    ? '<div style="font-size:0.55rem;color:var(--dim);padding:8px;background:var(--bg3);border-radius:6px;margin-bottom:12px;">' +
+                      _escapeHtml(details.description) + '</div>'
+                    : '') +
 
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;border-top:1px solid var(--border);padding-top:12px;">' +
                 '<button id="instEditBtn" class="btn primary" style="font-size:0.65rem;padding:4px 12px;">Edit</button>' +
@@ -736,42 +800,58 @@
 
                 bind('instEditBtn', function() {
                     openEditInstitutionModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instCurriculumBtn', function() {
                     openEditCurriculumModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instEnrollBtn', function() {
                     openEnrollStudentModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instHireBtn', function() {
                     openHireTeacherModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instHeadmasterBtn', function() {
                     openSetHeadmasterModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instTuitionBtn', function() {
                     openTuitionManagementModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instOwnershipBtn', function() {
                     openOwnershipManagementModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instGraduateBtn', function() {
                     openGraduateStudentModal(institutionId, function() {
-                        setTimeout(function() { openInstitutionDetailsModal(institutionId, onSuccess); }, 100);
+                        setTimeout(function() {
+                            openInstitutionDetailsModal(institutionId, onSuccess);
+                        }, 100);
                     });
                 });
                 bind('instDeleteBtn', function() {
@@ -805,44 +885,47 @@
 
             var s = details.summary;
             var current = details.curriculum;
+            var subjectsById = _subjectsById();
             var subjects = _subjects();
             var categories = _roleCategories();
             var specCat = s.specializationCategory;
             var allRoles = _getAllRoles();
 
-            // Filter roles by specialization category
             var rolePool = specCat
                 ? allRoles.filter(function(r) { return r.category === specCat; })
                 : allRoles;
 
-            // Build checked lookup
             var checkedIds = {};
             for (var i = 0; i < current.length; i++) {
                 checkedIds[current[i].id] = true;
             }
 
-            // Role checkboxes
             var roleHtml = '';
             if (rolePool.length === 0) {
                 roleHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">' +
-                    (specCat ? 'No roles in category "' + _escapeHtml(specCat) + '"' : 'No roles available') +
+                    (specCat
+                        ? 'No roles in category "' + _escapeHtml(specCat) + '"'
+                        : 'No roles available') +
                     '</div>';
             } else {
                 for (var i = 0; i < rolePool.length; i++) {
                     var r = rolePool[i];
                     var chk = checkedIds[r.id] ? ' checked' : '';
                     roleHtml += '<label style="display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:0.6rem;">' +
-                        '<input type="checkbox" class="curriculum-role-cb" value="' + _escapeHtml(r.id) + '"' + chk + '>' +
+                        '<input type="checkbox" class="curriculum-role-cb" value="' +
+                        _escapeHtml(r.id) + '"' + chk + '>' +
                         _escapeHtml(r.name) +
-                        (r.category ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(r.category) + ')</span>' : '') +
+                        (r.category
+                            ? ' <span style="color:var(--dim);font-size:0.5rem;">(' +
+                              _escapeHtml(r.category) + ')</span>'
+                            : '') +
                         '</label>';
                 }
             }
 
-            // Subjects grouped by category
             var subjectGroups = {};
             for (var key in subjects) {
-                if (!subjects.hasOwnProperty(key)) continue;
+                if (!Object.prototype.hasOwnProperty.call(subjects, key)) continue;
                 var sub = subjects[key];
                 var cat = sub.category || 'other';
                 if (!subjectGroups[cat]) subjectGroups[cat] = [];
@@ -851,28 +934,37 @@
 
             var subjectHtml = '';
             for (var cat in subjectGroups) {
-                if (!subjectGroups.hasOwnProperty(cat)) continue;
+                if (!Object.prototype.hasOwnProperty.call(subjectGroups, cat)) continue;
                 var catInfo = categories[cat] || { name: cat };
                 subjectHtml += '<div style="margin-bottom:8px;">';
-                subjectHtml += '<div style="font-size:0.55rem;color:var(--accent);margin-bottom:4px;">' + _escapeHtml(catInfo.name || cat) + '</div>';
+                subjectHtml += '<div style="font-size:0.55rem;color:var(--accent);margin-bottom:4px;">' +
+                    _escapeHtml(catInfo.name || cat) + '</div>';
                 subjectHtml += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
                 for (var i = 0; i < subjectGroups[cat].length; i++) {
                     var sub = subjectGroups[cat][i];
                     var chk = checkedIds[sub.id] ? ' checked' : '';
-                    var border = checkedIds[sub.id] ? 'var(--accent)' : 'var(--border)';
-                    subjectHtml += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.55rem;background:var(--bg2);padding:2px 8px;border-radius:12px;border:1px solid ' + border + ';">' +
-                        '<input type="checkbox" class="curriculum-subject-cb" value="' + _escapeHtml(sub.id) + '"' + chk + '>' +
+                    var border = checkedIds[sub.id]
+                        ? 'var(--accent)'
+                        : 'var(--border)';
+                    subjectHtml += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.55rem;background:var(--bg2);padding:2px 8px;border-radius:12px;border:1px solid ' +
+                        border + ';">' +
+                        '<input type="checkbox" class="curriculum-subject-cb" value="' +
+                        _escapeHtml(sub.id) + '"' + chk + '>' +
                         _escapeHtml(sub.name) +
                         '</label>';
                 }
                 subjectHtml += '</div></div>';
             }
 
-            // Custom subjects
-            var custom = current.filter(function(c) { return c.type === 'custom' || c.isCustom; });
+            // Existing custom subjects carry their id in a data attribute so
+            // they can be preserved across saves. New ones added in this
+            // session get a fresh id.
+            var custom = current.filter(function(c) {
+                return c.type === 'custom' || c.isCustom;
+            });
             var customHtml = '';
             for (var i = 0; i < custom.length; i++) {
-                customHtml += _customSubjectChip(custom[i].name, custom[i].name);
+                customHtml += _customSubjectChip(custom[i].name, custom[i].id);
             }
             if (!customHtml) {
                 customHtml = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
@@ -881,13 +973,17 @@
             var specWarning = '';
             if (specCat) {
                 specWarning = '<div style="padding:8px;background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:6px;margin-bottom:12px;font-size:0.55rem;">' +
-                    'This institution is specialized in <strong>' + _escapeHtml(specCat) + '</strong>. Only roles in this category can be added.</div>';
+                    'This institution is specialized in <strong>' +
+                    _escapeHtml(specCat) +
+                    '</strong>. Only roles in this category can be added.</div>';
             }
 
             var modalContent =
                 '<div style="margin-bottom:12px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                _getIcon('GEAR') + ' Editing curriculum for <strong>' + _escapeHtml(s.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + current.length + ' items currently</div>' +
+                _getIcon('GEAR') + ' Editing curriculum for <strong>' +
+                _escapeHtml(s.name) + '</strong>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+                current.length + ' items currently</div>' +
                 '</div>' +
                 specWarning +
 
@@ -936,16 +1032,7 @@
                     var subBoxes = document.querySelectorAll('.curriculum-subject-cb:checked');
                     for (var i = 0; i < subBoxes.length; i++) {
                         var subId = subBoxes[i].value;
-                        var sub = subjects[subId];
-                        // Subjects are keyed by uppercase enum name in constants; also try id lookup.
-                        if (!sub) {
-                            for (var key in subjects) {
-                                if (subjects.hasOwnProperty(key) && subjects[key].id === subId) {
-                                    sub = subjects[key];
-                                    break;
-                                }
-                            }
-                        }
+                        var sub = subjectsById[subId];
                         if (sub) {
                             newCurriculum.push({
                                 type: 'subject',
@@ -961,16 +1048,21 @@
                     var customItems = document.querySelectorAll('.custom-subject-item');
                     for (var i = 0; i < customItems.length; i++) {
                         var name = customItems[i].dataset.name;
-                        if (name) {
-                            newCurriculum.push({
-                                type: 'custom',
-                                id: 'custom_' + Date.now() + '_' + i,
-                                name: name,
-                                icon: null,
-                                baseLearnRate: 10,
-                                isCustom: true
-                            });
-                        }
+                        var existingId = customItems[i].dataset.id;
+                        if (!name) continue;
+
+                        var customId = existingId && existingId.indexOf('custom_') === 0
+                            ? existingId
+                            : 'custom_' + Date.now() + '_' + i;
+
+                        newCurriculum.push({
+                            type: 'custom',
+                            id: customId,
+                            name: name,
+                            icon: null,
+                            baseLearnRate: 10,
+                            isCustom: true
+                        });
                     }
 
                     var taughtRoles = newCurriculum
@@ -1002,54 +1094,62 @@
                 var addBtn = document.getElementById('addCustomSubjectBtn');
                 var container = document.getElementById('customSubjectsContainer');
 
+                function isEmptyPlaceholder(el) {
+                    var span = el.querySelector('span');
+                    return span && span.textContent.indexOf('No custom') !== -1;
+                }
+
+                function wireRemove(chip) {
+                    var removeBtn = chip.querySelector('.remove-custom-subject-btn');
+                    if (!removeBtn) return;
+                    removeBtn.onclick = function() {
+                        chip.remove();
+                        if (!container.querySelectorAll('.custom-subject-item').length) {
+                            container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
+                        }
+                    };
+                }
+
                 function addCustom() {
                     var name = input.value.trim();
                     if (!name) return;
-                    var chip = _customSubjectChip(name, name);
-                    var emptyMsg = container.querySelector('span[style*="dim"]');
-                    if (emptyMsg && emptyMsg.textContent.indexOf('No custom') !== -1) container.innerHTML = '';
-                    container.insertAdjacentHTML('beforeend', chip);
+                    if (isEmptyPlaceholder(container)) container.innerHTML = '';
+                    container.insertAdjacentHTML(
+                        'beforeend',
+                        _customSubjectChip(name, null)
+                    );
                     var lastChip = container.lastElementChild;
-                    var removeBtn = lastChip.querySelector('.remove-custom-subject-btn');
-                    if (removeBtn) {
-                        removeBtn.onclick = function() {
-                            lastChip.remove();
-                            if (!container.querySelectorAll('.custom-subject-item').length) {
-                                container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
-                            }
-                        };
-                    }
+                    if (lastChip) wireRemove(lastChip);
                     input.value = '';
                 }
 
                 addBtn.onclick = addCustom;
                 input.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter') { e.preventDefault(); addCustom(); }
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        addCustom();
+                    }
                 });
 
-                // Bind removes for pre-existing chips
-                var existing = container.querySelectorAll('.remove-custom-subject-btn');
+                var existing = container.querySelectorAll('.custom-subject-item');
                 for (var i = 0; i < existing.length; i++) {
-                    (function(btn) {
-                        btn.onclick = function() {
-                            var chip = btn.closest('.custom-subject-item');
-                            if (chip) chip.remove();
-                            if (!container.querySelectorAll('.custom-subject-item').length) {
-                                container.innerHTML = '<span style="color:var(--dim);font-size:0.5rem;padding:4px;">No custom subjects</span>';
-                            }
-                        };
-                    })(existing[i]);
+                    wireRemove(existing[i]);
                 }
             }, 100);
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening curriculum modal: ' + (e.message || 'unknown'), 'error');
+            _showToast('Error opening curriculum modal: ' +
+                (e.message || 'unknown'), 'error');
         }
     }
 
-    function _customSubjectChip(name, datasetName) {
-        return '<div class="custom-subject-item" data-name="' + _escapeHtml(datasetName || name) + '" ' +
+    function _customSubjectChip(name, existingId) {
+        var idAttr = existingId
+            ? ' data-id="' + _escapeHtml(existingId) + '"'
+            : '';
+        return '<div class="custom-subject-item" data-name="' + _escapeHtml(name) + '"' +
+            idAttr + ' ' +
             'style="display:flex;align-items:center;gap:6px;background:var(--bg3);padding:4px 10px;border-radius:12px;border:1px solid var(--border);font-size:0.55rem;">' +
             '<span>' + _escapeHtml(name) + '</span>' +
             '<button class="remove-custom-subject-btn" style="background:none;border:none;color:#b54a4a;cursor:pointer;font-size:0.5rem;padding:0 2px;">' +
@@ -1067,14 +1167,20 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
             var year = _getCurrentYear();
 
-            // Determine age band from type (rough default; the Command validates actual eligibility)
-            var minAge = 5, maxAge = 25;
-            var eligible = _queries().getEligibleStudents(s.locationId, minAge, maxAge, institutionId);
+            var minAge = 5;
+            var maxAge = 25;
+            var eligible = _queries().getEligibleStudents(
+                s.locationId, minAge, maxAge, institutionId
+            );
 
             if (eligible.length === 0) {
                 _showToast('No eligible students available', 'error');
@@ -1091,14 +1197,18 @@
 
             var tuitionInfo = _commands().calculateTuition(institutionId, year);
             var tuitionLine = tuitionInfo.success
-                ? (tuitionInfo.tuition === 0 ? 'Free' : tuitionInfo.tuition + ' gold/year')
+                ? (tuitionInfo.tuition === 0
+                    ? 'Free'
+                    : tuitionInfo.tuition + ' gold/year')
                 : 'Not available';
 
             var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 'Enroll student in <strong>' + _escapeHtml(s.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + s.currentStudentCount + ' of ' + s.maxStudents + ' capacity</div>' +
-                '<div style="font-size:0.6rem;color:var(--accent);margin-top:4px;padding:4px 8px;background:var(--bg3);border-radius:4px;">Tuition: ' + _escapeHtml(tuitionLine) + '</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+                s.currentStudentCount + ' of ' + s.maxStudents + ' capacity</div>' +
+                '<div style="font-size:0.6rem;color:var(--accent);margin-top:4px;padding:4px 8px;background:var(--bg3);border-radius:4px;">Tuition: ' +
+                _escapeHtml(tuitionLine) + '</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
@@ -1108,7 +1218,9 @@
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Enrollment Year</label>' +
-                '<input type="number" id="enrollYear" value="' + year + '" min="1" max="' + (year + 5) + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="number" id="enrollYear" value="' + year +
+                '" min="1" max="' + (year + 5) +
+                '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>';
 
             _openModal({
@@ -1119,10 +1231,18 @@
                 onConfirm: function() {
                     var studentId = document.getElementById('enrollStudentSelect').value;
                     var enrollYear = parseInt(document.getElementById('enrollYear').value, 10);
-                    if (!studentId) { _showToast('Select a student', 'error'); return false; }
-                    if (isNaN(enrollYear) || enrollYear < 1) { _showToast('Invalid year', 'error'); return false; }
+                    if (!studentId) {
+                        _showToast('Select a student', 'error');
+                        return false;
+                    }
+                    if (isNaN(enrollYear) || enrollYear < 1) {
+                        _showToast('Invalid year', 'error');
+                        return false;
+                    }
 
-                    var result = _commands().enrollStudent(institutionId, studentId, enrollYear);
+                    var result = _commands().enrollStudent(
+                        institutionId, studentId, enrollYear
+                    );
                     if (!result.success) {
                         _showToast(result.reason || 'Failed to enroll', 'error');
                         return false;
@@ -1153,12 +1273,18 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
             var teachers = details.teachers;
             var alreadyTeaching = {};
-            for (var i = 0; i < teachers.length; i++) alreadyTeaching[teachers[i].teacherId] = true;
+            for (var i = 0; i < teachers.length; i++) {
+                alreadyTeaching[teachers[i].teacherId] = true;
+            }
 
             var characters = _getCharacters();
             var eligible = [];
@@ -1180,9 +1306,12 @@
             for (var i = 0; i < eligible.length; i++) {
                 var c = eligible[i];
                 var age = _calculateAge(c.birthYear);
-                var profNames = (c.professions || []).map(function(p) { return p.name; }).join(', ');
+                var profNames = (c.professions || [])
+                    .map(function(p) { return p.name; })
+                    .join(', ');
                 teacherOptions += '<option value="' + _escapeHtml(c.id) + '">' +
-                    _escapeHtml(c.name + ' ' + (c.surname || '')) + ' (' + (age !== null ? age : '?') + 'y) — ' +
+                    _escapeHtml(c.name + ' ' + (c.surname || '')) +
+                    ' (' + (age !== null ? age : '?') + 'y) — ' +
                     _escapeHtml(profNames) + '</option>';
             }
 
@@ -1194,14 +1323,16 @@
                 for (var i = 0; i < curriculum.length; i++) {
                     var item = curriculum[i];
                     subjectOptions += '<option value="' + _escapeHtml(item.id) + '">' +
-                        _escapeHtml(item.name) + ' (' + _escapeHtml(item.type) + ')</option>';
+                        _escapeHtml(item.name) + ' (' +
+                        _escapeHtml(item.type) + ')</option>';
                 }
             }
 
             var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 'Hire teacher for <strong>' + _escapeHtml(s.name) + '</strong>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + teachers.length + ' teachers currently</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
+                teachers.length + ' teachers currently</div>' +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
@@ -1222,10 +1353,18 @@
                 onConfirm: function() {
                     var teacherId = document.getElementById('hireTeacherSelect').value;
                     var subjectId = document.getElementById('hireSubjectSelect').value;
-                    if (!teacherId) { _showToast('Select a teacher', 'error'); return false; }
-                    if (!subjectId) { _showToast('Select a subject', 'error'); return false; }
+                    if (!teacherId) {
+                        _showToast('Select a teacher', 'error');
+                        return false;
+                    }
+                    if (!subjectId) {
+                        _showToast('Select a subject', 'error');
+                        return false;
+                    }
 
-                    var result = _commands().hireTeacher(institutionId, teacherId, subjectId);
+                    var result = _commands().hireTeacher(
+                        institutionId, teacherId, subjectId
+                    );
                     if (!result.success) {
                         _showToast(result.reason || 'Failed to hire', 'error');
                         return false;
@@ -1256,7 +1395,11 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
             var current = details.headmaster;
@@ -1276,18 +1419,21 @@
                 var c = eligible[i];
                 var age = _calculateAge(c.birthYear);
                 options += '<option value="' + _escapeHtml(c.id) + '">' +
-                    _escapeHtml(c.name + ' ' + (c.surname || '')) + ' (' + (age !== null ? age : '?') + 'y)</option>';
+                    _escapeHtml(c.name + ' ' + (c.surname || '')) +
+                    ' (' + (age !== null ? age : '?') + 'y)</option>';
             }
 
             var currentLine = current
                 ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: ' +
-                  _escapeHtml(current.name || 'Unknown') + ' (' + _escapeHtml(current.title || 'Headmaster') +
+                  _escapeHtml(current.name || 'Unknown') + ' (' +
+                  _escapeHtml(current.title || 'Headmaster') +
                   ' since ' + (current.startYear || '?') + ')</div>'
                 : '';
 
             var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                'Appoint headmaster for <strong>' + _escapeHtml(s.name) + '</strong>' + currentLine +
+                'Appoint headmaster for <strong>' + _escapeHtml(s.name) + '</strong>' +
+                currentLine +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
@@ -1302,13 +1448,15 @@
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Start Year</label>' +
-                '<input type="number" id="headmasterStartYear" value="' + year + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="number" id="headmasterStartYear" value="' + year +
+                '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>' +
 
-                (current ?
-                    '<div style="margin-top:12px;padding:12px;background:rgba(200,112,64,0.1);border-radius:6px;border:1px solid var(--warn);">' +
-                    '<button id="endHeadmasterTermBtn" class="btn small" style="background:#8a5a20;border:none;color:white;padding:4px 10px;border-radius:4px;cursor:pointer;">End Current Term</button>' +
-                    '</div>' : '');
+                (current
+                    ? '<div style="margin-top:12px;padding:12px;background:rgba(200,112,64,0.1);border-radius:6px;border:1px solid var(--warn);">' +
+                      '<button id="endHeadmasterTermBtn" class="btn small" style="background:#8a5a20;border:none;color:white;padding:4px 10px;border-radius:4px;cursor:pointer;">End Current Term</button>' +
+                      '</div>'
+                    : '');
 
             _openModal({
                 title: 'Appoint Headmaster',
@@ -1317,13 +1465,24 @@
                 cancelText: 'Cancel',
                 onConfirm: function() {
                     var characterId = document.getElementById('headmasterSelect').value;
-                    var title = document.getElementById('headmasterTitle').value.trim() || 'Headmaster';
-                    var startYear = parseInt(document.getElementById('headmasterStartYear').value, 10);
+                    var title = document.getElementById('headmasterTitle').value.trim() ||
+                        'Headmaster';
+                    var startYear = parseInt(
+                        document.getElementById('headmasterStartYear').value, 10
+                    );
 
-                    if (!characterId) { _showToast('Select a headmaster', 'error'); return false; }
-                    if (isNaN(startYear) || startYear < 1) { _showToast('Invalid year', 'error'); return false; }
+                    if (!characterId) {
+                        _showToast('Select a headmaster', 'error');
+                        return false;
+                    }
+                    if (isNaN(startYear) || startYear < 1) {
+                        _showToast('Invalid year', 'error');
+                        return false;
+                    }
 
-                    var result = _commands().setHeadmaster(institutionId, characterId, title, startYear);
+                    var result = _commands().setHeadmaster(
+                        institutionId, characterId, title, startYear
+                    );
                     if (!result.success) {
                         _showToast(result.reason || 'Failed to appoint', 'error');
                         return false;
@@ -1342,25 +1501,34 @@
                 var endBtn = document.getElementById('endHeadmasterTermBtn');
                 if (endBtn) {
                     endBtn.onclick = function() {
-                        _confirmDialog('End the current headmaster\'s term?', 'End Term', function() {
-                            var r = _commands().endHeadmasterTerm(institutionId, _getCurrentYear(), 'Term ended');
-                            if (!r.success) {
-                                _showToast(r.reason || 'Failed', 'error');
-                                return;
+                        _confirmDialog(
+                            'End the current headmaster\'s term?',
+                            'End Term',
+                            function() {
+                                var r = _commands().endHeadmasterTerm(
+                                    institutionId,
+                                    _getCurrentYear(),
+                                    'Term ended'
+                                );
+                                if (!r.success) {
+                                    _showToast(r.reason || 'Failed', 'error');
+                                    return;
+                                }
+                                _persist();
+                                _showToast('Term ended', 'success');
+                                _processingModal = false;
+                                _closeTopModal();
+                                if (onSuccess) onSuccess();
                             }
-                            _persist();
-                            _showToast('Term ended', 'success');
-                            _processingModal = false;
-                            _closeTopModal();
-                            if (onSuccess) onSuccess();
-                        });
+                        );
                     };
                 }
             }, 100);
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening headmaster modal: ' + (e.message || 'unknown'), 'error');
+            _showToast('Error opening headmaster modal: ' +
+                (e.message || 'unknown'), 'error');
         }
     }
 
@@ -1374,10 +1542,16 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
-            var enrolled = details.students.filter(function(st) { return !st.graduated; });
+            var enrolled = details.students.filter(function(st) {
+                return !st.graduated;
+            });
             if (enrolled.length === 0) {
                 _showToast('No enrolled students', 'info');
                 _processingModal = false;
@@ -1391,13 +1565,17 @@
             for (var i = 0; i < enrolled.length; i++) {
                 var st = enrolled[i];
                 studentOptions += '<option value="' + _escapeHtml(st.studentId) + '">' +
-                    _escapeHtml(st.studentName || 'Unknown') + ' (' + (st.age !== null ? st.age + 'y' : '?') + ')</option>';
+                    _escapeHtml(st.studentName || 'Unknown') +
+                    ' (' + (st.age !== null ? st.age + 'y' : '?') + ')</option>';
             }
 
+            // Only show role selection when there is a choice. If the
+            // institution teaches exactly one role, graduateStudent auto-
+            // grants it and the selector is redundant.
             var taughtRoles = s.taughtRoleCount > 0 ? details.taughtRoles : [];
             var roleSelectHtml = '';
-            if (taughtRoles.length > 0) {
-                var roleOptions = '<option value="">— No role —</option>';
+            if (taughtRoles.length > 1) {
+                var roleOptions = '';
                 for (var i = 0; i < taughtRoles.length; i++) {
                     var roleId = taughtRoles[i];
                     var role = _getRoleById(roleId);
@@ -1408,8 +1586,9 @@
                     '<div class="form-group" style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Role to Grant</label>' +
                     '<select id="graduateRoleSelect" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-                    roleOptions + '</select>' +
-                    '<small style="font-size:0.5rem;color:var(--dim);">If the institution teaches multiple roles, choose which to grant.</small>' +
+                    roleOptions +
+                    '</select>' +
+                    '<small style="font-size:0.5rem;color:var(--dim);">This institution teaches multiple roles. Choose which to grant.</small>' +
                     '</div>';
             }
 
@@ -1427,7 +1606,8 @@
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Graduation Year</label>' +
-                '<input type="number" id="graduateYear" value="' + year + '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                '<input type="number" id="graduateYear" value="' + year +
+                '" min="1" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                 '</div>';
 
             _openModal({
@@ -1437,16 +1617,25 @@
                 cancelText: 'Cancel',
                 onConfirm: function() {
                     var studentId = document.getElementById('graduateStudentSelect').value;
-                    var gradYear = parseInt(document.getElementById('graduateYear').value, 10);
+                    var gradYear = parseInt(
+                        document.getElementById('graduateYear').value, 10
+                    );
                     var roleSel = document.getElementById('graduateRoleSelect');
                     var roleId = roleSel ? (roleSel.value || null) : null;
 
-                    if (!studentId) { _showToast('Select a student', 'error'); return false; }
-                    if (isNaN(gradYear) || gradYear < 1) { _showToast('Invalid year', 'error'); return false; }
+                    if (!studentId) {
+                        _showToast('Select a student', 'error');
+                        return false;
+                    }
+                    if (isNaN(gradYear) || gradYear < 1) {
+                        _showToast('Invalid year', 'error');
+                        return false;
+                    }
 
-                    var result = _commands().graduateStudent(institutionId, studentId, gradYear, roleId);
+                    var result = _commands().graduateStudent(
+                        institutionId, studentId, gradYear, roleId
+                    );
                     if (!result.success) {
-                        // Role selection required case
                         if (result.availableRoles) {
                             _showToast('Please choose a role to grant', 'error');
                         } else {
@@ -1466,7 +1655,8 @@
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening graduate modal: ' + (e.message || 'unknown'), 'error');
+            _showToast('Error opening graduate modal: ' +
+                (e.message || 'unknown'), 'error');
         }
     }
 
@@ -1480,16 +1670,38 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
+
+            var studentCount = details.students.length;
+            var teacherCount = details.teachers.length;
+
+            var cascadeNote = (studentCount > 0 || teacherCount > 0)
+                ? '<div style="margin-top:8px;padding:8px;background:rgba(200,112,64,0.15);border-radius:4px;font-size:0.6rem;">' +
+                  'If cascade is unchecked, students and teachers are removed ' +
+                  'from the institution record without a withdrawal history ' +
+                  'entry on any character. Check cascade unless you know why.</div>'
+                : '';
 
             var modalContent =
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                 '<strong>' + _getIcon('WARNING') + ' This cannot be undone</strong>' +
-                '<div style="margin-top:8px;">Delete <strong>' + _escapeHtml(s.name) + '</strong>?</div>' +
-                (details.students.length > 0 ? '<div style="margin-top:4px;">' + details.students.length + ' students enrolled</div>' : '') +
-                (details.teachers.length > 0 ? '<div style="margin-top:4px;">' + details.teachers.length + ' teachers hired</div>' : '') +
+                '<div style="margin-top:8px;">Delete <strong>' +
+                _escapeHtml(s.name) + '</strong>?</div>' +
+                (studentCount > 0
+                    ? '<div style="margin-top:4px;">' + studentCount +
+                      ' students enrolled</div>'
+                    : '') +
+                (teacherCount > 0
+                    ? '<div style="margin-top:4px;">' + teacherCount +
+                      ' teachers hired</div>'
+                    : '') +
+                cascadeNote +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
@@ -1510,7 +1722,8 @@
                 confirmText: 'Delete',
                 cancelText: 'Cancel',
                 onConfirm: function() {
-                    var confirmName = document.getElementById('confirmDeleteInstName').value.trim();
+                    var confirmName = document.getElementById('confirmDeleteInstName')
+                        .value.trim();
                     if (confirmName !== s.name) {
                         _showToast('Name does not match', 'error');
                         return false;
@@ -1548,15 +1761,23 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
             var isPublic = s.ownershipType === 'public';
 
-            var tuitionInfo = _commands().calculateTuition(institutionId, _getCurrentYear());
+            var tuitionInfo = _commands().calculateTuition(
+                institutionId, _getCurrentYear()
+            );
             var tuitionDisplay = isPublic
                 ? 'Free (Public)'
-                : (tuitionInfo.success ? (tuitionInfo.tuition + ' gold') : 'Unknown');
+                : (tuitionInfo.success
+                    ? (tuitionInfo.tuition + ' gold')
+                    : 'Unknown');
 
             var history = _commands().getTuitionHistory(institutionId, 10);
             var historyHtml = '';
@@ -1565,22 +1786,29 @@
                 historyHtml += '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border-light);font-size:0.55rem;">' +
                     '<span>' + _escapeHtml(String(h.year)) + '</span>' +
                     '<span>' + h.oldAmount + ' → ' + h.newAmount + '</span>' +
-                    '<span style="color:var(--dim);">' + _escapeHtml(h.reason || '') + '</span>' +
+                    '<span style="color:var(--dim);">' +
+                    _escapeHtml(h.reason || '') + '</span>' +
                     '</div>';
             }
 
             var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(s.name) + '</strong></div>' +
-                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' + _escapeHtml(tuitionDisplay) + '</strong></div>' +
-                (isPublic ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:2px;">Public schools are funded by settlement. Change ownership for a private school.</div>' : '') +
+                '<div style="font-size:0.7rem;"><strong>' +
+                _escapeHtml(s.name) + '</strong></div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' +
+                _escapeHtml(tuitionDisplay) + '</strong></div>' +
+                (isPublic
+                    ? '<div style="font-size:0.55rem;color:var(--accent);margin-top:2px;">Public schools are funded by settlement. Change ownership for a private school.</div>'
+                    : '') +
                 '</div>' +
 
                 (isPublic ? '' :
                     '<div>' +
                     '<div class="form-group" style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Base Tuition (gold/year)</label>' +
-                    '<input type="number" id="tuitionBase" value="' + (details.summary.baseTuition || 0) + '" min="0" max="200" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+                    '<input type="number" id="tuitionBase" value="' +
+                    (s.baseTuition || 0) +
+                    '" min="0" max="200" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Manual Override</label>' +
@@ -1594,10 +1822,13 @@
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
                     '<input type="text" id="tuitionReason" placeholder="e.g., Inflation, Scholarship" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
                     '</div>' +
-                    (historyHtml ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
-                        '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">History</div>' +
-                        '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:6px;">' + historyHtml + '</div>' +
-                        '</div>' : '') +
+                    (historyHtml
+                        ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
+                          '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">History</div>' +
+                          '<div style="max-height:150px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:6px;">' +
+                          historyHtml + '</div>' +
+                          '</div>'
+                        : '') +
                     '</div>'
                 );
 
@@ -1614,26 +1845,41 @@
                         return true;
                     }
 
-                    var base = parseInt(document.getElementById('tuitionBase').value, 10) || 0;
+                    var base = parseInt(
+                        document.getElementById('tuitionBase').value, 10
+                    ) || 0;
                     var override = document.getElementById('tuitionOverride').value;
                     var waive = document.getElementById('tuitionWaive').checked;
-                    var reason = document.getElementById('tuitionReason').value || 'Manual update';
+                    var reason = document.getElementById('tuitionReason').value ||
+                        'Manual update';
 
-                    // Apply base tuition change
                     var r1 = _commands().updateInstitution(institutionId, {
                         tuitionPerYear: base,
                         tuitionReason: reason
                     });
-                    if (!r1.success) { _showToast(r1.reason || 'Failed', 'error'); return false; }
+                    if (!r1.success) {
+                        _showToast(r1.reason || 'Failed', 'error');
+                        return false;
+                    }
 
-                    // Apply override
-                    var overrideVal = override === '' ? null : parseInt(override, 10);
-                    var r2 = _commands().updateTuition(institutionId, overrideVal, reason);
-                    if (!r2.success) { _showToast(r2.reason || 'Failed', 'error'); return false; }
+                    var overrideVal = override === ''
+                        ? null
+                        : parseInt(override, 10);
+                    var r2 = _commands().updateTuition(
+                        institutionId, overrideVal, reason
+                    );
+                    if (!r2.success) {
+                        _showToast(r2.reason || 'Failed', 'error');
+                        return false;
+                    }
 
-                    // Apply waiver
-                    var r3 = _commands().updateTuitionWaiver(institutionId, waive, reason);
-                    if (!r3.success) { _showToast(r3.reason || 'Failed', 'error'); return false; }
+                    var r3 = _commands().updateTuitionWaiver(
+                        institutionId, waive, reason
+                    );
+                    if (!r3.success) {
+                        _showToast(r3.reason || 'Failed', 'error');
+                        return false;
+                    }
 
                     _persist();
                     _showToast('Tuition updated', 'success');
@@ -1661,7 +1907,11 @@
 
         try {
             var details = _queries().getInstitutionDetails(institutionId);
-            if (!details) { _showToast('Institution not found', 'error'); _processingModal = false; return; }
+            if (!details) {
+                _showToast('Institution not found', 'error');
+                _processingModal = false;
+                return;
+            }
 
             var s = details.summary;
             var isPublic = s.ownershipType === 'public';
@@ -1672,38 +1922,51 @@
             var religionOptions = '<option value="">— Select —</option>';
             for (var i = 0; i < religions.length; i++) {
                 var sel = (religions[i].id === s.religionId) ? ' selected' : '';
-                religionOptions += '<option value="' + _escapeHtml(religions[i].id) + '"' + sel + '>' +
-                    _escapeHtml(religions[i].name) + '</option>';
+                religionOptions += '<option value="' + _escapeHtml(religions[i].id) + '"' +
+                    sel + '>' + _escapeHtml(religions[i].name) + '</option>';
             }
 
             var modalContent =
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(s.name) + '</strong></div>' +
+                '<div style="font-size:0.7rem;"><strong>' +
+                _escapeHtml(s.name) + '</strong></div>' +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">Current: <strong>' +
                 _escapeHtml(s.ownershipType || 'public') + '</strong></div>' +
-                (s.ownerName ? '<div style="font-size:0.55rem;">Owner: ' + _escapeHtml(s.ownerName) + '</div>' : '') +
-                (s.religionName ? '<div style="font-size:0.55rem;color:#4a9e6a;">Religion: ' + _escapeHtml(s.religionName) + '</div>' : '') +
+                (s.ownerName
+                    ? '<div style="font-size:0.55rem;">Owner: ' +
+                      _escapeHtml(s.ownerName) + '</div>'
+                    : '') +
+                (s.religionName
+                    ? '<div style="font-size:0.55rem;color:#4a9e6a;">Religion: ' +
+                      _escapeHtml(s.religionName) + '</div>'
+                    : '') +
                 '</div>' +
 
                 '<div class="form-group" style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Ownership Type</label>' +
                 '<div style="display:flex;flex-direction:column;gap:6px;">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
-                '<input type="radio" name="mgmtOwnershipType" value="public"' + (isPublic ? ' checked' : '') + '> Public (free)</label>' +
+                '<input type="radio" name="mgmtOwnershipType" value="public"' +
+                (isPublic ? ' checked' : '') + '> Public (free)</label>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
-                '<input type="radio" name="mgmtOwnershipType" value="private"' + (isPrivate ? ' checked' : '') + '> Private (tuition)</label>' +
-                (religions.length > 0 ?
-                    '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
-                    '<input type="radio" name="mgmtOwnershipType" value="religious"' + (isReligious ? ' checked' : '') + '> Religious</label>' : '') +
+                '<input type="radio" name="mgmtOwnershipType" value="private"' +
+                (isPrivate ? ' checked' : '') + '> Private (tuition)</label>' +
+                (religions.length > 0
+                    ? '<label style="display:flex;align-items:center;gap:6px;font-size:0.65rem;cursor:pointer;">' +
+                      '<input type="radio" name="mgmtOwnershipType" value="religious"' +
+                      (isReligious ? ' checked' : '') + '> Religious</label>'
+                    : '') +
                 '</div></div>' +
 
-                '<div id="mgmtReligionSection" style="' + (isReligious ? 'display:block;' : 'display:none;') +
+                '<div id="mgmtReligionSection" style="' +
+                (isReligious ? 'display:block;' : 'display:none;') +
                 'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                 '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">Religion</label>' +
                 '<select id="mgmtReligionSelect" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);">' +
                 religionOptions + '</select></div>' +
 
-                '<div id="mgmtOwnerSection" style="' + (isPrivate ? 'display:block;' : 'display:none;') +
+                '<div id="mgmtOwnerSection" style="' +
+                (isPrivate ? 'display:block;' : 'display:none;') +
                 'margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
                 '<div style="display:flex;gap:8px;margin-bottom:6px;">' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.6rem;cursor:pointer;">' +
@@ -1712,9 +1975,17 @@
                 '<input type="radio" name="mgmtOwnerType" value="household"> Household</label>' +
                 '</div>' +
                 '<div style="display:flex;gap:8px;">' +
-                '<input type="text" id="mgmtOwnerName" value="' + _escapeHtml(s.ownerName || '') + '" readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
+                '<input type="text" id="mgmtOwnerName" value="' +
+                _escapeHtml(s.ownerName || '') +
+                '" readonly style="flex:1;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;color:var(--text);cursor:pointer;">' +
                 '<button id="mgmtSelectOwnerBtn" class="btn" style="padding:4px 10px;font-size:0.6rem;">Select</button>' +
                 '</div></div>';
+
+            // Closure-scoped owner state. No polling.
+            var ownerState = {
+                id: s.ownerId || null,
+                type: s.ownerType || 'character'
+            };
 
             _openModal({
                 title: 'Ownership: ' + s.name,
@@ -1722,63 +1993,90 @@
                 confirmText: 'Save',
                 cancelText: 'Cancel',
                 onOpen: function() {
-                    var radios = document.querySelectorAll('input[name="mgmtOwnershipType"]');
+                    var radios = document.querySelectorAll(
+                        'input[name="mgmtOwnershipType"]'
+                    );
                     var religionSection = document.getElementById('mgmtReligionSection');
                     var ownerSection = document.getElementById('mgmtOwnerSection');
 
                     function update() {
                         var v = null;
-                        for (var i = 0; i < radios.length; i++) if (radios[i].checked) v = radios[i].value;
-                        religionSection.style.display = (v === 'religious') ? 'block' : 'none';
-                        ownerSection.style.display = (v === 'private') ? 'block' : 'none';
+                        for (var i = 0; i < radios.length; i++) {
+                            if (radios[i].checked) v = radios[i].value;
+                        }
+                        religionSection.style.display =
+                            (v === 'religious') ? 'block' : 'none';
+                        ownerSection.style.display =
+                            (v === 'private') ? 'block' : 'none';
                     }
-                    for (var i = 0; i < radios.length; i++) radios[i].onchange = update;
+                    for (var i = 0; i < radios.length; i++) {
+                        radios[i].onchange = update;
+                    }
 
-                    var ownerName = document.getElementById('mgmtOwnerName');
-                    ownerName.dataset.ownerId = '';
-                    ownerName.dataset.ownerType = 'character';
+                    var ownerNameInput = document.getElementById('mgmtOwnerName');
 
                     document.getElementById('mgmtSelectOwnerBtn').onclick = function() {
-                        var t = document.querySelector('input[name="mgmtOwnerType"]:checked');
+                        var t = document.querySelector(
+                            'input[name="mgmtOwnerType"]:checked'
+                        );
                         var type = t ? t.value : 'character';
                         if (type === 'character') {
                             _openCharacterSelector('Select Owner', function(c) {
                                 if (!c) return;
-                                ownerName.value = c.name + (c.surname ? ' ' + c.surname : '');
-                                ownerName.dataset.ownerId = c.id;
-                                ownerName.dataset.ownerType = 'character';
+                                ownerNameInput.value = c.name +
+                                    (c.surname ? ' ' + c.surname : '');
+                                ownerState.id = c.id;
+                                ownerState.type = 'character';
                             });
                         } else {
                             _openHouseholdSelector('Select Owner', function(h) {
                                 if (!h) return;
-                                ownerName.value = h.name;
-                                ownerName.dataset.ownerId = h.id;
-                                ownerName.dataset.ownerType = 'household';
+                                ownerNameInput.value = h.name;
+                                ownerState.id = h.id;
+                                ownerState.type = 'household';
                             });
                         }
                     };
                 },
                 onConfirm: function() {
                     var selected = null;
-                    var radios = document.querySelectorAll('input[name="mgmtOwnershipType"]');
-                    for (var i = 0; i < radios.length; i++) if (radios[i].checked) selected = radios[i].value;
-                    if (!selected) { _showToast('Choose ownership', 'error'); return false; }
+                    var radios = document.querySelectorAll(
+                        'input[name="mgmtOwnershipType"]'
+                    );
+                    for (var i = 0; i < radios.length; i++) {
+                        if (radios[i].checked) selected = radios[i].value;
+                    }
+                    if (!selected) {
+                        _showToast('Choose ownership', 'error');
+                        return false;
+                    }
 
-                    var ownerId = null, ownerType = null;
+                    var ownerId = null;
+                    var ownerType = null;
                     if (selected === 'private') {
-                        var ownerName = document.getElementById('mgmtOwnerName');
-                        ownerId = ownerName.dataset.ownerId || null;
-                        ownerType = ownerName.dataset.ownerType || null;
-                        if (!ownerId) { _showToast('Select an owner', 'error'); return false; }
+                        ownerId = ownerState.id;
+                        ownerType = ownerState.type;
+                        if (!ownerId) {
+                            _showToast('Select an owner', 'error');
+                            return false;
+                        }
                     }
 
                     var religionId = null;
                     if (selected === 'religious') {
                         religionId = document.getElementById('mgmtReligionSelect').value;
-                        if (!religionId) { _showToast('Select a religion', 'error'); return false; }
+                        if (!religionId) {
+                            _showToast('Select a religion', 'error');
+                            return false;
+                        }
                     }
 
-                    var result = _commands().setSchoolOwnership(institutionId, selected, ownerId || religionId, ownerType || (selected === 'religious' ? 'religion' : null));
+                    var result = _commands().setSchoolOwnership(
+                        institutionId,
+                        selected,
+                        ownerId || religionId,
+                        ownerType || (selected === 'religious' ? 'religion' : null)
+                    );
                     if (!result.success) {
                         _showToast(result.reason || 'Failed', 'error');
                         return false;
@@ -1796,7 +2094,8 @@
 
         } catch (e) {
             _processingModal = false;
-            _showToast('Error opening ownership modal: ' + (e.message || 'unknown'), 'error');
+            _showToast('Error opening ownership modal: ' +
+                (e.message || 'unknown'), 'error');
         }
     }
 

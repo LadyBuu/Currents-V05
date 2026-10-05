@@ -3,6 +3,26 @@
  * Canonical institution records, indexes, subscription, UI state.
  * No policy, no persistence, no cross-domain vocabulary, no tuition math.
  * Mutation primitives are internal; callers use EducationCommands.
+ *
+ * PUBLIC READS RETURN DEEP-ENOUGH CLONES
+ *
+ *   Container fields (students, graduates, teachers, curriculum, taughtRoles,
+ *   history, headmasterHistory, tuitionHistory, governmentFundingHistory,
+ *   profitHistory, demolishedRecord) are copied so that mutating a clone
+ *   cannot affect canonical state. Scalar fields are copied by value.
+ *
+ *   This does not protect against a caller mutating a nested object inside a
+ *   container (e.g. inst.students[0].notes = 'x'). Canonical records are
+ *   shared by reference inside their container elements. Commands are the
+ *   only legitimate mutators and they use _getInstitutionCanonical, so the
+ *   nested case is a caller bug, not a boundary the state layer can defend.
+ *
+ * HYDRATION THROWS ON CORRUPTED INPUT
+ *
+ *   hydrateFromMasterData validates structural shape and throws on duplicate
+ *   ids. It coerces container fields to the right type (array/object) or
+ *   nulls them out. This is the boundary between untrusted saved data and
+ *   the in-memory store; shape errors do not spread past it.
  */
 
 (function() {
@@ -42,18 +62,76 @@
     var _notifyQueue = [];
     var _notifying = false;
 
-    // --- Defensive clone of a canonical institution for public reads ---
+    // --- Known UI keys ---
+
+    var _UI_TOP_LEVEL_KEYS = {
+        selectedInstitutionId: true,
+        viewMode: true,
+        filters: true
+    };
+
+    var _UI_FILTER_KEYS = {
+        type: true,
+        location: true,
+        minReputation: true,
+        ownershipType: true,
+        roleCategory: true,
+        taughtRole: true,
+        religionId: true
+    };
+
+    // --- Container fields that get a shallow per-element copy on read ---
+
+    var _CONTAINER_ARRAY_FIELDS = [
+        'students',
+        'graduates',
+        'teachers',
+        'curriculum',
+        'taughtRoles',
+        'history',
+        'headmasterHistory',
+        'tuitionHistory',
+        'governmentFundingHistory',
+        'profitHistory'
+    ];
+
+    var _CONTAINER_OBJECT_FIELDS = [
+        'headmaster',
+        'demolishedRecord'
+    ];
+
+    // --- Deep-enough clone of a canonical institution for public reads ---
 
     function _cloneInstitution(inst) {
         if (!inst) return null;
-        // Shallow clone is enough to prevent field reassignment on the record
-        // itself. Nested arrays/objects are shared because Commands are the only
-        // legitimate mutators and they use _getInstitutionCanonical directly.
-        // Queries produce their own deep projections; State does not.
+
         var clone = {};
         for (var k in inst) {
-            if (inst.hasOwnProperty(k)) clone[k] = inst[k];
+            if (!Object.prototype.hasOwnProperty.call(inst, k)) continue;
+            clone[k] = inst[k];
         }
+
+        for (var a = 0; a < _CONTAINER_ARRAY_FIELDS.length; a++) {
+            var arrField = _CONTAINER_ARRAY_FIELDS[a];
+            var arr = inst[arrField];
+            if (Array.isArray(arr)) {
+                clone[arrField] = arr.slice();
+            }
+        }
+
+        for (var o = 0; o < _CONTAINER_OBJECT_FIELDS.length; o++) {
+            var objField = _CONTAINER_OBJECT_FIELDS[o];
+            var obj = inst[objField];
+            if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                var objCopy = {};
+                for (var ok in obj) {
+                    if (!Object.prototype.hasOwnProperty.call(obj, ok)) continue;
+                    objCopy[ok] = obj[ok];
+                }
+                clone[objField] = objCopy;
+            }
+        }
+
         return clone;
     }
 
@@ -149,7 +227,7 @@
         };
     }
 
-    // --- Public: canonical reads (defensive clones for external callers) ---
+    // --- Public: canonical reads (deep-enough clones for external callers) ---
 
     function getAllInstitutions() {
         var out = [];
@@ -222,7 +300,7 @@
         if (!inst) return null;
 
         for (var k in updates) {
-            if (updates.hasOwnProperty(k)) {
+            if (Object.prototype.hasOwnProperty.call(updates, k)) {
                 inst[k] = updates[k];
             }
         }
@@ -252,14 +330,13 @@
 
     /**
      * Normalize a raw institution record into the canonical shape.
-     * Defensive: fills missing fields with defaults but does not infer policy
-     * (no religionId → isReligiousSchool inference; no specializationCategory
+     * Defensive: fills missing fields with defaults and coerces container
+     * fields to the right type. Does not infer policy (no
+     * religionId → isReligiousSchool inference; no specializationCategory
      * → isSpecialized inference). Those are handled by Rules/Commands at
      * creation time.
      *
-     * Called by the app bootstrap before hydrateFromMasterData.
-     * Since there is no persisted data to migrate yet, this exists for
-     * future use and for defensive loading.
+     * Returns null if raw is not an object or has no id.
      */
     function migrateInstitution(raw) {
         if (!raw || typeof raw !== 'object') return null;
@@ -267,22 +344,39 @@
 
         var inst = Object.assign({}, raw);
 
-        if (!inst.students) inst.students = [];
-        if (!inst.graduates) inst.graduates = [];
-        if (!inst.teachers) inst.teachers = [];
-        if (!inst.curriculum) inst.curriculum = [];
-        if (!inst.taughtRoles) inst.taughtRoles = [];
-        if (!inst.history) inst.history = [];
-        if (!inst.headmasterHistory) inst.headmasterHistory = [];
-        if (!inst.tuitionHistory) inst.tuitionHistory = [];
-        if (!inst.governmentFundingHistory) inst.governmentFundingHistory = [];
-        if (!inst.profitHistory) inst.profitHistory = [];
+        // Arrays: coerce to [] if not already an array.
+        if (!Array.isArray(inst.students)) inst.students = [];
+        if (!Array.isArray(inst.graduates)) inst.graduates = [];
+        if (!Array.isArray(inst.teachers)) inst.teachers = [];
+        if (!Array.isArray(inst.curriculum)) inst.curriculum = [];
+        if (!Array.isArray(inst.taughtRoles)) inst.taughtRoles = [];
+        if (!Array.isArray(inst.history)) inst.history = [];
+        if (!Array.isArray(inst.headmasterHistory)) inst.headmasterHistory = [];
+        if (!Array.isArray(inst.tuitionHistory)) inst.tuitionHistory = [];
+        if (!Array.isArray(inst.governmentFundingHistory)) {
+            inst.governmentFundingHistory = [];
+        }
+        if (!Array.isArray(inst.profitHistory)) inst.profitHistory = [];
 
+        // Objects: null out if not a plain object.
+        if (inst.headmaster !== null &&
+            (typeof inst.headmaster !== 'object' || Array.isArray(inst.headmaster))) {
+            inst.headmaster = null;
+        }
+        if (inst.demolishedRecord !== null &&
+            (typeof inst.demolishedRecord !== 'object' ||
+             Array.isArray(inst.demolishedRecord))) {
+            inst.demolishedRecord = null;
+        }
+
+        // Scalar defaults.
         if (inst.status === undefined) inst.status = 'active';
         if (inst.ownershipType === undefined) inst.ownershipType = 'public';
         if (inst.isReligiousSchool === undefined) inst.isReligiousSchool = false;
         if (inst.isSpecialized === undefined) inst.isSpecialized = false;
-        if (inst.specializationCategory === undefined) inst.specializationCategory = null;
+        if (inst.specializationCategory === undefined) {
+            inst.specializationCategory = null;
+        }
         if (inst.religionId === undefined) inst.religionId = null;
         if (inst.religionName === undefined) inst.religionName = null;
 
@@ -291,19 +385,38 @@
 
     /**
      * Replace the entire canonical state with hydrated institutions.
+     *
+     * Throws if:
+     *   - rawInstitutions is not an array
+     *   - two records share an id
+     *
      * Caller is responsible for having run migrateInstitution on each record
-     * and for having arranged persistence.
+     * (or relying on this function to call it) and for having arranged
+     * persistence.
      */
     function hydrateFromMasterData(rawInstitutions) {
         if (!Array.isArray(rawInstitutions)) {
             throw new Error('hydrateFromMasterData requires an array');
         }
 
-        _institutions = [];
+        var next = [];
+        var seenIds = {};
+
         for (var i = 0; i < rawInstitutions.length; i++) {
             var migrated = migrateInstitution(rawInstitutions[i]);
-            if (migrated) _institutions.push(migrated);
+            if (!migrated) continue;
+
+            if (seenIds[migrated.id] === true) {
+                throw new Error(
+                    'hydrateFromMasterData: duplicate institution id "' +
+                    migrated.id + '"'
+                );
+            }
+            seenIds[migrated.id] = true;
+            next.push(migrated);
         }
+
+        _institutions = next;
 
         _indexesRebuild();
         _hydrated = true;
@@ -318,28 +431,60 @@
     // --- UI state ---
 
     function getUIState() {
-        // Snapshot: deep-enough clone to prevent mutation via returned reference.
+        // Snapshot: clone + freeze the returned object. Callers cannot mutate
+        // UI state through the return value.
+        var filtersSnapshot = {};
+        for (var fk in _uiState.filters) {
+            if (Object.prototype.hasOwnProperty.call(_uiState.filters, fk)) {
+                filtersSnapshot[fk] = _uiState.filters[fk];
+            }
+        }
+
         return Object.freeze({
             selectedInstitutionId: _uiState.selectedInstitutionId,
-            filters: Object.freeze(Object.assign({}, _uiState.filters)),
+            filters: Object.freeze(filtersSnapshot),
             viewMode: _uiState.viewMode
         });
     }
 
     function updateUIState(updates) {
         if (!updates || typeof updates !== 'object') return;
+
         for (var k in updates) {
-            if (!updates.hasOwnProperty(k)) continue;
+            if (!Object.prototype.hasOwnProperty.call(updates, k)) continue;
+
+            if (!_UI_TOP_LEVEL_KEYS[k]) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'EducationState.updateUIState: unknown key "' + k +
+                        '" ignored'
+                    );
+                }
+                continue;
+            }
+
             if (k === 'filters') {
-                // Merge filter fields individually.
                 var f = updates.filters;
+                if (!f || typeof f !== 'object') continue;
+
                 for (var fk in f) {
-                    if (f.hasOwnProperty(fk)) _uiState.filters[fk] = f[fk];
+                    if (!Object.prototype.hasOwnProperty.call(f, fk)) continue;
+                    if (!_UI_FILTER_KEYS[fk]) {
+                        if (typeof console !== 'undefined' && console.warn) {
+                            console.warn(
+                                'EducationState.updateUIState: unknown filter "' +
+                                fk + '" ignored'
+                            );
+                        }
+                        continue;
+                    }
+                    _uiState.filters[fk] = f[fk];
                 }
             } else {
                 _uiState[k] = updates[k];
             }
         }
+
         _notify('uiStateChanged', getUIState());
     }
 
@@ -353,7 +498,7 @@
         // Subscription
         subscribe: subscribe,
 
-        // Public canonical reads (defensive clones)
+        // Public canonical reads (deep-enough clones)
         getAllInstitutions: getAllInstitutions,
         getInstitution: getInstitution,
         getInstitutionsByLocation: getInstitutionsByLocation,

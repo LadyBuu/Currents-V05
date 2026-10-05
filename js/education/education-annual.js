@@ -23,7 +23,7 @@
  *   - EducationCommands, EducationQueries, EducationState, EducationRules
  *   - SkillUtils
  *   - getCharacterById, getCurrentYearSafe, getPlaces
- *   - SettlementState (optional)
+ *   - SettlementState (required; the budget step is meaningless without it)
  * =============================================================================
  */
 
@@ -93,6 +93,11 @@
     function _getSettlementState() {
         if (typeof window.SettlementState === 'undefined') {
             throw new Error('education-annual.js requires SettlementState');
+        }
+        if (typeof window.SettlementState.getEducationBudget !== 'function') {
+            throw new Error(
+                'education-annual.js requires SettlementState.getEducationBudget'
+            );
         }
         return window.SettlementState;
     }
@@ -274,24 +279,13 @@
 
     function _stepBudgetAllocation(currentYear, results) {
         var places = _getPlaces();
+        var settlementState = _getSettlementState();
+
         var budgetResults = {
             settlements: [],
             totalBudget: 0,
             totalInstitutions: 0
         };
-
-        // SettlementState is optional at the domain boundary: not every world
-        // has a settlement system loaded. If absent, skip the step entirely
-        // rather than throwing — this is a documented absence, not a missing
-        // dependency for the education pipeline itself.
-        var hasSettlementState = typeof window.SettlementState !== 'undefined' &&
-            typeof window.SettlementState.getEducationBudget === 'function';
-        if (!hasSettlementState) {
-            results.budgetProcessing = budgetResults;
-            return;
-        }
-
-        var settlementState = _getSettlementState();
 
         for (var i = 0; i < places.length; i++) {
             var place = places[i];
@@ -456,9 +450,11 @@
             results.status = fatalErrors.length > 0 ? 'partial' : 'completed_with_errors';
         }
 
-        results.processedStudentCount = results.skillGains.length > 0
-            ? _uniqueStudents(results.skillGains).length
-            : 0;
+        // processedStudentCount: unique students the pipeline touched this year.
+        // A student is counted if they gained skill, withdrew, or were
+        // evaluated for graduation readiness. This is a superset of the
+        // previous "students with skill gains" definition.
+        results.processedStudentCount = _uniqueTouchedStudents(results).length;
 
         return results;
     }
@@ -510,7 +506,7 @@
         }
 
         var students = (inst.students || []).slice();
-        var studentIds = {};
+        var touchedStudents = {};
 
         for (var j = 0; j < students.length; j++) {
             var rec = students[j];
@@ -529,6 +525,7 @@
                         studentId: rec.studentId,
                         reason: r.error
                     });
+                    touchedStudents[rec.studentId] = true;
                 }
                 continue;
             }
@@ -538,9 +535,10 @@
                 continue;
             }
 
+            touchedStudents[rec.studentId] = true;
+
             for (var s = 0; s < r.skillGains.length; s++) {
                 results.skillGains.push(r.skillGains[s]);
-                studentIds[r.skillGains[s].studentId] = true;
             }
 
             if (r.readyForGraduation) {
@@ -548,7 +546,7 @@
             }
         }
 
-        results.processedStudentCount = Object.keys(studentIds).length;
+        results.processedStudentCount = Object.keys(touchedStudents).length;
 
         if (processFinance) {
             if (inst.ownershipType === 'public') {
@@ -596,9 +594,25 @@
     // 5. INTERNAL HELPERS
     // =========================================================================
 
-    function _uniqueStudents(gains) {
+    /**
+     * Unique students the pipeline touched this year. A student is touched if
+     * they gained skill, were evaluated for readiness, or were withdrawn by
+     * the pipeline. Deceased students who withdrew are included.
+     */
+    function _uniqueTouchedStudents(results) {
         var ids = {};
-        for (var i = 0; i < gains.length; i++) ids[gains[i].studentId] = true;
+        for (var i = 0; i < results.skillGains.length; i++) {
+            ids[results.skillGains[i].studentId] = true;
+        }
+        for (var i = 0; i < results.readyForGraduation.length; i++) {
+            ids[results.readyForGraduation[i].studentId] = true;
+        }
+        for (var i = 0; i < results.withdrawals.length; i++) {
+            ids[results.withdrawals[i].studentId] = true;
+        }
+        for (var i = 0; i < results.graduations.length; i++) {
+            ids[results.graduations[i].studentId] = true;
+        }
         return Object.keys(ids);
     }
 

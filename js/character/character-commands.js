@@ -13,6 +13,9 @@
  *   - Bulk character-owned field updates
  *   - Death transition (markDeceased) — the single canonical writer of
  *     isDeceased and its associated fields
+ *   - Education field writers (education, educationHistory, subjectProgress,
+ *     isLiterate) — the only sanctioned writers for these character-owned
+ *     fields. EducationCommands and EducationLearning route through these.
  *
  * OUT OF SCOPE:
  *   - Character creation           -> character-creation-commands.js
@@ -22,6 +25,8 @@
  *   - Lifecycle orchestration      -> character-lifecycle.js
  *   - Persistence mechanics        -> character-state.js
  *   - Cross-domain events, toasts  -> caller
+ *   - Education policy             -> education-rules.js
+ *   - Education orchestration      -> education-commands.js
  *
  * DEATH TRANSITION (markDeceased):
  *   markDeceased(characterId, deathData) is the ONLY function that writes
@@ -46,6 +51,47 @@
  *     executionMethod,       string, optional
  *     executionLocation,     string, optional
  *   }
+ *
+ * EDUCATION FIELDS:
+ *   Four character-owned fields are written only by this module:
+ *
+ *     character.education         object, keyed by institutionId.
+ *                                 Shape per entry:
+ *                                 {
+ *                                   institutionName,
+ *                                   institutionType,
+ *                                   enrolledYear,
+ *                                   graduated: boolean,
+ *                                   graduationYear: number|null,
+ *                                   grantedRole: string|null,
+ *                                   withdrawn: boolean,
+ *                                   withdrawnReason: string,
+ *                                   withdrawnYear: number|null
+ *                                 }
+ *
+ *     character.educationHistory  array of history entries. Each entry is
+ *                                 shaped by the caller (EducationCommands).
+ *                                 This module does not validate its shape.
+ *
+ *     character.subjectProgress   object, keyed by subject key.
+ *                                 Shape per entry:
+ *                                 {
+ *                                   level: number 0-100,
+ *                                   lastStudied: number|null,
+ *                                   source: string|null,
+ *                                   type: 'subject'|'role',
+ *                                   roleId: string|null
+ *                                 }
+ *
+ *     character.isLiterate        boolean. Materialized mirror of
+ *                                 subjectProgress.literacy.level crossing the
+ *                                 literacy threshold. The subjectProgress
+ *                                 level is the source of truth; this field is
+ *                                 a cache for fast reads. Writers must keep
+ *                                 them in sync (EducationCommands does).
+ *
+ *   The generic updateCharacterFields / updateCharactersFields refuse these
+ *   four fields. Use the dedicated writers below.
  *
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js: CharacterState
@@ -150,6 +196,12 @@
         return true;
     }
 
+    function _isValidProficiencyLevel(v) {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+        if (v < 0 || v > 100) return false;
+        return true;
+    }
+
     function _isValidYearOrMissing(v) {
         if (_isMissing(v)) return true;
         return window.isValidYear(v) === true;
@@ -168,6 +220,22 @@
     // =========================================================================
     // 3. DOMAIN-OWNED FIELD GATE
     // =========================================================================
+    //
+    // Fields refused by the generic update path. Each has a dedicated writer
+    // owned by some module. Update via the dedicated writer, not through
+    // updateCharacterFields.
+    //
+    //   professions             -> CharacterCommands (this file)
+    //   rankAssignments         -> RankCommands
+    //   relationships           -> RelationshipCommands
+    //   friends                 -> RelationshipCommands
+    //   apprenticeshipDetails   -> ApprenticeshipCommands
+    //   apprentices             -> ApprenticeshipCommands
+    //   isDeleted, deletedAt    -> CharacterDeletionCommands
+    //   education               -> CharacterCommands (this file, education API)
+    //   educationHistory        -> CharacterCommands (this file, education API)
+    //   subjectProgress         -> CharacterCommands (this file, education API)
+    //   isLiterate              -> CharacterCommands (this file, education API)
 
     var _DOMAIN_OWNED_FIELDS = {
         professions: true,
@@ -177,7 +245,11 @@
         apprenticeshipDetails: true,
         apprentices: true,
         isDeleted: true,
-        deletedAt: true
+        deletedAt: true,
+        education: true,
+        educationHistory: true,
+        subjectProgress: true,
+        isLiterate: true
     };
 
     function _collectDomainOwnedKeys(updates) {
@@ -294,7 +366,6 @@
 
         var currentYear = window.getCurrentYear();
 
-        // Build the facts MortalityRules.validateDeath needs.
         var validationFacts = {
             characterId: characterId,
             isDeceased: character.isDeceased === true,
@@ -315,7 +386,6 @@
             return _fail(validation.errors.join('; '));
         }
 
-        // Build the update patch.
         var patch = {
             isDeceased: true,
             deathYear: deathData.deathYear,
@@ -962,33 +1032,555 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 11. EDUCATION CONTAINER INITIALISATION
+    // =========================================================================
+    //
+    // Ensures the four education-owned containers exist on the character with
+    // neutral defaults. Idempotent. Called by
+    // EducationLearning.ensureCharacterEducationRecord.
+    //
+    //   subjectProgress   -> {}
+    //   isLiterate        -> false
+    //   education         -> {}
+    //   educationHistory  -> []
+    //
+    // A character created by CharacterCreationCommands should already have
+    // these. This is a defensive backstop, not the primary initialiser.
+
+    function initializeEducationContainers(characterId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var patch = {};
+        var changed = false;
+
+        if (!_isPlainObject(character.subjectProgress)) {
+            patch.subjectProgress = {};
+            changed = true;
+        }
+        if (character.isLiterate === undefined) {
+            patch.isLiterate = false;
+            changed = true;
+        }
+        if (!_isPlainObject(character.education)) {
+            patch.education = {};
+            changed = true;
+        }
+        if (!Array.isArray(character.educationHistory)) {
+            patch.educationHistory = [];
+            changed = true;
+        }
+
+        if (!changed) {
+            return _ok({ initialized: false });
+        }
+
+        patch.updatedAt = Date.now();
+
+        var update = CS.updateCharacter(characterId, patch);
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the education container write.');
+        }
+
+        return _ok({ initialized: true });
+    }
+
+    // =========================================================================
+    // 12. EDUCATION RECORD (character.education)
+    // =========================================================================
+    //
+    // character.education is an object keyed by institutionId. Each entry
+    // records the character's enrolment state at that institution.
+    //
+    // Read:  getEducationRecord(characterId, institutionId)
+    //        getEducationRecords(characterId)
+    // Write: recordEducationEnrollment(characterId, institutionId, data)
+    //        recordEducationGraduation(characterId, institutionId, data)
+    //        recordEducationWithdrawal(characterId, institutionId, data)
+    //
+    // Called by EducationCommands.enrollStudent / graduateStudent /
+    // withdrawStudent.
+
+    function _normaliseEducationEntry(current, incoming) {
+        var base = _isPlainObject(current) ? current : {};
+        return {
+            institutionName: _isMissing(incoming.institutionName)
+                ? (typeof base.institutionName === 'string' ? base.institutionName : '')
+                : String(incoming.institutionName),
+            institutionType: _isMissing(incoming.institutionType)
+                ? (typeof base.institutionType === 'string' ? base.institutionType : '')
+                : String(incoming.institutionType),
+            enrolledYear: _isMissing(incoming.enrolledYear)
+                ? (_isMissing(base.enrolledYear) ? null : base.enrolledYear)
+                : incoming.enrolledYear,
+            graduated: incoming.graduated === true
+                ? true
+                : (base.graduated === true),
+            graduationYear: incoming.graduationYear !== undefined
+                ? incoming.graduationYear
+                : (_isMissing(base.graduationYear) ? null : base.graduationYear),
+            grantedRole: incoming.grantedRole !== undefined
+                ? incoming.grantedRole
+                : (_isMissing(base.grantedRole) ? null : base.grantedRole),
+            withdrawn: incoming.withdrawn === true
+                ? true
+                : (base.withdrawn === true),
+            withdrawnReason: _isMissing(incoming.withdrawnReason)
+                ? (typeof base.withdrawnReason === 'string' ? base.withdrawnReason : '')
+                : String(incoming.withdrawnReason),
+            withdrawnYear: incoming.withdrawnYear !== undefined
+                ? incoming.withdrawnYear
+                : (_isMissing(base.withdrawnYear) ? null : base.withdrawnYear)
+        };
+    }
+
+    function _writeEducationEntry(characterId, institutionId, entry) {
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var education = _isPlainObject(character.education)
+            ? Object.assign({}, character.education)
+            : {};
+        education[institutionId] = entry;
+
+        var update = CS.updateCharacter(characterId, {
+            education: education,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the education write.');
+        }
+        return _ok();
+    }
+
+    function getEducationRecord(characterId, institutionId) {
+        if (!_hasId(characterId)) return null;
+        if (!_hasId(institutionId)) return null;
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return null;
+        if (!_isPlainObject(character.education)) return null;
+
+        var entry = character.education[institutionId];
+        return _isPlainObject(entry) ? entry : null;
+    }
+
+    function getEducationRecords(characterId) {
+        if (!_hasId(characterId)) return [];
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !_isPlainObject(character.education)) return [];
+
+        var out = [];
+        for (var institutionId in character.education) {
+            if (!Object.prototype.hasOwnProperty.call(character.education, institutionId)) continue;
+            var entry = character.education[institutionId];
+            if (!_isPlainObject(entry)) continue;
+            out.push(Object.assign({ institutionId: institutionId }, entry));
+        }
+        return out;
+    }
+
+    function recordEducationEnrollment(characterId, institutionId, data) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(institutionId)) return _fail('Institution id is required.');
+        if (!_isPlainObject(data)) return _fail('Enrollment data must be a plain object.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var current = _isPlainObject(character.education)
+            ? character.education[institutionId]
+            : null;
+
+        if (_isPlainObject(current) && current.graduated === true) {
+            return _fail('Character has already graduated from this institution.');
+        }
+
+        var entry = _normaliseEducationEntry(current, {
+            institutionName: data.institutionName,
+            institutionType: data.institutionType,
+            enrolledYear: _isMissing(data.enrolledYear)
+                ? window.getCurrentYear()
+                : data.enrolledYear
+        });
+
+        var write = _writeEducationEntry(characterId, institutionId, entry);
+        if (!write.success) return write;
+
+        return _ok({ institutionId: institutionId, entry: entry });
+    }
+
+    function recordEducationGraduation(characterId, institutionId, data) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(institutionId)) return _fail('Institution id is required.');
+        if (!_isPlainObject(data)) return _fail('Graduation data must be a plain object.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var current = _isPlainObject(character.education)
+            ? character.education[institutionId]
+            : null;
+        if (!_isPlainObject(current)) {
+            return _fail('Character is not enrolled at this institution.');
+        }
+        if (current.graduated === true) {
+            return _fail('Character has already graduated from this institution.');
+        }
+
+        var entry = _normaliseEducationEntry(current, {
+            graduated: true,
+            graduationYear: _isMissing(data.graduationYear)
+                ? window.getCurrentYear()
+                : data.graduationYear,
+            grantedRole: _isMissing(data.grantedRole) ? null : data.grantedRole
+        });
+
+        var write = _writeEducationEntry(characterId, institutionId, entry);
+        if (!write.success) return write;
+
+        return _ok({ institutionId: institutionId, entry: entry });
+    }
+
+    function recordEducationWithdrawal(characterId, institutionId, data) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(institutionId)) return _fail('Institution id is required.');
+        if (!_isPlainObject(data)) return _fail('Withdrawal data must be a plain object.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var current = _isPlainObject(character.education)
+            ? character.education[institutionId]
+            : null;
+        if (!_isPlainObject(current)) {
+            return _fail('Character is not enrolled at this institution.');
+        }
+        if (current.graduated === true) {
+            return _fail('Character has already graduated from this institution.');
+        }
+
+        var entry = _normaliseEducationEntry(current, {
+            withdrawn: true,
+            withdrawnReason: _isMissing(data.reason) ? 'Withdrew' : data.reason,
+            withdrawnYear: _isMissing(data.year)
+                ? window.getCurrentYear()
+                : data.year
+        });
+
+        var write = _writeEducationEntry(characterId, institutionId, entry);
+        if (!write.success) return write;
+
+        return _ok({ institutionId: institutionId, entry: entry });
+    }
+
+    // =========================================================================
+    // 13. EDUCATION HISTORY (character.educationHistory)
+    // =========================================================================
+    //
+    // character.educationHistory is an append-only array of history entries.
+    // Each entry is shaped by EducationCommands.graduateStudent. This module
+    // does not validate entry shape — it just appends.
+
+    function getEducationHistory(characterId) {
+        if (!_hasId(characterId)) return [];
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.educationHistory)) return [];
+        return character.educationHistory.slice();
+    }
+
+    function appendEducationHistory(characterId, entry) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_isPlainObject(entry)) {
+            return _fail('History entry must be a plain object.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var history = Array.isArray(character.educationHistory)
+            ? character.educationHistory.slice()
+            : [];
+
+        var stored = Object.assign({}, entry);
+        history.push(stored);
+
+        var update = CS.updateCharacter(characterId, {
+            educationHistory: history,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the education history write.');
+        }
+
+        return _ok({ entry: stored, count: history.length });
+    }
+
+    // =========================================================================
+    // 14. SUBJECT PROGRESS (character.subjectProgress)
+    // =========================================================================
+    //
+    // character.subjectProgress is an object keyed by subject key. Keys are
+    // produced by EducationRules.progressKeyFor (bare subject id for
+    // 'subject', 'role_<id>' for 'role').
+    //
+    // Read:  getSubjectProgress(characterId, key)
+    //        getAllSubjectProgress(characterId)
+    // Write: ensureSubjectProgress(characterId, key, initial)  -- create if missing
+    //        updateSubjectProgress(characterId, key, patch)    -- merge onto existing
+
+    function getSubjectProgress(characterId, key) {
+        if (!_hasId(characterId)) return null;
+        if (!_hasId(key)) return null;
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return null;
+        if (!_isPlainObject(character.subjectProgress)) return null;
+
+        var entry = character.subjectProgress[key];
+        return _isPlainObject(entry) ? entry : null;
+    }
+
+    function getAllSubjectProgress(characterId) {
+        if (!_hasId(characterId)) return [];
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !_isPlainObject(character.subjectProgress)) return [];
+
+        var out = [];
+        for (var key in character.subjectProgress) {
+            if (!Object.prototype.hasOwnProperty.call(character.subjectProgress, key)) continue;
+            var entry = character.subjectProgress[key];
+            if (!_isPlainObject(entry)) continue;
+            out.push(Object.assign({ key: key }, entry));
+        }
+        return out;
+    }
+
+    function ensureSubjectProgress(characterId, key, initial) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(key)) return _fail('Subject key is required.');
+        if (!_isPlainObject(initial)) {
+            return _fail('Initial progress must be a plain object.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var progress = _isPlainObject(character.subjectProgress)
+            ? character.subjectProgress
+            : {};
+
+        var existing = progress[key];
+        if (_isPlainObject(existing)) {
+            return _ok({ created: false, progress: existing });
+        }
+
+        var level = _isValidProficiencyLevel(initial.level) ? initial.level : 0;
+        var entry = {
+            level: level,
+            lastStudied: _isMissing(initial.lastStudied)
+                ? null
+                : initial.lastStudied,
+            source: _isMissing(initial.source) ? null : String(initial.source),
+            type: initial.type === 'role' ? 'role' : 'subject',
+            roleId: initial.type === 'role' && _hasId(initial.roleId)
+                ? initial.roleId
+                : null
+        };
+
+        var next = Object.assign({}, progress);
+        next[key] = entry;
+
+        var update = CS.updateCharacter(characterId, {
+            subjectProgress: next,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the subject progress write.');
+        }
+
+        return _ok({ created: true, progress: entry });
+    }
+
+    function updateSubjectProgress(characterId, key, patch) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(key)) return _fail('Subject key is required.');
+        if (!_isPlainObject(patch)) {
+            return _fail('Progress patch must be a plain object.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var progress = _isPlainObject(character.subjectProgress)
+            ? character.subjectProgress
+            : {};
+        var existing = progress[key];
+        if (!_isPlainObject(existing)) {
+            return _fail('Subject progress entry does not exist for key: ' + key);
+        }
+
+        var nextEntry = {
+            level: _isValidProficiencyLevel(patch.level)
+                ? patch.level
+                : (_isValidProficiencyLevel(existing.level) ? existing.level : 0),
+            lastStudied: patch.lastStudied !== undefined
+                ? patch.lastStudied
+                : (_isMissing(existing.lastStudied) ? null : existing.lastStudied),
+            source: patch.source !== undefined
+                ? (patch.source === null ? null : String(patch.source))
+                : (_isMissing(existing.source) ? null : String(existing.source)),
+            type: existing.type === 'role' ? 'role' : 'subject',
+            roleId: existing.roleId || null
+        };
+
+        var next = Object.assign({}, progress);
+        next[key] = nextEntry;
+
+        var update = CS.updateCharacter(characterId, {
+            subjectProgress: next,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the subject progress write.');
+        }
+
+        return _ok({ progress: nextEntry });
+    }
+
+    // =========================================================================
+    // 15. LITERACY (character.isLiterate)
+    // =========================================================================
+    //
+    // isLiterate is a materialized mirror of subjectProgress.literacy.level
+    // crossing the threshold. Writes must keep them in sync — EducationCommands
+    // is responsible for calling setLiterate at the correct moment.
+    //
+    // The read here returns the field. EducationLearning.isLiterate reads the
+    // subjectProgress level and applies the threshold. The two should agree;
+    // if they can drift, EducationLearning should read this field instead.
+
+    function isLiterate(characterId) {
+        if (!_hasId(characterId)) return false;
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return false;
+        return character.isLiterate === true;
+    }
+
+    function setLiterate(characterId, value) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof value !== 'boolean') {
+            return _fail('value must be a boolean.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        if (character.isLiterate === value) {
+            return _ok({ isLiterate: value, unchanged: true });
+        }
+
+        var update = CS.updateCharacter(characterId, {
+            isLiterate: value,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the literacy write.');
+        }
+
+        return _ok({ isLiterate: value, unchanged: false });
+    }
+
+    // =========================================================================
+    // 16. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
+        // Character-owned field updates
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
         updateCharacter: updateCharacter,
 
+        // Death
         markDeceased: markDeceased,
 
+        // Professions
         getProfession: getProfession,
         getProfessions: getProfessions,
-
         addProfession: addProfession,
         updateProfession: updateProfession,
         removeProfession: removeProfession,
         removeProfessionFromAll: removeProfessionFromAll,
         replaceProfessions: replaceProfessions,
-
         setPrimaryProfession: setPrimaryProfession,
         clearPrimaryProfession: clearPrimaryProfession,
 
+        // Surname history
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
 
+        // Religion
         assignCharacterReligion: assignCharacterReligion,
-        removeCharacterReligion: removeCharacterReligion
+        removeCharacterReligion: removeCharacterReligion,
+
+        // Education containers
+        initializeEducationContainers: initializeEducationContainers,
+
+        // Education record
+        getEducationRecord: getEducationRecord,
+        getEducationRecords: getEducationRecords,
+        recordEducationEnrollment: recordEducationEnrollment,
+        recordEducationGraduation: recordEducationGraduation,
+        recordEducationWithdrawal: recordEducationWithdrawal,
+
+        // Education history
+        getEducationHistory: getEducationHistory,
+        appendEducationHistory: appendEducationHistory,
+
+        // Subject progress
+        getSubjectProgress: getSubjectProgress,
+        getAllSubjectProgress: getAllSubjectProgress,
+        ensureSubjectProgress: ensureSubjectProgress,
+        updateSubjectProgress: updateSubjectProgress,
+
+        // Literacy
+        isLiterate: isLiterate,
+        setLiterate: setLiterate
     };
 
     if (typeof module !== 'undefined' && module.exports) {

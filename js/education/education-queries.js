@@ -1,8 +1,20 @@
 /**
  * STILL WATERS - EDUCATION QUERIES
- * All semantic reads for education. Returns projections, never live records.
- * Planning/recommendation functions (health, demand, recommendations) live here
- * for now; they will migrate to EducationRules when that module grows.
+ * All semantic reads for education. Returns frozen projections, never live
+ * records. Reads through the public EducationState surface only — never the
+ * internal _getInstitutionCanonical / _getAllInstitutionsCanonical accessors,
+ * which are reserved for EducationCommands.
+ *
+ * Planning/recommendation functions (health, demand, recommendations) live
+ * here for now; they will migrate to EducationRules when that module grows.
+ *
+ * LITERACY READS
+ *
+ *   getLiteracyRate reads subjectProgress.literacy.level and applies
+ *   EducationRules.isLiterateAtLevel. The level is the source of truth; the
+ *   threshold predicate is the only place the boundary is interpreted.
+ *   character.isLiterate (read via CharacterCommands.isLiterate) is a cache
+ *   for fast reads, kept in sync by EducationCommands.advanceLearning.
  */
 
 (function() {
@@ -86,13 +98,27 @@
     }
 
     function _getRoleById(id) {
-        if (typeof window.RoleState !== 'undefined' && typeof window.RoleState.getRole === 'function') {
+        if (typeof window.RoleState !== 'undefined' &&
+            typeof window.RoleState.getRole === 'function') {
             return window.RoleState.getRole(id);
         }
         if (typeof window.getRoleById === 'function') {
             return window.getRoleById(id);
         }
         throw new Error('education-queries.js requires RoleState.getRole or getRoleById');
+    }
+
+    function _getAllRoles() {
+        if (typeof window.RoleState !== 'undefined' &&
+            typeof window.RoleState.getAllRoles === 'function') {
+            return window.RoleState.getAllRoles();
+        }
+        if (typeof window.getAllRoles === 'function') {
+            return window.getAllRoles();
+        }
+        throw new Error(
+            'education-queries.js requires RoleState.getAllRoles or getAllRoles'
+        );
     }
 
     function _getAllSubLocationIds(locationId) {
@@ -139,10 +165,14 @@
     function _institutionSummary(inst) {
         var currentStudents = _currentStudentCount(inst);
         var maxStudents = inst.maxStudents || 0;
-        var utilization = maxStudents > 0 ? Math.round((currentStudents / maxStudents) * 100) : 0;
+        var utilization = maxStudents > 0
+            ? Math.round((currentStudents / maxStudents) * 100)
+            : 0;
 
         var headmasterName = null;
-        if (inst.headmaster && inst.headmaster.name) headmasterName = inst.headmaster.name;
+        if (inst.headmaster && inst.headmaster.name) {
+            headmasterName = inst.headmaster.name;
+        }
 
         return _freeze({
             id: inst.id,
@@ -177,17 +207,30 @@
 
     function _studentProjection(record, character) {
         if (!record) return null;
-        var age = character ? _calculateAge(character.birthYear, false, null) : null;
+        var age = character
+            ? _calculateAge(character.birthYear, false, null)
+            : null;
         return _freeze({
             studentId: record.studentId,
-            studentName: record.studentName || (character ? _formatName(character) : null),
-            enrollmentYear: (record.enrollmentYear !== undefined) ? record.enrollmentYear : null,
+            studentName: record.studentName ||
+                (character ? _formatName(character) : null),
+            enrollmentYear: (record.enrollmentYear !== undefined)
+                ? record.enrollmentYear
+                : null,
             graduated: record.graduated === true,
-            graduationYear: (record.graduationYear !== undefined) ? record.graduationYear : null,
-            attendance: (record.attendance !== undefined) ? record.attendance : null,
+            graduationYear: (record.graduationYear !== undefined)
+                ? record.graduationYear
+                : null,
+            attendance: (record.attendance !== undefined)
+                ? record.attendance
+                : null,
             notes: record.notes || '',
-            tuitionPaid: (record.tuitionPaid !== undefined) ? record.tuitionPaid : 0,
-            tuitionYear: (record.tuitionYear !== undefined) ? record.tuitionYear : null,
+            tuitionPaid: (record.tuitionPaid !== undefined)
+                ? record.tuitionPaid
+                : 0,
+            tuitionYear: (record.tuitionYear !== undefined)
+                ? record.tuitionYear
+                : null,
             tuitionWaived: record.tuitionWaived === true,
             grantedRole: record.grantedRole || null,
             age: age,
@@ -212,7 +255,9 @@
         return _freeze({
             studentId: record.studentId,
             studentName: record.studentName || null,
-            graduationYear: (record.graduationYear !== undefined) ? record.graduationYear : null,
+            graduationYear: (record.graduationYear !== undefined)
+                ? record.graduationYear
+                : null,
             grantedRole: record.grantedRole || null
         });
     }
@@ -231,22 +276,31 @@
 
             if (filters.type && inst.type !== filters.type) continue;
             if (filters.location && inst.locationId !== filters.location) continue;
-            if (filters.ownershipType && inst.ownershipType !== filters.ownershipType) continue;
+            if (filters.ownershipType &&
+                inst.ownershipType !== filters.ownershipType) continue;
             if (filters.religionId && inst.religionId !== filters.religionId) continue;
             if (filters.isReligiousSchool !== undefined &&
-                (inst.isReligiousSchool === true) !== filters.isReligiousSchool) continue;
+                (inst.isReligiousSchool === true) !== filters.isReligiousSchool) {
+                continue;
+            }
 
-            if (filters.minReputation !== undefined && filters.minReputation !== null) {
+            if (filters.minReputation !== undefined &&
+                filters.minReputation !== null) {
                 var rep = (inst.reputation !== undefined) ? inst.reputation : 50;
                 if (rep < filters.minReputation) continue;
             }
 
             if (filters.taughtRole) {
-                if (!inst.taughtRoles || inst.taughtRoles.indexOf(filters.taughtRole) === -1) continue;
+                if (!inst.taughtRoles ||
+                    inst.taughtRoles.indexOf(filters.taughtRole) === -1) {
+                    continue;
+                }
             }
 
             if (filters.specializationCategory) {
-                if (inst.specializationCategory !== filters.specializationCategory) continue;
+                if (inst.specializationCategory !== filters.specializationCategory) {
+                    continue;
+                }
             }
 
             if (filters.roleCategory) {
@@ -254,7 +308,10 @@
                 var hasCategoryRole = false;
                 for (var j = 0; j < inst.taughtRoles.length; j++) {
                     var role = _getRoleById(inst.taughtRoles[j]);
-                    if (role && role.category === filters.roleCategory) { hasCategoryRole = true; break; }
+                    if (role && role.category === filters.roleCategory) {
+                        hasCategoryRole = true;
+                        break;
+                    }
                 }
                 if (!hasCategoryRole) continue;
             }
@@ -265,13 +322,17 @@
             }
 
             if (filters.isSpecialized !== undefined &&
-                (inst.isSpecialized === true) !== filters.isSpecialized) continue;
+                (inst.isSpecialized === true) !== filters.isSpecialized) {
+                continue;
+            }
 
             if (filters.search && typeof filters.search === 'string') {
                 var search = filters.search.toLowerCase().trim();
                 if (search) {
-                    var nameMatch = (inst.name || '').toLowerCase().indexOf(search) !== -1;
-                    var descMatch = (inst.description || '').toLowerCase().indexOf(search) !== -1;
+                    var nameMatch =
+                        (inst.name || '').toLowerCase().indexOf(search) !== -1;
+                    var descMatch =
+                        (inst.description || '').toLowerCase().indexOf(search) !== -1;
                     if (!nameMatch && !descMatch) continue;
                 }
             }
@@ -305,7 +366,8 @@
         var all = _getEducationState().getAllInstitutions();
         var out = [];
         for (var i = 0; i < all.length; i++) {
-            if (all[i].locationId && locationIds.indexOf(all[i].locationId) !== -1) {
+            if (all[i].locationId &&
+                locationIds.indexOf(all[i].locationId) !== -1) {
                 out.push(all[i]);
             }
         }
@@ -339,7 +401,9 @@
                 characterId: inst.headmaster.characterId,
                 name: inst.headmaster.name || null,
                 title: inst.headmaster.title || 'Headmaster',
-                startYear: (inst.headmaster.startYear !== undefined) ? inst.headmaster.startYear : null
+                startYear: (inst.headmaster.startYear !== undefined)
+                    ? inst.headmaster.startYear
+                    : null
             });
         }
 
@@ -350,7 +414,9 @@
                 name: item.name,
                 icon: item.icon || null,
                 category: item.category || null,
-                baseLearnRate: (item.baseLearnRate !== undefined) ? item.baseLearnRate : null
+                baseLearnRate: (item.baseLearnRate !== undefined)
+                    ? item.baseLearnRate
+                    : null
             });
         });
 
@@ -403,7 +469,8 @@
         var out = [];
         for (var i = 0; i < all.length; i++) {
             var inst = all[i];
-            if (inst.isReligiousSchool === true && inst.locationId === locationId) {
+            if (inst.isReligiousSchool === true &&
+                inst.locationId === locationId) {
                 out.push(inst);
             }
         }
@@ -465,7 +532,9 @@
                         out.push(_freeze({
                             institutionId: inst.id,
                             institutionName: inst.name,
-                            status: inst.students[j].graduated ? 'graduated' : 'enrolled',
+                            status: inst.students[j].graduated
+                                ? 'graduated'
+                                : 'enrolled',
                             enrollmentYear: inst.students[j].enrollmentYear || null,
                             graduationYear: inst.students[j].graduationYear || null,
                             grantedRole: inst.students[j].grantedRole || null
@@ -478,7 +547,10 @@
             if (inst.graduates) {
                 var already = false;
                 for (var k = 0; k < out.length; k++) {
-                    if (out[k].institutionId === inst.id) { already = true; break; }
+                    if (out[k].institutionId === inst.id) {
+                        already = true;
+                        break;
+                    }
                 }
                 if (!already) {
                     for (var j = 0; j < inst.graduates.length; j++) {
@@ -488,7 +560,8 @@
                                 institutionName: inst.name,
                                 status: 'graduated',
                                 enrollmentYear: null,
-                                graduationYear: inst.graduates[j].graduationYear || null,
+                                graduationYear:
+                                    inst.graduates[j].graduationYear || null,
                                 grantedRole: inst.graduates[j].grantedRole || null
                             }));
                             break;
@@ -505,7 +578,8 @@
         var inst = _getEducationState().getInstitution(institutionId);
         if (!inst || !inst.students) return false;
         for (var i = 0; i < inst.students.length; i++) {
-            if (inst.students[i].studentId === studentId && !inst.students[i].graduated) {
+            if (inst.students[i].studentId === studentId &&
+                !inst.students[i].graduated) {
                 return true;
             }
         }
@@ -518,9 +592,12 @@
         var character = _getCharacterById(inst.headmaster.characterId);
         return _freeze({
             characterId: inst.headmaster.characterId,
-            name: inst.headmaster.name || (character ? _formatName(character) : null),
+            name: inst.headmaster.name ||
+                (character ? _formatName(character) : null),
             title: inst.headmaster.title || 'Headmaster',
-            startYear: (inst.headmaster.startYear !== undefined) ? inst.headmaster.startYear : null,
+            startYear: (inst.headmaster.startYear !== undefined)
+                ? inst.headmaster.startYear
+                : null,
             character: character ? _freeze({
                 id: character.id,
                 name: _formatName(character),
@@ -640,8 +717,12 @@
             totalTeachers: totalTeachers,
             totalGraduates: totalGraduates,
             totalCapacity: totalCapacity,
-            averageReputation: count > 0 ? Math.round(totalReputation / count) : 0,
-            capacityUsed: totalCapacity > 0 ? Math.round((currentStudents / totalCapacity) * 100) : 0,
+            averageReputation: count > 0
+                ? Math.round(totalReputation / count)
+                : 0,
+            capacityUsed: totalCapacity > 0
+                ? Math.round((currentStudents / totalCapacity) * 100)
+                : 0,
             religiousSchools: religiousSchools,
             institutions: Object.freeze(institutions.slice()),
             educationBudget: _getEducationBudget(locationId)
@@ -651,9 +732,13 @@
     // =====================================================================
     // Graduation readiness
     // =====================================================================
+    //
+    // Reads through the public EducationState.getInstitution (clone), not the
+    // commands-only _getInstitutionCanonical escape hatch. The clone is deep
+    // enough for the student records this function needs.
 
     function getStudentsReadyForGraduation(institutionId, year) {
-        var inst = _getEducationState()._getInstitutionCanonical(institutionId);
+        var inst = _getEducationState().getInstitution(institutionId);
         if (!inst || !inst.students) return [];
 
         var currentYear = (year !== undefined) ? year : _getCurrentYear();
@@ -669,8 +754,11 @@
             var proficiencyByKey = {};
             if (student.subjectProgress) {
                 for (var key in student.subjectProgress) {
-                    if (student.subjectProgress.hasOwnProperty(key)) {
-                        proficiencyByKey[key] = student.subjectProgress[key].level || 0;
+                    if (Object.prototype.hasOwnProperty.call(
+                        student.subjectProgress, key
+                    )) {
+                        proficiencyByKey[key] =
+                            student.subjectProgress[key].level || 0;
                     }
                 }
             }
@@ -707,7 +795,7 @@
         if (maxReputation === undefined) maxReputation = 70;
         if (minStudents === undefined) minStudents = 0;
 
-        var all = _getEducationState()._getAllInstitutionsCanonical();
+        var all = _getEducationState().getAllInstitutions();
         var out = [];
 
         for (var i = 0; i < all.length; i++) {
@@ -730,7 +818,9 @@
             var curriculum = inst.curriculum || [];
             var missing = [];
             for (var j = 0; j < curriculum.length; j++) {
-                if (!subjectsTaught[curriculum[j].id]) missing.push(curriculum[j]);
+                if (!subjectsTaught[curriculum[j].id]) {
+                    missing.push(curriculum[j]);
+                }
             }
 
             if (missing.length > 0) {
@@ -738,11 +828,19 @@
                     institutionId: inst.id,
                     institutionName: inst.name,
                     missingSubjects: Object.freeze(missing.map(function(m) {
-                        return _freeze({ id: m.id, name: m.name, type: m.type });
+                        return _freeze({
+                            id: m.id,
+                            name: m.name,
+                            type: m.type
+                        });
                     })),
                     teacherCount: inst.teachers ? inst.teachers.length : 0,
                     studentCount: studentCount,
-                    teacherStudentRatio: studentCount / Math.max(1, inst.teachers ? inst.teachers.length : 0),
+                    teacherStudentRatio:
+                        studentCount / Math.max(
+                            1,
+                            inst.teachers ? inst.teachers.length : 0
+                        ),
                     priority: Math.floor((100 - rep) / 10)
                 }));
             }
@@ -798,12 +896,7 @@
         var inst = _getEducationState().getInstitution(institutionId);
         if (!inst || !inst.specializationCategory) return [];
 
-        if (typeof window.RoleState === 'undefined' ||
-            typeof window.RoleState.getAllRoles !== 'function') {
-            throw new Error('education-queries.js requires RoleState.getAllRoles for getAvailableRolesForInstitution');
-        }
-
-        var all = window.RoleState.getAllRoles();
+        var all = _getAllRoles();
         var out = [];
         for (var i = 0; i < all.length; i++) {
             if (all[i].category === inst.specializationCategory) {
@@ -853,7 +946,9 @@
         for (var i = 0; i < residents.length; i++) {
             var c = residents[i].character;
             if (!c.subjectProgress || !c.subjectProgress.literacy) continue;
-            if (RULES.isLiterateAtLevel(c.subjectProgress.literacy.level || 0)) literate++;
+            if (RULES.isLiterateAtLevel(c.subjectProgress.literacy.level || 0)) {
+                literate++;
+            }
         }
 
         return Math.round((literate / residents.length) * 100);
@@ -890,7 +985,8 @@
             if (enrolledIds[c.id]) continue;
 
             var literacy = (c.subjectProgress && c.subjectProgress.literacy)
-                ? (c.subjectProgress.literacy.level || 0) : 0;
+                ? (c.subjectProgress.literacy.level || 0)
+                : 0;
 
             out.push(_freeze({
                 characterId: c.id,
@@ -944,7 +1040,9 @@
         var maxScore = 100;
 
         var coverageRatio = schoolAgePopulation > 0
-            ? Math.min(100, Math.round((summary.totalCapacity / schoolAgePopulation) * 100))
+            ? Math.min(100, Math.round(
+                (summary.totalCapacity / schoolAgePopulation) * 100
+            ))
             : 0;
         score += (coverageRatio / 100) * 40;
 
@@ -952,18 +1050,26 @@
         score += (qualityScore / 100) * 30;
 
         var teacherStudentRatio = summary.currentStudents > 0
-            ? Math.min(100, Math.round((summary.totalTeachers / summary.currentStudents) * 100))
+            ? Math.min(100, Math.round(
+                (summary.totalTeachers / summary.currentStudents) * 100
+            ))
             : 0;
         score += (teacherStudentRatio / 100) * 30;
 
         score = Math.min(maxScore, Math.round(score));
 
         var recommendation;
-        if (score >= 80) recommendation = 'Excellent education infrastructure';
-        else if (score >= 60) recommendation = 'Good education, room for improvement';
-        else if (score >= 40) recommendation = 'Adequate education, needs attention';
-        else if (score >= 20) recommendation = 'Poor education, significant improvements needed';
-        else recommendation = 'Critical education crisis';
+        if (score >= 80) {
+            recommendation = 'Excellent education infrastructure';
+        } else if (score >= 60) {
+            recommendation = 'Good education, room for improvement';
+        } else if (score >= 40) {
+            recommendation = 'Adequate education, needs attention';
+        } else if (score >= 20) {
+            recommendation = 'Poor education, significant improvements needed';
+        } else {
+            recommendation = 'Critical education crisis';
+        }
 
         return _freeze({
             score: score,
@@ -995,7 +1101,8 @@
             var health = getEducationHealthScore(place.id);
             if (!health || !health.needsMoreSchools) continue;
 
-            var existingInstitutions = getInstitutionsInRegion(place.id, false).length;
+            var existingInstitutions =
+                getInstitutionsInRegion(place.id, false).length;
 
             out.push(_freeze({
                 locationId: place.id,
@@ -1004,7 +1111,9 @@
                 schoolAgePopulation: schoolAgePop,
                 existingInstitutions: existingInstitutions,
                 deficit: Math.max(0, schoolAgePop - health.totalCapacity),
-                priority: Math.min(100, Math.round((health.coverageRatio < 30 ? 80 : 50) + (schoolAgePop / 100))),
+                priority: Math.min(100, Math.round(
+                    (health.coverageRatio < 30 ? 80 : 50) + (schoolAgePop / 100)
+                )),
                 healthScore: health.score,
                 coverageRatio: health.coverageRatio,
                 educationBudget: _getEducationBudget(place.id),
@@ -1031,7 +1140,9 @@
 
         var locationIds = _getAllSubLocationIds(locationId);
         var locationIdSet = {};
-        for (var i = 0; i < locationIds.length; i++) locationIdSet[locationIds[i]] = true;
+        for (var i = 0; i < locationIds.length; i++) {
+            locationIdSet[locationIds[i]] = true;
+        }
 
         var all = _getEducationState().getAllInstitutions();
         var institutions = [];
@@ -1063,13 +1174,24 @@
         var growthRate = 0.02;
 
         var growthData = [
-            { year: _getCurrentYear() - 10, population: Math.round(population * 0.82) },
-            { year: _getCurrentYear() - 5,  population: Math.round(population * 0.91) },
-            { year: _getCurrentYear(),      population: population }
+            {
+                year: _getCurrentYear() - 10,
+                population: Math.round(population * 0.82)
+            },
+            {
+                year: _getCurrentYear() - 5,
+                population: Math.round(population * 0.91)
+            },
+            {
+                year: _getCurrentYear(),
+                population: population
+            }
         ];
 
         var currentCoverage = schoolAgePopulation > 0
-            ? Math.min(100, Math.round((totalCapacity / schoolAgePopulation) * 100))
+            ? Math.min(100, Math.round(
+                (totalCapacity / schoolAgePopulation) * 100
+            ))
             : 0;
         var currentGap = Math.max(0, schoolAgePopulation - totalCapacity);
         var studentTeacherRatio = totalTeachers > 0
@@ -1080,11 +1202,18 @@
         if (includeProjections) {
             for (var i = 1; i <= projectionYears; i++) {
                 var year = _getCurrentYear() + i;
-                var projectedPop = Math.round(population * Math.pow(1 + growthRate, i));
-                var projectedSchoolAge = Math.round(schoolAgePopulation * Math.pow(1 + growthRate, i));
-                var projectedGap = Math.max(0, projectedSchoolAge - totalCapacity);
+                var projectedPop = Math.round(
+                    population * Math.pow(1 + growthRate, i)
+                );
+                var projectedSchoolAge = Math.round(
+                    schoolAgePopulation * Math.pow(1 + growthRate, i)
+                );
+                var projectedGap =
+                    Math.max(0, projectedSchoolAge - totalCapacity);
                 var projectedCoverage = projectedSchoolAge > 0
-                    ? Math.min(100, Math.round((totalCapacity / projectedSchoolAge) * 100))
+                    ? Math.min(100, Math.round(
+                        (totalCapacity / projectedSchoolAge) * 100
+                    ))
                     : 0;
                 var teachersNeeded = studentTeacherRatio > 0
                     ? Math.ceil(projectedSchoolAge / studentTeacherRatio)
@@ -1097,7 +1226,10 @@
                     gap: projectedGap,
                     coverage: projectedCoverage,
                     teachersNeeded: teachersNeeded,
-                    additionalTeachersNeeded: Math.max(0, teachersNeeded - totalTeachers),
+                    additionalTeachersNeeded: Math.max(
+                        0,
+                        teachersNeeded - totalTeachers
+                    ),
                     newSchoolsNeeded: Math.ceil(projectedGap / 50)
                 }));
             }
@@ -1108,14 +1240,16 @@
             var schoolsNeeded = Math.ceil(currentGap / 50);
             recommendations.push(_freeze({
                 type: 'capacity',
-                message: 'Need ' + schoolsNeeded + ' new school(s) to accommodate ' + currentGap + ' more students',
+                message: 'Need ' + schoolsNeeded + ' new school(s) to ' +
+                    'accommodate ' + currentGap + ' more students',
                 priority: currentGap > 100 ? 'high' : 'medium'
             }));
         }
         if (studentTeacherRatio > 25) {
             recommendations.push(_freeze({
                 type: 'teachers',
-                message: 'Student-teacher ratio is ' + studentTeacherRatio + ':1 (recommended < 20:1)',
+                message: 'Student-teacher ratio is ' + studentTeacherRatio +
+                    ':1 (recommended < 20:1)',
                 priority: studentTeacherRatio > 30 ? 'high' : 'medium'
             }));
         }
@@ -1163,7 +1297,9 @@
 
         var locationIds = _getAllSubLocationIds(locationId);
         var locationIdSet = {};
-        for (var i = 0; i < locationIds.length; i++) locationIdSet[locationIds[i]] = true;
+        for (var i = 0; i < locationIds.length; i++) {
+            locationIdSet[locationIds[i]] = true;
+        }
 
         var all = _getEducationState().getAllInstitutions();
         var institutions = [];
@@ -1261,14 +1397,17 @@
                 var age = allStudents[i].age;
                 if (age === null || age === undefined) continue;
                 for (var key in ageGroups) {
-                    if (!ageGroups.hasOwnProperty(key)) continue;
+                    if (!Object.prototype.hasOwnProperty.call(ageGroups, key)) continue;
                     var g = ageGroups[key];
-                    if (age >= g.min && age < g.max) { g.count++; break; }
+                    if (age >= g.min && age < g.max) {
+                        g.count++;
+                        break;
+                    }
                 }
             }
 
             for (var key in ageGroups) {
-                if (!ageGroups.hasOwnProperty(key)) continue;
+                if (!Object.prototype.hasOwnProperty.call(ageGroups, key)) continue;
                 result.byAgeGroup[key] = ageGroups[key].count;
             }
         }
@@ -1276,8 +1415,11 @@
         if (byGender) {
             for (var i = 0; i < allStudents.length; i++) {
                 var g = allStudents[i].gender || 'unknown';
-                if (result.byGender[g] === undefined) result.byGender.unknown++;
-                else result.byGender[g]++;
+                if (result.byGender[g] === undefined) {
+                    result.byGender.unknown++;
+                } else {
+                    result.byGender[g]++;
+                }
             }
         }
 

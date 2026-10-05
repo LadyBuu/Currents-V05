@@ -1,24 +1,45 @@
 /**
  * STILL WATERS - EDUCATION LEARNING
- * Pure learning mechanics: read proficiency, read education level, read
- * literacy, ensure character education record. No commands except the
- * cross-domain write in ensureCharacterEducationRecord, which routes
- * through CharacterCommands.
+ * Proficiency, literacy, and education level reads. Plus a single hydration
+ * helper that routes every write through CharacterCommands.
  *
- * Demographics live in education-queries.js. Mutation (advanceLearning)
- * lives in education-commands.js.
+ * OWNERSHIP
  *
- * Ownership:
- *   - character.subjectProgress, character.isLiterate, character.education,
- *     character.educationHistory are education-owned fields on the character
- *     record, written only through CharacterCommands.updateEducationRecord.
- *   - role records are owned by RoleState; this module reads via RoleState.
+ *   Reads touch character fields directly because reads are free. Writes
+ *   never touch character fields directly — they route through
+ *   CharacterCommands:
  *
- * DEPENDENCIES (required, checked lazily):
- *   - education-rules.js    (EducationRules)
- *   - accessors.js          (getCharacterById)
- *   - role-state.js         (RoleState)
- *   - character-commands.js (CharacterCommands) — write path only
+ *     ensureCharacterEducationRecord → CharacterCommands.initializeEducationContainers
+ *
+ *   If CharacterCommands is missing, ensureCharacterEducationRecord fails
+ *   loudly. There is no degraded mode.
+ *
+ * LITERACY
+ *
+ *   character.isLiterate is a materialized flag with a single writer
+ *   (CharacterCommands.setLiterate) and a single reader
+ *   (CharacterCommands.isLiterate). education-learning.isLiterate delegates
+ *   to that reader.
+ *
+ *   The threshold predicate lives in education-rules.isLiterateAtLevel. It is
+ *   used by education-commands.advanceLearning to decide when to flip the
+ *   flag, and nowhere else.
+ *
+ *   Two reads of the same fact, one writer. No drift.
+ *
+ * READS IN THIS MODULE
+ *
+ *   getProficiency, getSubjectProficiency, getCharacterProficiencies,
+ *   getEducationLevel, isLiterate
+ *
+ * WRITES IN THIS MODULE
+ *
+ *   ensureCharacterEducationRecord (routed through CharacterCommands)
+ *
+ * DEPENDENCIES (required):
+ *   - education-rules.js     (EducationRules)
+ *   - accessors.js           (getCharacterById)
+ *   - character-commands.js  (CharacterCommands) — write path and literacy
  * =============================================================================
  */
 
@@ -41,19 +62,11 @@
         return window.getCharacterById(id);
     }
 
-    function _getRoleById(id) {
-        if (typeof window.RoleState === 'undefined' ||
-            typeof window.RoleState.getRole !== 'function') {
-            throw new Error('education-learning.js requires RoleState.getRole');
-        }
-        return window.RoleState.getRole(id);
-    }
-
     function _characterCommands() {
-        if (typeof window.CharacterCommands === 'undefined' ||
-            typeof window.CharacterCommands.updateEducationRecord !== 'function') {
+        if (typeof window.CharacterCommands === 'undefined') {
             throw new Error(
-                'education-learning.js requires CharacterCommands.updateEducationRecord'
+                'education-learning.js requires CharacterCommands to write ' +
+                'character-owned education fields.'
             );
         }
         return window.CharacterCommands;
@@ -63,12 +76,18 @@
     // 2. HYDRATION (explicit; routed through CharacterCommands)
     // =========================================================================
     //
-    // Ensures the character record has the canonical education fields.
-    // Reads never call this. Only hydration / enrolment paths call it, and
-    // it writes through CharacterCommands so the write boundary is uniform.
+    // Ensures the character record has the canonical education fields:
     //
-    // The function is idempotent: if the fields already exist, it does
-    // nothing and returns a success result without touching state.
+    //   character.subjectProgress   object
+    //   character.isLiterate        boolean
+    //   character.education         object
+    //   character.educationHistory  array
+    //
+    // All four are created by CharacterCommands.initializeEducationContainers,
+    // which is idempotent. Reads never call this. Only hydration and
+    // enrolment paths call it.
+    //
+    // Returns { success, initialized?, reason? }.
 
     function ensureCharacterEducationRecord(character) {
         if (!character) {
@@ -90,19 +109,15 @@
             return { success: true, initialized: false };
         }
 
-        var patch = {};
-        if (needsSubjectProgress) patch.subjectProgress = {};
-        if (needsIsLiterate) patch.isLiterate = false;
-        if (needsEducation) patch.education = {};
-        if (needsEducationHistory) patch.educationHistory = [];
-
-        var result = _characterCommands().updateEducationRecord(character.id, patch);
-        if (!result || !result.success) {
+        var result = _characterCommands().initializeEducationContainers(character.id);
+        if (!result || result.success !== true) {
             return {
                 success: false,
-                reason: (result && result.reason) || 'Failed to initialise education record.'
+                reason: (result && result.reason)
+                    || 'Failed to initialise education containers.'
             };
         }
+
         return { success: true, initialized: true };
     }
 
@@ -173,8 +188,12 @@
 
     /**
      * Get the education level for a character. Returns null if the character
-     * does not exist. Uses RULES.getEducationLevelForLiteracy — the only
-     * place the threshold table is interpreted.
+     * does not exist.
+     *
+     * Derived classification. Reads the literacy proficiency level directly
+     * and asks EducationRules for the highest level whose threshold is met.
+     * This is a read of an education-owned field and does not touch
+     * character.isLiterate.
      */
     function getEducationLevel(characterId) {
         var character = _getCharacterById(characterId);
@@ -191,22 +210,17 @@
     }
 
     /**
-     * Canonical literacy predicate. Literacy subject level is the source of
-     * truth. `character.isLiterate` is a materialized milestone maintained by
-     * EducationCommands.advanceLearning and is not consulted here — otherwise
-     * the two can drift.
+     * Canonical literacy predicate. Delegates to CharacterCommands.isLiterate,
+     * which reads character.isLiterate. That flag is written by
+     * CharacterCommands.setLiterate.
+     *
+     * Returns false if the character does not exist.
      */
     function isLiterate(characterId) {
+        if (!characterId) return false;
         var character = _getCharacterById(characterId);
         if (!character) return false;
-
-        var literacy = 0;
-        if (character.subjectProgress &&
-            character.subjectProgress.literacy &&
-            typeof character.subjectProgress.literacy.level === 'number') {
-            literacy = character.subjectProgress.literacy.level;
-        }
-        return RULES.isLiterateAtLevel(literacy);
+        return _characterCommands().isLiterate(characterId) === true;
     }
 
     // =========================================================================

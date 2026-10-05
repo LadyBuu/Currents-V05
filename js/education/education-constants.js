@@ -2,6 +2,30 @@
  * STILL WATERS - EDUCATION CONSTANTS
  * Vocabulary, static configuration, and simulation tuning.
  * Canonical source for all education constants. No fallbacks elsewhere.
+ *
+ * SUBJECT KEYS
+ *
+ *   SUBJECTS is keyed by SCREAMING_CASE for direct named access
+ *   (SUBJECTS.LITERACY, SUBJECTS.BASIC_MATH). The id field on each entry is
+ *   lowercase ('literacy', 'basic_math').
+ *
+ *   SUBJECTS_BY_ID is a parallel index keyed by id, for lookups where you
+ *   have a lowercase subject id and want the full entry. Frozen. Do not
+ *   rekey SUBJECTS — it would break every existing call site.
+ *
+ * INSTITUTION TIERS
+ *
+ *   INSTITUTION_TYPES[*].tier names a band in SCHOOL_TIERS[*].id. The
+ *   relationship is a foreign key, not duplicated data. baseTuition on the
+ *   type is the raw figure; TUITION_TYPE_MULTIPLIERS adjusts it per type
+ *   before reputation. Both are canonical; neither overrides the other.
+ *
+ * ROLE CATEGORIES
+ *
+ *   ROLE_CATEGORIES here mirrors the education domain's grouping used in the
+ *   curriculum modal. It is intended to agree with the role domain's own
+ *   category vocabulary. If the two diverge, this constant should be removed
+ *   and RoleState should provide categories instead. (Flagged, not resolved.)
  */
 
 (function() {
@@ -10,14 +34,15 @@
     // Education levels. `literacy` is the threshold; `yearsRequired` is the
     // nominal duration of formal schooling associated with the level.
     var EDUCATION_LEVELS = {
-        ILLITERATE: { id: 'illiterate', name: 'Illiterate',       yearsRequired: 0,  literacy: 0,  icon: '✗', description: 'Cannot read or write' },
-        BASIC:      { id: 'basic',      name: 'Basic Literacy',   yearsRequired: 2,  literacy: 30, icon: '⌇', description: 'Can read simple texts' },
-        LITERATE:   { id: 'literate',   name: 'Literate',         yearsRequired: 4,  literacy: 60, icon: '⌇', description: 'Can read and write fluently' },
-        EDUCATED:   { id: 'educated',   name: 'Educated',         yearsRequired: 6,  literacy: 80, icon: '✓', description: 'Well-read and knowledgeable' },
-        SCHOLAR:    { id: 'scholar',    name: 'Scholar',          yearsRequired: 10, literacy: 95, icon: '◉', description: 'Master of multiple disciplines' }
+        ILLITERATE: { id: 'illiterate', name: 'Illiterate',     yearsRequired: 0,  literacy: 0,  icon: '✗', description: 'Cannot read or write' },
+        BASIC:      { id: 'basic',      name: 'Basic Literacy', yearsRequired: 2,  literacy: 30, icon: '⌇', description: 'Can read simple texts' },
+        LITERATE:   { id: 'literate',   name: 'Literate',       yearsRequired: 4,  literacy: 60, icon: '⌇', description: 'Can read and write fluently' },
+        EDUCATED:   { id: 'educated',   name: 'Educated',       yearsRequired: 6,  literacy: 80, icon: '✓', description: 'Well-read and knowledgeable' },
+        SCHOLAR:    { id: 'scholar',    name: 'Scholar',        yearsRequired: 10, literacy: 95, icon: '◉', description: 'Master of multiple disciplines' }
     };
 
-    // Canonical subject registry.
+    // Canonical subject registry. Keyed by SCREAMING_CASE for direct access.
+    // Use SUBJECTS_BY_ID for lowercase-id lookups.
     var SUBJECTS = {
         LITERACY:            { id: 'literacy',            name: 'Literacy',             icon: '⌇', category: 'academic',     baseLearnRate: 15 },
         BASIC_MATH:          { id: 'basic_math',          name: 'Basic Mathematics',    icon: '⌇', category: 'academic',     baseLearnRate: 10 },
@@ -70,6 +95,20 @@
         SCULPTURE:           { id: 'sculpture',           name: 'Sculpture',            icon: '⌇', category: 'arts',         baseLearnRate: 10 },
         PERFORMING_ARTS:     { id: 'performing_arts',     name: 'Performing Arts',      icon: '⌇', category: 'arts',         baseLearnRate: 10 }
     };
+
+    // Parallel index: subject id -> subject entry. Built once. Frozen.
+    // Use this when you have a lowercase subject id and want the entry.
+    var SUBJECTS_BY_ID = (function() {
+        var byId = {};
+        for (var k in SUBJECTS) {
+            if (!Object.prototype.hasOwnProperty.call(SUBJECTS, k)) continue;
+            var s = SUBJECTS[k];
+            if (s && typeof s.id === 'string') {
+                byId[s.id] = s;
+            }
+        }
+        return Object.freeze(byId);
+    })();
 
     // Canonical institution types. Distinguished purely by size, scale, and
     // prestige. Specialization comes from curriculum + taughtRoles, not type.
@@ -192,25 +231,25 @@
     };
 
     var ROLE_CATEGORIES = {
-        combat:      { id: 'combat',      name: 'Combat & Military',           icon: '⚔' },
-        craft:       { id: 'craft',       name: 'Craftsmanship',               icon: '⌇' },
-        trade:       { id: 'trade',       name: 'Trade & Commerce',            icon: '⌇' },
-        agriculture: { id: 'agriculture', name: 'Agriculture & Fishing',       icon: '⌇' },
-        academic:    { id: 'academic',    name: 'Academic & Scholar',          icon: '⌇' },
-        medical:     { id: 'medical',     name: 'Medical & Healing',           icon: '⌆' },
-        religious:   { id: 'religious',   name: 'Religious',                   icon: '⌆' },
-        admin:       { id: 'admin',       name: 'Administration',              icon: '⌇' },
-        service:     { id: 'service',     name: 'Service',                     icon: '⌇' },
-        art:         { id: 'art',         name: 'Artistic',                    icon: '⌇' },
-        government:  { id: 'government',  name: 'Government & Public Service', icon: '⌇' },
-        household:   { id: 'household',   name: 'Household & Domestic Service',icon: '⌇' },
-        industrial:  { id: 'industrial',  name: 'Industry & Manufacturing',    icon: '⌇' },
-        maritime:    { id: 'maritime',    name: 'Maritime & Seafaring',        icon: '⌇' },
-        legal:       { id: 'legal',       name: 'Legal',                       icon: '⌇' },
-        diplomacy:   { id: 'diplomacy',   name: 'Diplomacy & Statecraft',      icon: '⌇' },
-        finance:     { id: 'finance',     name: 'Finance & Economics',         icon: '⌇' },
-        science:     { id: 'science',     name: 'Science & Research',          icon: '⌇' },
-        other:       { id: 'other',       name: 'Other',                       icon: '⌇' }
+        combat:      { id: 'combat',      name: 'Combat & Military',            icon: '⚔' },
+        craft:       { id: 'craft',       name: 'Craftsmanship',                icon: '⌇' },
+        trade:       { id: 'trade',       name: 'Trade & Commerce',             icon: '⌇' },
+        agriculture: { id: 'agriculture', name: 'Agriculture & Fishing',        icon: '⌇' },
+        academic:    { id: 'academic',    name: 'Academic & Scholar',           icon: '⌇' },
+        medical:     { id: 'medical',     name: 'Medical & Healing',            icon: '⌆' },
+        religious:   { id: 'religious',   name: 'Religious',                    icon: '⌆' },
+        admin:       { id: 'admin',       name: 'Administration',               icon: '⌇' },
+        service:     { id: 'service',     name: 'Service',                      icon: '⌇' },
+        art:         { id: 'art',         name: 'Artistic',                     icon: '⌇' },
+        government:  { id: 'government',  name: 'Government & Public Service',  icon: '⌇' },
+        household:   { id: 'household',   name: 'Household & Domestic Service', icon: '⌇' },
+        industrial:  { id: 'industrial',  name: 'Industry & Manufacturing',     icon: '⌇' },
+        maritime:    { id: 'maritime',    name: 'Maritime & Seafaring',         icon: '⌇' },
+        legal:       { id: 'legal',       name: 'Legal',                        icon: '⌇' },
+        diplomacy:   { id: 'diplomacy',   name: 'Diplomacy & Statecraft',       icon: '⌇' },
+        finance:     { id: 'finance',     name: 'Finance & Economics',          icon: '⌇' },
+        science:     { id: 'science',     name: 'Science & Research',           icon: '⌇' },
+        other:       { id: 'other',       name: 'Other',                        icon: '⌇' }
     };
 
     var TUITION_DEFAULTS = {
@@ -250,6 +289,7 @@
 
     window.EDUCATION_LEVELS = EDUCATION_LEVELS;
     window.SUBJECTS = SUBJECTS;
+    window.SUBJECTS_BY_ID = SUBJECTS_BY_ID;
     window.INSTITUTION_TYPES = INSTITUTION_TYPES;
     window.OWNERSHIP_TYPES = OWNERSHIP_TYPES;
     window.SCHOOL_TIERS = SCHOOL_TIERS;
@@ -262,6 +302,7 @@
         module.exports = {
             EDUCATION_LEVELS: EDUCATION_LEVELS,
             SUBJECTS: SUBJECTS,
+            SUBJECTS_BY_ID: SUBJECTS_BY_ID,
             INSTITUTION_TYPES: INSTITUTION_TYPES,
             OWNERSHIP_TYPES: OWNERSHIP_TYPES,
             SCHOOL_TIERS: SCHOOL_TIERS,
