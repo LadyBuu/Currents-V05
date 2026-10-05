@@ -16,6 +16,28 @@
  *   - Contains NO UI concerns: no toasts, no DOM, no browser-specific events
  *     beyond a single CustomEvent dispatch.
  *
+ * SKILL PROGRESSION vs SKILL OVERRIDE
+ *
+ *   Two commands exist for writing character role skill, and they have
+ *   different semantics on purpose:
+ *
+ *     updateCharacterSkill(cid, rid, level)
+ *         Administrative override. Can raise OR lower. Blind write.
+ *         Used by the role edit-skill modal.
+ *
+ *     recordCharacterSkillProgress(cid, rid, level)
+ *         Domain progression. Can raise. Never lowers.
+ *         If level <= current, succeeds with { unchanged: true } and
+ *         writes nothing. Used by process paths (education, and future
+ *         callers that model progression rather than administration).
+ *
+ *   The invariant: no progression system may reduce a character's canonical
+ *   role skill. An administrator can, deliberately.
+ *
+ *   Apprenticeship already implements this policy internally by reading
+ *   current skill, incrementing, and writing. It does not need to switch
+ *   to recordCharacterSkillProgress to be correct, but it may.
+ *
  * Reentrancy:
  *   There is no module-wide guard. Commands may call other commands freely
  *   because every operation is synchronous and side-effect explicit.
@@ -117,10 +139,6 @@
     // =========================================================================
     // 3. NOTIFICATION
     // =========================================================================
-    //
-    // A single CustomEvent dispatch per command that changes observable
-    // state. Subscribers (apprenticeship, households, etc.) listen on the
-    // window. No browser-specific events (no click, no input, etc.).
 
     function _notify(eventName, detail) {
         if (typeof window.dispatchEvent !== 'function') return;
@@ -369,8 +387,6 @@
             return _fail('Failed to delete role from state.');
         }
 
-        // Notify subscribers (e.g. apprenticeship domain) so they can
-        // terminate any relationships pointing at this role.
         _notify('roleDeleted', { roleId: roleId, roleName: role.name });
 
         return _ok({ roleName: role.name, removedFromCharacters: reassignedCount });
@@ -381,7 +397,6 @@
             return _fail('Roles must be an array.');
         }
 
-        // Validate every entry first; commit only if all are valid.
         var validated = [];
         for (var i = 0; i < roles.length; i++) {
             var r = roles[i];
@@ -470,10 +485,6 @@
     // =========================================================================
     // 7. SPECIALIZATION MANAGEMENT (role-level catalogue)
     // =========================================================================
-    //
-    // These mutate the role's catalogue of allowed specializations. They do
-    // NOT touch any character's profession record. Per-character specs are
-    // the character domain's responsibility.
 
     function addRoleSpecialization(roleId, specialization) {
         if (!_validString(roleId)) return _fail('Role id is required.');
@@ -559,7 +570,6 @@
         var existing = CC.getProfession(characterId, role.id);
 
         if (existing) {
-            // Update the existing profession rather than duplicating.
             var updateResult = CC.updateProfession(characterId, role.id, {
                 skillLevel: skillLevel,
                 startYear: startYear !== null ? startYear : existing.startYear,
@@ -642,6 +652,15 @@
         return _ok({ characterId: characterId, roleId: roleId });
     }
 
+    /**
+     * Administrative override. Can raise OR lower skill. Blind write.
+     *
+     * Used by the role edit-skill modal, where the admin deliberately
+     * chooses the target value and expects it to take effect.
+     *
+     * Do NOT use this from a process path. Use recordCharacterSkillProgress
+     * for anything that models progression (education, future systems).
+     */
     function updateCharacterSkill(characterId, roleId, skillLevel) {
         if (!_validString(characterId)) return _fail('Character id is required.');
         if (!_validString(roleId)) return _fail('Role id is required.');
@@ -660,9 +679,77 @@
         _notify('characterSkillUpdated', {
             characterId: characterId,
             roleId: roleId,
-            skillLevel: skillLevel
+            skillLevel: skillLevel,
+            mode: 'override'
         });
         return _ok({ characterId: characterId, roleId: roleId, skillLevel: skillLevel });
+    }
+
+    /**
+     * Domain progression. Can raise skill. Never lowers it.
+     *
+     * If the incoming level is less than or equal to the character's current
+     * role skill, the command succeeds with { unchanged: true } and writes
+     * nothing. If the character does not hold the role yet, the command
+     * fails: progression presumes an existing profession record, and the
+     * caller must decide whether to assign one first.
+     *
+     * Emits a `characterSkillProgressed` event with `previousSkill` and
+     * `skillLevel` so subscribers can observe the change.
+     */
+    function recordCharacterSkillProgress(characterId, roleId, skillLevel) {
+        if (!_validString(characterId)) return _fail('Character id is required.');
+        if (!_validString(roleId)) return _fail('Role id is required.');
+        if (!_validSkillLevel(skillLevel)) {
+            return _fail('Skill level must be a number between 0 and 100.');
+        }
+
+        var role = RS.getRole(roleId);
+        if (!role) return _fail('Role not found.');
+
+        var existing = CC.getProfession(characterId, roleId);
+        if (!existing) {
+            return _fail('Character does not hold this role. ' +
+                'Assign the role before recording progression.');
+        }
+
+        var currentSkill = typeof existing.skillLevel === 'number'
+            ? existing.skillLevel
+            : 0;
+
+        if (skillLevel <= currentSkill) {
+            return _ok({
+                characterId: characterId,
+                roleId: roleId,
+                skillLevel: currentSkill,
+                requestedSkill: skillLevel,
+                unchanged: true
+            });
+        }
+
+        var result = CC.updateProfession(characterId, roleId, { skillLevel: skillLevel });
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Failed to record skill progression.');
+        }
+
+        _notify('characterSkillProgressed', {
+            characterId: characterId,
+            roleId: roleId,
+            previousSkill: currentSkill,
+            skillLevel: skillLevel,
+            delta: skillLevel - currentSkill
+        });
+
+        return _ok({
+            characterId: characterId,
+            roleId: roleId,
+            skillLevel: skillLevel,
+            previousSkill: currentSkill,
+            delta: skillLevel - currentSkill,
+            unchanged: false
+        });
     }
 
     /**
@@ -806,7 +893,11 @@
         // Assignment
         assignRoleToCharacter: assignRoleToCharacter,
         removeRoleFromCharacter: removeRoleFromCharacter,
-        updateCharacterSkill: updateCharacterSkill,
+
+        // Skill writes
+        updateCharacterSkill: updateCharacterSkill,                     // override
+        recordCharacterSkillProgress: recordCharacterSkillProgress,     // progression
+
         bulkAssignRole: bulkAssignRole,
 
         // Salary / literacy

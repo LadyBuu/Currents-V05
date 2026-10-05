@@ -38,6 +38,32 @@
  *   If CharacterCommands is missing, the commands fail loudly. There is
  *   no degraded mode.
  *
+ * ROLE SKILL PROGRESSION
+ *
+ *   Education owns educational progress (subjectProgress). The canonical
+ *   role skill lives on the character record as professions[].skillLevel,
+ *   written only through RoleCommands.
+ *
+ *   Two Role commands exist for writing role skill, with different
+ *   semantics:
+ *
+ *     RoleCommands.updateCharacterSkill(cid, rid, level)
+ *         Administrative override. Blind write. Can raise or lower.
+ *         Used by the role edit-skill modal.
+ *
+ *     RoleCommands.recordCharacterSkillProgress(cid, rid, level)
+ *         Domain progression. Can raise. Never lowers.
+ *         Used by advanceLearning for role-type curriculum items.
+ *
+ *   The invariant: no progression system may reduce a character's
+ *   canonical role skill. An administrator can, deliberately, through
+ *   the override command.
+ *
+ *   If the character does not hold the role, recordCharacterSkillProgress
+ *   fails. Education does not assign the role; that is a Role or Character
+ *   decision, taken at graduation (via RoleCommands.assignRoleToCharacter)
+ *   or through the role assignment UI.
+ *
  * DEPENDENCIES
  *
  *   Required at load:
@@ -52,7 +78,7 @@
  *   Required for specific commands:
  *     - CharacterCommands    (student enrollment / graduation / withdrawal /
  *                             subject progress / literacy)
- *     - RoleCommands         (graduation role grant, best-effort)
+ *     - RoleCommands         (graduation role grant; role skill progression)
  *     - RoleQueries          (role-teacher eligibility, hard requirement)
  *     - HouseholdEconomy     (tuition payment, hard requirement when a
  *                             household is present)
@@ -157,7 +183,8 @@
         return CC[name];
     }
 
-    // ---- RoleCommands — required only for the graduation role grant.
+    // ---- RoleCommands — required for graduation role grant and for role
+    //      skill progression on role-type curriculum items.
 
     function _roleCommandsOrNull() {
         if (typeof window.RoleCommands === 'undefined') return null;
@@ -983,6 +1010,9 @@
 
         // Role grant. Failures do not abort graduation. The error is
         // recorded on the result envelope as `roleGrantError`.
+        //
+        // NOTE: The skillLevel of 100 is a deliberate placeholder pending
+        // the qualification model. See the education doc's Known Deferrals.
         var roleGrantError = null;
         if (roleToGrant) {
             try {
@@ -1183,11 +1213,50 @@
                     : 'unknown error'));
         }
 
-        // Role skill sync. Optional; skipped if RoleCommands is unavailable.
+        // Role skill progression. Education owns educational progress; the
+        // canonical role skill is character.professions[].skillLevel, written
+        // only through RoleCommands.recordCharacterSkillProgress, which
+        // enforces the no-downgrade invariant for process paths.
+        //
+        // RoleCommands.recordCharacterSkillProgress is required for role-type
+        // curriculum items. A missing module or a missing method is a
+        // load-order failure, not a silent skip: without it, the write would
+        // be dropped and the character would have educational progress with
+        // no matching role skill.
+        //
+        // If the character does not hold the role, the call fails and the
+        // failure is recorded on the return envelope as `roleSkillError`.
+        // Education does not assign the role. Assignment is a Role or
+        // Character decision, taken at graduation (via
+        // RoleCommands.assignRoleToCharacter) or through the role assignment
+        // UI.
         if (curriculumItem.type === 'role' && result.increased > 0) {
             var RC = _roleCommandsOrNull();
-            if (RC && typeof RC.updateCharacterSkill === 'function') {
-                RC.updateCharacterSkill(characterId, curriculumItem.id, result.newLevel);
+            if (!RC || typeof RC.recordCharacterSkillProgress !== 'function') {
+                return _fail(
+                    'RoleCommands.recordCharacterSkillProgress is required ' +
+                    'to record role skill progression for role-type ' +
+                    'curriculum item "' + curriculumItem.id + '".'
+                );
+            }
+            var progressResult = RC.recordCharacterSkillProgress(
+                characterId, curriculumItem.id, result.newLevel
+            );
+            if (!progressResult || progressResult.success !== true) {
+                // Non-fatal: subject progress is already written. Record the
+                // failure on the return envelope so the caller can see that
+                // role skill did not advance.
+                return _ok({
+                    characterId: characterId,
+                    subjectId: key,
+                    subjectName: curriculumItem.name,
+                    oldLevel: result.oldLevel,
+                    newLevel: result.newLevel,
+                    increased: result.increased,
+                    roleSkillError: progressResult && progressResult.reason
+                        ? progressResult.reason
+                        : 'Role skill progression failed for unknown reason'
+                });
             }
         }
 
