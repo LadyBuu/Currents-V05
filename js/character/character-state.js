@@ -22,10 +22,10 @@
  *     - family semantics            -> family-rules.js / family-queries.js
  *     - mortality policy            -> mortality-rules.js
  *     - lifecycle orchestration     -> character-lifecycle.js
- *     - professional semantics      -> future professional-* domain
- *     - relationship semantics      -> future relationship-* domain
+ *     - professional semantics      -> role / professional domain
+ *     - relationship semantics      -> relationship domain
  *     - location movement history   -> location-*
- *     - rank semantics              -> rank-*
+ *     - rank semantics              -> rank domain
  *     - domain rule validation      -> each domain's own rules module
  *
  * DEATH FIELDS:
@@ -49,6 +49,26 @@
  *
  *   These fields are character-owned. They are written only through
  *   CharacterCommands.markDeceased. They are read through MortalityQueries.
+ *
+ * DOMAIN-OWNED EMBEDDED FIELDS:
+ *   The character record also carries embedded containers owned by other
+ *   domains. They are NOT character-owned. The generic updateCharacter /
+ *   updateCharacters path refuses them; only applyDomainFieldPatch may write
+ *   them, and only CharacterCommands calls applyDomainFieldPatch.
+ *
+ *       professions             -> CharacterCommands (profession API)
+ *       rankAssignments         -> CharacterCommands (rank API)
+ *       activeRankId            -> CharacterCommands (rank API, derived)
+ *       activeRankNumber        -> CharacterCommands (rank API, derived)
+ *       education               -> CharacterCommands (education API)
+ *       educationHistory        -> CharacterCommands (education API)
+ *       subjectProgress         -> CharacterCommands (education API)
+ *       isLiterate              -> CharacterCommands (education API)
+ *       relationships           -> RelationshipCommands
+ *       friends                 -> RelationshipCommands
+ *       apprenticeshipDetails   -> ApprenticeshipCommands
+ *       apprentices             -> ApprenticeshipCommands
+ *       isDeleted, deletedAt    -> CharacterDeletionCommands
  *
  * REMOVED FIELDS:
  *   The parent-child compatibility mirrors (motherId, fatherId, children,
@@ -115,6 +135,16 @@
     // =========================================================================
     // 1. CHARACTER-OWNED FIELDS
     // =========================================================================
+    //
+    // Fields the generic updateCharacter / updateCharacters path will accept.
+    // Anything not listed here (and not the id) is refused.
+    //
+    // Domain-owned embedded fields (professions, rankAssignments,
+    // activeRankId, activeRankNumber, education, educationHistory,
+    // subjectProgress, isLiterate, relationships, friends,
+    // apprenticeshipDetails, apprentices, isDeleted, deletedAt) are
+    // deliberately absent. They are written via applyDomainFieldPatch by
+    // the owning domain's commands.
 
     var _CHARACTER_OWNED_FIELDS = {
         // Identity
@@ -162,22 +192,16 @@
         notes: true,
         appearance: true,
 
-        // Rank identity pointer
-        activeRankId: true,
-        activeRankNumber: true,
-
-        // Apprenticeship identity pointer
+        // Apprenticeship identity pointer (character-owned scalar)
+        // NOTE: apprenticeshipDetails and apprentices are domain-owned and
+        // are deliberately NOT listed here.
         isMaster: true,
         masterId: true,
         masterProfessionId: true,
-        apprenticeshipDetails: true,
 
-        // Friendship details blob
+        // Friendship details blob (character-owned legacy container)
+        // NOTE: friends is domain-owned and is deliberately NOT listed here.
         friendshipDetails: true,
-
-        // Soft delete
-        isDeleted: true,
-        deletedAt: true,
 
         // Metadata
         createdAt: true,
@@ -335,6 +359,7 @@
                 }
             }
 
+            // Active rank index: only the currently active rank id.
             if (_hasId(c.activeRankId)) {
                 _pushToIndex(_cache.byRank, c.activeRankId, c);
             }
@@ -447,6 +472,85 @@
     // =========================================================================
     // 9. PROJECTION HELPERS
     // =========================================================================
+    //
+    // A projection is a shallow, defensive copy of the character for external
+    // consumers. It includes the fields every reader is expected to see:
+    // identity, demographics, life/death, location, religion/culture,
+    // presentation, and the embedded domain containers that other domains
+    // need to read.
+    //
+    // The projections are "deep enough": container arrays and objects owned
+    // by the character are copied so a caller cannot mutate canonical state
+    // through a projection. Nested objects inside container elements are
+    // shared by reference — mutating them is a caller bug.
+
+    function _cloneProfessions(professions) {
+        if (!Array.isArray(professions)) return [];
+        var out = [];
+        for (var i = 0; i < professions.length; i++) {
+            var p = professions[i];
+            if (!p) continue;
+            out.push({
+                id: p.id,
+                name: p.name,
+                skillLevel: p.skillLevel,
+                startYear: _isMissing(p.startYear) ? null : p.startYear,
+                primary: p.primary === true,
+                notes: typeof p.notes === 'string' ? p.notes : '',
+                specs: Array.isArray(p.specs) ? p.specs.slice() : [],
+                baseSalary: typeof p.baseSalary === 'number' ? p.baseSalary : 0,
+                customSalary: _isMissing(p.customSalary) ? null : p.customSalary,
+                salaryHistory: Array.isArray(p.salaryHistory)
+                    ? p.salaryHistory.slice()
+                    : [],
+                salaryLastCalculated: _isMissing(p.salaryLastCalculated)
+                    ? null
+                    : p.salaryLastCalculated,
+                paysSalary: p.paysSalary === undefined ? true : p.paysSalary === true
+            });
+        }
+        return out;
+    }
+
+    function _cloneNumberInfo(number) {
+        if (!number || typeof number !== 'object') return null;
+        return {
+            rawNumber: typeof number.rawNumber === 'number'
+                ? number.rawNumber
+                : null,
+            display: typeof number.display === 'string'
+                ? number.display
+                : null,
+            type: typeof number.type === 'string' ? number.type : null,
+            groupId: _isMissing(number.groupId) ? null : number.groupId,
+            holdersInGroup: (typeof number.holdersInGroup === 'number'
+                && Number.isFinite(number.holdersInGroup))
+                ? number.holdersInGroup
+                : null
+        };
+    }
+
+    function _cloneRankAssignments(rankAssignments) {
+        if (!Array.isArray(rankAssignments)) return [];
+        var out = [];
+        for (var i = 0; i < rankAssignments.length; i++) {
+            var a = rankAssignments[i];
+            if (!a) continue;
+            out.push({
+                rankId: a.rankId,
+                customTitle: _isMissing(a.customTitle) ? null : a.customTitle,
+                address: _isMissing(a.address) ? null : a.address,
+                number: _cloneNumberInfo(a.number),
+                order: typeof a.order === 'number' ? a.order : 10,
+                isActive: a.isActive === true,
+                isDeprecated: a.isDeprecated === true,
+                assignedYear: _isMissing(a.assignedYear) ? null : a.assignedYear,
+                notes: typeof a.notes === 'string' ? a.notes : '',
+                inheritedFrom: _isMissing(a.inheritedFrom) ? null : a.inheritedFrom
+            });
+        }
+        return out;
+    }
 
     function _project(c) {
         if (!c || !_hasId(c.id)) return null;
@@ -474,7 +578,33 @@
             household: _isMissing(c.household) ? null : c.household,
             religionId: _isMissing(c.religionId) ? null : c.religionId,
             cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
+
+            // Embedded domain containers, defensively cloned.
+            professions: _cloneProfessions(c.professions),
+            rankAssignments: _cloneRankAssignments(c.rankAssignments),
+
+            // Active rank pointers. Derived by CharacterCommands; read here
+            // for the character summary and cross-domain readers.
             activeRankId: _isMissing(c.activeRankId) ? null : c.activeRankId,
+            activeRankNumber: (typeof c.activeRankNumber === 'number'
+                && Number.isFinite(c.activeRankNumber))
+                ? c.activeRankNumber
+                : null,
+
+            // Education containers. Cloned shallowly: the container itself
+            // is copied, but nested per-institution and per-subject objects
+            // remain shared by reference. Reads are safe; mutation is a bug.
+            education: _isPlainObject(c.education)
+                ? Object.assign({}, c.education)
+                : {},
+            educationHistory: Array.isArray(c.educationHistory)
+                ? c.educationHistory.slice()
+                : [],
+            subjectProgress: _isPlainObject(c.subjectProgress)
+                ? Object.assign({}, c.subjectProgress)
+                : {},
+            isLiterate: c.isLiterate === true,
+
             epithet: _isMissing(c.epithet) ? '' : c.epithet,
             notes: _isMissing(c.notes) ? '' : c.notes,
             appearance: c.appearance && typeof c.appearance === 'object'
@@ -581,6 +711,13 @@
         return bucket ? _projectArray(bucket) : [];
     }
 
+    /**
+     * Returns characters whose ACTIVE rank matches rankId.
+     *
+     * This index reflects activeRankId only. To find characters whose
+     * rankAssignments include a rank regardless of active state, use
+     * RankQueries.getCharactersWithRank, which scans the assignment array.
+     */
     function getCharactersByRank(rankId) {
         if (!_hasId(rankId)) return [];
         var bucket = _cache.byRank.get(rankId);
