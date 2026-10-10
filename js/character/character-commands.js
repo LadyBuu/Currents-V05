@@ -8,6 +8,7 @@
  * SCOPE:
  *   - Character-owned field updates
  *   - Profession array management on the character record
+ *   - Rank assignment array management on the character record
  *   - Surname history mutations
  *   - Religion assignment orchestration (delegates to ReligionCommands)
  *   - Bulk character-owned field updates
@@ -16,6 +17,9 @@
  *   - Education field writers (education, educationHistory, subjectProgress,
  *     isLiterate) — the only sanctioned writers for these character-owned
  *     fields. EducationCommands and EducationLearning route through these.
+ *   - Rank field writers (rankAssignments, activeRankId, activeRankNumber) —
+ *     the only sanctioned writers for these character-owned fields.
+ *     RankCommands and RankAssignment route through these.
  *
  * OUT OF SCOPE:
  *   - Character creation           -> character-creation-commands.js
@@ -27,6 +31,8 @@
  *   - Cross-domain events, toasts  -> caller
  *   - Education policy             -> education-rules.js
  *   - Education orchestration      -> education-commands.js
+ *   - Rank policy                  -> rank-rules.js
+ *   - Rank orchestration           -> rank-commands.js / rank-assignment.js
  *
  * DEATH TRANSITION (markDeceased):
  *   markDeceased(characterId, deathData) is the ONLY function that writes
@@ -92,6 +98,43 @@
  *
  *   The generic updateCharacterFields / updateCharactersFields refuse these
  *   four fields. Use the dedicated writers below.
+ *
+ * RANK FIELDS:
+ *   Three character-owned fields are written only by this module:
+ *
+ *     character.rankAssignments   array of assignment records. Each entry:
+ *                                 {
+ *                                   rankId: string,
+ *                                   customTitle: string|null,
+ *                                   address: string|null,
+ *                                   number: {
+ *                                     rawNumber: number,
+ *                                     display: string,
+ *                                     type: 'ordinal'|'roman'|'custom',
+ *                                     groupId: string|null,
+ *                                     holdersInGroup: number|null
+ *                                   } | null,
+ *                                   order: number,
+ *                                   isActive: boolean,
+ *                                   isDeprecated: boolean,
+ *                                   assignedYear: number|null,
+ *                                   notes: string,
+ *                                   inheritedFrom: string|null
+ *                                 }
+ *
+ *     character.activeRankId      string|null. Pointer to the currently active
+ *                                 (non-deprecated) rank assignment. Must match
+ *                                 the rankId of exactly one non-deprecated
+ *                                 entry in rankAssignments, or be null when
+ *                                 there are no non-deprecated entries.
+ *
+ *     character.activeRankNumber  number|null. Raw number of the active rank
+ *                                 assignment, mirrored for fast reads. Kept in
+ *                                 sync with activeRankId. When the active
+ *                                 assignment has no number, this is null.
+ *
+ *   The generic updateCharacterFields / updateCharactersFields refuse these
+ *   three fields. Use the dedicated writers below.
  *
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js: CharacterState
@@ -226,7 +269,9 @@
     // updateCharacterFields.
     //
     //   professions             -> CharacterCommands (this file)
-    //   rankAssignments         -> RankCommands
+    //   rankAssignments         -> CharacterCommands (this file, rank API)
+    //   activeRankId            -> CharacterCommands (this file, rank API)
+    //   activeRankNumber        -> CharacterCommands (this file, rank API)
     //   relationships           -> RelationshipCommands
     //   friends                 -> RelationshipCommands
     //   apprenticeshipDetails   -> ApprenticeshipCommands
@@ -240,6 +285,8 @@
     var _DOMAIN_OWNED_FIELDS = {
         professions: true,
         rankAssignments: true,
+        activeRankId: true,
+        activeRankNumber: true,
         relationships: true,
         friends: true,
         apprenticeshipDetails: true,
@@ -1527,7 +1574,579 @@
     }
 
     // =========================================================================
-    // 16. EXPORTS
+    // 16. RANK API - NORMALISATION
+    // =========================================================================
+    //
+    // The rank assignment record is authored by RankAssignment and consumed by
+    // RankQueries, RankIssues, and the character summary. This module owns its
+    // shape: every write runs through _normaliseRankAssignment so the stored
+    // record is always well-formed. Callers do not shape it.
+
+    function _normaliseNumberInfo(raw) {
+        if (_isMissing(raw)) return null;
+        if (!_isPlainObject(raw)) return null;
+
+        var rawNumber = raw.rawNumber;
+        if (typeof rawNumber !== 'number' || !Number.isFinite(rawNumber)) return null;
+
+        var display = typeof raw.display === 'string' && raw.display.length > 0
+            ? raw.display
+            : String(rawNumber);
+
+        var type = raw.type;
+        if (type !== 'ordinal' && type !== 'roman' && type !== 'custom') {
+            type = 'custom';
+        }
+
+        var groupId = _hasId(raw.groupId) ? raw.groupId : null;
+        var holdersInGroup = (typeof raw.holdersInGroup === 'number'
+            && Number.isFinite(raw.holdersInGroup))
+            ? raw.holdersInGroup
+            : null;
+
+        return {
+            rawNumber: rawNumber,
+            display: display,
+            type: type,
+            groupId: groupId,
+            holdersInGroup: holdersInGroup
+        };
+    }
+
+    function _normaliseRankAssignment(input) {
+        var order = input.order;
+        if (typeof order !== 'number' || !Number.isFinite(order)) {
+            order = 10;
+        }
+
+        return {
+            rankId: input.rankId,
+            customTitle: _hasId(input.customTitle) ? input.customTitle : null,
+            address: _hasId(input.address) ? input.address : null,
+            number: _normaliseNumberInfo(input.number),
+            order: order,
+            isActive: input.isActive === true,
+            isDeprecated: input.isDeprecated === true,
+            assignedYear: _isMissing(input.assignedYear) ? null : input.assignedYear,
+            notes: typeof input.notes === 'string' ? input.notes : '',
+            inheritedFrom: _hasId(input.inheritedFrom) ? input.inheritedFrom : null
+        };
+    }
+
+    function _findRankAssignmentIndex(assignments, rankId) {
+        if (!Array.isArray(assignments)) return -1;
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            if (a && a.rankId === rankId) return i;
+        }
+        return -1;
+    }
+
+    function _findActiveRankAssignmentIndex(assignments) {
+        if (!Array.isArray(assignments)) return -1;
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            if (a && a.rankId && a.isDeprecated !== true && a.isActive === true) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Recomputes isActive flags across an assignment array, ensuring exactly
+     * one non-deprecated entry is active. If activeRankId is supplied and
+     * matches a non-deprecated entry, that entry is marked active. Otherwise
+     * the first non-deprecated entry (by order) is marked active. If there are
+     * no non-deprecated entries, all entries are inactive.
+     *
+     * Also recomputes activeRankId and activeRankNumber from the resulting
+     * state. Callers use the returned object to build the write patch.
+     */
+    function _reconcileRankActives(assignments, preferredActiveRankId) {
+        var next = [];
+        for (var i = 0; i < assignments.length; i++) {
+            var copy = _normaliseRankAssignment(assignments[i]);
+            copy.isActive = false;
+            next.push(copy);
+        }
+
+        var activeIdx = -1;
+
+        if (_hasId(preferredActiveRankId)) {
+            for (var j = 0; j < next.length; j++) {
+                if (next[j].rankId === preferredActiveRankId
+                    && next[j].isDeprecated !== true) {
+                    activeIdx = j;
+                    break;
+                }
+            }
+        }
+
+        if (activeIdx === -1) {
+            var sortedIndexes = [];
+            for (var k = 0; k < next.length; k++) {
+                if (next[k].isDeprecated !== true) sortedIndexes.push(k);
+            }
+            sortedIndexes.sort(function (a, b) {
+                return (next[a].order || 0) - (next[b].order || 0);
+            });
+            if (sortedIndexes.length > 0) activeIdx = sortedIndexes[0];
+        }
+
+        if (activeIdx !== -1) {
+            next[activeIdx].isActive = true;
+        }
+
+        var activeRankId = activeIdx !== -1 ? next[activeIdx].rankId : null;
+        var activeRankNumber = null;
+        if (activeIdx !== -1 && next[activeIdx].number) {
+            var raw = next[activeIdx].number.rawNumber;
+            if (typeof raw === 'number' && Number.isFinite(raw)) {
+                activeRankNumber = raw;
+            }
+        }
+
+        return {
+            assignments: next,
+            activeRankId: activeRankId,
+            activeRankNumber: activeRankNumber
+        };
+    }
+
+    function _writeRankAssignments(characterId, assignments, preferredActiveRankId) {
+        var reconciled = _reconcileRankActives(assignments, preferredActiveRankId);
+
+        var patch = {
+            rankAssignments: reconciled.assignments,
+            activeRankId: reconciled.activeRankId,
+            activeRankNumber: reconciled.activeRankNumber,
+            updatedAt: Date.now()
+        };
+
+        var result = CS.applyDomainFieldPatch(characterId, patch);
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'CharacterState refused the rank assignment write.');
+        }
+
+        return _ok({
+            assignments: reconciled.assignments,
+            activeRankId: reconciled.activeRankId,
+            activeRankNumber: reconciled.activeRankNumber
+        });
+    }
+
+    // =========================================================================
+    // 17. RANK API - CONTAINER INITIALISATION
+    // =========================================================================
+    //
+    // Ensures rankAssignments exists as an array and activeRankId /
+    // activeRankNumber exist as null. Idempotent. Called by
+    // RankState/RankCommands bootstrap and by CharacterCreationCommands.
+
+    function initializeRankContainers(characterId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var needsAssignments = !Array.isArray(character.rankAssignments);
+        var needsActiveRankId = character.activeRankId === undefined;
+        var needsActiveRankNumber = character.activeRankNumber === undefined;
+
+        if (!needsAssignments && !needsActiveRankId && !needsActiveRankNumber) {
+            return _ok({ initialized: false });
+        }
+
+        var patch = { updatedAt: Date.now() };
+        if (needsAssignments) patch.rankAssignments = [];
+        if (needsActiveRankId) patch.activeRankId = null;
+        if (needsActiveRankNumber) patch.activeRankNumber = null;
+
+        var write = CS.applyDomainFieldPatch(characterId, patch);
+        if (!write || write.success !== true) {
+            return _fail(write && write.reason
+                ? write.reason
+                : 'CharacterState refused the rank container write.');
+        }
+
+        return _ok({ initialized: true });
+    }
+
+    // =========================================================================
+    // 18. RANK API - READS
+    // =========================================================================
+
+    function getRankAssignments(characterId) {
+        if (!_hasId(characterId)) return [];
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.rankAssignments)) return [];
+
+        var out = [];
+        for (var i = 0; i < character.rankAssignments.length; i++) {
+            var a = character.rankAssignments[i];
+            if (!a) continue;
+            out.push(_normaliseRankAssignment(a));
+        }
+        return out;
+    }
+
+    function getRankAssignment(characterId, rankId) {
+        if (!_hasId(characterId)) return null;
+        if (!_hasId(rankId)) return null;
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.rankAssignments)) return null;
+
+        var idx = _findRankAssignmentIndex(character.rankAssignments, rankId);
+        if (idx === -1) return null;
+        return _normaliseRankAssignment(character.rankAssignments[idx]);
+    }
+
+    function getActiveRank(characterId) {
+        if (!_hasId(characterId)) return null;
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.rankAssignments)) return null;
+
+        var idx = _findActiveRankAssignmentIndex(character.rankAssignments);
+        if (idx === -1) return null;
+        return _normaliseRankAssignment(character.rankAssignments[idx]);
+    }
+
+    function hasRankAssignment(characterId, rankId, includeDeprecated) {
+        if (!_hasId(characterId)) return false;
+        if (!_hasId(rankId)) return false;
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.rankAssignments)) return false;
+
+        for (var i = 0; i < character.rankAssignments.length; i++) {
+            var a = character.rankAssignments[i];
+            if (!a || a.rankId !== rankId) continue;
+            if (includeDeprecated === true) return true;
+            if (a.isDeprecated !== true) return true;
+        }
+        return false;
+    }
+
+    // =========================================================================
+    // 19. RANK API - WRITES
+    // =========================================================================
+
+    /**
+     * Adds a rank assignment. If the character has no active rank, the new
+     * assignment becomes active. Duplicate non-deprecated assignments for the
+     * same rank are refused; a previously deprecated assignment is reactivated
+     * instead (its isDeprecated is cleared and it is treated as the write
+     * target). Returns { success, assignment, activeRankId }.
+     */
+    function addRankAssignment(characterId, assignmentData) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_isPlainObject(assignmentData)) {
+            return _fail('Assignment data must be a plain object.');
+        }
+        if (!_hasId(assignmentData.rankId)) {
+            return _fail('rankId is required.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments.slice()
+            : [];
+
+        // Non-deprecated duplicate: refuse.
+        for (var i = 0; i < existing.length; i++) {
+            var a = existing[i];
+            if (a && a.rankId === assignmentData.rankId && a.isDeprecated !== true) {
+                return _fail('Character already has this rank.');
+            }
+        }
+
+        var normalised = _normaliseRankAssignment(assignmentData);
+
+        // Reactivate a deprecated entry if one exists.
+        var reactivated = false;
+        for (var j = 0; j < existing.length; j++) {
+            if (existing[j] && existing[j].rankId === assignmentData.rankId
+                && existing[j].isDeprecated === true) {
+                existing[j] = Object.assign({}, existing[j], normalised, {
+                    isDeprecated: false,
+                    isActive: false
+                });
+                reactivated = true;
+                break;
+            }
+        }
+
+        if (!reactivated) {
+            existing.push(normalised);
+        }
+
+        var preferredActive = null;
+        if (!_hasId(character.activeRankId)) {
+            preferredActive = assignmentData.rankId;
+        }
+
+        var write = _writeRankAssignments(characterId, existing, preferredActive);
+        if (!write.success) return write;
+
+        var stored = null;
+        for (var k = 0; k < write.assignments.length; k++) {
+            if (write.assignments[k].rankId === assignmentData.rankId) {
+                stored = write.assignments[k];
+                break;
+            }
+        }
+
+        return _ok({
+            assignment: stored,
+            activeRankId: write.activeRankId,
+            activeRankNumber: write.activeRankNumber,
+            reactivated: reactivated
+        });
+    }
+
+    /**
+     * Patches an existing rank assignment. The rankId itself cannot be changed;
+     * remove the assignment and add a new one instead.
+     */
+    function updateRankAssignment(characterId, rankId, patch) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+        if (!_isPlainObject(patch)) return _fail('Patch must be a plain object.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments.slice()
+            : [];
+        var idx = _findRankAssignmentIndex(existing, rankId);
+        if (idx === -1) return _fail('Character does not have this rank.');
+
+        var current = _normaliseRankAssignment(existing[idx]);
+        var candidate = Object.assign({}, current);
+
+        if (Object.prototype.hasOwnProperty.call(patch, 'customTitle')) {
+            candidate.customTitle = _hasId(patch.customTitle) ? patch.customTitle : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'address')) {
+            candidate.address = _hasId(patch.address) ? patch.address : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'number')) {
+            candidate.number = _normaliseNumberInfo(patch.number);
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'order')) {
+            if (typeof patch.order === 'number' && Number.isFinite(patch.order)) {
+                candidate.order = patch.order;
+            }
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'assignedYear')) {
+            candidate.assignedYear = _isMissing(patch.assignedYear)
+                ? null
+                : patch.assignedYear;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'notes')) {
+            candidate.notes = typeof patch.notes === 'string' ? patch.notes : '';
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'inheritedFrom')) {
+            candidate.inheritedFrom = _hasId(patch.inheritedFrom)
+                ? patch.inheritedFrom
+                : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'isDeprecated')) {
+            candidate.isDeprecated = patch.isDeprecated === true;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'isActive')) {
+            candidate.isActive = patch.isActive === true;
+        }
+
+        existing[idx] = candidate;
+
+        var preferredActive = null;
+        if (candidate.isActive === true && candidate.isDeprecated !== true) {
+            preferredActive = rankId;
+        } else if (character.activeRankId === rankId
+            && candidate.isDeprecated === true) {
+            preferredActive = null;
+        } else {
+            preferredActive = character.activeRankId || null;
+        }
+
+        var write = _writeRankAssignments(characterId, existing, preferredActive);
+        if (!write.success) return write;
+
+        var stored = null;
+        for (var m = 0; m < write.assignments.length; m++) {
+            if (write.assignments[m].rankId === rankId) {
+                stored = write.assignments[m];
+                break;
+            }
+        }
+
+        return _ok({
+            assignment: stored,
+            activeRankId: write.activeRankId,
+            activeRankNumber: write.activeRankNumber
+        });
+    }
+
+    /**
+     * Marks a rank assignment as deprecated. Active pointer is recomputed.
+     * Idempotent: deprecating an already-deprecated assignment is a no-op that
+     * returns { unchanged: true }.
+     */
+    function deprecateRankAssignment(characterId, rankId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments.slice()
+            : [];
+        var idx = _findRankAssignmentIndex(existing, rankId);
+        if (idx === -1) return _fail('Character does not have this rank.');
+
+        var current = _normaliseRankAssignment(existing[idx]);
+        if (current.isDeprecated === true) {
+            return _ok({ unchanged: true });
+        }
+
+        current.isDeprecated = true;
+        current.isActive = false;
+        existing[idx] = current;
+
+        // If the active pointer pointed at this rank, force a reselection.
+        var preferredActive = character.activeRankId === rankId
+            ? null
+            : (character.activeRankId || null);
+
+        var write = _writeRankAssignments(characterId, existing, preferredActive);
+        if (!write.success) return write;
+
+        return _ok({
+            unchanged: false,
+            activeRankId: write.activeRankId,
+            activeRankNumber: write.activeRankNumber
+        });
+    }
+
+    /**
+     * Hard-removes a rank assignment (deprecated or not). Active pointer is
+     * recomputed.
+     */
+    function removeRankAssignment(characterId, rankId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments.slice()
+            : [];
+        var idx = _findRankAssignmentIndex(existing, rankId);
+        if (idx === -1) return _fail('Character does not have this rank.');
+
+        existing.splice(idx, 1);
+
+        var preferredActive = character.activeRankId === rankId
+            ? null
+            : (character.activeRankId || null);
+
+        var write = _writeRankAssignments(characterId, existing, preferredActive);
+        if (!write.success) return write;
+
+        return _ok({
+            activeRankId: write.activeRankId,
+            activeRankNumber: write.activeRankNumber
+        });
+    }
+
+    /**
+     * Sets the active rank. The rankId must exist on the character and must
+     * not be deprecated. Idempotent.
+     */
+    function setActiveRank(characterId, rankId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments.slice()
+            : [];
+        var idx = _findRankAssignmentIndex(existing, rankId);
+        if (idx === -1) {
+            return _fail('Character does not hold this rank.');
+        }
+
+        var normalised = _normaliseRankAssignment(existing[idx]);
+        if (normalised.isDeprecated === true) {
+            return _fail('Cannot activate a deprecated rank assignment.');
+        }
+
+        if (character.activeRankId === rankId) {
+            return _ok({ unchanged: true, activeRankId: rankId });
+        }
+
+        var write = _writeRankAssignments(characterId, existing, rankId);
+        if (!write.success) return write;
+
+        return _ok({
+            unchanged: false,
+            activeRankId: write.activeRankId,
+            activeRankNumber: write.activeRankNumber
+        });
+    }
+
+    function clearActiveRank(characterId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+
+        if (!_hasId(character.activeRankId)) {
+            return _ok({ unchanged: true });
+        }
+
+        // Force a reselection among non-deprecated entries.
+        var existing = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments.slice()
+            : [];
+
+        var write = _writeRankAssignments(characterId, existing, null);
+        if (!write.success) return write;
+
+        return _ok({
+            unchanged: false,
+            activeRankId: write.activeRankId,
+            activeRankNumber: write.activeRankNumber
+        });
+    }
+
+    // =========================================================================
+    // 20. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
@@ -1580,7 +2199,24 @@
 
         // Literacy
         isLiterate: isLiterate,
-        setLiterate: setLiterate
+        setLiterate: setLiterate,
+
+        // Rank containers
+        initializeRankContainers: initializeRankContainers,
+
+        // Rank reads
+        getRankAssignments: getRankAssignments,
+        getRankAssignment: getRankAssignment,
+        getActiveRank: getActiveRank,
+        hasRankAssignment: hasRankAssignment,
+
+        // Rank writes
+        addRankAssignment: addRankAssignment,
+        updateRankAssignment: updateRankAssignment,
+        deprecateRankAssignment: deprecateRankAssignment,
+        removeRankAssignment: removeRankAssignment,
+        setActiveRank: setActiveRank,
+        clearActiveRank: clearActiveRank
     };
 
     if (typeof module !== 'undefined' && module.exports) {
