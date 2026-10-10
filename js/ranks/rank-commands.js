@@ -2,562 +2,1066 @@
  * =============================================================================
  * STILL WATERS - RANK COMMANDS (rank-commands.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/rank/rank-commands.js
- * 
- * This file contains ALL write operations for ranks.
- * 
- * EXPORTED FUNCTIONS:
- *   - RankCommands.createRank(rankData)
- *   - RankCommands.updateRank(rankId, updates)
- *   - RankCommands.deleteRank(rankId)
- *   - RankCommands.addInheritanceRule(parentRankId, childRankId, minChildAge, order)
- *   - RankCommands.removeInheritanceRule(parentRankId, ruleIndex)
- *   - RankCommands.assignRankToCharacter(characterId, rankId, options)
- *   - RankCommands.deprecateRankAssignment(characterId, rankId)
- *   - RankCommands.renumberRankHolders(rankId)
- *   - RankCommands.updateRankSurnameRule(rankId, ruleSettings)
- *   - RankCommands.applySpouseInheritanceFixes(fixes)
- *   - RankCommands.bulkAssignRank(characterIds, rankId, options)
- *   - RankCommands.bulkDeprecateRank(characterIds, rankId)
- *   - RankCommands.rebuildAllRankNumbering()
- *   - RankCommands.getCharactersDirect()
- *   - RankCommands.forceSave()
- *   - RankCommands.hasRankDirect(character, rankId)
- *   - RankCommands.addRankToCharacterDirect(characterId, rankId, notes)
- *   - RankCommands.deprecateRankForCharacterDirect(characterId, rankId)
- * 
- * DEPENDENCIES:
- *   - rank-state.js: RankState
- *   - rank-queries.js: RankQueries
- *   - rank-assignment.js: RankAssignment
- *   - accessors.js: getCharacterById, getCharacters
- *   - time.js: getCurrentYearSafe
- *   - storage.js: saveMasterData
- * 
+ *
+ * The single write boundary for the rank domain.
+ *
+ * This file:
+ *   - creates, updates, and deletes rank records
+ *   - manages inheritance rules
+ *   - assigns, deprecates, and removes rank assignments on characters,
+ *     delegating the character-record write to CharacterCommands
+ *   - manages surname rules
+ *   - exposes the death hook for deprecateOnDeath ranks
+ *   - owns persist(), the only call site of saveMasterData in this domain
+ *
+ * This file does NOT:
+ *   - read or write the character record directly (CharacterCommands does)
+ *   - read or write relationship state (RomanceQueries, FamilyQueries do)
+ *   - perform numbering arithmetic on its own (RankAssignment does)
+ *   - call saveMasterData anywhere except persist()
+ *   - toast, render, or touch the DOM
+ *
+ * OWNERSHIP:
+ *   Rank records             -> RankState (this file calls its _-prefixed
+ *                               mutators)
+ *   Inheritance rules        -> RankState (this file calls its _-prefixed
+ *                               mutators)
+ *   Rank assignments         -> CharacterCommands (this file calls its
+ *                               public writers)
+ *   Rank policy              -> RankRules
+ *   Numbering arithmetic     -> RankAssignment
+ *
+ * PERSISTENCE:
+ *   Commands do not save. Every command mutates in-memory state and returns.
+ *   The caller is responsible for calling RankCommands.persist() once per
+ *   batch, after every command in the batch has succeeded. RankState has
+ *   already called markDataDirty on every mutation. persist() forces a
+ *   synchronous flush.
+ *
+ *   Batch callers (annual pipeline, modal onConfirm, bulk operations) call
+ *   persist() exactly once at the end. Single-operation callers may call
+ *   persist() immediately after a successful command.
+ *
+ * CONTRACT:
+ *   Every public command returns { success: true, ... } or
+ *   { success: false, reason: string, ... }. Never throws for domain errors.
+ *   Programming errors (missing required dependency, malformed argument
+ *   types where the caller is expected to have validated) throw.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - rank-state.js        (RankState)
+ *   - rank-rules.js        (RankRules)
+ *   - rank-queries.js      (RankQueries) — for getInheritanceSource
+ *   - rank-assignment.js   (RankAssignment) — for getNextRankNumber,
+ *                            renumberRankHolders, applySpouseInheritanceFixes,
+ *                            updateRankSurnameRule, generateSurnameFromRankRule
+ *   - character-commands.js (CharacterCommands) — for rank assignment writes
+ *   - time.js              (getCurrentYear, isValidYear)
+ *   - ids.js               (generateId)
+ *   - storage.js           (saveMasterData)
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    var _processingCommand = false;
+    if (!window.RankState) {
+        throw new Error('rank-commands.js requires rank-state.js to load first.');
+    }
+    if (!window.RankRules) {
+        throw new Error('rank-commands.js requires rank-rules.js to load first.');
+    }
+    if (!window.RankQueries) {
+        throw new Error('rank-commands.js requires rank-queries.js to load first.');
+    }
+    if (!window.RankAssignment) {
+        throw new Error('rank-commands.js requires rank-assignment.js to load first.');
+    }
+    if (!window.CharacterCommands) {
+        throw new Error('rank-commands.js requires character-commands.js to load first.');
+    }
+    if (typeof window.generateId !== 'function') {
+        throw new Error('rank-commands.js requires ids.js (generateId).');
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('rank-commands.js requires time.js (getCurrentYear).');
+    }
+    if (typeof window.isValidYear !== 'function') {
+        throw new Error('rank-commands.js requires time.js (isValidYear).');
+    }
+    if (typeof window.saveMasterData !== 'function') {
+        throw new Error('rank-commands.js requires storage.js (saveMasterData).');
+    }
+
+    var RS = window.RankState;
+    var RR = window.RankRules;
+    var RQ = window.RankQueries;
+    var RA = window.RankAssignment;
+    var CC = window.CharacterCommands;
+
+    var _requiredCharacterMethods = [
+        'addRankAssignment',
+        'updateRankAssignment',
+        'deprecateRankAssignment',
+        'removeRankAssignment',
+        'setActiveRank',
+        'clearActiveRank',
+        'getRankAssignment',
+        'getRankAssignments',
+        'hasRankAssignment'
+    ];
+    for (var _m = 0; _m < _requiredCharacterMethods.length; _m++) {
+        var _name = _requiredCharacterMethods[_m];
+        if (typeof CC[_name] !== 'function') {
+            throw new Error(
+                'rank-commands.js: CharacterCommands.' + _name +
+                ' is required. Character-commands.js must be loaded with the rank API.'
+            );
+        }
+    }
+
+    var _requiredAssignmentMethods = [
+        'getNextRankNumber',
+        'renumberRankHolders',
+        'applySpouseInheritanceFixes',
+        'updateRankSurnameRule'
+    ];
+    for (var _a = 0; _a < _requiredAssignmentMethods.length; _a++) {
+        var _aName = _requiredAssignmentMethods[_a];
+        if (typeof RA[_aName] !== 'function') {
+            throw new Error(
+                'rank-commands.js: RankAssignment.' + _aName + ' is required.'
+            );
+        }
+    }
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 2. RESULT HELPERS
     // =========================================================================
 
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-    }
-
-    function _invalidateAccessorCaches() {
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            window.invalidateAccessorCaches();
-        }
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
-    }
-
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    // =========================================================================
-    // 2. RANK CRUD COMMANDS (Wrappers around RankState)
-    // =========================================================================
-
-    function createRank(rankData) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
-
-        try {
-            var result = window.RankState.addRank(rankData);
-            return result;
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to create rank' };
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    function updateRank(rankId, updates) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
-
-        try {
-            var result = window.RankState.updateRank(rankId, updates);
-            return result;
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to update rank' };
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    function deleteRank(rankId) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
-
-        try {
-            // Check if rank has holders
-            var holders = window.RankQueries.getCharactersWithRank(rankId, false);
-            if (holders && holders.length > 0) {
-                return { 
-                    success: false, 
-                    error: 'Cannot delete rank with ' + holders.length + ' active holder(s). Remove or deprecate assignments first.' 
-                };
+    function _ok(data) {
+        var result = { success: true };
+        if (data && typeof data === 'object') {
+            for (var key in data) {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    result[key] = data[key];
+                }
             }
+        }
+        return result;
+    }
 
-            var result = window.RankState.deleteRank(rankId);
-            return result;
+    function _fail(reason) {
+        return { success: false, reason: reason };
+    }
+
+    // =========================================================================
+    // 3. VALIDATION HELPERS
+    // =========================================================================
+
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
+    }
+
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
+
+    function _isPlainObject(v) {
+        if (v === null || typeof v !== 'object') return false;
+        var proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
+    }
+
+    function _isNonEmptyString(v) {
+        return typeof v === 'string' && v.trim() !== '';
+    }
+
+    function _isValidYearOrMissing(v) {
+        if (_isMissing(v)) return true;
+        return window.isValidYear(v) === true;
+    }
+
+    function _resolveYear(value) {
+        if (_isMissing(value)) return window.getCurrentYear();
+        return value;
+    }
+
+    // =========================================================================
+    // 4. PERSISTENCE
+    // =========================================================================
+
+    /**
+     * Forces a synchronous flush of masterData to storage.
+     *
+     * The only call site of saveMasterData in this domain. Every command has
+     * already mutated in-memory state and called markDataDirty via RankState.
+     * persist() is the caller's explicit "I am done; write it out" signal.
+     *
+     * Returns { success: true } if the write succeeded, { success: false,
+     * reason } otherwise.
+     */
+    function persist() {
+        try {
+            var ok = window.saveMasterData();
+            if (ok === true) return _ok();
+            return _fail('saveMasterData returned false');
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to delete rank' };
-        } finally {
-            _processingCommand = false;
+            return _fail(e && e.message ? e.message : 'saveMasterData threw');
         }
     }
 
     // =========================================================================
-    // 3. INHERITANCE COMMANDS (Wrappers around RankState)
+    // 5. RANK CRUD
     // =========================================================================
 
-    function addInheritanceRule(parentRankId, childRankId, minChildAge, order) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
+    /**
+     * Creates a rank.
+     *
+     * Input shape (all optional except name):
+     *   {
+     *     name,
+     *     priority,
+     *     symbol,
+     *     genderRestriction,
+     *     parentRankId,
+     *     numbered,
+     *     numberingType,
+     *     numberingGroup,
+     *     sourceRankId,
+     *     inheritanceSource,
+     *     locationTypeId,
+     *     deprecateOnDeath,
+     *     spouseInheritance,
+     *     allowsMultipleSpouses,
+     *     customSurnameRule,
+     *     surnameConnector,
+     *     surnamePrefix,
+     *     surnameSuffix
+     *   }
+     *
+     * applyDefaults fills in the rest. Validation via RankRules.validate.
+     */
+    function createRank(rankData) {
+        if (!_isPlainObject(rankData)) {
+            return _fail('rankData must be a plain object.');
         }
-        _processingCommand = true;
+        if (!_isNonEmptyString(rankData.name)) {
+            return _fail('name is required.');
+        }
+
+        var defaults = RR.applyDefaults(rankData);
+
+        // Cross-rank reference checks before writing: parent and source
+        // must exist. RankState validates on insert too, but failing here
+        // gives a clearer reason to the caller.
+        if (_hasId(defaults.parentRankId) && !RS.getRank(defaults.parentRankId)) {
+            return _fail('parentRankId "' + defaults.parentRankId + '" does not exist.');
+        }
+        if (_hasId(defaults.sourceRankId) && !RS.getRank(defaults.sourceRankId)) {
+            return _fail('sourceRankId "' + defaults.sourceRankId + '" does not exist.');
+        }
+
+        var candidate = Object.assign({}, defaults, {
+            id: window.generateId('rank'),
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        });
+
+        var validation = RR.validate(candidate);
+        if (!validation.valid) {
+            return _fail(validation.errors.join('; '));
+        }
 
         try {
-            var result = window.RankState.addInheritanceRule(parentRankId, childRankId, minChildAge, order);
-            return result;
+            var rank = RS._addRank(candidate);
+            return _ok({ rank: rank });
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to add inheritance rule' };
-        } finally {
-            _processingCommand = false;
+            return _fail(e && e.message ? e.message : 'RankState refused the write.');
+        }
+    }
+
+    /**
+     * Updates a rank.
+     *
+     * Rejects cross-rank reference changes that would point at a
+     * non-existent rank. Coherence checks (sourceRankId requires
+     * inheritanceSource, etc.) run via RankRules.validatePatch.
+     */
+    function updateRank(rankId, updates) {
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+        if (!_isPlainObject(updates)) {
+            return _fail('updates must be a plain object.');
+        }
+
+        var current = RS.getRank(rankId);
+        if (!current) return _fail('Rank not found.');
+
+        if (_hasId(updates.parentRankId)
+            && updates.parentRankId !== current.parentRankId
+            && !RS.getRank(updates.parentRankId)) {
+            return _fail('parentRankId "' + updates.parentRankId + '" does not exist.');
+        }
+        if (_hasId(updates.sourceRankId)
+            && updates.sourceRankId !== current.sourceRankId
+            && !RS.getRank(updates.sourceRankId)) {
+            return _fail('sourceRankId "' + updates.sourceRankId + '" does not exist.');
+        }
+
+        var coherence = RR.validatePatch(current, updates);
+        if (!coherence.valid) {
+            return _fail(coherence.errors.join('; '));
+        }
+
+        var patch = Object.assign({}, updates, { updatedAt: Date.now() });
+
+        try {
+            var updated = RS._updateRank(rankId, patch);
+            if (!updated) return _fail('Rank not found after update.');
+            return _ok({ rank: updated });
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'RankState refused the write.');
+        }
+    }
+
+    /**
+     * Deletes a rank.
+     *
+     * Refuses if the rank has non-deprecated holders, unless the caller
+     * passes { force: true }. In that case, every assignment for the rank
+     * is removed from every character before the rank record is deleted.
+     *
+     * Also refuses if any other rank references this rank as its parent or
+     * source, or if any inheritance rule references it — unless force is
+     * set, in which case those references are cleaned up: child ranks lose
+     * the parentRankId, sourceRankId references are nulled, and inheritance
+     * rules referencing this rank as a child are dropped (RankState._removeRank
+     * already does the last part).
+     */
+    function deleteRank(rankId, options) {
+        options = options || {};
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var rank = RS.getRank(rankId);
+        if (!rank) return _fail('Rank not found.');
+
+        var holders = RQ.getCharactersWithRank(rankId, false);
+        var force = options.force === true;
+
+        if (holders.length > 0 && !force) {
+            return _fail(
+                'Cannot delete rank with ' + holders.length +
+                ' active holder(s). Remove or deprecate assignments first, ' +
+                'or pass { force: true }.'
+            );
+        }
+
+        var allRanks = RS.getAllRanks();
+        var referrers = [];
+        for (var i = 0; i < allRanks.length; i++) {
+            var r = allRanks[i];
+            if (!r || r.id === rankId) continue;
+            if (r.parentRankId === rankId) referrers.push({ id: r.id, field: 'parentRankId' });
+            if (r.sourceRankId === rankId) referrers.push({ id: r.id, field: 'sourceRankId' });
+        }
+        if (referrers.length > 0 && !force) {
+            return _fail(
+                'Cannot delete rank referenced by ' + referrers.length +
+                ' other rank(s) as parent or source. Pass { force: true } to ' +
+                'null the references and proceed.'
+            );
+        }
+
+        if (force && holders.length > 0) {
+            for (var h = 0; h < holders.length; h++) {
+                var holderId = holders[h].id;
+                var removeResult = CC.removeRankAssignment(holderId, rankId);
+                if (!removeResult || removeResult.success !== true) {
+                    return _fail('Failed to remove rank assignment from character ' +
+                        holderId + ': ' +
+                        (removeResult && removeResult.reason
+                            ? removeResult.reason
+                            : 'unknown error'));
+                }
+            }
+        }
+
+        if (force && referrers.length > 0) {
+            for (var r = 0; r < referrers.length; r++) {
+                var ref = referrers[r];
+                var patch = {};
+                patch[ref.field] = null;
+                // Coherence: clearing sourceRankId requires inheritanceSource
+                // to become 'none'. The current rank record has its own
+                // inheritanceSource which we reset here.
+                if (ref.field === 'sourceRankId') {
+                    patch.inheritanceSource = 'none';
+                }
+                var updateResult = RS._updateRank(ref.id, patch);
+                if (!updateResult) {
+                    return _fail('Failed to update referring rank ' + ref.id + '.');
+                }
+            }
+        }
+
+        try {
+            var deleted = RS._removeRank(rankId);
+            if (!deleted) return _fail('RankState refused the delete.');
+            return _ok({
+                rankId: rankId,
+                removedAssignments: force ? holders.length : 0,
+                clearedReferences: force ? referrers.length : 0
+            });
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'RankState refused the delete.');
+        }
+    }
+
+    // =========================================================================
+    // 6. INHERITANCE RULES
+    // =========================================================================
+
+    function addInheritanceRule(parentRankId, rule) {
+        if (!_hasId(parentRankId)) return _fail('parentRankId is required.');
+        if (!_isPlainObject(rule)) return _fail('rule must be a plain object.');
+
+        var validation = RR.validateInheritanceRule(rule);
+        if (!validation.valid) {
+            return _fail(validation.errors.join('; '));
+        }
+
+        if (!RS.getRank(parentRankId)) {
+            return _fail('Parent rank not found.');
+        }
+        if (_hasId(rule.childRankId) && !RS.getRank(rule.childRankId)) {
+            return _fail('Child rank "' + rule.childRankId + '" does not exist.');
+        }
+        if (_hasId(rule.childRankIdFemale) && !RS.getRank(rule.childRankIdFemale)) {
+            return _fail('Child rank "' + rule.childRankIdFemale + '" does not exist.');
+        }
+
+        try {
+            var stored = RS._addInheritanceRule(parentRankId, rule);
+            return _ok({ rule: stored });
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'RankState refused the rule.');
         }
     }
 
     function removeInheritanceRule(parentRankId, ruleIndex) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
+        if (!_hasId(parentRankId)) return _fail('parentRankId is required.');
+        if (typeof ruleIndex !== 'number' || !Number.isInteger(ruleIndex)) {
+            return _fail('ruleIndex must be an integer.');
         }
-        _processingCommand = true;
 
         try {
-            var result = window.RankState.removeInheritanceRule(parentRankId, ruleIndex);
-            return result;
+            var removed = RS._removeInheritanceRule(parentRankId, ruleIndex);
+            if (!removed) return _fail('No such rule.');
+            return _ok();
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to remove inheritance rule' };
-        } finally {
-            _processingCommand = false;
+            return _fail(e && e.message ? e.message : 'RankState refused the delete.');
+        }
+    }
+
+    /**
+     * Bulk-replaces the inheritance rules for a parent rank.
+     */
+    function setInheritanceRules(parentRankId, rules) {
+        if (!_hasId(parentRankId)) return _fail('parentRankId is required.');
+        if (!Array.isArray(rules)) return _fail('rules must be an array.');
+
+        for (var i = 0; i < rules.length; i++) {
+            var validation = RR.validateInheritanceRule(rules[i]);
+            if (!validation.valid) {
+                return _fail('rule[' + i + ']: ' + validation.errors.join('; '));
+            }
+            if (_hasId(rules[i].childRankId) && !RS.getRank(rules[i].childRankId)) {
+                return _fail('rule[' + i + ']: child rank "' +
+                    rules[i].childRankId + '" does not exist.');
+            }
+            if (_hasId(rules[i].childRankIdFemale)
+                && !RS.getRank(rules[i].childRankIdFemale)) {
+                return _fail('rule[' + i + ']: child rank "' +
+                    rules[i].childRankIdFemale + '" does not exist.');
+            }
+        }
+
+        try {
+            RS._setInheritanceRules(parentRankId, rules);
+            return _ok();
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'RankState refused the write.');
         }
     }
 
     // =========================================================================
-    // 4. ASSIGNMENT COMMANDS (Wrappers around RankAssignment)
+    // 7. RANK ASSIGNMENT
     // =========================================================================
+    //
+    // Assignment writes go through CharacterCommands. The rank domain's job
+    // here is:
+    //   - validate against RankRules.canAssignRank
+    //   - compute the numbering info via RankAssignment.getNextRankNumber
+    //   - read/write the character-side assignment via CharacterCommands
+    //
+    // The character projection used by canAssignRank is fetched from
+    // CharacterState.getCharacter (which returns a projection).
 
+    function _getCharacterProjection(characterId) {
+        if (!_hasId(characterId)) return null;
+        if (typeof window.CharacterState === 'undefined'
+            || typeof window.CharacterState.getCharacter !== 'function') {
+            return null;
+        }
+        return window.CharacterState.getCharacter(characterId);
+    }
+
+    /**
+     * Assigns a rank to a character.
+     *
+     * options:
+     *   {
+     *     customTitle,      string | null
+     *     address,          string | null
+     *     number,           number | null | object (see below)
+     *     order,            number
+     *     assignedYear,     number
+     *     notes,            string
+     *     inheritedFrom,    string | null
+     *     skipNumbering     boolean   — do not compute a number even for
+     *                                  numbered ranks
+     *   }
+     *
+     * number may be:
+     *   - undefined       → auto-computed for numbered ranks
+     *   - null            → no number
+     *   - a number        → treated as rawNumber, display computed via
+     *                       RankRules.formatNumber
+     *   - an object       → passed through as-is (rawNumber, display, type,
+     *                       groupId, holdersInGroup)
+     */
     function assignRankToCharacter(characterId, rankId, options) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
+        options = options || {};
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
 
-        try {
-            var result = window.RankAssignment.assignRankToCharacter(characterId, rankId, options);
-            return result;
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to assign rank' };
-        } finally {
-            _processingCommand = false;
+        var rank = RS.getRank(rankId);
+        if (!rank) return _fail('Rank not found.');
+
+        var character = _getCharacterProjection(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var policy = RR.canAssignRank(character, rank, options);
+        if (!policy.valid) return _fail(policy.reason);
+
+        // Numbering.
+        var numberInfo = null;
+        if (rank.numbered === true && options.skipNumbering !== true) {
+            if (options.number === null) {
+                numberInfo = null;
+            } else if (typeof options.number === 'number') {
+                numberInfo = {
+                    rawNumber: options.number,
+                    display: RR.formatNumber(options.number, rank.numberingType),
+                    type: rank.numberingType === 'ordinal' ? 'ordinal' : 'roman',
+                    groupId: null,
+                    holdersInGroup: null
+                };
+            } else if (_isPlainObject(options.number)) {
+                numberInfo = options.number;
+            } else {
+                var sourceId = null;
+                if (rank.numberingGroup === 'parent'
+                    || rank.numberingGroup === 'spouse'
+                    || rank.numberingGroup === 'source') {
+                    sourceId = RQ.getInheritanceSource(characterId, rankId);
+                }
+                try {
+                    numberInfo = RA.getNextRankNumber(
+                        rankId,
+                        characterId,
+                        character.name,
+                        character.gender,
+                        sourceId
+                    );
+                } catch (e) {
+                    numberInfo = null;
+                }
+            }
         }
+
+        var assignedYear = _isValidYearOrMissing(options.assignedYear)
+            ? _resolveYear(options.assignedYear)
+            : window.getCurrentYear();
+
+        var writeResult = CC.addRankAssignment(characterId, {
+            rankId: rankId,
+            customTitle: _hasId(options.customTitle) ? options.customTitle : null,
+            address: _hasId(options.address) ? options.address : null,
+            number: numberInfo,
+            order: (typeof options.order === 'number' && Number.isFinite(options.order))
+                ? options.order
+                : undefined,
+            assignedYear: assignedYear,
+            notes: typeof options.notes === 'string' ? options.notes : '',
+            inheritedFrom: _hasId(options.inheritedFrom) ? options.inheritedFrom : null
+        });
+
+        if (!writeResult || writeResult.success !== true) {
+            return _fail(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterCommands refused the rank assignment.');
+        }
+
+        return _ok({
+            characterId: characterId,
+            rankId: rankId,
+            assignment: writeResult.assignment,
+            activeRankId: writeResult.activeRankId,
+            activeRankNumber: writeResult.activeRankNumber,
+            reactivated: writeResult.reactivated === true
+        });
     }
 
+    /**
+     * Deprecates a rank assignment. The assignment record stays on the
+     * character, marked deprecated; the active pointer is recomputed by
+     * CharacterCommands.
+     */
     function deprecateRankAssignment(characterId, rankId) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
 
-        try {
-            var result = window.RankAssignment.deprecateRankAssignment(characterId, rankId);
-            return result;
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to deprecate rank assignment' };
-        } finally {
-            _processingCommand = false;
+        var character = _getCharacterProjection(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var policy = RR.canDeprecateRankAssignment(character, rankId);
+        if (!policy.valid) return _fail(policy.reason);
+
+        var writeResult = CC.deprecateRankAssignment(characterId, rankId);
+        if (!writeResult || writeResult.success !== true) {
+            return _fail(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterCommands refused the deprecation.');
         }
+
+        return _ok({
+            characterId: characterId,
+            rankId: rankId,
+            activeRankId: writeResult.activeRankId,
+            activeRankNumber: writeResult.activeRankNumber,
+            unchanged: writeResult.unchanged === true
+        });
     }
 
+    /**
+     * Hard-removes a rank assignment. Distinct from deprecate: the record
+     * ceases to exist.
+     */
+    function removeRankAssignment(characterId, rankId) {
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var writeResult = CC.removeRankAssignment(characterId, rankId);
+        if (!writeResult || writeResult.success !== true) {
+            return _fail(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterCommands refused the removal.');
+        }
+        return _ok({
+            characterId: characterId,
+            rankId: rankId,
+            activeRankId: writeResult.activeRankId,
+            activeRankNumber: writeResult.activeRankNumber
+        });
+    }
+
+    function setActiveRank(characterId, rankId) {
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var writeResult = CC.setActiveRank(characterId, rankId);
+        if (!writeResult || writeResult.success !== true) {
+            return _fail(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterCommands refused the active rank write.');
+        }
+        return _ok({
+            characterId: characterId,
+            activeRankId: writeResult.activeRankId,
+            activeRankNumber: writeResult.activeRankNumber,
+            unchanged: writeResult.unchanged === true
+        });
+    }
+
+    function clearActiveRank(characterId) {
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+
+        var writeResult = CC.clearActiveRank(characterId);
+        if (!writeResult || writeResult.success !== true) {
+            return _fail(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterCommands refused the active rank clear.');
+        }
+        return _ok({
+            characterId: characterId,
+            activeRankId: writeResult.activeRankId,
+            activeRankNumber: writeResult.activeRankNumber,
+            unchanged: writeResult.unchanged === true
+        });
+    }
+
+    /**
+     * Bulk-assigns a rank to many characters.
+     *
+     * Does not short-circuit on individual failures: each character is
+     * attempted independently. The envelope reports counts and a list of
+     * per-character errors.
+     */
+    function bulkAssignRank(characterIds, rankId, options) {
+        options = options || {};
+        if (!Array.isArray(characterIds)) {
+            return _fail('characterIds must be an array.');
+        }
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var rank = RS.getRank(rankId);
+        if (!rank) return _fail('Rank not found.');
+
+        var results = [];
+        var errors = [];
+
+        for (var i = 0; i < characterIds.length; i++) {
+            var cid = characterIds[i];
+            var r = assignRankToCharacter(cid, rankId, options);
+            if (r.success) {
+                results.push({ characterId: cid, assignment: r.assignment });
+            } else {
+                errors.push({ characterId: cid, reason: r.reason });
+            }
+        }
+
+        return _ok({
+            totalProcessed: characterIds.length,
+            successful: results.length,
+            failed: errors.length,
+            results: results,
+            errors: errors
+        });
+    }
+
+    /**
+     * Bulk-deprecates a rank for many characters.
+     */
+    function bulkDeprecateRank(characterIds, rankId) {
+        if (!Array.isArray(characterIds)) {
+            return _fail('characterIds must be an array.');
+        }
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+
+        var succeeded = [];
+        var errors = [];
+
+        for (var i = 0; i < characterIds.length; i++) {
+            var cid = characterIds[i];
+            var r = deprecateRankAssignment(cid, rankId);
+            if (r.success) {
+                succeeded.push(cid);
+            } else {
+                errors.push({ characterId: cid, reason: r.reason });
+            }
+        }
+
+        return _ok({
+            totalProcessed: characterIds.length,
+            successful: succeeded.length,
+            failed: errors.length,
+            succeeded: succeeded,
+            errors: errors
+        });
+    }
+
+    // =========================================================================
+    // 8. NUMBERING
+    // =========================================================================
+
+    /**
+     * Renumbers all holders of a rank. Delegates to RankAssignment.
+     */
     function renumberRankHolders(rankId) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+        var rank = RS.getRank(rankId);
+        if (!rank) return _fail('Rank not found.');
+        if (rank.numbered !== true) {
+            return _fail('Rank is not numbered.');
         }
-        _processingCommand = true;
 
         try {
-            var result = window.RankAssignment.renumberRankHolders(rankId);
-            return result;
+            var result = RA.renumberRankHolders(rankId);
+            if (!result || result.success !== true) {
+                return _fail(result && result.error
+                    ? result.error
+                    : 'RankAssignment refused the renumber.');
+            }
+            return _ok({ rankId: rankId, fixedCount: result.fixedCount || 0 });
         } catch (e) {
-            return { success: false, error: e.message || 'Failed to renumber rank holders' };
-        } finally {
-            _processingCommand = false;
+            return _fail(e && e.message ? e.message : 'Renumber failed.');
         }
     }
+
+    /**
+     * Renumbers every numbered rank. Useful for repair passes and after
+     * structural changes to a rank's inheritance source configuration.
+     */
+    function rebuildAllRankNumbering() {
+        var ranks = RS.getAllRanks();
+        var fixedCounts = {};
+        var totalFixed = 0;
+        var errors = [];
+
+        for (var i = 0; i < ranks.length; i++) {
+            var r = ranks[i];
+            if (!r || r.numbered !== true) continue;
+            var result = renumberRankHolders(r.id);
+            if (result.success) {
+                if (result.fixedCount > 0) {
+                    fixedCounts[r.id] = result.fixedCount;
+                    totalFixed += result.fixedCount;
+                }
+            } else {
+                errors.push({ rankId: r.id, reason: result.reason });
+            }
+        }
+
+        return _ok({
+            totalFixed: totalFixed,
+            fixedCounts: fixedCounts,
+            errors: errors
+        });
+    }
+
+    // =========================================================================
+    // 9. SURNAME RULE
+    // =========================================================================
 
     function updateRankSurnameRule(rankId, ruleSettings) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
+        if (!_hasId(rankId)) return _fail('rankId is required.');
+        if (!_isPlainObject(ruleSettings)) {
+            return _fail('ruleSettings must be a plain object.');
         }
-        _processingCommand = true;
 
-        try {
-            var result = window.RankAssignment.updateRankSurnameRule(rankId, ruleSettings);
-            return result;
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to update surname rule' };
-        } finally {
-            _processingCommand = false;
-        }
+        var rank = RS.getRank(rankId);
+        if (!rank) return _fail('Rank not found.');
+
+        var updates = {
+            customSurnameRule: ruleSettings.enabled === true,
+            surnameConnector: typeof ruleSettings.connector === 'string'
+                ? ruleSettings.connector
+                : 'of',
+            surnamePrefix: typeof ruleSettings.prefix === 'string'
+                ? ruleSettings.prefix
+                : '',
+            surnameSuffix: typeof ruleSettings.suffix === 'string'
+                ? ruleSettings.suffix
+                : ''
+        };
+
+        return updateRank(rankId, updates);
     }
 
+    // =========================================================================
+    // 10. SPOUSE INHERITANCE
+    // =========================================================================
+
+    /**
+     * Applies a batch of spouse-inheritance fixes.
+     *
+     * `fixes` is an array of records shaped as produced by
+     * RankIssues.checkSpouseInheritance:
+     *
+     *   { characterId, rankId, spouseName, sourceRankName, ... }
+     *
+     * The command assigns each rank, using inheritedFrom = the spouse id
+     * when present.
+     *
+     * Persist is the caller's responsibility. The annual pipeline calls
+     * persist once after all fixes; a modal calls persist once after the
+     * batch.
+     */
     function applySpouseInheritanceFixes(fixes) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
+        if (!Array.isArray(fixes)) return _fail('fixes must be an array.');
+        if (fixes.length === 0) return _ok({ applied: 0, errors: [] });
 
-        try {
-            var result = window.RankAssignment.applySpouseInheritanceFixes(fixes);
-            return result;
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to apply spouse inheritance fixes' };
-        } finally {
-            _processingCommand = false;
-        }
-    }
+        var applied = 0;
+        var errors = [];
+        var currentYear = window.getCurrentYear();
 
-    // =========================================================================
-    // 5. BULK OPERATIONS
-    // =========================================================================
-
-    function bulkAssignRank(characterIds, rankId, options) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
-
-        try {
-            options = options || {};
-            var results = [];
-            var errors = [];
-
-            for (var i = 0; i < characterIds.length; i++) {
-                var result = assignRankToCharacter(characterIds[i], rankId, options);
-                if (result.success) {
-                    results.push(result.data);
-                } else {
-                    errors.push({
-                        characterId: characterIds[i],
-                        error: result.error
-                    });
-                }
+        for (var i = 0; i < fixes.length; i++) {
+            var fix = fixes[i];
+            if (!_isPlainObject(fix)) {
+                errors.push({ index: i, reason: 'fix is not an object' });
+                continue;
+            }
+            if (!_hasId(fix.characterId)) {
+                errors.push({ index: i, reason: 'characterId missing' });
+                continue;
+            }
+            if (!_hasId(fix.rankId)) {
+                errors.push({ index: i, reason: 'rankId missing' });
+                continue;
             }
 
-            return {
-                success: errors.length === 0,
-                results: results,
-                errors: errors,
-                totalProcessed: characterIds.length,
-                successful: results.length,
-                failed: errors.length
-            };
-
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to bulk assign ranks' };
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    function bulkDeprecateRank(characterIds, rankId) {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
-
-        try {
-            var results = [];
-            var errors = [];
-
-            for (var i = 0; i < characterIds.length; i++) {
-                var result = deprecateRankAssignment(characterIds[i], rankId);
-                if (result.success) {
-                    results.push(characterIds[i]);
-                } else {
-                    errors.push({
-                        characterId: characterIds[i],
-                        error: result.error
-                    });
-                }
-            }
-
-            return {
-                success: errors.length === 0,
-                results: results,
-                errors: errors,
-                totalProcessed: characterIds.length,
-                successful: results.length,
-                failed: errors.length
-            };
-
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to bulk deprecate ranks' };
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. REBUILD COMMANDS
-    // =========================================================================
-
-    function rebuildAllRankNumbering() {
-        if (_processingCommand) {
-            return { success: false, error: 'Already processing a command' };
-        }
-        _processingCommand = true;
-
-        try {
-            var ranks = window.RankQueries.getAllRanks();
-            var fixedCounts = {};
-            var totalFixed = 0;
-
-            for (var i = 0; i < ranks.length; i++) {
-                var rank = ranks[i];
-                if (rank.numbered) {
-                    var result = renumberRankHolders(rank.id);
-                    if (result.success && result.fixedCount > 0) {
-                        fixedCounts[rank.id] = result.fixedCount;
-                        totalFixed += result.fixedCount;
-                    }
-                }
-            }
-
-            return {
-                success: true,
-                fixedCounts: fixedCounts,
-                totalFixed: totalFixed
-            };
-
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to rebuild numbering' };
-        } finally {
-            _processingCommand = false;
-        }
-    }
-
-    // =========================================================================
-    // 7. DIRECT HELPER FUNCTIONS (Legacy Compatibility from rankSystem.js)
-    // =========================================================================
-
-    /**
-     * Gets characters directly from masterData (bypasses accessors)
-     * WARNING: Use RankQueries.getCharactersWithRank() instead when possible
-     * @returns {Array} Array of character objects
-     */
-    function getCharactersDirect() {
-        if (window.masterData && window.masterData.data && window.masterData.data.characters) {
-            return window.masterData.data.characters;
-        }
-        return [];
-    }
-
-    /**
-     * Forces a save to localStorage
-     * WARNING: Use saveMasterData() instead when possible
-     */
-    function forceSave() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
-    }
-
-    /**
-     * Checks if a character has a specific rank (direct access)
-     * @param {Object} character - Character object
-     * @param {string} rankId - Rank ID to check
-     * @returns {boolean} True if character has the rank
-     */
-    function hasRankDirect(character, rankId) {
-        if (!character || !character.rankAssignments) return false;
-        return character.rankAssignments.some(function(ra) {
-            return ra.rankId === rankId && !ra.isDeprecated;
-        });
-    }
-
-    /**
-     * Adds a rank to a character directly (bypasses validation)
-     * WARNING: Use RankCommands.assignRankToCharacter() instead
-     * @param {string} characterId - Character ID
-     * @param {string} rankId - Rank ID
-     * @param {string} notes - Optional notes
-     * @returns {boolean} True if successful
-     */
-    function addRankToCharacterDirect(characterId, rankId, notes) {
-        var characters = getCharactersDirect();
-        var character = characters.find(function(c) { return c.id === characterId; });
-        if (!character) return false;
-        
-        var rank = window.RankQueries.getRank(rankId);
-        if (!rank) return false;
-        
-        // Check gender restriction
-        if (rank.genderRestriction !== 'either' && character.gender !== rank.genderRestriction) {
-            return false;
-        }
-        
-        // Check if already has rank
-        if (hasRankDirect(character, rankId)) return true;
-        
-        if (!character.rankAssignments) character.rankAssignments = [];
-        
-        var currentYear = _getCurrentYear();
-        
-        // Get next number if numbered
-        var numberInfo = null;
-        if (rank.numbered) {
-            numberInfo = window.RankAssignment.getNextRankNumber(rankId, characterId, character.name, character.gender);
-        }
-        
-        character.rankAssignments.push({
-            rankId: rankId,
-            customTitle: null,
-            address: null,
-            number: numberInfo,
-            order: character.rankAssignments.length * 10 + 10,
-            isActive: character.rankAssignments.length === 0,
-            isDeprecated: false,
-            assignedYear: currentYear,
-            notes: notes || 'Added by rank manager'
-        });
-        
-        if (character.rankAssignments.length === 1) {
-            character.activeRankId = rankId;
-        }
-        
-        forceSave();
-        return true;
-    }
-
-    /**
-     * Deprecates a rank for a character directly (bypasses validation)
-     * WARNING: Use RankCommands.deprecateRankAssignment() instead
-     * @param {string} characterId - Character ID
-     * @param {string} rankId - Rank ID
-     * @returns {boolean} True if successful
-     */
-    function deprecateRankForCharacterDirect(characterId, rankId) {
-        var characters = getCharactersDirect();
-        var character = characters.find(function(c) { return c.id === characterId; });
-        if (!character || !character.rankAssignments) return false;
-        
-        var assignment = character.rankAssignments.find(function(a) {
-            return a.rankId === rankId && !a.isDeprecated;
-        });
-        if (!assignment) return false;
-        
-        assignment.isDeprecated = true;
-        
-        if (character.activeRankId === rankId) {
-            var nextActive = character.rankAssignments.find(function(a) {
-                return !a.isDeprecated && a.rankId !== rankId;
+            var result = assignRankToCharacter(fix.characterId, fix.rankId, {
+                notes: 'Inherited from spouse ' +
+                    (fix.spouseName || 'unknown') +
+                    (fix.sourceRankName ? ' via ' + fix.sourceRankName : ''),
+                assignedYear: currentYear,
+                inheritedFrom: _hasId(fix.spouseId) ? fix.spouseId : null
             });
-            character.activeRankId = nextActive ? nextActive.rankId : null;
+
+            if (result.success) {
+                applied++;
+            } else {
+                errors.push({
+                    index: i,
+                    characterId: fix.characterId,
+                    rankId: fix.rankId,
+                    reason: result.reason
+                });
+            }
         }
-        
-        forceSave();
-        return true;
+
+        return _ok({
+            applied: applied,
+            failed: errors.length,
+            errors: errors
+        });
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 11. DEATH HOOK
+    // =========================================================================
+
+    /**
+     * Deprecates every rank assignment on a deceased character where the
+     * rank has deprecateOnDeath === true.
+     *
+     * Called by the death cascade (CharacterLifecycle or the rank
+     * integrations module). The caller is responsible for calling persist()
+     * after the death cascade, along with whatever else the cascade does.
+     *
+     * Returns a summary of what was deprecated and what failed.
+     */
+    function deprecateRanksOnDeath(characterId, options) {
+        options = options || {};
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+
+        var character = _getCharacterProjection(characterId);
+        if (!character) return _fail('Character not found.');
+
+        var assignments = Array.isArray(character.rankAssignments)
+            ? character.rankAssignments
+            : [];
+
+        var deprecated = [];
+        var errors = [];
+
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            if (!a || a.isDeprecated === true) continue;
+
+            var rank = RS.getRank(a.rankId);
+            if (!rank) {
+                errors.push({ rankId: a.rankId, reason: 'rank not found' });
+                continue;
+            }
+            if (rank.deprecateOnDeath !== true) continue;
+
+            var result = deprecateRankAssignment(characterId, a.rankId);
+            if (result.success) {
+                deprecated.push(a.rankId);
+            } else {
+                errors.push({ rankId: a.rankId, reason: result.reason });
+            }
+        }
+
+        // Ranks that were deprecated may need renumbering for their
+        // remaining holders. Attempt renumber for each affected rank.
+        var renumbered = [];
+        for (var j = 0; j < deprecated.length; j++) {
+            var rankId = deprecated[j];
+            var rankRecord = RS.getRank(rankId);
+            if (!rankRecord || rankRecord.numbered !== true) continue;
+            var rn = renumberRankHolders(rankId);
+            if (rn.success && rn.fixedCount > 0) {
+                renumbered.push({ rankId: rankId, fixedCount: rn.fixedCount });
+            }
+        }
+
+        return _ok({
+            characterId: characterId,
+            deathYear: _isValidYearOrMissing(options.deathYear)
+                ? _resolveYear(options.deathYear)
+                : window.getCurrentYear(),
+            deprecated: deprecated,
+            renumbered: renumbered,
+            errors: errors
+        });
+    }
+
+    // =========================================================================
+    // 12. EXPORTS
     // =========================================================================
 
     window.RankCommands = {
+        // Persistence
+        persist: persist,
+
         // Rank CRUD
         createRank: createRank,
         updateRank: updateRank,
         deleteRank: deleteRank,
 
-        // Inheritance
+        // Inheritance rules
         addInheritanceRule: addInheritanceRule,
         removeInheritanceRule: removeInheritanceRule,
+        setInheritanceRules: setInheritanceRules,
 
         // Assignment
         assignRankToCharacter: assignRankToCharacter,
         deprecateRankAssignment: deprecateRankAssignment,
-        renumberRankHolders: renumberRankHolders,
+        removeRankAssignment: removeRankAssignment,
+        setActiveRank: setActiveRank,
+        clearActiveRank: clearActiveRank,
 
-        // Surname rules
+        // Bulk
+        bulkAssignRank: bulkAssignRank,
+        bulkDeprecateRank: bulkDeprecateRank,
+
+        // Numbering
+        renumberRankHolders: renumberRankHolders,
+        rebuildAllRankNumbering: rebuildAllRankNumbering,
+
+        // Surname rule
         updateRankSurnameRule: updateRankSurnameRule,
 
         // Spouse inheritance
         applySpouseInheritanceFixes: applySpouseInheritanceFixes,
 
-        // Bulk operations
-        bulkAssignRank: bulkAssignRank,
-        bulkDeprecateRank: bulkDeprecateRank,
-
-        // Rebuild
-        rebuildAllRankNumbering: rebuildAllRankNumbering,
-
-        // Direct helpers (legacy compatibility)
-        getCharactersDirect: getCharactersDirect,
-        forceSave: forceSave,
-        hasRankDirect: hasRankDirect,
-        addRankToCharacterDirect: addRankToCharacterDirect,
-        deprecateRankForCharacterDirect: deprecateRankForCharacterDirect
+        // Death hook
+        deprecateRanksOnDeath: deprecateRanksOnDeath
     };
 
-    // Legacy aliases
-    window._rankCommands = window.RankCommands;
-
-    // Also expose individual functions at window level for backward compatibility
-    window.getCharactersDirect = getCharactersDirect;
-    window.forceSave = forceSave;
-    window.hasRankDirect = hasRankDirect;
-    window.addRankToCharacterDirect = addRankToCharacterDirect;
-    window.deprecateRankForCharacterDirect = deprecateRankForCharacterDirect;
-
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.RankCommands;
+    }
 })();
