@@ -1,352 +1,269 @@
 /**
  * =============================================================================
- * STILL WATERS - RANK ISSUES SYSTEM (WITH AUTO-FIX)
+ * STILL WATERS - RANK ISSUES (rank-issues.js)
  * =============================================================================
- * 
- * LOCATION: js/ranks/rank-issues.js
- * 
- * This file uses the REAL relationship system:
- *   - RomanceLogic.getPrimaryPartner() for spouse detection
- *   - FamilyLogic.getParents() / getChildren() for family relationships
- * 
- * ISSUE TYPES CHECKED:
- *   1. Spouse Inheritance - Spouse not receiving rank upon marriage
- *   2. Child Inheritance - Children not receiving parent's rank
- *   3. Gender Mismatch - Wrong gender holding restricted ranks
- *   4. Numbering Issues - Incorrect birth order numbering
- *   5. Deprecation Issues - Ranks not deprecating when they should
- *   6. Broken Inheritance Rules - Rules referencing non-existent ranks
- * 
- * AUTO-FIX: Each issue includes a fix function that can be called
- * 
+ *
+ * LOCATION: js/core/rank/rank-issues.js
+ *
+ * Detects rank configuration problems and produces auto-fix closures.
+ *
+ * This file:
+ *   - scans the population for rank assignment inconsistencies
+ *   - produces a structured list of issues, each carrying a fix closure
+ *   - exposes an applyFixes() batch applier
+ *   - exposes processAnnualRank(year) as the annual-pipeline entry point
+ *   - exposes handleCharacterDeath() as the death-cascade hook
+ *   - exposes removeAllReferencesTo() as the hard-delete cleanup
+ *
+ * This file does NOT:
+ *   - persist (callers call RankCommands.persist)
+ *   - toast or render
+ *   - reach into character, family, or relationship state directly. All
+ *     reads go through CharacterState projections, FamilyQueries, and
+ *     RomanceQueries.
+ *
+ * ISSUE TYPES:
+ *   Spouse Inheritance   — a character is married to a rank holder whose
+ *                          rank grants spouse inheritance, and does not
+ *                          hold the inherited rank.
+ *   Child Inheritance    — a character's parent holds a rank whose
+ *                          inheritance rules name a rank the child does
+ *                          not hold.
+ *   Gender Mismatch      — a character holds a rank restricted to the
+ *                          opposite gender.
+ *   Numbering Error      — a numbered rank's holder has an incorrect or
+ *                          missing number.
+ *   Deprecation Error    — a deceased character holds a rank that is
+ *                          configured to deprecate on death.
+ *   Broken Inheritance   — an inheritance rule references a rank that no
+ *                          longer exists.
+ *
+ * Each issue carries:
+ *   type           string
+ *   severity       'error' | 'warning' | 'info'
+ *   message        human-readable
+ *   rankId         string | null
+ *   rankName       string | null
+ *   characterId    string | null
+ *   characterName  string | null
+ *   fixLabel       string | null
+ *   fixData        object | null
+ *   fix            function | null  -> { success, reason? }
+ *
+ * CONTRACT:
+ *   - checkAll() never throws. It returns { success, issues, count,
+ *     bySeverity }.
+ *   - Each fix() returns { success: boolean, reason?: string }.
+ *   - applyFixes(issues) applies every issue.fix() in order, returns
+ *     { applied, failed, errors }.
+ *   - processAnnualRank(year) checks, applies, renumbers, persists once.
+ *   - handleCharacterDeath(id, options) deprecates deprecateOnDeath ranks
+ *     and renumbers; does not persist.
+ *   - removeAllReferencesTo(id) removes references to a deleted character
+ *     from other characters' rank assignments; does not persist.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - rank-state.js         (RankState)
+ *   - rank-rules.js         (RankRules)
+ *   - rank-queries.js       (RankQueries)
+ *   - rank-commands.js      (RankCommands)
+ *   - rank-assignment.js    (RankAssignment) — for getNextRankNumber only
+ *   - character-state.js    (CharacterState)
+ *   - character-commands.js (CharacterCommands)
+ *   - time.js               (getCurrentYear, calculateAge)
+ *
+ * DEPENDENCIES (REQUIRED AT CALL TIME):
+ *   - RomanceQueries.getActiveCommittedPartners
+ *   - FamilyQueries.getParents / getChildIds
+ *
+ * DEPENDENCIES (OPTIONAL):
+ *   - registerLifecycleHook — if present, handleCharacterDeath and
+ *     removeAllReferencesTo register death/delete handlers.
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    var _processingIssues = false;
+    if (!window.RankState) {
+        throw new Error('rank-issues.js requires rank-state.js to load first.');
+    }
+    if (!window.RankRules) {
+        throw new Error('rank-issues.js requires rank-rules.js to load first.');
+    }
+    if (!window.RankQueries) {
+        throw new Error('rank-issues.js requires rank-queries.js to load first.');
+    }
+    if (!window.RankCommands) {
+        throw new Error('rank-issues.js requires rank-commands.js to load first.');
+    }
+    if (!window.RankAssignment) {
+        throw new Error('rank-issues.js requires rank-assignment.js to load first.');
+    }
+    if (!window.CharacterState) {
+        throw new Error('rank-issues.js requires character-state.js to load first.');
+    }
+    if (!window.CharacterCommands) {
+        throw new Error('rank-issues.js requires character-commands.js to load first.');
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('rank-issues.js requires time.js (getCurrentYear).');
+    }
+
+    var RS = window.RankState;
+    var RR = window.RankRules;
+    var RQ = window.RankQueries;
+    var RC = window.RankCommands;
+    var RA = window.RankAssignment;
+    var CS = window.CharacterState;
+    var CC = window.CharacterCommands;
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 2. HELPERS
     // =========================================================================
 
-    function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
+    function _isPlainObject(v) {
+        if (v === null || typeof v !== 'object') return false;
+        var proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
     }
 
-    function _getRankById(id) {
-        if (typeof window.RankQueries !== 'undefined' && 
-            typeof window.RankQueries.getRank === 'function') {
-            return window.RankQueries.getRank(id);
-        }
-        if (typeof window.getRankById === 'function') {
-            return window.getRankById(id);
-        }
-        return null;
+    function _readCharacter(characterId) {
+        if (!_hasId(characterId)) return null;
+        return CS.getCharacter(characterId);
     }
 
-    function _getAllRanks() {
-        if (typeof window.RankQueries !== 'undefined' && 
-            typeof window.RankQueries.getAllRanks === 'function') {
-            return window.RankQueries.getAllRanks();
-        }
-        if (typeof window.getRanks === 'function') {
-            return window.getRanks();
-        }
-        return [];
+    function _readAllCharacters() {
+        return CS.getAllCharacters();
     }
 
-    function _getInheritanceRules() {
-        if (typeof window.RankQueries !== 'undefined' && 
-            typeof window.RankQueries.getInheritanceRules === 'function') {
-            return window.RankQueries.getInheritanceRules();
-        }
-        if (typeof window.getInheritanceRules === 'function') {
-            return window.getInheritanceRules();
-        }
-        return {};
+    function _displayName(character) {
+        if (!character) return '';
+        var name = typeof character.name === 'string' ? character.name : '';
+        var surname = typeof character.surname === 'string' ? character.surname : '';
+        return (name + ' ' + surname).trim();
     }
 
-    function _getCharactersWithRank(rankId, includeDeprecated) {
-        if (typeof window.RankQueries !== 'undefined' && 
-            typeof window.RankQueries.getCharactersWithRank === 'function') {
-            return window.RankQueries.getCharactersWithRank(rankId, includeDeprecated);
+    function _readRomanceQueries() {
+        if (typeof window.RomanceQueries === 'undefined') return null;
+        if (typeof window.RomanceQueries.getActiveCommittedPartners !== 'function') {
+            return null;
         }
-        return [];
+        return window.RomanceQueries;
     }
 
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData();
-        }
+    function _readFamilyQueries() {
+        if (typeof window.FamilyQueries === 'undefined') return null;
+        return window.FamilyQueries;
     }
 
-    function _showToast(msg, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        }
-    }
-
-    // =========================================================================
-    // 2. RELATIONSHIP SYSTEM WRAPPERS - USING THE REAL SYSTEM
-    // =========================================================================
-
-    /**
-     * Gets the primary partner (spouse) of a character using RomanceLogic
-     * This is the CORRECT way to get a spouse
-     */
-    function _getPrimaryPartner(characterId) {
-        // Try RomanceLogic.getPrimaryPartner first (most accurate)
-        if (typeof window.RomanceLogic !== 'undefined' && 
-            typeof window.RomanceLogic.getPrimaryPartner === 'function') {
-            return window.RomanceLogic.getPrimaryPartner(characterId);
-        }
-        
-        // Fallback: RomanceLogic.getActiveRomanticRelationships
-        if (typeof window.RomanceLogic !== 'undefined' && 
-            typeof window.RomanceLogic.getActiveRomanticRelationships === 'function') {
-            var rels = window.RomanceLogic.getActiveRomanticRelationships(characterId);
-            if (rels && rels.length > 0) {
-                // Get the partner from the first active relationship
-                var rel = rels[0];
-                if (rel.participantA === characterId) {
-                    return _getCharacterById(rel.participantB);
-                } else {
-                    return _getCharacterById(rel.participantA);
+    function _getCommittedPartners(characterId) {
+        var romance = _readRomanceQueries();
+        if (!romance) return [];
+        try {
+            var partners = romance.getActiveCommittedPartners(characterId);
+            if (!Array.isArray(partners)) return [];
+            var out = [];
+            for (var i = 0; i < partners.length; i++) {
+                if (partners[i] && _hasId(partners[i].partnerId)) {
+                    out.push(partners[i].partnerId);
                 }
             }
+            return out;
+        } catch (e) {
+            return [];
         }
-        
-        // Fallback: FamilyLogic.getCurrentSpouse
-        if (typeof window.FamilyLogic !== 'undefined' && 
-            typeof window.FamilyLogic.getCurrentSpouse === 'function') {
-            return window.FamilyLogic.getCurrentSpouse(characterId);
+    }
+
+    function _getParentIds(characterId) {
+        var family = _readFamilyQueries();
+        if (!family || typeof family.getParents !== 'function') return [];
+        try {
+            var parents = family.getParents(characterId);
+            if (!parents) return [];
+            var ids = [];
+            if (Array.isArray(parents)) {
+                for (var i = 0; i < parents.length; i++) {
+                    var p = parents[i];
+                    if (!p) continue;
+                    if (typeof p === 'string') ids.push(p);
+                    else if (_hasId(p.id)) ids.push(p.id);
+                    else if (_hasId(p.parentId)) ids.push(p.parentId);
+                }
+            } else if (_isPlainObject(parents)) {
+                if (parents.father) {
+                    var f = parents.father;
+                    if (typeof f === 'string') ids.push(f);
+                    else if (_hasId(f.id)) ids.push(f.id);
+                    else if (_hasId(f.parentId)) ids.push(f.parentId);
+                }
+                if (parents.mother) {
+                    var m = parents.mother;
+                    if (typeof m === 'string') ids.push(m);
+                    else if (_hasId(m.id)) ids.push(m.id);
+                    else if (_hasId(m.parentId)) ids.push(m.parentId);
+                }
+            }
+            return ids;
+        } catch (e) {
+            return [];
         }
-        
-        // Last resort: check character.relationships array directly
-        var char = _getCharacterById(characterId);
-        if (char && char.relationships) {
-            for (var i = 0; i < char.relationships.length; i++) {
-                var rel = char.relationships[i];
-                if (rel.status === 'ongoing' || rel.status === 'active') {
-                    var relType = rel.details?.type || rel.type;
-                    if (relType === 'committed' || relType === 'marriage' || relType === 'romance') {
-                        return _getCharacterById(rel.partnerId);
+    }
+
+    function _getChildIds(characterId) {
+        var family = _readFamilyQueries();
+        if (!family) return [];
+        var out = [];
+        try {
+            if (typeof family.getChildIds === 'function') {
+                var ids = family.getChildIds(characterId);
+                if (Array.isArray(ids)) {
+                    for (var i = 0; i < ids.length; i++) {
+                        if (_hasId(ids[i])) out.push(ids[i]);
+                    }
+                }
+            } else if (typeof family.getChildren === 'function') {
+                var children = family.getChildren(characterId);
+                if (Array.isArray(children)) {
+                    for (var j = 0; j < children.length; j++) {
+                        var c = children[j];
+                        if (!c) continue;
+                        if (typeof c === 'string') out.push(c);
+                        else if (_hasId(c.id)) out.push(c.id);
+                        else if (_hasId(c.childId)) out.push(c.childId);
                     }
                 }
             }
+        } catch (e) {
+            return out;
         }
-        
-        return null;
+        return out;
     }
 
-    /**
-     * Gets all spouses of a character using FamilyLogic
-     */
-    function _getSpouses(characterId) {
-        if (typeof window.FamilyLogic !== 'undefined' && 
-            typeof window.FamilyLogic.getSpouses === 'function') {
-            return window.FamilyLogic.getSpouses(characterId, true);
-        }
-        
-        // Fallback: RomanceLogic.getActiveRomanticRelationships
-        if (typeof window.RomanceLogic !== 'undefined' && 
-            typeof window.RomanceLogic.getActiveRomanticRelationships === 'function') {
-            var rels = window.RomanceLogic.getActiveRomanticRelationships(characterId);
-            var spouses = [];
-            for (var i = 0; i < rels.length; i++) {
-                var rel = rels[i];
-                var partnerId = rel.participantA === characterId ? rel.participantB : rel.participantA;
-                var partner = _getCharacterById(partnerId);
-                if (partner) spouses.push(partner);
-            }
-            return spouses;
-        }
-        
-        return [];
-    }
-
-    function _getParents(characterId) {
-        if (typeof window.FamilyLogic !== 'undefined' && 
-            typeof window.FamilyLogic.getParents === 'function') {
-            return window.FamilyLogic.getParents(characterId);
-        }
-        if (typeof window.getParents === 'function') {
-            return window.getParents(characterId);
-        }
-        return { father: null, mother: null };
-    }
-
-    function _getChildren(characterId, activeOnly) {
-        if (typeof window.FamilyLogic !== 'undefined' && 
-            typeof window.FamilyLogic.getChildren === 'function') {
-            return window.FamilyLogic.getChildren(characterId, activeOnly !== false);
-        }
-        if (typeof window.getChildren === 'function') {
-            return window.getChildren(characterId, activeOnly !== false);
-        }
-        return [];
-    }
-
-    function _getRelationshipBetween(idA, idB) {
-        if (typeof window.getRelationshipBetween === 'function') {
-            return window.getRelationshipBetween(idA, idB);
+    function _findAssignment(character, rankId, includeDeprecated) {
+        if (!character || !Array.isArray(character.rankAssignments)) return null;
+        for (var i = 0; i < character.rankAssignments.length; i++) {
+            var a = character.rankAssignments[i];
+            if (!a || a.rankId !== rankId) continue;
+            if (includeDeprecated === true) return a;
+            if (a.isDeprecated !== true) return a;
         }
         return null;
     }
 
     // =========================================================================
-    // 3. RANK COMMANDS WRAPPERS
-    // =========================================================================
-
-    function _assignRankToCharacter(characterId, rankId, options) {
-        if (typeof window.RankCommands !== 'undefined' && 
-            typeof window.RankCommands.assignRankToCharacter === 'function') {
-            return window.RankCommands.assignRankToCharacter(characterId, rankId, options);
-        }
-        if (typeof window.assignRankToCharacter === 'function') {
-            return window.assignRankToCharacter(characterId, rankId, options);
-        }
-        return null;
-    }
-
-    function _deprecateRankAssignment(characterId, rankId) {
-        if (typeof window.RankCommands !== 'undefined' && 
-            typeof window.RankCommands.deprecateRankAssignment === 'function') {
-            return window.RankCommands.deprecateRankAssignment(characterId, rankId);
-        }
-        if (typeof window.deprecateRankAssignment === 'function') {
-            return window.deprecateRankAssignment(characterId, rankId);
-        }
-        return null;
-    }
-
-    function _renumberRankHolders(rankId) {
-        if (typeof window.RankCommands !== 'undefined' && 
-            typeof window.RankCommands.renumberRankHolders === 'function') {
-            return window.RankCommands.renumberRankHolders(rankId);
-        }
-        if (typeof window.renumberRankHolders === 'function') {
-            return window.renumberRankHolders(rankId);
-        }
-        return null;
-    }
-
-    function _removeInheritanceRule(parentRankId, ruleIndex) {
-        if (typeof window.RankCommands !== 'undefined' && 
-            typeof window.RankCommands.removeInheritanceRule === 'function') {
-            return window.RankCommands.removeInheritanceRule(parentRankId, ruleIndex);
-        }
-        if (typeof window.removeInheritanceRule === 'function') {
-            return window.removeInheritanceRule(parentRankId, ruleIndex);
-        }
-        return null;
-    }
-
-    function _updateRank(rankId, updates) {
-        if (typeof window.RankCommands !== 'undefined' && 
-            typeof window.RankCommands.updateRank === 'function') {
-            return window.RankCommands.updateRank(rankId, updates);
-        }
-        if (typeof window.updateRank === 'function') {
-            return window.updateRank(rankId, updates);
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 4. HELPER FUNCTIONS
-    // =========================================================================
-
-    function _hasRankAssignment(characterId, rankId) {
-        var char = _getCharacterById(characterId);
-        if (!char || !char.rankAssignments) return false;
-        
-        for (var i = 0; i < char.rankAssignments.length; i++) {
-            if (char.rankAssignments[i].rankId === rankId && 
-                !char.rankAssignments[i].isDeprecated) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Gets the source of inheritance for a character's rank
-     * Returns the character ID of the parent or spouse who passed down the rank
-     */
-    function _getInheritanceSource(characterId, rankId) {
-        var char = _getCharacterById(characterId);
-        if (!char) return null;
-        
-        var rank = _getRankById(rankId);
-        if (!rank) return null;
-        
-        // Check if rank is inherited from spouse
-        if (rank.inheritanceSource === 'spouse' || rank.spouseInheritance) {
-            var spouse = _getPrimaryPartner(characterId);
-            if (spouse && spouse.activeRankId === rank.sourceRankId) {
-                return spouse.id;
-            }
-            if (spouse && rank.spouseInheritance && spouse.activeRankId === rank.spouseInheritance) {
-                return spouse.id;
-            }
-        }
-        
-        // Check if rank is inherited from parent
-        if (rank.inheritanceSource === 'parent') {
-            var parents = _getParents(characterId);
-            if (parents.father && parents.father.activeRankId === rank.sourceRankId) {
-                return parents.father.id;
-            }
-            if (parents.mother && parents.mother.activeRankId === rank.sourceRankId) {
-                return parents.mother.id;
-            }
-        }
-        
-        return null;
-    }
-
-    function _toOrdinal(n) {
-        if (n === 1) return '1st';
-        if (n === 2) return '2nd';
-        if (n === 3) return '3rd';
-        return n + 'th';
-    }
-
-    function _getOrdinalSuffix(n) {
-        if (n === 1) return 'st';
-        if (n === 2) return 'nd';
-        if (n === 3) return 'rd';
-        return 'th';
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    // =========================================================================
-    // 5. ISSUE CLASS WITH AUTO-FIX
+    // 3. RANK ISSUE STRUCTURE
     // =========================================================================
 
     function RankIssue(type, severity, message, rankId, characterId, fixFn, fixData) {
@@ -355,600 +272,1024 @@
         this.message = message;
         this.rankId = rankId || null;
         this.characterId = characterId || null;
-        this.fix = fixFn || null;  // Function that actually fixes the issue
+        this.fix = typeof fixFn === 'function' ? fixFn : null;
         this.fixData = fixData || null;
-        this.fixLabel = null;  // Human-readable fix label
+        this.fixLabel = null;
         this.rankName = null;
         this.characterName = null;
-        
-        if (rankId) {
-            var rank = _getRankById(rankId);
-            if (rank) this.rankName = rank.name;
+
+        if (_hasId(this.rankId)) {
+            var rank = RS.getRank(this.rankId);
+            if (rank && typeof rank.name === 'string') this.rankName = rank.name;
         }
-        if (characterId) {
-            var char = _getCharacterById(characterId);
-            if (char) this.characterName = char.name + (char.surname ? ' ' + char.surname : '');
-        }
-    }
-
-    // =========================================================================
-    // 6. MAIN ISSUE CHECKER
-    // =========================================================================
-
-    function checkAllRankIssues() {
-        if (_processingIssues) {
-            return { success: false, error: 'Already processing issues' };
-        }
-        _processingIssues = true;
-
-        try {
-            var issues = [];
-            
-            issues = issues.concat(_checkSpouseInheritance());
-            issues = issues.concat(_checkChildInheritance());
-            issues = issues.concat(_checkGenderMismatch());
-            issues = issues.concat(_checkNumberingIssues());
-            issues = issues.concat(_checkDeprecationIssues());
-            issues = issues.concat(_checkBrokenInheritanceRules());
-            
-            return {
-                success: true,
-                issues: issues,
-                count: issues.length,
-                bySeverity: {
-                    error: issues.filter(function(i) { return i.severity === 'error'; }),
-                    warning: issues.filter(function(i) { return i.severity === 'warning'; }),
-                    info: issues.filter(function(i) { return i.severity === 'info'; })
-                }
-            };
-
-        } catch (e) {
-            return { success: false, error: e.message || 'Failed to check issues' };
-        } finally {
-            _processingIssues = false;
+        if (_hasId(this.characterId)) {
+            var character = _readCharacter(this.characterId);
+            if (character) this.characterName = _displayName(character);
         }
     }
 
     // =========================================================================
-    // 7. SPOUSE INHERITANCE CHECKS WITH AUTO-FIX - USING RELATIONSHIP SYSTEM
+    // 4. MAIN CHECKER
+    // =========================================================================
+
+    function checkAll() {
+        var issues = [];
+
+        var groups = [
+            _checkSpouseInheritance(),
+            _checkChildInheritance(),
+            _checkGenderMismatch(),
+            _checkNumberingIssues(),
+            _checkDeprecationIssues(),
+            _checkBrokenInheritanceRules()
+        ];
+
+        for (var i = 0; i < groups.length; i++) {
+            var g = groups[i];
+            if (!Array.isArray(g)) continue;
+            for (var j = 0; j < g.length; j++) {
+                issues.push(g[j]);
+            }
+        }
+
+        var bySeverity = { error: [], warning: [], info: [] };
+        for (var k = 0; k < issues.length; k++) {
+            var iss = issues[k];
+            if (bySeverity[iss.severity]) {
+                bySeverity[iss.severity].push(iss);
+            }
+        }
+
+        return {
+            success: true,
+            issues: issues,
+            count: issues.length,
+            bySeverity: bySeverity
+        };
+    }
+
+    // =========================================================================
+    // 5. SPOUSE INHERITANCE
     // =========================================================================
 
     function _checkSpouseInheritance() {
-        var issues = [];
-        var characters = _getCharacters();
-        var ranks = _getAllRanks();
-        
-        var rankMap = {};
-        for (var i = 0; i < ranks.length; i++) {
-            rankMap[ranks[i].id] = ranks[i];
+        var romance = _readRomanceQueries();
+        if (!romance) return [];
+
+        var allCharacters = _readAllCharacters();
+        var rankCache = {};
+
+        function getRank(rankId) {
+            if (!_hasId(rankId)) return null;
+            if (Object.prototype.hasOwnProperty.call(rankCache, rankId)) {
+                return rankCache[rankId];
+            }
+            var r = RS.getRank(rankId);
+            rankCache[rankId] = r;
+            return r;
         }
-        
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (char.isDeceased) continue;
-            
-            // Get spouse using the relationship system
-            var spouse = _getPrimaryPartner(char.id);
-            if (!spouse) continue;
-            
-            if (!spouse.activeRankId) continue;
-            
-            var spouseRank = rankMap[spouse.activeRankId];
-            if (!spouseRank) continue;
-            
-            // Check if the spouse's rank grants an inherited rank
-            var inheritedRankId = null;
-            
-            // Check spouseInheritance field on the rank
-            if (spouseRank.spouseInheritance) {
-                inheritedRankId = spouseRank.spouseInheritance;
+
+        var issues = [];
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c) continue;
+            if (c.isDeceased === true) continue;
+            if (c.isDeleted === true) continue;
+
+            var partners;
+            try {
+                partners = romance.getActiveCommittedPartners(c.id);
+            } catch (e) {
+                continue;
             }
-            
-            // Check inheritanceSource with sourceRankId
-            if (spouseRank.inheritanceSource === 'spouse' && spouseRank.sourceRankId) {
-                inheritedRankId = spouseRank.sourceRankId;
-            }
-            
-            if (!inheritedRankId) continue;
-            
-            var inheritedRank = rankMap[inheritedRankId];
-            if (!inheritedRank) continue;
-            
-            var hasRank = _hasRankAssignment(char.id, inheritedRankId);
-            if (!hasRank) {
-                // Create auto-fix function
-                var fixFn = function(charId, rankId, spouseId, spouseName, rankName) {
-                    return function() {
-                        var result = _assignRankToCharacter(charId, rankId, {
-                            notes: 'Inherited from spouse ' + spouseName + ' via ' + rankName,
-                            assignedYear: _getCurrentYear()
+            if (!Array.isArray(partners) || partners.length === 0) continue;
+
+            for (var j = 0; j < partners.length; j++) {
+                var pref = partners[j];
+                if (!pref || !_hasId(pref.partnerId)) continue;
+
+                var spouse = _readCharacter(pref.partnerId);
+                if (!spouse) continue;
+                if (!_hasId(spouse.activeRankId)) continue;
+
+                var spouseRank = getRank(spouse.activeRankId);
+                if (!spouseRank) continue;
+
+                var inheritedRankId = _resolveSpouseInheritedRankId(spouseRank);
+                if (!_hasId(inheritedRankId)) continue;
+
+                var inheritedRank = getRank(inheritedRankId);
+                if (!inheritedRank) continue;
+
+                if (_findAssignment(c, inheritedRankId, false)) continue;
+
+                // Gender restriction.
+                if (inheritedRank.genderRestriction === 'male'
+                    && c.gender !== 'male') continue;
+                if (inheritedRank.genderRestriction === 'female'
+                    && c.gender !== 'female') continue;
+
+                var characterId = c.id;
+                var rankId = inheritedRankId;
+                var spouseId = spouse.id;
+                var spouseName = _displayName(spouse);
+                var sourceRankName = spouseRank.name;
+                var inheritedRankName = inheritedRank.name;
+
+                var fix = (function (cid, rid, sid, sName, srcName) {
+                    return function () {
+                        var result = RC.assignRankToCharacter(cid, rid, {
+                            notes: 'Inherited from spouse ' + sName +
+                                ' via ' + srcName,
+                            assignedYear: window.getCurrentYear(),
+                            inheritedFrom: sid
                         });
-                        if (result && result.success !== false) {
-                            _saveMasterData();
-                            _showToast('Added ' + _getRankById(rankId).name + ' to ' + _getCharacterById(charId).name, 'success');
-                            return true;
+                        if (result.success) {
+                            return { success: true };
                         }
-                        _showToast('Failed to add rank', 'error');
-                        return false;
+                        return {
+                            success: false,
+                            reason: result.reason || 'assignRankToCharacter failed'
+                        };
                     };
-                }(char.id, inheritedRankId, spouse.id, spouse.name, spouseRank.name);
-                
+                })(characterId, rankId, spouseId, spouseName, sourceRankName);
+
                 var issue = new RankIssue(
                     'Spouse Inheritance',
                     'error',
-                    char.name + ' is married to ' + spouse.name + ' (who holds "' + spouseRank.name + '") but does not have the inherited rank "' + inheritedRank.name + '"',
-                    inheritedRankId,
-                    char.id,
-                    fixFn,
-                    { spouseId: spouse.id, rankId: inheritedRankId }
+                    _displayName(c) + ' is married to ' + spouseName +
+                    ' (who holds "' + sourceRankName +
+                    '") but does not have the inherited rank "' +
+                    inheritedRankName + '"',
+                    rankId,
+                    characterId,
+                    fix,
+                    { spouseId: spouseId, rankId: rankId }
                 );
-                issue.fixLabel = 'Add "' + inheritedRank.name + '" to ' + char.name;
+                issue.fixLabel = 'Add "' + inheritedRankName + '" to ' +
+                    _displayName(c);
                 issues.push(issue);
             }
         }
-        
+
         return issues;
     }
 
+    function _resolveSpouseInheritedRankId(rank) {
+        if (!_isPlainObject(rank)) return null;
+        if (rank.inheritanceSource === 'spouse' && _hasId(rank.sourceRankId)) {
+            return rank.sourceRankId;
+        }
+        if (_hasId(rank.spouseInheritance)) {
+            return rank.spouseInheritance;
+        }
+        return null;
+    }
+
     // =========================================================================
-    // 8. CHILD INHERITANCE CHECKS WITH AUTO-FIX
+    // 6. CHILD INHERITANCE
     // =========================================================================
 
     function _checkChildInheritance() {
-        var issues = [];
-        var characters = _getCharacters();
-        var ranks = _getAllRanks();
-        var inheritanceRules = _getInheritanceRules();
-        
-        var rankMap = {};
-        for (var i = 0; i < ranks.length; i++) {
-            rankMap[ranks[i].id] = ranks[i];
+        var family = _readFamilyQueries();
+        if (!family) return [];
+
+        var allCharacters = _readAllCharacters();
+        var rankCache = {};
+
+        function getRank(rankId) {
+            if (!_hasId(rankId)) return null;
+            if (Object.prototype.hasOwnProperty.call(rankCache, rankId)) {
+                return rankCache[rankId];
+            }
+            var r = RS.getRank(rankId);
+            rankCache[rankId] = r;
+            return r;
         }
-        
-        for (var i = 0; i < characters.length; i++) {
-            var child = characters[i];
-            if (child.isDeceased) continue;
-            
-            var parents = _getParents(child.id);
-            var parentRanks = [];
-            
-            if (parents.father && parents.father.activeRankId) {
-                parentRanks.push({ parent: parents.father, rankId: parents.father.activeRankId });
+
+        var rulesCache = {};
+
+        function getRules(rankId) {
+            if (!_hasId(rankId)) return [];
+            if (Object.prototype.hasOwnProperty.call(rulesCache, rankId)) {
+                return rulesCache[rankId];
             }
-            if (parents.mother && parents.mother.activeRankId) {
-                parentRanks.push({ parent: parents.mother, rankId: parents.mother.activeRankId });
-            }
-            
-            for (var j = 0; j < parentRanks.length; j++) {
-                var parentInfo = parentRanks[j];
-                var parentRank = rankMap[parentInfo.rankId];
+            var rules = RQ.getInheritanceRulesForRank(rankId);
+            rulesCache[rankId] = Array.isArray(rules) ? rules : [];
+            return rulesCache[rankId];
+        }
+
+        var issues = [];
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var child = allCharacters[i];
+            if (!child) continue;
+            if (child.isDeceased === true) continue;
+            if (child.isDeleted === true) continue;
+
+            var parentIds = _getParentIds(child.id);
+            for (var pi = 0; pi < parentIds.length; pi++) {
+                var parentId = parentIds[pi];
+                var parent = _readCharacter(parentId);
+                if (!parent) continue;
+                if (!_hasId(parent.activeRankId)) continue;
+
+                var parentRank = getRank(parent.activeRankId);
                 if (!parentRank) continue;
-                
-                var rules = inheritanceRules[parentRank.id] || [];
-                
-                for (var k = 0; k < rules.length; k++) {
-                    var rule = rules[k];
+
+                var rules = getRules(parentRank.id);
+                for (var ri = 0; ri < rules.length; ri++) {
+                    var rule = rules[ri];
+                    if (!rule) continue;
+
                     var childRankId = rule.childRankId;
-                    
                     if (rule.childRankIdFemale && child.gender === 'female') {
                         childRankId = rule.childRankIdFemale;
                     }
-                    
-                    if (!childRankId) continue;
-                    
-                    var childRank = rankMap[childRankId];
+                    if (!_hasId(childRankId)) continue;
+
+                    var childRank = getRank(childRankId);
                     if (!childRank) continue;
-                    
-                    var hasRank = _hasRankAssignment(child.id, childRankId);
-                    if (!hasRank) {
-                        // Create auto-fix function
-                        var fixFn = function(childId, rankId, parentId, parentName) {
-                            return function() {
-                                var result = _assignRankToCharacter(childId, rankId, {
-                                    notes: 'Inherited from parent ' + parentName,
-                                    assignedYear: _getCharacterById(childId)?.birthYear || _getCurrentYear()
-                                });
-                                if (result && result.success !== false) {
-                                    _saveMasterData();
-                                    _showToast('Added ' + _getRankById(rankId).name + ' to ' + _getCharacterById(childId).name, 'success');
-                                    return true;
-                                }
-                                _showToast('Failed to add rank', 'error');
-                                return false;
-                            };
-                        }(child.id, childRankId, parentInfo.parent.id, parentInfo.parent.name);
-                        
-                        var issue = new RankIssue(
-                            'Child Inheritance',
-                            'warning',
-                            child.name + ' is a child of ' + parentInfo.parent.name + ' (who holds "' + parentRank.name + '") but does not have the inherited rank "' + childRank.name + '"',
-                            childRankId,
-                            child.id,
-                            fixFn,
-                            { parentId: parentInfo.parent.id, rankId: childRankId }
+
+                    // Age floor.
+                    if (typeof rule.minChildAge === 'number'
+                        && rule.minChildAge > 0) {
+                        var age = window.calculateAge(
+                            child.birthYear,
+                            child.isDeceased === true,
+                            child.deathYear
                         );
-                        issue.fixLabel = 'Add "' + childRank.name + '" to ' + child.name;
-                        issues.push(issue);
+                        if (typeof age !== 'number' || age < rule.minChildAge) {
+                            continue;
+                        }
                     }
+
+                    if (_findAssignment(child, childRankId, false)) continue;
+
+                    // Gender restriction on the inherited rank.
+                    if (childRank.genderRestriction === 'male'
+                        && child.gender !== 'male') continue;
+                    if (childRank.genderRestriction === 'female'
+                        && child.gender !== 'female') continue;
+
+                    var childId = child.id;
+                    var parentName = _displayName(parent);
+                    var inheritedRankId = childRankId;
+                    var inheritedRankName = childRank.name;
+                    var sourceRankName = parentRank.name;
+
+                    var fix = (function (cid, rid, pName, srcName) {
+                        return function () {
+                            var result = RC.assignRankToCharacter(cid, rid, {
+                                notes: 'Inherited from parent ' + pName +
+                                    ' via ' + srcName,
+                                inheritedFrom: null
+                            });
+                            if (result.success) {
+                                return { success: true };
+                            }
+                            return {
+                                success: false,
+                                reason: result.reason || 'assignRankToCharacter failed'
+                            };
+                        };
+                    })(childId, inheritedRankId, parentName, sourceRankName);
+
+                    var issue = new RankIssue(
+                        'Child Inheritance',
+                        'warning',
+                        _displayName(child) + ' is a child of ' + parentName +
+                        ' (who holds "' + sourceRankName +
+                        '") but does not have the inherited rank "' +
+                        inheritedRankName + '"',
+                        inheritedRankId,
+                        childId,
+                        fix,
+                        { parentId: parentId, rankId: inheritedRankId }
+                    );
+                    issue.fixLabel = 'Add "' + inheritedRankName + '" to ' +
+                        _displayName(child);
+                    issues.push(issue);
                 }
             }
         }
-        
+
         return issues;
     }
 
     // =========================================================================
-    // 9. GENDER MISMATCH CHECKS WITH AUTO-FIX
+    // 7. GENDER MISMATCH
     // =========================================================================
 
     function _checkGenderMismatch() {
+        var allCharacters = _readAllCharacters();
         var issues = [];
-        var characters = _getCharacters();
-        var ranks = _getAllRanks();
-        
-        var rankMap = {};
-        for (var i = 0; i < ranks.length; i++) {
-            rankMap[ranks[i].id] = ranks[i];
-        }
-        
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (!char.rankAssignments) continue;
-            
-            for (var j = 0; j < char.rankAssignments.length; j++) {
-                var assignment = char.rankAssignments[j];
-                if (assignment.isDeprecated) continue;
-                
-                var rank = rankMap[assignment.rankId];
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || !Array.isArray(c.rankAssignments)) continue;
+
+            for (var j = 0; j < c.rankAssignments.length; j++) {
+                var a = c.rankAssignments[j];
+                if (!a || a.isDeprecated === true) continue;
+
+                var rank = RS.getRank(a.rankId);
                 if (!rank) continue;
-                
-                if (rank.genderRestriction && rank.genderRestriction !== 'either') {
-                    if (char.gender !== rank.genderRestriction) {
-                        // Create auto-fix function - deprecate the rank
-                        var fixFn = function(charId, rankId, rankName) {
-                            return function() {
-                                var result = _deprecateRankAssignment(charId, rankId);
-                                if (result && result.success !== false) {
-                                    _saveMasterData();
-                                    _showToast('Deprecated "' + rankName + '" for ' + _getCharacterById(charId).name, 'success');
-                                    return true;
-                                }
-                                _showToast('Failed to deprecate rank', 'error');
-                                return false;
-                            };
-                        }(char.id, rank.id, rank.name);
-                        
-                        var issue = new RankIssue(
-                            'Gender Mismatch',
-                            'error',
-                            char.name + ' holds "' + rank.name + '" but is ' + char.gender + ' (rank requires ' + rank.genderRestriction + ')',
-                            rank.id,
-                            char.id,
-                            fixFn,
-                            { correctGender: rank.genderRestriction }
-                        );
-                        issue.fixLabel = 'Deprecate "' + rank.name + '" from ' + char.name;
-                        issues.push(issue);
-                    }
-                }
+
+                if (rank.genderRestriction === 'either') continue;
+                if (rank.genderRestriction === c.gender) continue;
+
+                var characterId = c.id;
+                var rankId = rank.id;
+                var rankName = rank.name;
+                var characterName = _displayName(c);
+
+                var fix = (function (cid, rid) {
+                    return function () {
+                        var result = RC.deprecateRankAssignment(cid, rid);
+                        if (result.success) return { success: true };
+                        return {
+                            success: false,
+                            reason: result.reason || 'deprecateRankAssignment failed'
+                        };
+                    };
+                })(characterId, rankId);
+
+                var issue = new RankIssue(
+                    'Gender Mismatch',
+                    'error',
+                    characterName + ' holds "' + rankName + '" but is ' +
+                    c.gender + ' (rank requires ' + rank.genderRestriction + ')',
+                    rankId,
+                    characterId,
+                    fix,
+                    { correctGender: rank.genderRestriction }
+                );
+                issue.fixLabel = 'Deprecate "' + rankName + '" from ' + characterName;
+                issues.push(issue);
             }
         }
-        
+
         return issues;
     }
 
     // =========================================================================
-    // 10. NUMBERING ISSUES CHECKS WITH AUTO-FIX
+    // 8. NUMBERING ISSUES
     // =========================================================================
+    //
+    // Detects holders of a numbered rank whose number is either missing or
+    // does not match what a renumber would assign.
+    //
+    // Rather than reproduce the renumber logic here, this check consults
+    // RankAssignment.getNextRankNumber for each holder in each group, and
+    // compares against the recorded number. A mismatch is a single issue per
+    // (rank, holder) with a fix that calls RankCommands.renumberRankHolders.
+    //
+    // This produces at most one issue per rank in practice, since a
+    // renumber fixes all holders of a rank. To keep the report compact, only
+    // the first mismatch per rank is reported.
 
     function _checkNumberingIssues() {
+        var allCharacters = _readAllCharacters();
         var issues = [];
-        var characters = _getCharacters();
-        var ranks = _getAllRanks();
-        
-        var rankMap = {};
-        for (var i = 0; i < ranks.length; i++) {
-            rankMap[ranks[i].id] = ranks[i];
-        }
-        
-        var holdersByGroup = {};
-        
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (!char.rankAssignments) continue;
-            
-            for (var j = 0; j < char.rankAssignments.length; j++) {
-                var assignment = char.rankAssignments[j];
-                if (assignment.isDeprecated) continue;
-                
-                var rank = rankMap[assignment.rankId];
-                if (!rank || !rank.numbered) continue;
-                
-                var inheritedFrom = _getInheritanceSource(char.id, rank.id);
-                var key = rank.id + '|' + (char.gender || 'unknown') + '|' + (inheritedFrom || 'none');
-                
-                if (!holdersByGroup[key]) {
-                    holdersByGroup[key] = [];
-                }
-                
-                holdersByGroup[key].push({
-                    character: char,
-                    assignment: assignment,
-                    inheritedFrom: inheritedFrom,
-                    birthYear: char.birthYear || 0
-                });
-            }
-        }
-        
-        for (var key in holdersByGroup) {
-            if (!holdersByGroup.hasOwnProperty(key)) continue;
-            
-            var parts = key.split('|');
-            var rankId = parts[0];
-            var gender = parts[1];
-            var inheritedFrom = parts[2] === 'none' ? null : parts[2];
-            
-            var holders = holdersByGroup[key];
-            
-            holders.sort(function(a, b) {
-                return (a.birthYear || 9999) - (b.birthYear || 9999);
-            });
-            
-            for (var i = 0; i < holders.length; i++) {
-                var holder = holders[i];
-                var expectedNumber = i + 1;
-                var expectedDisplay = _toOrdinal(expectedNumber);
-                var inheritedFromName = inheritedFrom ? 
-                    (_getCharacterById(inheritedFrom)?.name || 'unknown') : 'unknown';
-                var rank = rankMap[rankId];
-                
-                if (holder.assignment.number) {
-                    var currentDisplay = holder.assignment.number.display;
-                    
-                    if (currentDisplay !== expectedDisplay) {
-                        // Create auto-fix function - renumber all holders
-                        var fixFn = function(rId) {
-                            return function() {
-                                var result = _renumberRankHolders(rId);
-                                if (result && result.success !== false) {
-                                    _saveMasterData();
-                                    _showToast('Renumbered holders for ' + _getRankById(rId).name, 'success');
-                                    return true;
-                                }
-                                _showToast('Failed to renumber', 'error');
-                                return false;
-                            };
-                        }(rankId);
-                        
-                        var issue = new RankIssue(
-                            'Numbering Error',
-                            'error',
-                            holder.character.name + ' has number "' + currentDisplay + '" for "' + rank.name + '" but should be "' + expectedDisplay + '" (birth order: ' + expectedNumber + _getOrdinalSuffix(expectedNumber) + ' ' + gender + ' child of ' + inheritedFromName + ')',
-                            rankId,
-                            holder.character.id,
-                            fixFn,
-                            { correctNumber: expectedDisplay, correctRaw: expectedNumber }
-                        );
-                        issue.fixLabel = 'Re-number all "' + rank.name + '" holders';
-                        issues.push(issue);
-                        break; // Only one issue per group
-                    }
-                } else {
-                    // Create auto-fix function - renumber all holders
-                    var fixFn = function(rId) {
-                        return function() {
-                            var result = _renumberRankHolders(rId);
-                            if (result && result.success !== false) {
-                                _saveMasterData();
-                                _showToast('Renumbered holders for ' + _getRankById(rId).name, 'success');
-                                return true;
-                            }
-                            _showToast('Failed to renumber', 'error');
-                            return false;
+        var seenRankIds = {};
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || !Array.isArray(c.rankAssignments)) continue;
+
+            for (var j = 0; j < c.rankAssignments.length; j++) {
+                var a = c.rankAssignments[j];
+                if (!a || a.isDeprecated === true) continue;
+
+                var rank = RS.getRank(a.rankId);
+                if (!rank || rank.numbered !== true) continue;
+                if (seenRankIds[rank.id]) continue;
+
+                var discrepancy = _findFirstNumberingDiscrepancy(rank.id);
+                if (!discrepancy) continue;
+                seenRankIds[rank.id] = true;
+
+                var rankId = rank.id;
+                var rankName = rank.name;
+                var characterName = discrepancy.characterName;
+
+                var fix = (function (rid) {
+                    return function () {
+                        var result = RC.renumberRankHolders(rid);
+                        if (result.success) {
+                            return { success: true, fixedCount: result.fixedCount };
+                        }
+                        return {
+                            success: false,
+                            reason: result.reason || 'renumberRankHolders failed'
                         };
-                    }(rankId);
-                    
-                    var issue = new RankIssue(
-                        'Numbering Error',
-                        'warning',
-                        holder.character.name + ' has no number for "' + rank.name + '" (should be ' + expectedDisplay + ' as ' + expectedNumber + _getOrdinalSuffix(expectedNumber) + ' ' + gender + ' child of ' + inheritedFromName + ')',
-                        rankId,
-                        holder.character.id,
-                        fixFn,
-                        { correctNumber: expectedDisplay, correctRaw: expectedNumber }
-                    );
-                    issue.fixLabel = 'Re-number all "' + rank.name + '" holders';
-                    issues.push(issue);
-                    break; // Only one issue per group
-                }
+                    };
+                })(rankId);
+
+                var issue = new RankIssue(
+                    'Numbering Error',
+                    'error',
+                    characterName + ' has number "' +
+                    (discrepancy.currentDisplay || '(none)') +
+                    '" for "' + rankName + '" but should be "' +
+                    discrepancy.expectedDisplay + '"',
+                    rankId,
+                    discrepancy.characterId,
+                    fix,
+                    {
+                        expectedNumber: discrepancy.expectedDisplay,
+                        expectedRaw: discrepancy.expectedRaw
+                    }
+                );
+                issue.fixLabel = 'Re-number all "' + rankName + '" holders';
+                issues.push(issue);
             }
         }
-        
+
         return issues;
     }
 
+    /**
+     * Finds the first (rank, holder) whose number is wrong. Returns null
+     * when the rank's numbering is consistent.
+     *
+     * Walks the group structure the same way renumberRankHolders does, so
+     * the expected number matches what the fix will produce.
+     */
+    function _findFirstNumberingDiscrepancy(rankId) {
+        var rank = RS.getRank(rankId);
+        if (!rank || rank.numbered !== true) return null;
+
+        var allCharacters = _readAllCharacters();
+        var groups = new Map();
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || !Array.isArray(c.rankAssignments)) continue;
+
+            var assignment = null;
+            for (var j = 0; j < c.rankAssignments.length; j++) {
+                var a = c.rankAssignments[j];
+                if (a && a.rankId === rankId && a.isDeprecated !== true) {
+                    assignment = a;
+                    break;
+                }
+            }
+            if (!assignment) continue;
+
+            var groupKey = _resolveHolderGroupKey(rank, c, assignment);
+            if (!groups.has(groupKey)) groups.set(groupKey, []);
+            groups.get(groupKey).push({
+                character: c,
+                assignment: assignment
+            });
+        }
+
+        var found = null;
+
+        groups.forEach(function (holders) {
+            if (found) return;
+
+            if (rank.numberingType === 'reign') {
+                holders.sort(function (a, b) {
+                    var ay = a.assignment.assignedYear;
+                    var by = b.assignment.assignedYear;
+                    if (typeof ay !== 'number') ay = Number.MAX_SAFE_INTEGER;
+                    if (typeof by !== 'number') by = Number.MAX_SAFE_INTEGER;
+                    if (ay !== by) return ay - by;
+                    return String(a.character.name || '').localeCompare(
+                        String(b.character.name || '')
+                    );
+                });
+            } else {
+                holders.sort(function (a, b) {
+                    var ay = a.character.birthYear;
+                    var by = b.character.birthYear;
+                    if (typeof ay !== 'number') ay = Number.MAX_SAFE_INTEGER;
+                    if (typeof by !== 'number') by = Number.MAX_SAFE_INTEGER;
+                    if (ay !== by) return ay - by;
+                    return String(a.character.name || '').localeCompare(
+                        String(b.character.name || '')
+                    );
+                });
+            }
+
+            for (var k = 0; k < holders.length; k++) {
+                var entry = holders[k];
+                var expectedRaw = k + 1;
+                var expectedDisplay = RR.formatNumber(
+                    expectedRaw,
+                    rank.numberingType
+                );
+
+                var current = entry.assignment.number;
+                var currentRaw = current && typeof current.rawNumber === 'number'
+                    ? current.rawNumber
+                    : null;
+                var currentDisplay = current && typeof current.display === 'string'
+                    ? current.display
+                    : null;
+
+                if (currentRaw === expectedRaw && currentDisplay === expectedDisplay) {
+                    continue;
+                }
+
+                found = {
+                    characterId: entry.character.id,
+                    characterName: _displayName(entry.character),
+                    currentRaw: currentRaw,
+                    currentDisplay: currentDisplay,
+                    expectedRaw: expectedRaw,
+                    expectedDisplay: expectedDisplay
+                };
+                return;
+            }
+        });
+
+        return found;
+    }
+
+    function _resolveHolderGroupKey(rank, character, assignment) {
+        if (rank.numberingGroup === 'global') return 'global';
+
+        if (_hasId(assignment.inheritedFrom)) {
+            return assignment.inheritedFrom;
+        }
+
+        var sourceId = RQ.getInheritanceSource(character.id, rank.id);
+        if (_hasId(sourceId)) return sourceId;
+        return 'unknown';
+    }
+
     // =========================================================================
-    // 11. DEPRECATION ISSUES CHECKS WITH AUTO-FIX
+    // 9. DEPRECATION ISSUES
     // =========================================================================
 
     function _checkDeprecationIssues() {
+        var allCharacters = _readAllCharacters();
         var issues = [];
-        var characters = _getCharacters();
-        var ranks = _getAllRanks();
-        
-        var rankMap = {};
-        for (var i = 0; i < ranks.length; i++) {
-            rankMap[ranks[i].id] = ranks[i];
-        }
-        
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            
-            if (!char.isDeceased) continue;
-            if (!char.rankAssignments) continue;
-            
-            for (var j = 0; j < char.rankAssignments.length; j++) {
-                var assignment = char.rankAssignments[j];
-                if (assignment.isDeprecated) continue;
-                
-                var rank = rankMap[assignment.rankId];
-                if (!rank || !rank.deprecateOnDeath) continue;
-                
-                // Create auto-fix function
-                var fixFn = function(charId, rankId, rankName) {
-                    return function() {
-                        var result = _deprecateRankAssignment(charId, rankId);
-                        if (result && result.success !== false) {
-                            _saveMasterData();
-                            _showToast('Deprecated "' + rankName + '" for deceased ' + _getCharacterById(charId).name, 'success');
-                            return true;
-                        }
-                        _showToast('Failed to deprecate rank', 'error');
-                        return false;
+        var seenCharacterIds = {};
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c) continue;
+            if (c.isDeceased !== true) continue;
+            if (seenCharacterIds[c.id]) continue;
+            if (!Array.isArray(c.rankAssignments)) continue;
+
+            for (var j = 0; j < c.rankAssignments.length; j++) {
+                var a = c.rankAssignments[j];
+                if (!a || a.isDeprecated === true) continue;
+
+                var rank = RS.getRank(a.rankId);
+                if (!rank || rank.deprecateOnDeath !== true) continue;
+
+                seenCharacterIds[c.id] = true;
+
+                var characterId = c.id;
+                var rankId = rank.id;
+                var rankName = rank.name;
+                var characterName = _displayName(c);
+
+                var fix = (function (cid, rid) {
+                    return function () {
+                        var result = RC.deprecateRankAssignment(cid, rid);
+                        if (result.success) return { success: true };
+                        return {
+                            success: false,
+                            reason: result.reason || 'deprecateRankAssignment failed'
+                        };
                     };
-                }(char.id, rank.id, rank.name);
-                
+                })(characterId, rankId);
+
                 var issue = new RankIssue(
                     'Deprecation Error',
                     'error',
-                    char.name + ' has died but "' + rank.name + '" has not been deprecated (rank is set to deprecate on death)',
-                    rank.id,
-                    char.id,
-                    fixFn,
+                    characterName + ' has died but "' + rankName +
+                    '" has not been deprecated (rank is set to deprecate on death)',
+                    rankId,
+                    characterId,
+                    fix,
                     { shouldDeprecate: true }
                 );
-                issue.fixLabel = 'Deprecate "' + rank.name + '" from ' + char.name;
+                issue.fixLabel = 'Deprecate "' + rankName + '" from ' + characterName;
                 issues.push(issue);
-                break; // Only one deprecation issue per character
+                break;
             }
         }
-        
+
         return issues;
     }
 
     // =========================================================================
-    // 12. BROKEN INHERITANCE RULES CHECKS WITH AUTO-FIX
+    // 10. BROKEN INHERITANCE RULES
     // =========================================================================
 
     function _checkBrokenInheritanceRules() {
         var issues = [];
-        var ranks = _getAllRanks();
-        var inheritanceRules = _getInheritanceRules();
-        
-        var rankMap = {};
-        for (var i = 0; i < ranks.length; i++) {
-            rankMap[ranks[i].id] = ranks[i];
+        var allRules = RQ.getInheritanceRules();
+        var rankCache = {};
+
+        function rankExists(rankId) {
+            if (!_hasId(rankId)) return false;
+            if (Object.prototype.hasOwnProperty.call(rankCache, rankId)) {
+                return rankCache[rankId];
+            }
+            var r = RS.getRank(rankId);
+            rankCache[rankId] = !!r;
+            return rankCache[rankId];
         }
-        
-        for (var parentId in inheritanceRules) {
-            if (!inheritanceRules.hasOwnProperty(parentId)) continue;
-            
-            var parentRank = rankMap[parentId];
+
+        for (var parentId in allRules) {
+            if (!Object.prototype.hasOwnProperty.call(allRules, parentId)) continue;
+
+            var parentRank = RS.getRank(parentId);
             if (!parentRank) {
-                // Can't auto-fix this - need manual intervention
-                var issue = new RankIssue(
+                // Parent missing entirely. The rank record is gone but rules
+                // persist. Report one issue per orphan parent; fix is not
+                // automatic because we cannot tell whether to remove the
+                // parent id or the rules.
+                var orphanIssue = new RankIssue(
                     'Broken Inheritance Rule',
                     'error',
-                    'Inheritance rule references non-existent parent rank (ID: ' + parentId + ')',
+                    'Inheritance rules reference a non-existent parent rank (id: ' +
+                    parentId + ')',
                     null,
                     null,
                     null,
                     null
                 );
-                issue.fixLabel = 'Manual fix required - remove broken rule';
-                issues.push(issue);
+                orphanIssue.fixLabel = 'Manual fix required — remove broken rules';
+                issues.push(orphanIssue);
                 continue;
             }
-            
-            var rules = inheritanceRules[parentId];
-            var rulesToRemove = [];
-            
+
+            var rules = allRules[parentId];
+            if (!Array.isArray(rules)) continue;
+
+            var brokenIndices = [];
             for (var j = 0; j < rules.length; j++) {
                 var rule = rules[j];
-                
-                if (rule.childRankId) {
-                    var childRank = rankMap[rule.childRankId];
-                    if (!childRank) {
-                        rulesToRemove.push(j);
-                    }
+                if (!rule) continue;
+                if (_hasId(rule.childRankId) && !rankExists(rule.childRankId)) {
+                    brokenIndices.push(j);
+                    continue;
                 }
-                
-                if (rule.childRankIdFemale) {
-                    var childRankFemale = rankMap[rule.childRankIdFemale];
-                    if (!childRankFemale) {
-                        if (rulesToRemove.indexOf(j) === -1) {
-                            rulesToRemove.push(j);
-                        }
-                    }
+                if (_hasId(rule.childRankIdFemale)
+                    && !rankExists(rule.childRankIdFemale)) {
+                    brokenIndices.push(j);
                 }
             }
-            
-            if (rulesToRemove.length > 0) {
-                // Create auto-fix function - remove broken rules
-                var fixFn = function(pId, indices) {
-                    return function() {
-                        var success = true;
-                        // Remove from end to avoid index shifting
-                        indices.sort(function(a, b) { return b - a; });
-                        for (var idx = 0; idx < indices.length; idx++) {
-                            var result = _removeInheritanceRule(pId, indices[idx]);
-                            if (!result || result.success === false) {
-                                success = false;
-                            }
-                        }
-                        if (success) {
-                            _saveMasterData();
-                            _showToast('Removed broken inheritance rules from "' + _getRankById(pId).name + '"', 'success');
-                            return true;
-                        }
-                        _showToast('Failed to remove broken rules', 'error');
-                        return false;
+
+            if (brokenIndices.length === 0) continue;
+
+            var parentRankId = parentId;
+            var parentRankName = parentRank.name;
+            var indices = brokenIndices.slice();
+
+            var fix = (function (pid, idxs) {
+                return function () {
+                    // Remove from the end so earlier indices stay valid.
+                    idxs.sort(function (a, b) { return b - a; });
+                    var removed = 0;
+                    for (var i = 0; i < idxs.length; i++) {
+                        var result = RC.removeInheritanceRule(pid, idxs[i]);
+                        if (result.success) removed++;
+                    }
+                    if (removed === idxs.length) {
+                        return { success: true, removed: removed };
+                    }
+                    return {
+                        success: false,
+                        reason: 'Removed ' + removed + ' of ' + idxs.length +
+                            ' broken rules'
                     };
-                }(parentId, rulesToRemove.slice());
-                
-                var issue = new RankIssue(
-                    'Broken Inheritance Rule',
-                    'error',
-                    'Inheritance rule from "' + parentRank.name + '" has ' + rulesToRemove.length + ' broken child rank reference(s)',
-                    parentId,
-                    null,
-                    fixFn,
-                    { brokenIndices: rulesToRemove }
-                );
-                issue.fixLabel = 'Remove broken rules from "' + parentRank.name + '"';
-                issues.push(issue);
-            }
+                };
+            })(parentRankId, indices);
+
+            var issue = new RankIssue(
+                'Broken Inheritance Rule',
+                'error',
+                'Inheritance rule from "' + parentRankName + '" has ' +
+                brokenIndices.length + ' broken child rank reference(s)',
+                parentRankId,
+                null,
+                fix,
+                { brokenIndices: brokenIndices }
+            );
+            issue.fixLabel = 'Remove broken rules from "' + parentRankName + '"';
+            issues.push(issue);
         }
-        
+
         return issues;
     }
 
     // =========================================================================
-    // 13. GET CURRENT YEAR
+    // 11. BATCH FIX APPLIER
     // =========================================================================
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+    /**
+     * Applies every issue.fix() in order.
+     *
+     * options:
+     *   {
+     *     filter  function(issue) -> boolean
+     *             Only apply fixes where filter returns true. Default: all
+     *             issues that have a fix.
+     *   }
+     *
+     * Returns { applied, failed, skipped, errors }.
+     *
+     * Does NOT persist. Caller calls RankCommands.persist() after.
+     */
+    function applyFixes(issues, options) {
+        options = options || {};
+        var filter = typeof options.filter === 'function' ? options.filter : null;
+
+        if (!Array.isArray(issues)) {
+            return { applied: 0, failed: 0, skipped: 0, errors: [] };
+        }
+
+        var applied = 0;
+        var failed = 0;
+        var skipped = 0;
+        var errors = [];
+
+        for (var i = 0; i < issues.length; i++) {
+            var issue = issues[i];
+            if (!issue || typeof issue.fix !== 'function') {
+                skipped++;
+                continue;
+            }
+            if (filter && !filter(issue)) {
+                skipped++;
+                continue;
+            }
+
+            var result;
+            try {
+                result = issue.fix();
+            } catch (e) {
+                result = {
+                    success: false,
+                    reason: e && e.message ? e.message : 'fix threw'
+                };
+            }
+
+            if (result && result.success === true) {
+                applied++;
+            } else {
+                failed++;
+                errors.push({
+                    type: issue.type,
+                    rankId: issue.rankId,
+                    characterId: issue.characterId,
+                    reason: result && result.reason
+                        ? result.reason
+                        : 'fix returned failure'
+                });
+            }
+        }
+
+        return {
+            applied: applied,
+            failed: failed,
+            skipped: skipped,
+            errors: errors
+        };
+    }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 12. ANNUAL PIPELINE
+    // =========================================================================
+
+    /**
+     * Runs the rank annual pipeline.
+     *
+     * Pipeline order:
+     *   1. Detect issues (checkAll).
+     *   2. Apply fixes for issues that have an automatic fix.
+     *   3. Rebuild all numbering (catches anything step 2 missed).
+     *   4. Persist once (unless persist: false).
+     *
+     * options:
+     *   {
+     *     persist:          boolean  default true
+     *     skipFixes:        boolean  default false — if true, only report
+     *     filter:           function(issue) -> boolean  — applied to fixes
+     *   }
+     *
+     * Returns:
+     *   {
+     *     year,
+     *     status:                 'completed' | 'completed_with_errors' | 'partial',
+     *     issueCount,
+     *     issuesBySeverity:       { error, warning, info },
+     *     fixResults:             { applied, failed, skipped, errors },
+     *     renumberResults:        { totalFixed, fixedCounts, errors },
+     *     persisted:              boolean,
+     *     persistError:           string | null
+     *   }
+     */
+    function processAnnualRank(year, options) {
+        options = options || {};
+        var currentYear = (typeof year === 'number' && Number.isFinite(year))
+            ? year
+            : window.getCurrentYear();
+        var shouldPersist = options.persist !== false;
+        var skipFixes = options.skipFixes === true;
+
+        var checkResult = checkAll();
+        var issues = checkResult.issues;
+
+        var fixResults = {
+            applied: 0,
+            failed: 0,
+            skipped: 0,
+            errors: []
+        };
+
+        if (!skipFixes && issues.length > 0) {
+            fixResults = applyFixes(issues, { filter: options.filter });
+        }
+
+        var renumberResults = RC.rebuildAllRankNumbering();
+
+        var persisted = false;
+        var persistError = null;
+        if (shouldPersist) {
+            var persistResult = RC.persist();
+            if (persistResult.success) {
+                persisted = true;
+            } else {
+                persistError = persistResult.reason;
+            }
+        }
+
+        var status = 'completed';
+        if (persistError) {
+            status = 'partial';
+        } else if (fixResults.failed > 0
+            || (renumberResults.errors && renumberResults.errors.length > 0)) {
+            status = 'completed_with_errors';
+        }
+
+        return {
+            year: currentYear,
+            status: status,
+            issueCount: issues.length,
+            issuesBySeverity: {
+                error: checkResult.bySeverity.error.length,
+                warning: checkResult.bySeverity.warning.length,
+                info: checkResult.bySeverity.info.length
+            },
+            fixResults: fixResults,
+            renumberResults: renumberResults,
+            persisted: persisted,
+            persistError: persistError
+        };
+    }
+
+    // =========================================================================
+    // 13. DEATH HOOK
+    // =========================================================================
+
+    /**
+     * Handles a character death from the rank domain's perspective.
+     *
+     * Delegates the deprecate-on-death + renumber work to
+     * RankCommands.deprecateRanksOnDeath. Does not persist — the death
+     * cascade's orchestrator persists once at the end.
+     *
+     * options: { deathYear }
+     */
+    function handleCharacterDeath(characterId, options) {
+        options = options || {};
+        if (!_hasId(characterId)) {
+            return { success: false, reason: 'characterId is required' };
+        }
+        var deathYear = (typeof options.deathYear === 'number'
+            && Number.isFinite(options.deathYear))
+            ? options.deathYear
+            : window.getCurrentYear();
+
+        return RC.deprecateRanksOnDeath(characterId, { deathYear: deathYear });
+    }
+
+    // =========================================================================
+    // 14. HARD-DELETE CLEANUP
+    // =========================================================================
+
+    /**
+     * Removes every reference to a deleted character from other characters'
+     * rank assignments.
+     *
+     * The character's own assignments vanish with the record. What remains
+     * are inheritedFrom pointers on *other* characters' assignments that
+     * named the deleted character. This function nulls them and renumbers
+     * the affected ranks.
+     *
+     * Does NOT persist. Caller calls RankCommands.persist().
+     */
+    function removeAllReferencesTo(characterId) {
+        if (!_hasId(characterId)) {
+            return { success: false, reason: 'characterId is required' };
+        }
+
+        var allCharacters = _readAllCharacters();
+        var touchedRanks = {};
+        var cleaned = 0;
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || c.id === characterId) continue;
+            if (!Array.isArray(c.rankAssignments)) continue;
+
+            for (var j = 0; j < c.rankAssignments.length; j++) {
+                var a = c.rankAssignments[j];
+                if (!a || a.isDeprecated === true) continue;
+                if (a.inheritedFrom !== characterId) continue;
+
+                var update = CC.updateRankAssignment(c.id, a.rankId, {
+                    inheritedFrom: null
+                });
+                if (update && update.success === true) {
+                    cleaned++;
+                    touchedRanks[a.rankId] = true;
+                }
+            }
+        }
+
+        // Renumber affected ranks.
+        var renumberErrors = [];
+        for (var rankId in touchedRanks) {
+            if (!Object.prototype.hasOwnProperty.call(touchedRanks, rankId)) continue;
+            var rn = RC.renumberRankHolders(rankId);
+            if (!rn.success && rn.reason) {
+                renumberErrors.push({ rankId: rankId, reason: rn.reason });
+            }
+        }
+
+        return {
+            success: true,
+            cleaned: cleaned,
+            ranksRenumbered: Object.keys(touchedRanks).length,
+            renumberErrors: renumberErrors
+        };
+    }
+
+    // =========================================================================
+    // 15. LIFECYCLE HOOK REGISTRATION
+    // =========================================================================
+
+    if (typeof window.registerLifecycleHook === 'function') {
+        window.registerLifecycleHook('death', function (payload) {
+            if (!payload || !_hasId(payload.characterId)) return;
+            handleCharacterDeath(payload.characterId, {
+                deathYear: (typeof payload.deathYear === 'number')
+                    ? payload.deathYear
+                    : undefined
+            });
+        });
+        window.registerLifecycleHook('delete', function (payload) {
+            if (!payload || !_hasId(payload.characterId)) return;
+            removeAllReferencesTo(payload.characterId);
+        });
+    }
+
+    // =========================================================================
+    // 16. EXPORTS
     // =========================================================================
 
     window.RankIssues = {
-        checkAll: checkAllRankIssues,
+        // Detection
+        checkAll: checkAll,
+
+        // Per-category checks (each returns an array of RankIssue)
         checkSpouseInheritance: _checkSpouseInheritance,
         checkChildInheritance: _checkChildInheritance,
         checkGenderMismatch: _checkGenderMismatch,
         checkNumberingIssues: _checkNumberingIssues,
         checkDeprecationIssues: _checkDeprecationIssues,
         checkBrokenInheritanceRules: _checkBrokenInheritanceRules,
+
+        // Batch fix
+        applyFixes: applyFixes,
+
+        // Annual pipeline
+        processAnnualRank: processAnnualRank,
+
+        // Lifecycle
+        handleCharacterDeath: handleCharacterDeath,
+        removeAllReferencesTo: removeAllReferencesTo,
+
+        // Structure
         RankIssue: RankIssue
     };
 
-    window._rankIssues = window.RankIssues;
-
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.RankIssues;
+    }
 })();
