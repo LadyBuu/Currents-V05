@@ -1,0 +1,1473 @@
+﻿=================================================================
+ACCESSOR AUDIT
+Root:     js
+Files:    375
+Generated: 2026-10-11T19:04:47.1979191+01:00
+=================================================================
+
+-----------------------------------------------------------------
+1. getXById call sites, per file
+-----------------------------------------------------------------
+  apprenticeship\apprenticeship-commands.js  [8 hit(s)]
+    L  117  getCharacterById          function _getCharacterById(id) {
+    L  121  getCharacterById          return window.getCharacterById(id);
+    L  124  getRoleById               function _getRoleById(id) {
+    L  128  getRoleById               return window.getRoleById(id);
+    L  277  getCharacterById          var master = _getCharacterById(args.masterId);
+    L  278  getCharacterById          var apprentice = _getCharacterById(args.apprenticeId);
+    L  279  getRoleById               var role = args.roleId ? _getRoleById(args.roleId) : null;
+    L  630  getRoleById               var role = _getRoleById(meta.roleId);
+  apprenticeship\apprenticeship-queries.js  [6 hit(s)]
+    L   47  getCharacterById          *   - getCharacterById          (accessors)
+    L  130  getCharacterById          function _getCharacterById(id) {
+    L  131  getCharacterById          return window.getCharacterById(id);
+    L  310  getCharacterById          var master = _getCharacterById(rel.participantA);
+    L  311  getCharacterById          var apprentice = _getCharacterById(rel.participantB);
+    L  486  getCharacterById          var master = _getCharacterById(masterId);
+  apprenticeship\modals-apprenticeship.js  [5 hit(s)]
+    L  100  getCharacterById          function _getCharacterById(id)          { return window.getCharacterById(id); }
+    L  101  getPlaceById              function _getPlaceById(id)              { return window.getPlaceById(id); }
+    L  555  getCharacterById          var master = _getCharacterById(masterId);
+    L  630  getPlaceById              var place = _getPlaceById(locationId);
+    L  688  getCharacterById          var char = _getCharacterById(charId);
+  apprenticeship\professional-knowledge-commands.js  [6 hit(s)]
+    L   35  getCharacterById          function _getCharacterById(id) { return _dep('getCharacterById', window.getCharacterById)(id); }
+    L   36  getRoleById               function _getRoleById(id)      { return _dep('getRoleById', window.getRoleById)(id); }
+    L   78  getCharacterById          var dying = _getCharacterById(dyingId);
+    L   79  getCharacterById          var heir = _getCharacterById(heirId);
+    L   95  getRoleById               var role = _getRoleById(roleId);
+    L  143  getCharacterById          var char = _getCharacterById(characterId);
+  character\character-generator.js  [5 hit(s)]
+    L   62  getPlaceById              *   - world.js:      getPlaceById (via accessors.js)
+    L  188  getPlaceById              var place = window.getPlaceById(locationId);
+    L  206  getPlaceById              current = window.getPlaceById(current.parentId);
+    L  267  getPlaceById              return window.getPlaceById(chosenId);
+    L  533  getPlaceById              var specified = window.getPlaceById(countryIdResult.value);
+  character\character-lifecycle.js  [1 hit(s)]
+    L  808  getRankById               var rank = window.getRankById(character.activeRankId);
+  character\character-ui-list.js  [1 hit(s)]
+    L  339  getCharacterById          var character = window.getCharacterById(id);
+  character\children-generator.js  [4 hit(s)]
+    L   53  getCharacterById          *   - accessors.js:  getCharacterById (for age and birth-year lookups)
+    L  203  getCharacterById          var mother = window.getCharacterById(motherId);
+    L  253  getCharacterById          var mother = window.getCharacterById(motherId);
+    L  333  getCharacterById          var mother = window.getCharacterById(motherId);
+  core\accessors.js  [12 hit(s)]
+    L  277  getCharacterById          function getCharacterById(id) {
+    L  283  getPlaceById              function getPlaceById(id) {
+    L  289  getRankById               function getRankById(id) {
+    L  295  getRoleById               function getRoleById(id) {
+    L  301  getLocationTypeById       function getLocationTypeById(id) {
+    L  307  getGovernmentTypeById     function getGovernmentTypeById(id) {
+    L  313  getHouseholdById          function getHouseholdById(id) {
+    L  328  getCharacterById          return typeof id === 'string' && id.length > 0 && getCharacterById(id) !== null;
+    L  332  getPlaceById              return typeof id === 'string' && id.length > 0 && getPlaceById(id) !== null;
+    L  336  getRoleById               return typeof id === 'string' && id.length > 0 && getRoleById(id) !== null;
+    L  340  getRankById               return typeof id === 'string' && id.length > 0 && getRankById(id) !== null;
+    L  344  getHouseholdById          return typeof id === 'string' && id.length > 0 && getHouseholdById(id) !== null;
+  core\family-accessors.js  [22 hit(s)]
+    L   98  getCharacterById          function _getCharacterById(id) {
+    L   99  getCharacterById          return window.getCharacterById(id);
+    L  187  getCharacterById          var character = _getCharacterById(characterId);
+    L  190  getCharacterById          return _getCharacterById(character.fatherId);
+    L  197  getCharacterById          var character = _getCharacterById(characterId);
+    L  200  getCharacterById          return _getCharacterById(character.motherId);
+    L  208  getCharacterById          var character = _getCharacterById(characterId);
+    L  212  getCharacterById          ? _getCharacterById(character.fatherId)
+    L  215  getCharacterById          ? _getCharacterById(character.motherId)
+    L  239  getCharacterById          var character = _getCharacterById(characterId);
+    L  264  getCharacterById          var father = _getCharacterById(character.fatherId);
+    L  271  getCharacterById          var mother = _getCharacterById(character.motherId);
+    L  284  getCharacterById          var parent = _getCharacterById(ap.parentId);
+    L  313  getCharacterById          var character = _getCharacterById(characterId);
+    L  334  getCharacterById          var character = _getCharacterById(characterId);
+    L  354  getCharacterById          var character = _getCharacterById(characterId);
+    L  376  getCharacterById          var character = _getCharacterById(characterId);
+    L  386  getCharacterById          var child = _getCharacterById(ac.childId);
+    L  416  getCharacterById          var character = _getCharacterById(characterId);
+    L  534  getCharacterById          var character = _getCharacterById(characterId);
+    L  811  getCharacterById          var char1 = _getCharacterById(charId1);
+    L  812  getCharacterById          var char2 = _getCharacterById(charId2);
+  core\integrity.js  [10 hit(s)]
+    L  126  getCharacterById          if (_hasId(char.motherId) && !window.getCharacterById(char.motherId)) {
+    L  134  getCharacterById          if (_hasId(char.fatherId) && !window.getCharacterById(char.fatherId)) {
+    L  146  getCharacterById          if (!window.getCharacterById(ap.parentId)) {
+    L  360  getPlaceById              if (_hasId(place.parentId) && !window.getPlaceById(place.parentId)) {
+    L  475  getCharacterById          if (!window.getCharacterById(partnerId)) {
+    L  533  getCharacterById          if (!window.getCharacterById(friendId)) {
+    L  594  getCharacterById          if (!window.getCharacterById(member.characterId)) {
+    L  609  getCharacterById          if (!window.getCharacterById(dept.headId)) {
+    L  829  getCharacterById          if (_hasId(char.masterId) && !window.getCharacterById(char.masterId)) {
+    L  842  getCharacterById          var apprentice = window.getCharacterById(apprenticeId);
+  core\names.js  [3 hit(s)]
+    L  265  getCharacterById          var c = window.getCharacterById(characterId);
+    L  280  getCharacterById          var c = window.getCharacterById(characterId);
+    L  295  getCharacterById          var c = window.getCharacterById(characterId);
+  core\queries\household-queries.js  [4 hit(s)]
+    L   41  getCharacterById          var character = window.getCharacterById(characterId);
+    L   45  getHouseholdById          return window.getHouseholdById(householdId);
+    L   61  getCharacterById          var char = window.getCharacterById(member.characterId);
+    L   91  getCharacterById          return window.getCharacterById(household.members[i].characterId);
+  core\queries\query-helpers.js  [3 hit(s)]
+    L   89  getCharacterById          father: char.fatherId ? window.getCharacterById(char.fatherId) : null,
+    L   90  getCharacterById          mother: char.motherId ? window.getCharacterById(char.motherId) : null
+    L  196  getPlaceById              current = window.getPlaceById(current.parentId);
+  core\queries\rank-queries.js  [4 hit(s)]
+    L   26  getRankById               var rank = window.getRankById(active[i].rankId);
+    L   35  getRankById               return window.getRankById(best.rankId);
+    L   42  getRankById               rank = window.getRankById(character.activeRankId);
+    L   60  getRankById               var rank = window.getRankById(a.rankId);
+  core\world.js  [12 hit(s)]
+    L  114  getPlaceById              function _getPlaceById(id) {
+    L  115  getPlaceById              return window.getPlaceById(id);
+    L  118  getLocationTypeById       function _getLocationTypeById(id) {
+    L  119  getLocationTypeById       return window.getLocationTypeById(id);
+    L  167  getLocationTypeById       return _typePriority(_getLocationTypeById(typeId));
+    L  184  getLocationTypeById       return _typeScope(_getLocationTypeById(typeId));
+    L  322  getPlaceById              current = _getPlaceById(current.parentId);
+    L  344  getPlaceById              current = _getPlaceById(current.parentId);
+    L  404  getPlaceById              var place = _getPlaceById(placeId);
+    L  430  getCharacterById          var character = window.getCharacterById(characterId);
+    L  459  getPlaceById              return _getPlaceById(countryId);
+    L  524  getPlaceById              return _getPlaceById(id);
+  crime\crime-commands.js  [11 hit(s)]
+    L   72  getCharacterById          function _getCharacterById(id) {
+    L   74  getCharacterById          return window.getCharacterById(id);
+    L   77  getHouseholdById          function _getHouseholdById(id) {
+    L   79  getHouseholdById          return window.getHouseholdById(id);
+    L   82  getPlaceById              function _getPlaceById(id) {
+    L   84  getPlaceById              return window.getPlaceById(id);
+    L  445  getCharacterById          var victim = _getCharacterById(victimId);
+    L  446  getCharacterById          var killer = _getCharacterById(killerId);
+    L  652  getCharacterById          var condemned = _getCharacterById(condemnedId);
+    L  801  getCharacterById          var victim = _getCharacterById(victimId);
+    L  802  getCharacterById          var killer = _getCharacterById(killerId);
+  crime\crime-law-integration.js  [5 hit(s)]
+    L   99  getCharacterById          function _getCharacterById(id) {
+    L  103  getCharacterById          return window.getCharacterById(id);
+    L  186  getPlaceById              var place = window.getPlaceById(locationId);
+    L  245  getCharacterById          var character = _getCharacterById(characterId);
+    L  472  getCharacterById          var character = _getCharacterById(characterId);
+  crime\crime-queries.js  [3 hit(s)]
+    L   91  getPlaceById              function _getPlaceById(id) {
+    L   93  getPlaceById              return window.getPlaceById(id);
+    L  464  getPlaceById              var place = _getPlaceById(locId);
+  crime\crime-state.js  [13 hit(s)]
+    L   45  getHouseholdById          *   - accessors.js: getCharacterById, getHouseholdById (for name snapshots)
+    L   89  getCharacterById          function _getCharacterById(id) {
+    L   91  getCharacterById          return window.getCharacterById(id);
+    L   94  getHouseholdById          function _getHouseholdById(id) {
+    L   96  getHouseholdById          return window.getHouseholdById(id);
+    L  450  getCharacterById          var victim = data.victimId ? _getCharacterById(data.victimId) : null;
+    L  451  getCharacterById          var perpetrator = data.perpetratorId ? _getCharacterById(data.perpetratorId) : null;
+    L  877  getHouseholdById          var householdA = _getHouseholdById(data.householdAId);
+    L  878  getHouseholdById          var householdB = _getHouseholdById(data.householdBId);
+    L  895  getCharacterById          var characterA = data.characterAId ? _getCharacterById(data.characterAId) : null;
+    L  896  getCharacterById          var characterB = data.characterBId ? _getCharacterById(data.characterBId) : null;
+    L  968  getCharacterById          var victim = deathData.victimId ? _getCharacterById(deathData.victimId) : null;
+    L  969  getCharacterById          var killer = deathData.killerId ? _getCharacterById(deathData.killerId) : null;
+  crime\crime-ui-stats.js  [7 hit(s)]
+    L   89  getCharacterById          function _getCharacterById(id) {
+    L   91  getCharacterById          return window.getCharacterById(id);
+    L   94  getPlaceById              function _getPlaceById(id) {
+    L   96  getPlaceById              return window.getPlaceById(id);
+    L  101  getPlaceById              var place = _getPlaceById(id);
+    L  399  getCharacterById          var perpetrator = crime.perpetratorId ? _getCharacterById(crime.perpetratorId) : null;
+    L  400  getCharacterById          var victim = crime.victimId ? _getCharacterById(crime.victimId) : null;
+  crime\modals-crime.js  [14 hit(s)]
+    L   94  getCharacterById          function _getCharacterById(id) {
+    L   96  getCharacterById          return window.getCharacterById(id);
+    L   99  getHouseholdById          function _getHouseholdById(id) {
+    L  101  getHouseholdById          return window.getHouseholdById(id);
+    L  104  getPlaceById              function _getPlaceById(id) {
+    L  106  getPlaceById              return window.getPlaceById(id);
+    L  111  getPlaceById              var place = _getPlaceById(id);
+    L  441  getCharacterById          var victim = _getCharacterById(options.victimId);
+    L  448  getCharacterById          var killer = _getCharacterById(options.killerId);
+    L  572  getCharacterById          var condemned = _getCharacterById(options.condemnedId);
+    L  694  getHouseholdById          var hA = _getHouseholdById(options.householdAId);
+    L  701  getHouseholdById          var hB = _getHouseholdById(options.householdBId);
+    L  720  getCharacterById          var perpetrator = crime.perpetratorId ? _getCharacterById(crime.perpetratorId) : null;
+    L  721  getCharacterById          var victim = crime.victimId ? _getCharacterById(crime.victimId) : null;
+  culture\culture-queries.js  [5 hit(s)]
+    L  258  getPlaceById              var place = placeQueries.getPlaceById(currentId);
+    L  319  getPlaceById              var place = placeQueries.getPlaceById(locationId);
+    L  328  getPlaceById              var parentPlace = placeQueries.getPlaceById(current);
+    L  357  getCharacterById          var character = characterQueries.getCharacterById(characterId);
+    L  437  getPlaceById              var place = placeQueries.getPlaceById(culture.locations[i]);
+  culture\culture-view-models.js  [1 hit(s)]
+    L  130  getPlaceById              var place = placeQueries.getPlaceById(locationIds[i]);
+  disaster\disaster-commands.js  [6 hit(s)]
+    L   62  getCharacterById          function _getCharacterById(id) {
+    L   64  getCharacterById          return window.getCharacterById(id);
+    L   76  getPlaceById              function _getPlaceById(id) {
+    L   78  getPlaceById              return window.getPlaceById(id);
+    L  272  getPlaceById              var location = _getPlaceById(locationId);
+    L  527  getPlaceById              var location = _getPlaceById(locationId);
+  disaster\disaster-damage.js  [2 hit(s)]
+    L   87  getPlaceById              function _getPlaceById(id) {
+    L   89  getPlaceById              return window.getPlaceById(id);
+  disaster\disaster-queries.js  [3 hit(s)]
+    L   48  getPlaceById              function _getPlaceById(id) {
+    L   50  getPlaceById              return window.getPlaceById(id);
+    L   59  getPlaceById              var place = _getPlaceById(id);
+  disaster\disaster-ui-stats.js  [4 hit(s)]
+    L   75  getPlaceById              function _getPlaceById(id) {
+    L   77  getPlaceById              return window.getPlaceById(id);
+    L   86  getPlaceById              var place = _getPlaceById(id);
+    L  290  getPlaceById              var location = d.locationId ? _getPlaceById(d.locationId) : null;
+  disaster\modals-disaster.js  [6 hit(s)]
+    L   99  getPlaceById              function _getPlaceById(id) {
+    L  101  getPlaceById              return window.getPlaceById(id);
+    L  248  getPlaceById              var location = disaster.locationId ? _getPlaceById(disaster.locationId) : null;
+    L  332  getPlaceById              var location = _getPlaceById(locationId);
+    L  396  getPlaceById              var deadliestLocation = deadliest.locationId ? _getPlaceById(deadliest.locationId) : null;
+    L  410  getPlaceById              var recentLocation = recent.locationId ? _getPlaceById(recent.locationId) : null;
+  education\education-annual.js  [3 hit(s)]
+    L   72  getCharacterById          function _getCharacterById(id) {
+    L   76  getCharacterById          return window.getCharacterById(id);
+    L  135  getCharacterById          var student = _getCharacterById(studentRecord.studentId);
+  education\education-commands.js  [18 hit(s)]
+    L   70  getPlaceById              *     - getCharacterById, getCharacters, getPlaceById (accessors)
+    L  131  getCharacterById          function _getCharacterById(id) {
+    L  141  getPlaceById              function _getPlaceById(id) {
+    L  218  getRoleById               function _getRoleById(id) {
+    L  463  getPlaceById              var location = _getPlaceById(opts.locationId);
+    L  490  getCharacterById          var ownerChar = _getCharacterById(ownerId);
+    L  636  getPlaceById              var newPlace = _getPlaceById(patch.locationId);
+    L  675  getCharacterById          var c = _getCharacterById(ownerId);
+    L  796  getCharacterById          var teacher = _getCharacterById(teacherId);
+    L  833  getRoleById               var role = _getRoleById(subjectId);
+    L  899  getCharacterById          var student = _getCharacterById(studentId);
+    L 1040  getRoleById               var roleName = (_getRoleById(roleToGrant) || {}).name || roleToGrant;
+    L 1112  getRoleById               ? ' as ' + ((_getRoleById(roleToGrant) || {}).name || '')
+    L 1172  getCharacterById          var character = _getCharacterById(characterId);
+    L 1314  getCharacterById          var character = _getCharacterById(characterId);
+    L 1465  getCharacterById          var c = _getCharacterById(ownerId);
+    L 1524  getCharacterById          var c = _getCharacterById(ownerId);
+    L 1687  getCharacterById          var owner = _getCharacterById(inst.ownerId);
+  education\education-history.js  [9 hit(s)]
+    L   62  getCharacterById          function _getCharacterById(id) {
+    L   66  getCharacterById          return window.getCharacterById(id);
+    L  310  getCharacterById          var teacher = _getCharacterById(teacherId);
+    L  335  getCharacterById          var teacher = _getCharacterById(teacherId);
+    L  350  getCharacterById          var student = _getCharacterById(studentId);
+    L  365  getCharacterById          var student = _getCharacterById(studentId);
+    L  380  getCharacterById          var student = _getCharacterById(studentId);
+    L  395  getCharacterById          var character = _getCharacterById(characterId);
+    L  412  getCharacterById          var character = _getCharacterById(characterId);
+  education\education-learning.js  [6 hit(s)]
+    L   58  getCharacterById          function _getCharacterById(id) {
+    L   62  getCharacterById          return window.getCharacterById(id);
+    L  134  getCharacterById          var character = _getCharacterById(characterId);
+    L  165  getCharacterById          var character = _getCharacterById(characterId);
+    L  199  getCharacterById          var character = _getCharacterById(characterId);
+    L  221  getCharacterById          var character = _getCharacterById(characterId);
+  education\education-queries.js  [20 hit(s)]
+    L   44  getCharacterById          function _getCharacterById(id) {
+    L   48  getCharacterById          return window.getCharacterById(id);
+    L   51  getPlaceById              function _getPlaceById(id) {
+    L   55  getPlaceById              return window.getPlaceById(id);
+    L  100  getRoleById               function _getRoleById(id) {
+    L  106  getRoleById               return window.getRoleById(id);
+    L  157  getPlaceById              var place = _getPlaceById(locationId);
+    L  310  getRoleById               var role = _getRoleById(inst.taughtRoles[j]);
+    L  391  getCharacterById          var char = _getCharacterById(s.studentId);
+    L  489  getCharacterById          var char = includeCharacterData ? _getCharacterById(s.studentId) : null;
+    L  501  getCharacterById          var char = _getCharacterById(g.studentId);
+    L  515  getCharacterById          var char = _getCharacterById(t.teacherId);
+    L  592  getCharacterById          var character = _getCharacterById(inst.headmaster.characterId);
+    L  685  getPlaceById              var place = _getPlaceById(locationId);
+    L  751  getCharacterById          var student = _getCharacterById(rec.studentId);
+    L  882  getRoleById               var role = _getRoleById(inst.taughtRoles[i]);
+    L  919  getPlaceById              var place = _getPlaceById(locationId);
+    L 1138  getPlaceById              var place = _getPlaceById(locationId);
+    L 1295  getPlaceById              var place = _getPlaceById(locationId);
+    L 1325  getCharacterById          var char = _getCharacterById(record.studentId);
+  education\modals-education.js  [6 hit(s)]
+    L  106  getCharacterById          function _getCharacterById(id) {
+    L  108  getCharacterById          return window.getCharacterById(id);
+    L  121  getRoleById               function _getRoleById(roleId) {
+    L  127  getRoleById               return window.getRoleById(roleId);
+    L 1020  getRoleById               var role = _getRoleById(roleId);
+    L 1581  getRoleById               var role = _getRoleById(roleId);
+  events\annualProcessing.js  [3 hit(s)]
+    L  252  getCharacterById          var student = _getCharacterById(studentRecord.studentId);
+    L  321  getCharacterById          function _getCharacterById(id) {
+    L  323  getCharacterById          return window.getCharacterById(id);
+  events\census-core.js  [2 hit(s)]
+    L   55  getCharacterById          function _getCharacterById(id) {
+    L   56  getCharacterById          if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
+  events\social-events-system.js  [29 hit(s)]
+    L  131  getCharacterById          function _getCharacterById(id) {
+    L  132  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  139  getPlaceById              function _getPlaceById(id) {
+    L  140  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  374  getCharacterById          var partner = _getCharacterById(partnerId);
+    L  492  getCharacterById          var charA = participants[0] ? _getCharacterById(participants[0]) : null;
+    L  493  getCharacterById          var charB = participants[1] ? _getCharacterById(participants[1]) : null;
+    L  514  getCharacterById          var char = _getCharacterById(pId);
+    L  558  getCharacterById          participants.map(function(id) { return _getCharacterById(id); }));
+    L  569  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  570  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  599  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  600  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  631  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  632  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  674  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  675  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  717  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  718  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  748  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  749  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  778  getCharacterById          var charA = _getCharacterById(charIdA);
+    L  779  getCharacterById          var charB = _getCharacterById(charIdB);
+    L  802  getCharacterById          var character = _getCharacterById(charId);
+    L  826  getPlaceById              var newLocation = _getPlaceById(newLocationId);
+    L  837  getCharacterById          var character = _getCharacterById(charId);
+    L  847  getRoleById               var role = typeof window.getRoleById === 'function' ? window.getRoleById(roleId) : null;
+    L  872  getCharacterById          var master = _getCharacterById(masterId);
+    L  873  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+  events\timeline-core.js  [6 hit(s)]
+    L   44  getCharacterById          function _getCharacterById(id) {
+    L   45  getCharacterById          if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
+    L   49  getPlaceById              function _getPlaceById(id) {
+    L   50  getPlaceById              if (typeof window.getPlaceById === 'function') return window.getPlaceById(id);
+    L  174  getPlaceById              var birthplace = _getPlaceById(char.birthplaceId);
+    L  221  getPlaceById              var location = _getPlaceById(move.locationId);
+  households\household-assignment.js  [10 hit(s)]
+    L  106  getCharacterById          function _getCharacterById(id) {
+    L  110  getCharacterById          return window.getCharacterById(id);
+    L  171  getCharacterById          var child = _getCharacterById(childId);
+    L  181  getCharacterById          var mother = _getCharacterById(motherId);
+    L  188  getCharacterById          var father = _getCharacterById(fatherId);
+    L  251  getCharacterById          var character = _getCharacterById(characterId);
+    L  254  getCharacterById          var spouse = _getCharacterById(spouseId);
+    L  448  getCharacterById          var character = _getCharacterById(characterId);
+    L  520  getCharacterById          var heir = _getCharacterById(heirId);
+    L  617  getCharacterById          var character = _getCharacterById(characterId);
+  households\household-commands.js  [12 hit(s)]
+    L   45  getCharacterById          function _getCharacterById(id) {
+    L   49  getCharacterById          return window.getCharacterById(id);
+    L  173  getCharacterById          var head = _getCharacterById(data.headId);
+    L  261  getCharacterById          character = _getCharacterById(household.members[i].characterId);
+    L  415  getCharacterById          var character = _getCharacterById(characterId);
+    L  487  getCharacterById          var character = _getCharacterById(characterId);
+    L  593  getCharacterById          var character = _getCharacterById(characterId);
+    L  755  getCharacterById          character = _getCharacterById(m.characterId);
+    L  878  getCharacterById          var head = _getCharacterById(options.headId);
+    L  943  getCharacterById          var head = _getCharacterById(updates.headId);
+    L 1162  getCharacterById          var character = _getCharacterById(characterId);
+    L 1299  getCharacterById          character = _getCharacterById(m.characterId);
+  households\household-economy.js  [1 hit(s)]
+    L  237  getCharacterById          ? window.getCharacterById(member.characterId)
+  households\household-queries.js  [7 hit(s)]
+    L   30  getCharacterById          function _getCharacterById(id) {
+    L   34  getCharacterById          return window.getCharacterById(id);
+    L  144  getCharacterById          character = _getCharacterById(member.characterId);
+    L  311  getCharacterById          character = _getCharacterById(member.characterId);
+    L  662  getCharacterById          character = _getCharacterById(member.characterId);
+    L  701  getCharacterById          child = _getCharacterById(childId);
+    L  745  getCharacterById          sibling = _getCharacterById(sibId);
+  households\household-servant.js  [12 hit(s)]
+    L  139  getCharacterById          function _getCharacterById(id) {
+    L  143  getCharacterById          return window.getCharacterById(id);
+    L  314  getCharacterById          var employer = _getCharacterById(employerId);
+    L  315  getCharacterById          var servant = _getCharacterById(servantId);
+    L  454  getCharacterById          var employer = _getCharacterById(employerId);
+    L  455  getCharacterById          var servant = _getCharacterById(servantId);
+    L  520  getCharacterById          var servant = _getCharacterById(servantId);
+    L  718  getCharacterById          var employer = _getCharacterById(employerId);
+    L  719  getCharacterById          var servant = _getCharacterById(servantId);
+    L  822  getCharacterById          var servant = _getCharacterById(servantId);
+    L  823  getCharacterById          var currentEmployer = _getCharacterById(currentEmployerId);
+    L  824  getCharacterById          var newEmployer = _getCharacterById(newEmployerId);
+  households\household-ui-list.js  [3 hit(s)]
+    L   72  getPlaceById              function _getPlaceById(id) {
+    L   76  getPlaceById              return window.getPlaceById(id);
+    L  193  getPlaceById              place = _getPlaceById(locationId);
+  households\modals-household-snapshot.js  [1 hit(s)]
+    L  608  getCharacterById          var character = window.getCharacterById(characterId);
+  households\modals-household-staff.js  [12 hit(s)]
+    L   81  getRoleById               function _getRoleById(id) {
+    L   83  getRoleById               if (typeof window.getRoleById === 'function') return window.getRoleById(id);
+    L   86  getRoleById               return window.RoleQueries.getRoleById(id);
+    L  413  getRoleById               ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+    L  542  getRoleById               ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+    L  730  getRoleById               ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
+    L  815  getRoleById               ? (_getRoleById(assignment.roleIdAtAssignment) || {}).name || 'Unknown'
+    L  992  getRoleById               ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
+    L 1112  getRoleById               _escapeHtml((_getRoleById(position.requiredRoleId) || {}).name || 'Unknown')
+    L 1298  getRoleById               ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+    L 1399  getRoleById               ? (_getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
+    L 1515  getRoleById               ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+  households\modals-residence.js  [3 hit(s)]
+    L  155  getPlaceById              function _getPlaceById(id) {
+    L  157  getPlaceById              return window.getPlaceById(id);
+    L  216  getPlaceById              var place = _getPlaceById(locationId);
+  households\modals-residence-owner.js  [3 hit(s)]
+    L   90  getCharacterById          function _getCharacterById(id) {
+    L   92  getCharacterById          return window.getCharacterById(id);
+    L  158  getCharacterById          var c = _getCharacterById(ownerId);
+  households\modals-residence-rental.js  [1 hit(s)]
+    L  167  getCharacterById          var c = window.getCharacterById(id);
+  households\modals-residence-staff.js  [11 hit(s)]
+    L  110  getCharacterById          function _getCharacterById(id) {
+    L  114  getCharacterById          return window.getCharacterById(id);
+    L  117  getRoleById               function _getRoleById(id) {
+    L  119  getRoleById               if (typeof window.getRoleById === 'function') return window.getRoleById(id);
+    L  122  getRoleById               return window.RoleQueries.getRoleById(id);
+    L  483  getRoleById               ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+    L  633  getRoleById               ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+    L  830  getRoleById               ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
+    L  929  getRoleById               ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+    L 1028  getRoleById               ? (_getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
+    L 1146  getRoleById               ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+  households\residence-system.js  [10 hit(s)]
+    L  105  getCharacterById          function _getCharacterById(id) {
+    L  109  getCharacterById          return window.getCharacterById(id);
+    L  112  getPlaceById              function _getPlaceById(id) {
+    L  116  getPlaceById              return window.getPlaceById(id);
+    L  353  getPlaceById              var place = _getPlaceById(locationId);
+    L  496  getPlaceById              var place = _getPlaceById(updates.locationId);
+    L 1048  getCharacterById          var c = _getCharacterById(id);
+    L 1070  getCharacterById          if (!_getCharacterById(ownerId)) {
+    L 1141  getCharacterById          if (!_getCharacterById(renterId)) {
+    L 1439  getCharacterById          var character = _getCharacterById(characterId);
+  location\location-commands.js  [15 hit(s)]
+    L   93  getLocationTypeById       if (!_state().getLocationTypeById(input.typeId)) {
+    L   96  getPlaceById              if (input.parentId && !_state().getPlaceById(input.parentId)) {
+    L  121  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  128  getLocationTypeById       if (updates.typeId !== undefined && !_state().getLocationTypeById(updates.typeId)) {
+    L  157  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  210  getLocationTypeById       var type = _state().getLocationTypeById(typeId);
+    L  230  getLocationTypeById       var type = _state().getLocationTypeById(typeId);
+    L  254  getCharacterById          var character = _characterQueries().getCharacterById(characterId);
+    L  256  getPlaceById              var place = _state().getPlaceById(locationId);
+    L  274  getPlaceById              var fromPlace = _state().getPlaceById(moveData.fromLocationId);
+    L  314  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  326  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  328  getCharacterById          var character = _characterQueries().getCharacterById(characterId);
+    L  367  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  393  getPlaceById              var place = _state().getPlaceById(placeId);
+  location\location-hierarchy.js  [7 hit(s)]
+    L   48  getPlaceById              var place = _state().getPlaceById(placeId);
+    L   57  getPlaceById              var parent = _state().getPlaceById(newParentId);
+    L   95  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  159  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  198  getPlaceById              if (!_state().getPlaceById(id1) || !_state().getPlaceById(id2)) return null;
+    L  217  getPlaceById              var common = _state().getPlaceById(locationIds[0]);
+    L  220  getPlaceById              if (!_state().getPlaceById(locationIds[i])) return null;
+  location\location-movement.js  [5 hit(s)]
+    L   50  getCharacterById          var character = _characters().getCharacterById(characterId);
+    L   84  getCharacterById          var character = _characters().getCharacterById(characterId);
+    L  133  getCharacterById          var character = _characters().getCharacterById(characterId);
+    L  143  getCharacterById          var character = _characters().getCharacterById(characterId);
+    L  161  getRankById               var rank = window.RankQueries.getRankById(character.activeRankId);
+  location\location-queries.js  [20 hit(s)]
+    L   67  getPlaceById              return _state().getPlaceById(placeId);
+    L   76  getPlaceById              var p = _state().getPlaceById(ids[i]);
+    L  116  getLocationTypeById       var t = _state().getLocationTypeById(ids[i]);
+    L  123  getLocationTypeById       return _state().getLocationTypeById(typeId);
+    L  127  getLocationTypeById       var type = _state().getLocationTypeById(typeId);
+    L  132  getLocationTypeById       var type = _state().getLocationTypeById(typeId);
+    L  149  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  197  getPlaceById              var p = _state().getPlaceById(ids[i]);
+    L  239  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  260  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  297  getPlaceById              var place = _state().getPlaceById(locationId);
+    L  337  getPlaceById              var place = _state().getPlaceById(placeId);
+    L  358  getPlaceById              var current = _state().getPlaceById(placeId);
+    L  364  getPlaceById              current = _state().getPlaceById(current.parentId);
+    L  408  getPlaceById              var country = _state().getPlaceById(countryId);
+    L  441  getPlaceById              if (placeId1 === placeId2) return _state().getPlaceById(placeId1);
+    L  504  getPlaceById              var place = _state().getPlaceById(locId);
+    L  586  getPlaceById              var place = _state().getPlaceById(locationId);
+    L  592  getPlaceById              var parent = place.parentId ? _state().getPlaceById(place.parentId) : null;
+    L  721  getCharacterById          var character = _characters().getCharacterById(characterId);
+  location\location-state.js  [2 hit(s)]
+    L  113  getPlaceById              function getPlaceById(placeId) {
+    L  118  getLocationTypeById       function getLocationTypeById(typeId) {
+  location\location-view-models.js  [2 hit(s)]
+    L  224  getCharacterById          var character = _characters().getCharacterById(characterId);
+    L  296  getCharacterById          var character = _characters().getCharacterById(characterId);
+  names\name-commands.js  [1 hit(s)]
+    L  127  getCharacterById          return window.getCharacterById(characterId);
+  names\name-queries.js  [11 hit(s)]
+    L  306  getCharacterById          var character = window.getCharacterById(characterId);
+    L  320  getCharacterById          ? window.getCharacterById(character.fatherId)
+    L  325  getCharacterById          ? window.getCharacterById(character.motherId)
+    L  331  getCharacterById          ? window.getCharacterById(father.fatherId)
+    L  337  getCharacterById          ? window.getCharacterById(father2.motherId)
+    L  343  getCharacterById          ? window.getCharacterById(mother.fatherId)
+    L  349  getCharacterById          ? window.getCharacterById(mother2.motherId)
+    L  355  getCharacterById          ? window.getCharacterById(pgf.fatherId)
+    L  361  getCharacterById          ? window.getCharacterById(mgf.fatherId)
+    L  455  getCharacterById          var character = window.getCharacterById(characterId);
+    L  498  getCharacterById          var character = window.getCharacterById(characterId);
+  names\name-state.js  [1 hit(s)]
+    L  211  getCharacterById          var character = window.getCharacterById(characterId);
+  relationships\affair-commands.js  [3 hit(s)]
+    L   73  getCharacterById          return window.getCharacterById(id);
+    L  500  getRankById               var r = window.getRankById(c.activeRankId);
+    L  786  getRankById               var r = window.getRankById(character.activeRankId);
+  relationships\affair-queries.js  [2 hit(s)]
+    L   45  getCharacterById          return window.getCharacterById(id);
+    L   58  getRankById               var rank = window.getRankById(character.activeRankId);
+  relationships\friendship-commands.js  [1 hit(s)]
+    L   55  getCharacterById          return window.getCharacterById(id);
+  relationships\jealousy-commands.js  [1 hit(s)]
+    L   65  getCharacterById          return window.getCharacterById(id);
+  relationships\jealousy-queries.js  [2 hit(s)]
+    L   60  getCharacterById          return window.getCharacterById(id);
+    L   73  getRankById               var rank = window.getRankById(character.activeRankId);
+  relationships\matchmaking-queries.js  [1 hit(s)]
+    L   65  getCharacterById          return window.getCharacterById(id);
+  relationships\modals-friendship.js  [1 hit(s)]
+    L   75  getCharacterById          return window.getCharacterById(id);
+  relationships\modals-relationship.js  [1 hit(s)]
+    L   79  getCharacterById          return window.getCharacterById(id);
+  relationships\professional-commands.js  [1 hit(s)]
+    L  142  getCharacterById          return window.getCharacterById(id);
+  relationships\relationship-finder-queries.js  [1 hit(s)]
+    L   63  getCharacterById          return window.getCharacterById(id);
+  relationships\relationship-integration.js  [1 hit(s)]
+    L   81  getCharacterById          return window.getCharacterById(id);
+  relationships\rivalry-commands.js  [1 hit(s)]
+    L   54  getCharacterById          return window.getCharacterById(id);
+  relationships\romance-commands.js  [2 hit(s)]
+    L   66  getCharacterById          return window.getCharacterById(id);
+    L  142  getRankById               var rank = window.getRankById(character.activeRankId);
+  religion\modals-religion.js  [7 hit(s)]
+    L  135  getCharacterById          function _getCharacterById(id) {
+    L  137  getCharacterById          return window.getCharacterById(id);
+    L  149  getPlaceById              function _getPlaceById(id) {
+    L  151  getPlaceById              return window.getPlaceById(id);
+    L  223  getCharacterById          var char = _getCharacterById(id);
+    L  234  getPlaceById              var place = _getPlaceById(id);
+    L 1604  getCharacterById          var character = _getCharacterById(characterId);
+  religion\religion-commands.js  [9 hit(s)]
+    L   85  getCharacterById          function _getCharacterById(id) {
+    L   89  getCharacterById          return window.getCharacterById(id);
+    L   92  getPlaceById              function _getPlaceById(id) {
+    L   96  getPlaceById              return window.getPlaceById(id);
+    L  351  getCharacterById          var character = _getCharacterById(characterId);
+    L  577  getPlaceById              var place = _getPlaceById(locationId);
+    L  631  getCharacterById          var existing = _getCharacterById(characterId);
+    L  689  getCharacterById          var character = _getCharacterById(characterId);
+    L  723  getCharacterById          var character = _getCharacterById(characterId);
+  religion\religion-inheritance.js  [5 hit(s)]
+    L   80  getCharacterById          function _getCharacterById(id) {
+    L   84  getCharacterById          return window.getCharacterById(id);
+    L  139  getCharacterById          var child = _getCharacterById(childId);
+    L  218  getCharacterById          var mother = motherId ? _getCharacterById(motherId) : null;
+    L  219  getCharacterById          var father = fatherId ? _getCharacterById(fatherId) : null;
+  religion\religion-queries.js  [6 hit(s)]
+    L   69  getCharacterById          function _getCharacterById(id) {
+    L   73  getCharacterById          return window.getCharacterById(id);
+    L  368  getCharacterById          var character = _getCharacterById(characterId);
+    L  375  getCharacterById          var character = _getCharacterById(characterId);
+    L  680  getCharacterById          var charA = _getCharacterById(characterIdA);
+    L  681  getCharacterById          var charB = _getCharacterById(characterIdB);
+  religion\religion-rules.js  [8 hit(s)]
+    L   71  getCharacterById          function _getCharacterById(id) {
+    L   75  getCharacterById          return window.getCharacterById(id);
+    L  102  getCharacterById          var character = _getCharacterById(characterId);
+    L  142  getCharacterById          var character = _getCharacterById(characterId);
+    L  163  getCharacterById          var character = _getCharacterById(characterId);
+    L  195  getCharacterById          var character = _getCharacterById(characterId);
+    L  488  getCharacterById          var mother = motherId ? _getCharacterById(motherId) : null;
+    L  489  getCharacterById          var father = fatherId ? _getCharacterById(fatherId) : null;
+  religion\religion-view-models.js  [2 hit(s)]
+    L   59  getCharacterById          var char = window.getCharacterById(characterId);
+    L   72  getPlaceById              var place = window.getPlaceById(placeId);
+  roles\modals-roles.js  [2 hit(s)]
+    L  825  getCharacterById          var character = window.getCharacterById(selectedIds[0]);
+    L  938  getCharacterById          var character = window.getCharacterById(characterId);
+  roles\role-commands.js  [1 hit(s)]
+    L  546  getCharacterById          var character = window.getCharacterById(characterId);
+  roles\role-queries.js  [4 hit(s)]
+    L  186  getRankById               * Delegates to getRankById (accessors). Rank is canonical in
+    L  196  getRankById               var rank = window.getRankById(rankId);
+    L  336  getCharacterById          var character = window.getCharacterById(characterId);
+    L  346  getCharacterById          var character = window.getCharacterById(characterId);
+  selectors\locationDropdown.js  [2 hit(s)]
+    L   48  getPlaceById              function _getPlaceById(id) {
+    L   50  getPlaceById              return window.getPlaceById(id);
+  selectors\modals-char-selector.js  [3 hit(s)]
+    L  135  getCharacterById          this._targetChar = this.targetId ? _QH.getCharacterById(this.targetId) : null;
+    L  569  getCharacterById          var char = _QH.getCharacterById(charId);
+    L  590  getCharacterById          var char = _QH.getCharacterById(charId);
+  selectors\modals-household-selector.js  [9 hit(s)]
+    L   29  getCharacterById          function _getCharacterById(id) {
+    L   30  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L   37  getPlaceById              function _getPlaceById(id) {
+    L   38  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  201  getCharacterById          var character = _getCharacterById(member.characterId);
+    L  289  getCharacterById          var spouse = _getCharacterById(spouseId);
+    L  390  getCharacterById          var targetCharacter = targetCharacterId ? _getCharacterById(targetCharacterId) : null;
+    L  461  getCharacterById          var char = _getCharacterById(h.members[j].characterId);
+    L  531  getCharacterById          var char = _getCharacterById(h.members[j].characterId);
+  selectors\selector-base.js  [5 hit(s)]
+    L  109  getCharacterById          var char1 = typeof window.getCharacterById === 'function' ? window.getCharacterById(charId1) : null;
+    L  110  getCharacterById          var char2 = typeof window.getCharacterById === 'function' ? window.getCharacterById(charId2) : null;
+    L  123  getCharacterById          var mother = typeof window.getCharacterById === 'function' ? window.getCharacterById(char1.motherId) : null;
+    L  127  getCharacterById          var father = typeof window.getCharacterById === 'function' ? window.getCharacterById(char1.fatherId) : null;
+    L  141  getCharacterById          var char1 = typeof window.getCharacterById === 'function' ? window.getCharacterById(charId1) : null;
+  settlement\modals-settlement-core.js  [1 hit(s)]
+    L   88  getPlaceById              var place = _getPlaceQueries().getPlaceById(locationId);
+  settlement\modals-settlement-economy.js  [1 hit(s)]
+    L   85  getPlaceById              var place = _getPlaceQueries().getPlaceById(locationId);
+  settlement\modals-settlement-roles.js  [1 hit(s)]
+    L   82  getPlaceById              var place = _getPlaceQueries().getPlaceById(locationId);
+  settlement\settlement-budget.js  [6 hit(s)]
+    L   34  getPlaceById              function _getPlaceById(id) {
+    L   35  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   93  getPlaceById              var place = _getPlaceById(locationId);
+    L  124  getPlaceById              var place = _getPlaceById(locationId);
+    L  154  getPlaceById              var place = _getPlaceById(locationId);
+    L  184  getPlaceById              var place = _getPlaceById(locationId);
+  settlement\settlement-crud.js  [4 hit(s)]
+    L   40  getPlaceById              function _getPlaceById(id) {
+    L   41  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   73  getPlaceById              var place = _getPlaceById(locationId);
+    L  161  getPlaceById              var place = _getPlaceById(locationId);
+  settlement\settlement-enterprises.js  [6 hit(s)]
+    L   59  getPlaceById              function _getPlaceById(id) {
+    L   60  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  119  getPlaceById              var place = _getPlaceById(locationId);
+    L  151  getPlaceById              var place = _getPlaceById(locationId);
+    L  193  getPlaceById              var place = _getPlaceById(locationId);
+    L  225  getPlaceById              var place = _getPlaceById(locationId);
+  settlement\settlement-factory.js  [2 hit(s)]
+    L  168  getRankById               var rank = _getRankRules().getRankById(overrides.rankId);
+    L  262  getPlaceById              var place = _getPlaceQueries().getPlaceById(locationId);
+  settlement\settlement-government.js  [6 hit(s)]
+    L   34  getPlaceById              function _getPlaceById(id) {
+    L   35  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   93  getPlaceById              var place = _getPlaceById(locationId);
+    L  124  getPlaceById              var place = _getPlaceById(locationId);
+    L  162  getPlaceById              var place = _getPlaceById(locationId);
+    L  203  getPlaceById              var place = _getPlaceById(locationId);
+  settlement\settlement-prosperity-queries.js  [1 hit(s)]
+    L  246  getRankById               var rank = _getRankRules().getRankById(settlement.rankId);
+  settlement\settlement-rank-commands.js  [1 hit(s)]
+    L  225  getRankById               var rank = _getRankRules().getRankById(rankId);
+  settlement\settlement-rank-queries.js  [2 hit(s)]
+    L   87  getRankById               return _getRankRules().getRankById(settlement.rankId);
+    L  184  getRankById               result.currentRank = _getRankRules().getRankById(settlement.rankId);
+  settlement\settlement-rank-rules.js  [2 hit(s)]
+    L   79  getRankById               function getRankById(rankId) {
+    L  201  getRankById               var currentRank = getRankById(input.currentRankId);
+  settlement\settlement-ranks.js  [4 hit(s)]
+    L   65  getRankById               function getRankById(rankId) {
+    L  222  getRankById               var rank = getRankById(rankId);
+    L  239  getRankById               var rank = getRankById(rankId);
+    L  264  getRankById               var rank = getRankById(rankId);
+  settlement\settlement-specialization-commands.js  [1 hit(s)]
+    L  126  getRoleById               var role = _getRoleQueries().getRoleById(roleId);
+  settlement\settlement-view-models.js  [5 hit(s)]
+    L   89  getPlaceById              var place = _getPlaceQueries().getPlaceById(locationId);
+    L   95  getRankById               var rank = _getRankRules().getRankById(rankId);
+    L  138  getRankById               var rank = _getRankRules().getRankById(settlement.rankId);
+    L  212  getRankById               var rank = _getRankRules().getRankById(settlement.rankId);
+    L  549  getRankById               var rank = _getRankRules().getRankById(settlement.rankId);
+  settlement\trash\modals-settlement.js  [21 hit(s)]
+    L  100  getPlaceById              function _getPlaceById(id) {
+    L  101  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  108  getLocationTypeById       function _getLocationTypeById(id) {
+    L  109  getLocationTypeById       return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
+    L  119  getRoleById               function _getRoleById(id) {
+    L  121  getRoleById               return window.getRoleById(id);
+    L  147  getLocationTypeById       var type = _getLocationTypeById(places[i].typeId);
+    L  308  getCharacterById          function _getCharacterById(id) {
+    L  309  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  334  getPlaceById              var place = _getPlaceById(locationId);
+    L  575  getPlaceById              var place = _getPlaceById(locationId);
+    L  699  getPlaceById              var place = _getPlaceById(locationId);
+    L  712  getRoleById               var currentRole = currentRoleId ? _getRoleById(currentRoleId) : null;
+    L  842  getPlaceById              var place = _getPlaceById(locationId);
+    L  959  getPlaceById              var place = _getPlaceById(locationId);
+    L 1061  getPlaceById              var place = _getPlaceById(locationId);
+    L 1201  getPlaceById              var place = _getPlaceById(locationId);
+    L 1346  getPlaceById              var place = _getPlaceById(locationId);
+    L 1530  getPlaceById              var place = _getPlaceById(locationId);
+    L 1645  getPlaceById              var place = _getPlaceById(locationId);
+    L 1789  getPlaceById              var place = _getPlaceById(locationId);
+  settlement\trash\settlement-commands.js  [32 hit(s)]
+    L   44  getPlaceById              function _getPlaceById(id) {
+    L   45  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   52  getCharacterById          function _getCharacterById(id) {
+    L   53  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L   98  getRoleById               function _getRoleById(id) {
+    L  100  getRoleById               return window.getRoleById(id);
+    L  179  getPlaceById              var place = _getPlaceById(locationId);
+    L  243  getPlaceById              'Built "' + feature.name + '" at ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  291  getPlaceById              'Removed "' + feature.name + '" from ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  341  getPlaceById              'Demolished "' + feature.name + '" at ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  363  getPlaceById              var place = _getPlaceById(locationId);
+    L  437  getPlaceById              var place = _getPlaceById(locationId);
+    L  444  getRoleById               var role = _getRoleById(roleId);
+    L  760  getPlaceById              'Education spending for ' + (_getPlaceById(locationId)?.displayName || 'Unknown') +
+    L  878  getPlaceById              data.ownerName = 'State of ' + (_getPlaceById(locationId)?.displayName || 'Unknown');
+    L  892  getPlaceById              'Created state enterprise "' + result.data.name + '" at ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  954  getPlaceById              var place = _getPlaceById(locationId);
+    L 1039  getPlaceById              var place = _getPlaceById(locationId);
+    L 1148  getPlaceById              var place = _getPlaceById(locationId);
+    L 1285  getPlaceById              var place = _getPlaceById(locationId);
+    L 1291  getCharacterById          var character = _getCharacterById(characterId);
+    L 1297  getRoleById               var role = _getRoleById(roleId);
+    L 1341  getPlaceById              var place = _getPlaceById(locationId);
+    L 1347  getCharacterById          var character = _getCharacterById(characterId);
+    L 1353  getRoleById               var role = _getRoleById(roleId);
+    L 1388  getPlaceById              var place = _getPlaceById(locationId);
+    L 1394  getCharacterById          var character = _getCharacterById(characterId);
+    L 1472  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1535  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1549  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1675  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1833  getPlaceById              var place = _getPlaceById(locationId);
+  settlement\trash\settlement-economy.js  [7 hit(s)]
+    L   42  getPlaceById              function _getPlaceById(id) {
+    L   43  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   63  getRoleById               function _getRoleById(id) {
+    L   65  getRoleById               return window.getRoleById(id);
+    L  713  getRoleById               var role = _getRoleById(prof.id);
+    L 1001  getRoleById               var role = _getRoleById(roleId);
+    L 1044  getRoleById               var role = _getRoleById(roleId);
+  tabs\apprenticeship-tab.js  [17 hit(s)]
+    L   44  getCharacterById          function _getCharacterById(id) {
+    L   45  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L   52  getRoleById               function _getRoleById(id) {
+    L   53  getRoleById               return typeof window.getRoleById === 'function' ? window.getRoleById(id) : null;
+    L  352  getRoleById               var role = _getRoleById(roleId);
+    L  491  getCharacterById          var char = _getCharacterById(charId);
+    L  492  getRoleById               var role = _getRoleById(roleId);
+    L  603  getCharacterById          var char = _getCharacterById(charId);
+    L  628  getCharacterById          var char = _getCharacterById(charId);
+    L  704  getRoleById               var role = _getRoleById(_selectedRoleId);
+    L  725  getPlaceById              var place = typeof window.getPlaceById === 'function' ? window.getPlaceById(locationFilter) : null;
+    L 1028  getCharacterById          var char = _getCharacterById(charId);
+    L 1029  getRoleById               var role = _getRoleById(roleId);
+    L 1097  getCharacterById          var char = _getCharacterById(charId);
+    L 1127  getCharacterById          var master = _getCharacterById(masterId);
+    L 1136  getCharacterById          var appChar = typeof existingApps[i] === 'string' ? _getCharacterById(existingApps[i]) : existingApps[i];
+    L 1169  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+  tabs\culture-characters-tab.js  [9 hit(s)]
+    L  105  getCharacterById          function _getCharacterById(id) {
+    L  106  getCharacterById          if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
+    L  117  getPlaceById              function _getPlaceById(id) {
+    L  118  getPlaceById              if (typeof window.getPlaceById === 'function') return window.getPlaceById(id);
+    L  197  getPlaceById              var place = _getPlaceById(locId);
+    L  528  getCharacterById          var character = _getCharacterById(charId);
+    L  593  getCharacterById          var character = _getCharacterById(charId);
+    L  771  getCharacterById          var char = _getCharacterById(charId);
+    L  791  getCharacterById          var char = _getCharacterById(charId);
+  tabs\culture-names-tab.js  [5 hit(s)]
+    L   66  getPlaceById              function _getPlaceById(id) {
+    L   67  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  104  getPlaceById              var place = _getPlaceById(culture.locations[0]);
+    L  116  getPlaceById              current = _getPlaceById(current.parentId);
+    L  126  getPlaceById              var place = _getPlaceById(countryId);
+  tabs\government-civil-laws-tab.js  [7 hit(s)]
+    L   26  getPlaceById              function _getPlaceById(id) {
+    L   27  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   30  getCharacterById          function _getCharacterById(id) {
+    L   31  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  416  getPlaceById              var place = _getPlaceById(locationId);
+    L  443  getPlaceById              var place = _getPlaceById(locationId);
+    L  618  getPlaceById              var place = locationId ? _getPlaceById(locationId) : null;
+  tabs\government-departments-tab.js  [8 hit(s)]
+    L   30  getPlaceById              function _getPlaceById(id) {
+    L   31  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   34  getCharacterById          function _getCharacterById(id) {
+    L   35  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  280  getRoleById               var role = typeof window.getRoleById === 'function' ? window.getRoleById(pos.requiredRoleId) : null;
+    L  294  getCharacterById          var char = _getCharacterById(assign.characterId);
+    L  393  getPlaceById              var place = _getPlaceById(locationId);
+    L  651  getPlaceById              var place = locationId ? _getPlaceById(locationId) : null;
+  tabs\government-details-tab.js  [12 hit(s)]
+    L   31  getPlaceById              function _getPlaceById(id) {
+    L   32  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   35  getGovernmentTypeById     function _getGovernmentTypeById(id) {
+    L   36  getGovernmentTypeById     return typeof window.getGovernmentTypeById === 'function' ? window.getGovernmentTypeById(id) : null;
+    L   51  getCharacterById          function _getCharacterById(id) {
+    L   52  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  126  getCharacterById          var char = _getCharacterById(assignment.characterId);
+    L  159  getGovernmentTypeById     var govType = govTypeId ? _getGovernmentTypeById(govTypeId) : null;
+    L  287  getPlaceById              var place = _getPlaceById(placeId);
+    L  352  getCharacterById          var char = _getCharacterById(characterId);
+    L  395  getPlaceById              var place = _getPlaceById(placeId);
+    L  481  getPlaceById              var place = locationId ? _getPlaceById(locationId) : null;
+  tabs\government-economy-tab.js  [5 hit(s)]
+    L   27  getPlaceById              function _getPlaceById(id) {
+    L   28  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  503  getPlaceById              var locPlace = _getPlaceById(placeIds[i]);
+    L  534  getPlaceById              var place = _getPlaceById(placeId);
+    L  733  getPlaceById              var place = locationId ? _getPlaceById(locationId) : null;
+  tabs\government-history-tab.js  [11 hit(s)]
+    L   31  getPlaceById              function _getPlaceById(id) {
+    L   32  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   35  getCharacterById          function _getCharacterById(id) {
+    L   36  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  170  getCharacterById          var char = _getCharacterById(charId);
+    L  202  getCharacterById          var char = _getCharacterById(leader.characterId);
+    L  244  getCharacterById          var char = _getCharacterById(assignment.characterId);
+    L  436  getPlaceById              var place = _getPlaceById(placeId);
+    L  450  getCharacterById          var char = _getCharacterById(characterId);
+    L  600  getCharacterById          var char = _getCharacterById(characterId);
+    L  654  getPlaceById              var place = locationId ? _getPlaceById(locationId) : null;
+  tabs\government-type-manager-tab.js  [3 hit(s)]
+    L   81  getRankById               function _getRankById(id) {
+    L   83  getRankById               return window.getRankById(id);
+    L  214  getRankById               var rank = _getRankById(type.allowedRankIds[j]);
+  tabs\household-activity-tab.js  [4 hit(s)]
+    L   73  getCharacterById          function _getCharacterById(id) {
+    L   75  getCharacterById          return window.getCharacterById(id);
+    L   80  getPlaceById              function _getPlaceById(id) {
+    L   82  getPlaceById              return window.getPlaceById(id);
+  tabs\household-departments-tab.js  [9 hit(s)]
+    L   60  getCharacterById          function _getCharacterById(id) {
+    L   62  getCharacterById          return window.getCharacterById(id);
+    L  247  getCharacterById          head = _getCharacterById(dept.headId);
+    L  294  getCharacterById          var c = _getCharacterById(a.characterId);
+    L  323  getCharacterById          var c = _getCharacterById(a.characterId);
+    L  788  getCharacterById          var char = _getCharacterById(characterId);
+    L  885  getCharacterById          var char = _getCharacterById(characterId);
+    L 1075  getCharacterById          var headChar = dept.headId ? _getCharacterById(dept.headId) : null;
+    L 1282  getCharacterById          var char = _getCharacterById(characterId);
+  tabs\household-economy-tab.js  [2 hit(s)]
+    L   50  getCharacterById          function _getCharacterById(id) {
+    L   52  getCharacterById          return window.getCharacterById(id);
+  tabs\household-holdings-tab.js  [6 hit(s)]
+    L   93  getCharacterById          function _getCharacterById(id) {
+    L   95  getCharacterById          return window.getCharacterById(id);
+    L  100  getPlaceById              function _getPlaceById(id) {
+    L  102  getPlaceById              return window.getPlaceById(id);
+    L  412  getPlaceById              var place = _getPlaceById(e.locationId);
+    L  465  getPlaceById              var place = _getPlaceById(s.locationId);
+  tabs\household-members-tab.js  [9 hit(s)]
+    L   66  getCharacterById          function _getCharacterById(id) {
+    L   68  getCharacterById          return window.getCharacterById(id);
+    L   80  getPlaceById              function _getPlaceById(id) {
+    L   82  getPlaceById              return window.getPlaceById(id);
+    L  631  getCharacterById          var char = _getCharacterById(characterId);
+    L  688  getCharacterById          var char = _getCharacterById(characterId);
+    L  804  getCharacterById          var char = _getCharacterById(characterId);
+    L  994  getCharacterById          var char = _getCharacterById(characterId);
+    L 1014  getCharacterById          var char = _getCharacterById(characterId);
+  tabs\household-overview-tab.js  [7 hit(s)]
+    L   54  getCharacterById          function _getCharacterById(id) {
+    L   56  getCharacterById          return window.getCharacterById(id);
+    L   61  getPlaceById              function _getPlaceById(id) {
+    L   63  getPlaceById              return window.getPlaceById(id);
+    L  194  getPlaceById              var place = _getPlaceById(household.locationId);
+    L  735  getCharacterById          var char = _getCharacterById(headId);
+    L  810  getPlaceById              (locationId ? ' Â· Location: ' + _escapeHtml(_getPlaceById(locationId)?.displayName || 'Unknown') : '') +
+  tabs\location-tab.js  [18 hit(s)]
+    L   75  getPlaceById              function _getPlaceById(id) {
+    L   76  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   83  getLocationTypeById       function _getLocationTypeById(id) {
+    L   84  getLocationTypeById       return typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(id) : null;
+    L  116  getGovernmentTypeById     function _getGovernmentTypeById(id) {
+    L  118  getGovernmentTypeById     return window.getGovernmentTypeById(id);
+    L  156  getPlaceById              var current = _getPlaceById(locationId);
+    L  161  getPlaceById              current = _getPlaceById(current.parentId);
+    L  220  getPlaceById              var place = _getPlaceById(locationId);
+    L  235  getGovernmentTypeById     var govType = place.governmentTypeId ? _getGovernmentTypeById(place.governmentTypeId) : null;
+    L  287  getPlaceById              var parent = _getPlaceById(place.parentId);
+    L  346  getLocationTypeById       var typeObj = _getLocationTypeById(place.typeId);
+    L  437  getPlaceById              var place = _getPlaceById(locationId);
+    L  638  getPlaceById              var place = _getPlaceById(locationId);
+    L  678  getPlaceById              (place.parentId ? '<div><strong style="color: var(--dim);">Parent:</strong> ' + _escapeHtml(_getPlaceById(place.paren...
+    L  715  getPlaceById              if (parentId && _getPlaceById(parentId)) {
+    L  753  getPlaceById              var place = _getPlaceById(locationId);
+    L  770  getLocationTypeById       var type = _getLocationTypeById(p.typeId);
+  tabs\rank-manager-tab.js  [1 hit(s)]
+    L  356  getRankById               var sourceRank = _getRankById(rank.sourceRankId);
+  tabs\religion-details-tab.js  [4 hit(s)]
+    L   85  getCharacterById          function _getCharacterById(id) {
+    L   86  getCharacterById          if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
+    L   94  getCharacterById          var char = _getCharacterById(id);
+    L  104  getPlaceById              var place = window.getPlaceById(id);
+  tabs\religion-followers-tab.js  [5 hit(s)]
+    L   86  getCharacterById          function _getCharacterById(id) {
+    L   87  getCharacterById          if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
+    L   99  getPlaceById              var place = window.getPlaceById(id);
+    L  552  getCharacterById          var char = _getCharacterById(charId);
+    L  751  getCharacterById          var character = _getCharacterById(characterId);
+  tabs\religion-places-tab.js  [2 hit(s)]
+    L   96  getPlaceById              var place = window.getPlaceById(id);
+    L  125  getCharacterById          var char = window.getCharacterById(id);
+  tabs\roles-analytics-tab.js  [8 hit(s)]
+    L   66  getRoleById               function _getRoleById(id) {
+    L   68  getRoleById               return window.getRoleById(id);
+    L   99  getPlaceById              function _getPlaceById(id) {
+    L  104  getPlaceById              return window.getPlaceById(id);
+    L  107  getPlaceById              return window._getPlaceById(id);
+    L  117  getLocationTypeById       return window.getLocationTypeById(id);
+    L  210  getRoleById               var role = _getRoleById(roleId);
+    L  429  getRoleById               var role = _getRoleById(roleId);
+  tabs\roles-tab.js  [4 hit(s)]
+    L   66  getRoleById               function _getRoleById(id) {
+    L   68  getRoleById               return window.getRoleById(id);
+    L  137  getRoleById               var role = _getRoleById(roleId);
+    L  378  getRoleById               var role = _getRoleById(roleId);
+  tabs\settlement-economy-tab.js  [9 hit(s)]
+    L   72  getPlaceById              function _getPlaceById(id) {
+    L   73  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  316  getPlaceById              var place = _getPlaceById(locationId);
+    L  763  getPlaceById              var place = _getPlaceById(locationId);
+    L  870  getPlaceById              var place = _getPlaceById(locationId);
+    L  978  getPlaceById              var place = _getPlaceById(locationId);
+    L 1111  getPlaceById              var place = _getPlaceById(locationId);
+    L 1193  getPlaceById              var place = _getPlaceById(locationId);
+    L 1275  getPlaceById              var place = _getPlaceById(locationId);
+  tabs\settlement-education-tab.js  [15 hit(s)]
+    L   72  getPlaceById              function _getPlaceById(id) {
+    L   73  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   80  getCharacterById          function _getCharacterById(id) {
+    L   81  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  285  getRoleById               function _getRoleById(id) {
+    L  287  getRoleById               return window.getRoleById(id);
+    L  351  getPlaceById              var place = _getPlaceById(locationId);
+    L  539  getCharacterById          var hm = _getCharacterById(s.headmaster.characterId);
+    L  653  getPlaceById              var place = _getPlaceById(locationId);
+    L  976  getCharacterById          var headmasterChar = headmaster ? _getCharacterById(headmaster.characterId) : null;
+    L 1031  getCharacterById          var student = _getCharacterById(s.studentId);
+    L 1070  getCharacterById          var teacher = _getCharacterById(t.teacherId);
+    L 1425  getCharacterById          var student = _getCharacterById(studentId);
+    L 1590  getCharacterById          var student = _getCharacterById(studentId);
+    L 1626  getCharacterById          var teacher = _getCharacterById(teacherId);
+  tabs\settlement-features-tab.js  [3 hit(s)]
+    L   72  getPlaceById              function _getPlaceById(id) {
+    L   73  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  193  getPlaceById              var place = _getPlaceById(locationId);
+  tabs\settlement-history-tab.js  [9 hit(s)]
+    L   73  getPlaceById              function _getPlaceById(id) {
+    L   74  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   81  getCharacterById          function _getCharacterById(id) {
+    L   82  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  152  getRoleById               function _getRoleById(id) {
+    L  154  getRoleById               return window.getRoleById(id);
+    L  260  getPlaceById              var place = _getPlaceById(locationId);
+    L  763  getPlaceById              var place = _getPlaceById(locationId);
+    L  800  getPlaceById              var place = _getPlaceById(locationId);
+  tabs\settlement-industry-tab.js  [8 hit(s)]
+    L   93  getPlaceById              function _getPlaceById(id) {
+    L   94  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  101  getCharacterById          function _getCharacterById(id) {
+    L  102  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  268  getPlaceById              var place = _getPlaceById(locationId);
+    L  326  getPlaceById              var place = _getPlaceById(locationId);
+    L  607  getPlaceById              var place = _getPlaceById(locationId);
+    L  844  getPlaceById              var place = _getPlaceById(locationId);
+  tabs\settlement-overview-tab.js  [3 hit(s)]
+    L   47  getPlaceById              function _getPlaceById(id) {
+    L   48  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  159  getPlaceById              var place = _getPlaceById(locationId);
+  tabs\settlement-religion-tab.js  [10 hit(s)]
+    L   72  getPlaceById              function _getPlaceById(id) {
+    L   73  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   80  getCharacterById          function _getCharacterById(id) {
+    L   81  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  260  getPlaceById              var place = _getPlaceById(locationId);
+    L  368  getCharacterById          var headClergy = pw.headClergyId ? _getCharacterById(pw.headClergyId) : null;
+    L  514  getPlaceById              var place = _getPlaceById(locationId);
+    L  658  getPlaceById              var place = _getPlaceById(locationId);
+    L  660  getCharacterById          var headClergy = pw.headClergyId ? _getCharacterById(pw.headClergyId) : null;
+    L  664  getCharacterById          var c = _getCharacterById(pw.clergy[i]);
+  tabs\settlement-residence-tab.js  [8 hit(s)]
+    L  115  getPlaceById              function _getPlaceById(id) {
+    L  117  getPlaceById              return window.getPlaceById(id);
+    L  120  getPlaceById              return window._getPlaceById(id);
+    L  144  getCharacterById          function _getCharacterById(id) {
+    L  146  getCharacterById          return window.getCharacterById(id);
+    L  149  getCharacterById          return window._getCharacterById(id);
+    L  471  getPlaceById              var place = _getPlaceById(locationId);
+    L  947  getPlaceById              var place = _getPlaceById(locationId);
+  tabs\settlement-roles-tab.js  [10 hit(s)]
+    L   72  getPlaceById              function _getPlaceById(id) {
+    L   73  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   80  getCharacterById          function _getCharacterById(id) {
+    L   81  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  130  getRoleById               function _getRoleById(id) {
+    L  132  getRoleById               return window.getRoleById(id);
+    L  300  getPlaceById              var place = _getPlaceById(locationId);
+    L  465  getCharacterById          var char = _getCharacterById(master.id);
+    L  710  getRoleById               var role = _getRoleById(roleId);
+    L  899  getCharacterById          var char = _getCharacterById(master.id);
+  trash\affair-system.js  [28 hit(s)]
+    L   97  getCharacterById          function _getCharacterById(id) {
+    L   99  getCharacterById          return window.getCharacterById(id);
+    L  240  getRankById               var rank = window.getRankById(character.activeRankId);
+    L  265  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  266  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  328  getCharacterById          _getCharacterById(affair.participantA),
+    L  329  getCharacterById          _getCharacterById(affair.participantB)
+    L  354  getCharacterById          var locA = _getCurrentLocation(_getCharacterById(affair.participantA));
+    L  355  getCharacterById          var locB = _getCurrentLocation(_getCharacterById(affair.participantB));
+    L  383  getCharacterById          var charA = _getCharacterById(affair.participantA);
+    L  384  getCharacterById          var charB = _getCharacterById(affair.participantB);
+    L  399  getCharacterById          return discovererId ? _getCharacterById(discovererId) : null;
+    L  415  getCharacterById          var charA = _getCharacterById(affair.participantA);
+    L  416  getCharacterById          var charB = _getCharacterById(affair.participantB);
+    L  433  getCharacterById          var partner = _getCharacterById(partnerId);
+    L  439  getCharacterById          discoverer = _getCharacterById(options.discovererId);
+    L  441  getCharacterById          discoverer = _getCharacterById(affair.metadata.discovererId);
+    L  459  getCharacterById          var other = _getCharacterById(otherId);
+    L  475  getCharacterById          var other = _getCharacterById(otherId);
+    L  492  getCharacterById          var victim = options.victimId ? _getCharacterById(options.victimId) :
+    L  512  getCharacterById          var ruler = options.rulerId ? _getCharacterById(options.rulerId) : discoverer;
+    L  586  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  587  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  634  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  635  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  647  getCharacterById          var wrongedParty = _getCharacterById(wrongedPartyId);
+    L  661  getCharacterById          adulterer = _getCharacterById(participants[i]);
+    L  814  getCharacterById          var character = _getCharacterById(participants[i]);
+  trash\apprenticeship-system.js  [23 hit(s)]
+    L   59  getCharacterById          function _getCharacterById(id) {
+    L   61  getCharacterById          return window.getCharacterById(id);
+    L   64  getCharacterById          return window._getCharacterById(id);
+    L   76  getRoleById               function _getRoleById(id) {
+    L   78  getRoleById               return window.getRoleById(id);
+    L   81  getRoleById               return window._getRoleById(id);
+    L  152  getCharacterById          var char = _getCharacterById(characterId);
+    L  164  getCharacterById          var char = _getCharacterById(characterId);
+    L  190  getRoleById               var role = _getRoleById(roleId);
+    L  372  getCharacterById          var master = _getCharacterById(masterId);
+    L  373  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+    L  394  getRoleById               var role = _getRoleById(roleId);
+    L  411  getCharacterById          var apprenticeChar = _getCharacterById(apprenticeId);
+    L  622  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+    L  767  getCharacterById          var master = _getCharacterById(masterId);
+    L  768  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+    L 1048  getCharacterById          var dying = _getCharacterById(dyingId);
+    L 1049  getCharacterById          var heir = _getCharacterById(heirId);
+    L 1075  getRoleById               var role = _getRoleById(roleId);
+    L 1116  getCharacterById          var char = _getCharacterById(characterId);
+    L 1306  getCharacterById          var master = _getCharacterById(masterId);
+    L 1307  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+    L 1356  getRoleById               return _getRoleById(roleId);
+  trash\children\adoption-service.js  [19 hit(s)]
+    L   67  getCharacterById          function _getCharacterById(id) {
+    L   69  getCharacterById          return window.getCharacterById(id);
+    L  148  getCharacterById          var child = _getCharacterById(childId);
+    L  154  getCharacterById          parent: _getCharacterById(ap.parentId),
+    L  181  getCharacterById          var parent = _getCharacterById(parentId);
+    L  187  getCharacterById          child: _getCharacterById(ac.childId),
+    L  214  getCharacterById          var child = _getCharacterById(childId);
+    L  231  getCharacterById          var parent = _getCharacterById(parentId);
+    L  254  getCharacterById          var child = _getCharacterById(childId);
+    L  278  getCharacterById          var child = _getCharacterById(childId);
+    L  304  getCharacterById          var child = _getCharacterById(childId);
+    L  325  getCharacterById          var child = _getCharacterById(childId);
+    L  427  getCharacterById          var parent = _getCharacterById(parentId);
+    L  428  getCharacterById          var child = _getCharacterById(childId);
+    L  449  getCharacterById          var partner = options.partnerId ? _getCharacterById(options.partnerId) : null;
+    L  536  getCharacterById          var parent = _getCharacterById(parentId);
+    L  537  getCharacterById          var child = _getCharacterById(childId);
+    L  592  getCharacterById          var child = _getCharacterById(childId);
+    L  640  getCharacterById          var character = _getCharacterById(characterId);
+  trash\children\children-commands.js  [20 hit(s)]
+    L   40  getCharacterById          function _getCharacterById(id) {
+    L   42  getCharacterById          return window.getCharacterById(id);
+    L  209  getCharacterById          var child = _getCharacterById(childId);
+    L  210  getCharacterById          var parent = _getCharacterById(parentId);
+    L  247  getCharacterById          var child = _getCharacterById(childId);
+    L  277  getCharacterById          var child = _getCharacterById(childId);
+    L  281  getCharacterById          father: child.fatherId ? _getCharacterById(child.fatherId) : null,
+    L  282  getCharacterById          mother: child.motherId ? _getCharacterById(child.motherId) : null
+    L  327  getCharacterById          var child = _getCharacterById(childId);
+    L  365  getCharacterById          var mother = motherId ? _getCharacterById(motherId) : null;
+    L  366  getCharacterById          var father = fatherId ? _getCharacterById(fatherId) : null;
+    L  367  getCharacterById          var child = _getCharacterById(childId);
+    L 1051  getCharacterById          var intendedParentChar = _getCharacterById(intendedParentId);
+    L 1062  getCharacterById          var intendedPartnerChar = _getCharacterById(intendedPartnerId);
+    L 1096  getCharacterById          var intendedParentChar = _getCharacterById(intendedParentId);
+    L 1097  getCharacterById          var intendedPartnerChar = intendedPartnerId ? _getCharacterById(intendedPartnerId) : null;
+    L 1333  getCharacterById          var parent = _getCharacterById(parentId);
+    L 1334  getCharacterById          var child = _getCharacterById(childId);
+    L 1340  getCharacterById          var parent = _getCharacterById(parentId);
+    L 1341  getCharacterById          var child = _getCharacterById(childId);
+  trash\children\children-lifecycle.js  [4 hit(s)]
+    L   63  getCharacterById          function _getCharacterById(id) {
+    L   65  getCharacterById          return window.getCharacterById(id);
+    L  800  getCharacterById          var child = _getCharacterById(childId);
+    L  801  getCharacterById          var parent = _getCharacterById(parentId);
+  trash\children\children-queries.js  [28 hit(s)]
+    L   37  getCharacterById          function _getCharacterById(id) {
+    L   39  getCharacterById          return window.getCharacterById(id);
+    L  199  getCharacterById          var character = _getCharacterById(parentId);
+    L  262  getCharacterById          var character = _getCharacterById(parentId);
+    L  265  getCharacterById          var child = _getCharacterById(character.children[i]);
+    L  321  getCharacterById          var child = _getCharacterById(childId);
+    L  325  getCharacterById          var parent = _getCharacterById(child.adoptedParents[i].parentId);
+    L  338  getCharacterById          var child = _getCharacterById(childId);
+    L  342  getCharacterById          father: child.fatherId ? _getCharacterById(child.fatherId) : null,
+    L  343  getCharacterById          mother: child.motherId ? _getCharacterById(child.motherId) : null,
+    L  350  getCharacterById          var parent = _getCharacterById(child.adoptedParents[i].parentId);
+    L  378  getCharacterById          var character = _getCharacterById(childId);
+    L  399  getCharacterById          var character = _getCharacterById(childId);
+    L  502  getCharacterById          var parent = _getCharacterById(records[i].parentId);
+    L  552  getCharacterById          var child = _getCharacterById(childIds[i]);
+    L  909  getCharacterById          var child = _getCharacterById(record.childIds[j]);
+    L  932  getCharacterById          var child = _getCharacterById(childId);
+    L  950  getCharacterById          var child = _getCharacterById(childId);
+    L  958  getCharacterById          geneticMother: geneticMotherId ? _getCharacterById(geneticMotherId) : null,
+    L  959  getCharacterById          geneticFather: geneticFatherId ? _getCharacterById(geneticFatherId) : null,
+    L  960  getCharacterById          birthMother: birthMotherId ? _getCharacterById(birthMotherId) : null
+    L 1148  getCharacterById          var character = _getCharacterById(characterId);
+    L 1165  getCharacterById          var spouse = _getCharacterById(spouseId);
+    L 1215  getCharacterById          var char1 = _getCharacterById(charId1);
+    L 1216  getCharacterById          var char2 = _getCharacterById(charId2);
+    L 1285  getCharacterById          var char1 = _getCharacterById(charId1);
+    L 1286  getCharacterById          var char2 = _getCharacterById(charId2);
+    L 1341  getCharacterById          var character = _getCharacterById(characterId);
+  trash\children\children-state.js  [2 hit(s)]
+    L   64  getCharacterById          function _getCharacterById(id) {
+    L   66  getCharacterById          return window.getCharacterById(id);
+  trash\children\modals-adoption.js  [11 hit(s)]
+    L   79  getCharacterById          function _getCharacterById(id) {
+    L   80  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L   91  getPlaceById              function _getPlaceById(id) {
+    L   92  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L  415  getCharacterById          existingFather = _getCharacterById(child.fatherId);
+    L  418  getCharacterById          existingMother = _getCharacterById(child.motherId);
+    L 1163  getCharacterById          var father = child.fatherId ? _getCharacterById(child.fatherId) : null;
+    L 1164  getCharacterById          var mother = child.motherId ? _getCharacterById(child.motherId) : null;
+    L 1247  getCharacterById          var father = _getCharacterById(child.fatherId);
+    L 1254  getCharacterById          var mother = _getCharacterById(child.motherId);
+    L 1411  getCharacterById          var child = _getCharacterById(selectedChildId);
+  trash\children\modals-birth.js  [9 hit(s)]
+    L   85  getCharacterById          function _getCharacterById(id) {
+    L   86  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  148  getPlaceById              function _getPlaceById(id) {
+    L  149  getPlaceById              if (typeof window.getPlaceById === 'function') return window.getPlaceById(id);
+    L  335  getLocationTypeById       var type = typeof window.getLocationTypeById === 'function' ? window.getLocationTypeById(places[i].typeId) : null;
+    L  351  getCharacterById          var mother = _getCharacterById(motherId);
+    L  352  getCharacterById          var father = fatherId ? _getCharacterById(fatherId) : null;
+    L  659  getCharacterById          ? window.getCharacterById(motherId)
+    L  662  getCharacterById          ? window.getCharacterById(fatherId)
+  trash\children\modals-surrogacy.js  [8 hit(s)]
+    L   83  getCharacterById          function _getCharacterById(id) {
+    L   84  getCharacterById          if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
+    L  353  getCharacterById          var char1 = _getCharacterById(char1Id);
+    L  354  getCharacterById          var char2 = _getCharacterById(char2Id);
+    L  369  getCharacterById          var character = _getCharacterById(characterId);
+    L  760  getCharacterById          var donor = _getCharacterById(selectedDonorId);
+    L 1000  getCharacterById          var surrogate = _getCharacterById(selectedSurrogateId);
+    L 1070  getCharacterById          var selectedParent = _getCharacterById(selectedParentId);
+  trash\children\pregnancy-service.js  [2 hit(s)]
+    L   74  getCharacterById          function _getCharacterById(id) {
+    L   76  getCharacterById          return window.getCharacterById(id);
+  trash\children\surrogacy-service.js  [13 hit(s)]
+    L   50  getCharacterById          function _getCharacterById(id) {
+    L   52  getCharacterById          return window.getCharacterById(id);
+    L  197  getCharacterById          var intended = _getCharacterById(intendedId);
+    L  205  getCharacterById          var eggDonor = _getCharacterById(options.eggDonor.id);
+    L  216  getCharacterById          var spermDonor = _getCharacterById(options.spermDonor.id);
+    L  370  getCharacterById          var intendedParentChar = _getCharacterById(intendedParentId);
+    L  382  getCharacterById          var intendedPartnerChar = _getCharacterById(intendedPartnerId);
+    L  712  getCharacterById          var child = _getCharacterById(record.childIds[j]);
+    L  740  getCharacterById          var child = _getCharacterById(childId);
+    L  763  getCharacterById          var child = _getCharacterById(childId);
+    L  771  getCharacterById          geneticMother: geneticMotherId ? _getCharacterById(geneticMotherId) : null,
+    L  772  getCharacterById          geneticFather: geneticFatherId ? _getCharacterById(geneticFatherId) : null,
+    L  773  getCharacterById          birthMother: birthMotherId ? _getCharacterById(birthMotherId) : null
+  trash\family-commands.js  [1 hit(s)]
+    L   33  getCharacterById          return window.getCharacterById(id);
+  trash\family-logic.js  [14 hit(s)]
+    L   34  getCharacterById          function _getCharacterById(id) {
+    L   35  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  223  getCharacterById          var child = _getCharacterById(childId);
+    L  224  getCharacterById          var parent = _getCharacterById(parentId);
+    L  335  getCharacterById          var child = _getCharacterById(childId);
+    L  371  getCharacterById          var parent = _getCharacterById(parentId);
+    L  422  getCharacterById          var parent = _getCharacterById(parentId);
+    L  466  getCharacterById          var child = _getCharacterById(childId);
+    L  530  getCharacterById          var sibling = _getCharacterById(siblingId);
+    L  620  getCharacterById          var char1 = _getCharacterById(charId1);
+    L  621  getCharacterById          var char2 = _getCharacterById(charId2);
+    L  699  getCharacterById          var character = _getCharacterById(characterId);
+    L  716  getCharacterById          var spouse = _getCharacterById(spouseId);
+    L  743  getCharacterById          var character = _getCharacterById(characterId);
+  trash\family-queries.js  [7 hit(s)]
+    L  134  getCharacterById          var p = window.getCharacterById(rels[i].parentId);
+    L  344  getCharacterById          var c = window.getCharacterById(id);
+    L  348  getCharacterById          var c = window.getCharacterById(id);
+    L  368  getCharacterById          var character = window.getCharacterById(characterId);
+    L  378  getCharacterById          var c = window.getCharacterById(id);
+    L  382  getCharacterById          var c = window.getCharacterById(s.siblingId);
+    L  386  getCharacterById          var c = window.getCharacterById(id);
+  trash\family-statistics.js  [2 hit(s)]
+    L   22  getCharacterById          var c = window.getCharacterById(characterId);
+    L   29  getCharacterById          var character = window.getCharacterById(characterId);
+  trash\friendship-logic.js  [10 hit(s)]
+    L   23  getCharacterById          function _getCharacterById(id) {
+    L   24  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  138  getCharacterById          (_getCharacterById(charAId)?.name || 'Character') + ' and ' +
+    L  139  getCharacterById          (_getCharacterById(charBId)?.name || 'Character') + ' became friends',
+    L  140  getCharacterById          [_getCharacterById(charAId), _getCharacterById(charBId)]);
+    L  180  getCharacterById          var friend = _getCharacterById(friendId);
+    L  199  getCharacterById          var friend = _getCharacterById(friendId);
+    L  346  getCharacterById          (_getCharacterById(charAId)?.name || 'Character') + ' and ' +
+    L  347  getCharacterById          (_getCharacterById(charBId)?.name || 'Character') + ' are no longer friends',
+    L  348  getCharacterById          [_getCharacterById(charAId), _getCharacterById(charBId)]);
+  trash\jealousy-system.js  [12 hit(s)]
+    L   58  getCharacterById          function _getCharacterById(id) {
+    L   59  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  156  getRankById               var rank = window.getRankById(character.activeRankId);
+    L  183  getCharacterById          var jaloux = _getCharacterById(jalouxId);
+    L  184  getCharacterById          var target = _getCharacterById(targetId);
+    L  196  getCharacterById          var about = _getCharacterById(aboutId);
+    L  272  getCharacterById          var character = _getCharacterById(characterId);
+    L  299  getCharacterById          about: _getCharacterById(caredAboutIds[j]),
+    L  327  getCharacterById          var jaloux = _getCharacterById(jalouxId);
+    L  328  getCharacterById          var target = _getCharacterById(targetId);
+    L  367  getCharacterById          about: options.aboutId ? _getCharacterById(options.aboutId) : null,
+    L  447  getCharacterById          var character = _getCharacterById(characterId);
+  trash\modals-family.js  [1 hit(s)]
+    L   52  getCharacterById          return window.getCharacterById(id);
+  trash\mortality\modals-death.js  [4 hit(s)]
+    L  155  getCharacterById          function _getCharacterById(id) {
+    L  156  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L  500  getCharacterById          father = _getCharacterById(partnerId);
+    L  710  getCharacterById          var killer = _getCharacterById(murdererId);
+  trash\mortality\mortality-commands.js  [5 hit(s)]
+    L   37  getCharacterById          function _getCharacterById(id) {
+    L   39  getCharacterById          return window.getCharacterById(id);
+    L  148  getCharacterById          killerName: _getCharacterById(options.killerId)?.name || 'Unknown',
+    L  222  getCharacterById          killerName: options.killerId ? (_getCharacterById(options.killerId)?.name || 'Unknown') : null,
+    L  343  getCharacterById          var character = _getCharacterById(characterId);
+  trash\mortality\mortality-queries.js  [3 hit(s)]
+    L   37  getCharacterById          function _getCharacterById(id) {
+    L   39  getCharacterById          return window.getCharacterById(id);
+    L  238  getCharacterById          var character = _getCharacterById(record.characterId);
+  trash\mortality\mortality-state.js  [4 hit(s)]
+    L   70  getCharacterById          function _getCharacterById(id) {
+    L   72  getCharacterById          return window.getCharacterById(id);
+    L  132  getCharacterById          killerName: char.killerId ? (_getCharacterById(char.killerId)?.name || 'Unknown') : null,
+    L  146  getCharacterById          killerName: char.killerId ? (_getCharacterById(char.killerId)?.name || 'Unknown') : 'Unknown',
+  trash\professional-logic.js  [18 hit(s)]
+    L   25  getCharacterById          function _getCharacterById(id) {
+    L   27  getCharacterById          return window.getCharacterById(id);
+    L   30  getCharacterById          return window._getCharacterById(id);
+    L   42  getRoleById               function _getRoleById(id) {
+    L   44  getRoleById               return window.getRoleById(id);
+    L   47  getRoleById               return window._getRoleById(id);
+    L   85  getCharacterById          var char = _getCharacterById(characterId);
+    L  144  getCharacterById          return _getCharacterById(rel.participantA);
+    L  170  getCharacterById          var apprentice = _getCharacterById(apprenticeId);
+    L  308  getCharacterById          var char = _getCharacterById(characterId);
+    L  316  getRoleById               var role = _getRoleById(prof.id);
+    L  378  getCharacterById          var char = _getCharacterById(characterId);
+    L  444  getCharacterById          return _getCharacterById(rel.participantA);
+    L  469  getCharacterById          var employee = _getCharacterById(employeeId);
+    L  529  getCharacterById          var member = _getCharacterById(memberId);
+    L  626  getCharacterById          var guild = _getCharacterById(guildId);
+    L  715  getCharacterById          var charA = _getCharacterById(charAId);
+    L  716  getCharacterById          var charB = _getCharacterById(charBId);
+  trash\relationshipFinder.js  [9 hit(s)]
+    L  183  getCharacterById          const char = getCharacterById(id);
+    L  196  getCharacterById          const char = getCharacterById(id);
+    L  266  getCharacterById          const char1 = getCharacterById(char1Id);
+    L  267  getCharacterById          const char2 = getCharacterById(char2Id);
+    L  421  getCharacterById          const char = getCharacterById(startId);
+    L  428  getCharacterById          path: [{ id: startId, name: getCharacterById(startId)?.name, relation: 'Start' }],
+    L  442  getCharacterById          const endChar = getCharacterById(endId);
+    L  448  getCharacterById          const connChar = getCharacterById(conn.id);
+    L  472  getCharacterById          const character = getCharacterById(characterId);
+  trash\relationship-registry.js  [16 hit(s)]
+    L   59  getCharacterById          function _getCharacterById(id) {
+    L   61  getCharacterById          return window.getCharacterById(id);
+    L  217  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  218  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  291  getCharacterById          var charA = _getCharacterById(relationship.participantA);
+    L  292  getCharacterById          var charB = _getCharacterById(relationship.participantB);
+    L  323  getCharacterById          var charA = _getCharacterById(relationship.participantA);
+    L  324  getCharacterById          var charB = _getCharacterById(relationship.participantB);
+    L  368  getCharacterById          var charA = _getCharacterById(relationship.participantA);
+    L  369  getCharacterById          var charB = _getCharacterById(relationship.participantB);
+    L  414  getCharacterById          var charA = _getCharacterById(relationship.participantA);
+    L  415  getCharacterById          var charB = _getCharacterById(relationship.participantB);
+    L  580  getCharacterById          var charA = _getCharacterById(relationship.participantA);
+    L  581  getCharacterById          var charB = _getCharacterById(relationship.participantB);
+    L  734  getCharacterById          var charA = _getCharacterById(relationship.participantA);
+    L  735  getCharacterById          var charB = _getCharacterById(relationship.participantB);
+  trash\romance-logic.js  [19 hit(s)]
+    L  101  getCharacterById          function _getCharacterById(id) {
+    L  103  getCharacterById          return window.getCharacterById(id);
+    L  144  getRankById               function _getRankById(id) {
+    L  146  getRankById               return window.getRankById(id);
+    L  231  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  232  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  279  getCharacterById          var character = _getCharacterById(characterId);
+    L  284  getRankById               var rank = _getRankById(character.activeRankId);
+    L  308  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  309  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  401  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  402  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  463  getCharacterById          return _getCharacterById(partnerId);
+    L  520  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  521  getCharacterById          var charB = _getCharacterById(characterBId);
+    L  557  getCharacterById          var survivor = _getCharacterById(survivingId);
+    L  558  getCharacterById          var deceased = _getCharacterById(deceasedId);
+    L  579  getCharacterById          var charA = _getCharacterById(characterAId);
+    L  580  getCharacterById          var charB = _getCharacterById(characterBId);
+  trash\settlement-commands-annual.js  [3 hit(s)]
+    L   27  getPlaceById              var _getPlaceById = core.getPlaceById || function(id) { return typeof window.getPlaceById === 'function' ? window.get...
+    L  128  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  150  getPlaceById              var place = _getPlaceById(locationId);
+  trash\settlement-commands-core.js  [7 hit(s)]
+    L   35  getPlaceById              function _getPlaceById(id) {
+    L   36  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   43  getCharacterById          function _getCharacterById(id) {
+    L   44  getCharacterById          return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+    L   90  getRoleById               function _getRoleById(id) {
+    L   92  getRoleById               return window.getRoleById(id);
+    L  171  getPlaceById              var place = _getPlaceById(locationId);
+  trash\settlement-commands-writes.js  [31 hit(s)]
+    L   38  getPlaceById              var _getPlaceById = core.getPlaceById || function(id) { return typeof window.getPlaceById === 'function' ? window.get...
+    L   39  getCharacterById          var _getCharacterById = core.getCharacterById || function(id) { return typeof window.getCharacterById === 'function' ...
+    L   44  getRoleById               var _getRoleById = core.getRoleById || function(id) { return typeof window.getRoleById === 'function' ? window.getRol...
+    L   49  getPlaceById              var place = _getPlaceById(locationId);
+    L  149  getPlaceById              'Built "' + feature.name + '" at ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  197  getPlaceById              'Removed "' + feature.name + '" from ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  247  getPlaceById              'Demolished "' + feature.name + '" at ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  269  getPlaceById              var place = _getPlaceById(locationId);
+    L  343  getPlaceById              var place = _getPlaceById(locationId);
+    L  350  getRoleById               var role = _getRoleById(roleId);
+    L  666  getPlaceById              'Education spending for ' + (_getPlaceById(locationId)?.displayName || 'Unknown') +
+    L  784  getPlaceById              data.ownerName = 'State of ' + (_getPlaceById(locationId)?.displayName || 'Unknown');
+    L  798  getPlaceById              'Created state enterprise "' + result.data.name + '" at ' + (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L  851  getPlaceById              var place = _getPlaceById(locationId);
+    L  857  getCharacterById          var character = _getCharacterById(characterId);
+    L  863  getRoleById               var role = _getRoleById(roleId);
+    L  907  getPlaceById              var place = _getPlaceById(locationId);
+    L  913  getCharacterById          var character = _getCharacterById(characterId);
+    L  919  getRoleById               var role = _getRoleById(roleId);
+    L  954  getPlaceById              var place = _getPlaceById(locationId);
+    L  960  getCharacterById          var character = _getCharacterById(characterId);
+    L 1038  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1101  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1115  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1241  getPlaceById              (_getPlaceById(locationId)?.displayName || 'Unknown'),
+    L 1318  getPlaceById              var place = _getPlaceById(locationId);
+    L 1390  getPlaceById              var place = _getPlaceById(locationId);
+    L 1486  getPlaceById              var place = _getPlaceById(locationId);
+    L 1612  getPlaceById              var place = _getPlaceById(locationId);
+    L 1728  getPlaceById              var place = _getPlaceById(locationId);
+    L 1831  getPlaceById              var place = _getPlaceById(locationId);
+  trash\settlement-economy-core.js  [6 hit(s)]
+    L   34  getPlaceById              function _getPlaceById(id) {
+    L   35  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   56  getRoleById               function _getRoleById(id) {
+    L   58  getRoleById               return window.getRoleById(id);
+    L  571  getRoleById               var role = _getRoleById(roleId);
+    L  614  getRoleById               var role = _getRoleById(roleId);
+  trash\settlement-prosperity.js  [5 hit(s)]
+    L   41  getPlaceById              function _getPlaceById(id) {
+    L   42  getPlaceById              return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    L   63  getRoleById               function _getRoleById(id) {
+    L   65  getRoleById               return window.getRoleById(id);
+    L  323  getRoleById               var role = _getRoleById(prof.id);
+
+  Totals per accessor:
+    getCharacterById          682
+    getPlaceById              330
+    getRankById               39
+    getRoleById               102
+    getLocationTypeById       23
+    getGovernmentTypeById     7
+    getHouseholdById          14
+
+-----------------------------------------------------------------
+2. Call shape: bare global vs method call (heuristic)
+-----------------------------------------------------------------
+  Bare global:      getXById(          -> goes through window/global
+  Method call:      .getXById( or X.getXById(  -> could be state layer
+  Classified by the character immediately before the accessor name.
+
+    Accessor                  bare: Bare   method: Method
+    getCharacterById          9           674
+    getPlaceById              1           329
+    getRankById               5           33
+    getRoleById               1           101
+    getLocationTypeById       0           23
+    getGovernmentTypeById     0           7
+    getHouseholdById          1           12
+
+-----------------------------------------------------------------
+3. Cache invalidation call sites
+-----------------------------------------------------------------
+  invalidateAccessorCaches:
+    character\character-state.js  L   95  *   window.invalidateAccessorCaches(). Without this, getCharacterById
+    character\character-state.js  L  414  function _invalidateAccessorCaches() {
+    character\character-state.js  L  416  window.invalidateAccessorCaches();
+    character\character-state.js  L  423  _invalidateAccessorCaches();
+    character\character-state.js  L  460  _invalidateAccessorCaches();
+    character\character-state.js  L 1099  _invalidateAccessorCaches();
+    core\accessors.js  L   40  *     call invalidateAccessorCaches() after modifying canonical data.
+    core\accessors.js  L  176  function invalidateAccessorCaches() {
+    disaster\disaster-commands.js  L  183  function _invalidateAccessorCaches() {
+    disaster\disaster-commands.js  L  185  window.invalidateAccessorCaches();
+    disaster\disaster-state.js  L   69  function _invalidateAccessorCaches() {
+    disaster\disaster-state.js  L   71  window.invalidateAccessorCaches();
+    disaster\disaster-state.js  L  190  _invalidateAccessorCaches();
+    government\government-commands.js  L   45  if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
+    government\government-queries.js  L   45  if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
+    tabs\government-details-tab.js  L  449  window.invalidateAccessorCaches();
+    tabs\government-economy-tab.js  L  699  window.invalidateAccessorCaches();
+    tabs\government-type-manager-tab.js  L   77  window.invalidateAccessorCaches();
+    tabs\household-overview-tab.js  L  631  window.invalidateAccessorCaches();
+    tabs\location-tab.js  L  187  window.invalidateAccessorCaches();
+    tabs\location-type-manager-tab.js  L   71  window._invalidateAccessorCaches();
+    tabs\rank-manager-tab.js  L   95  window.invalidateAccessorCaches();
+    trash\apprenticeship-system.js  L  283  window.invalidateAccessorCaches();
+    trash\family-logic.js  L   74  window.invalidateAccessorCaches();
+    trash\children\adoption-service.js  L  121  window.invalidateAccessorCaches();
+    trash\children\children-commands.js  L   97  window.invalidateAccessorCaches();
+    trash\children\children-lifecycle.js  L  146  window.invalidateAccessorCaches();
+    trash\children\pregnancy-service.js  L  163  window.invalidateAccessorCaches();
+    trash\children\surrogacy-service.js  L  125  window.invalidateAccessorCaches();
+    trash\mortality\mortality-commands.js  L   96  window.invalidateAccessorCaches();
+
+  refreshCaches:
+    core\accessors.js  L  191  function refreshCaches() {
+
+-----------------------------------------------------------------
+4. State modules that write to masterData.data.<collection>
+-----------------------------------------------------------------
+    Module                            Exists    writes: Writes  invalidate calls: Inval
+    character-state.js                yes       writes: 1     invalidate calls: 6
+    place-state.js                    MISSING
+    rank-state.js                     yes       writes: 0     invalidate calls: 0
+    role-state.js                     yes       writes: 0     invalidate calls: 0
+    location-type-state.js            MISSING
+    government-type-state.js          MISSING
+    household-state.js                yes       writes: 0     invalidate calls: 0
+
+-----------------------------------------------------------------
+5. VERDICT: state modules writing to masterData without invalidating
+-----------------------------------------------------------------
+  None. Every state module that writes to masterData also calls invalidateAccessorCaches.
+
+-----------------------------------------------------------------
+6. Which cached collections are actually READ through accessors
+-----------------------------------------------------------------
+  (see section 1 totals — accessor -> collection is 1:1:)
+    getCharacterById       -> characters
+    getPlaceById           -> places
+    getRankById            -> ranks
+    getRoleById            -> roles
+    getLocationTypeById    -> locationTypes
+    getGovernmentTypeById  -> governmentTypes
+    getHouseholdById       -> households
+
+  If an accessor has 0 hits in section 1, its cache is dead code.
+
+=================================================================
+Written to accessor-audit.txt
+=================================================================
