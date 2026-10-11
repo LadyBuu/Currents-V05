@@ -17,8 +17,14 @@
  *   2. Verify external dependencies the rank domain needs are present.
  *   3. Hydrate RankState from masterData exactly once.
  *   4. Run RankState.validateIntegrity() and log warnings on failure.
- *   5. Register the death / delete lifecycle hooks if the hook API exists.
- *   6. Expose window.Rank as the single entry point for new code.
+ *   5. Expose window.Rank as the single entry point for new code.
+ *
+ * DISPATCH MODEL:
+ *   The character subsystem dispatches death and delete consequences
+ *   directly. RankIssues exposes handleCharacterDeath and
+ *   removeAllReferencesTo; CharacterLifecycle and CharacterDeletionCommands
+ *   call them. There is no listener registry and no lifecycle hook
+ *   registration.
  *
  * CONTRACT:
  *   - init() throws on hard failures. Never leaves the domain in a
@@ -27,8 +33,7 @@
  *   - init() is idempotent.
  *   - reinit() re-hydrates from masterData. Safe to call from tests or a
  *     manual reload path.
- *   - Optional modules (registerLifecycleHook, CharacterLifecycle, the
- *     education domain, SkillUtils) are warned about, not failed on.
+ *   - Optional modules are warned about, not failed on.
  *
  * FAILURE SEMANTICS:
  *   A missing module or a missing required method is a load-order bug.
@@ -59,12 +64,12 @@
  *     - FamilyQueries.getParents
  *
  * DEPENDENCIES (OPTIONAL, warn only):
- *     - registerLifecycleHook
  *     - CharacterLifecycle.killCharacter
  *     - SkillUtils
  *     - EducationCommands / EducationQueries
  *     - Icons, openModal, closeTopModal
  *     - _showToast / showToast
+ *     - FamilyQueries
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -106,7 +111,6 @@
         'CharacterCommands'
     ];
 
-    // Required methods on CharacterCommands — the rank-assignment API.
     var REQUIRED_CHARACTER_COMMANDS = [
         'addRankAssignment',
         'updateRankAssignment',
@@ -120,12 +124,10 @@
         'initializeRankContainers'
     ];
 
-    // Required methods on RomanceQueries.
     var REQUIRED_ROMANCE_QUERIES = [
         'getActiveCommittedPartners'
     ];
 
-    // Required methods on FamilyQueries.
     var REQUIRED_FAMILY_QUERIES = [
         'getParents'
     ];
@@ -135,7 +137,6 @@
     // =========================================================================
 
     var OPTIONAL_GLOBALS = [
-        'registerLifecycleHook',
         'CharacterLifecycle',
         'SkillUtils',
         'EducationCommands',
@@ -255,9 +256,6 @@
         return errors;
     }
 
-    /**
-     * Read-only verification. Never throws. Returns { ok, status }.
-     */
     function verify() {
         var status = {
             missingModules: _verifyModules(),
@@ -385,44 +383,7 @@
     }
 
     // =========================================================================
-    // 9. LIFECYCLE HOOK REGISTRATION
-    // =========================================================================
-    //
-    // RankIssues registers its own hooks at its load time if the hook API
-    // exists. This is a defensive second attempt in case RankIssues loaded
-    // before registerLifecycleHook (which should not happen given the load
-    // order, but the cost of the check is trivial).
-
-    function _registerLifecycleHooks() {
-        if (typeof window.registerLifecycleHook !== 'function') return;
-        if (!window.RankIssues) return;
-        if (typeof window.RankIssues.handleCharacterDeath !== 'function') return;
-        if (typeof window.RankIssues.removeAllReferencesTo !== 'function') return;
-
-        try {
-            window.registerLifecycleHook('death', function (payload) {
-                if (!payload || typeof payload.characterId !== 'string') return;
-                window.RankIssues.handleCharacterDeath(payload.characterId, {
-                    deathYear: typeof payload.deathYear === 'number'
-                        ? payload.deathYear
-                        : undefined
-                });
-            });
-            window.registerLifecycleHook('delete', function (payload) {
-                if (!payload || typeof payload.characterId !== 'string') return;
-                window.RankIssues.removeAllReferencesTo(payload.characterId);
-            });
-        } catch (e) {
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn(
-                    'rank-bootstrap.js: lifecycle hook registration failed:', e
-                );
-            }
-        }
-    }
-
-    // =========================================================================
-    // 10. INIT
+    // 9. INIT
     // =========================================================================
 
     function init() {
@@ -444,18 +405,11 @@
             throw new Error(msg);
         }
 
-        // Hydrate. Errors here are load-order bugs (RankState already
-        // requires masterData); let them propagate.
         _hydrateState();
 
-        // Integrity check. Non-fatal.
         verified.status.integrityErrors = _checkIntegrity();
 
-        // Warn about optional deps and integrity problems.
         _reportWarnings(verified.status);
-
-        // Lifecycle hooks. Defensive.
-        _registerLifecycleHooks();
 
         _initialised = true;
 
@@ -470,12 +424,8 @@
     }
 
     // =========================================================================
-    // 11. REINIT
+    // 10. REINIT
     // =========================================================================
-    //
-    // Re-hydrates from masterData. Useful for tests and for a manual reload
-    // path. RankState already reloads on masterDataUpdated, so this is not
-    // the normal path.
 
     function reinit() {
         if (typeof window.masterData === 'undefined' || !window.masterData
@@ -501,18 +451,14 @@
     }
 
     // =========================================================================
-    // 12. NAMESPACE
+    // 11. NAMESPACE
     // =========================================================================
-    //
-    // window.Rank is the recommended entry point for new code. Individual
-    // globals remain on window for backward compatibility.
 
     window.Rank = {
         init: init,
         verify: verify,
         reinit: reinit,
 
-        // Domain modules
         Rules: window.RankRules,
         State: window.RankState,
         Queries: window.RankQueries,
@@ -520,18 +466,13 @@
         Assignment: window.RankAssignment,
         Issues: window.RankIssues,
 
-        // UI
         UI: window.RankUI,
         Modals: window.RankModals
     };
 
     // =========================================================================
-    // 13. AUTO-INIT
+    // 12. AUTO-INIT
     // =========================================================================
-    //
-    // Bootstrap runs immediately at load time. A failure throws and halts
-    // bootstrap, which is the intended behaviour: a rank domain without its
-    // dependencies is a broken application, not a degraded one.
 
     init();
 
