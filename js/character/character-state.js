@@ -89,6 +89,18 @@
  *   returns a live canonical character object. Authorized mutation code
  *   calls _getLiveCharacterForMutation(id).
  *
+ * ACCESSOR CACHE CONTRACT:
+ *   accessors.js maintains an id -> record cache used by getCharacterById.
+ *   Every mutation of the character collection invalidates that cache via
+ *   window.invalidateAccessorCaches(). Without this, getCharacterById
+ *   returns stale records after a character write, and downstream consumers
+ *   (relationship commands, family queries, rank queries, education
+ *   commands, UIs) read the pre-mutation shape.
+ *
+ *   The invalidation happens at the memory-write boundary (_emitChange),
+ *   not at persistence time, because the cache mirrors canonical memory,
+ *   not storage.
+ *
  * SEMANTIC RULES:
  *   - Missing data is not fabricated. Missing character -> null.
  *     Missing collection -> [].
@@ -101,6 +113,9 @@
  * DEPENDENCIES (REQUIRED):
  *   - storage.js:   masterData, markDataDirty
  *   - accessors.js: getCharacters (initial load only)
+ *
+ * DEPENDENCIES (OPTIONAL, called defensively):
+ *   - accessors.js: invalidateAccessorCaches. If absent, no-op.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -396,9 +411,16 @@
         }
     }
 
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+    }
+
     function _emitChange(action, characterIds) {
         window.markDataDirty();
         _rebuildCaches();
+        _invalidateAccessorCaches();
         _notifySubscribers({
             type: 'charactersChanged',
             action: action,
@@ -435,6 +457,7 @@
 
     function _handleMasterDataUpdated() {
         _rebuildCaches();
+        _invalidateAccessorCaches();
         _notifySubscribers({
             type: 'charactersChanged',
             action: 'reload',
@@ -1073,6 +1096,7 @@
 
     function refresh() {
         _rebuildCaches();
+        _invalidateAccessorCaches();
         _notifySubscribers({
             type: 'charactersChanged',
             action: 'refresh',
