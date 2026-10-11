@@ -22,6 +22,20 @@
  *     reads go through CharacterState projections, FamilyQueries, and
  *     RomanceQueries.
  *
+ * DISPATCH MODEL:
+ *   The character subsystem dispatches directly. It does NOT route
+ *   through a listener registry.
+ *
+ *     CharacterLifecycle.killCharacter
+ *         -> RankIssues.handleCharacterDeath
+ *
+ *     CharacterDeletionCommands.deleteCharacter
+ *         -> RankIssues.removeAllReferencesTo
+ *
+ *   Both call sites live in the character subsystem. This module
+ *   exposes the functions; the caller invokes them. There is no
+ *   registerLifecycleHook mechanism.
+ *
  * ISSUE TYPES:
  *   Spouse Inheritance   — a character is married to a rank holder whose
  *                          rank grants spouse inheritance, and does not
@@ -55,7 +69,7 @@
  *     bySeverity }.
  *   - Each fix() returns { success: boolean, reason?: string }.
  *   - applyFixes(issues) applies every issue.fix() in order, returns
- *     { applied, failed, errors }.
+ *     { applied, failed, skipped, errors }.
  *   - processAnnualRank(year) checks, applies, renumbers, persists once.
  *   - handleCharacterDeath(id, options) deprecates deprecateOnDeath ranks
  *     and renumbers; does not persist.
@@ -75,10 +89,6 @@
  * DEPENDENCIES (REQUIRED AT CALL TIME):
  *   - RomanceQueries.getActiveCommittedPartners
  *   - FamilyQueries.getParents / getChildIds
- *
- * DEPENDENCIES (OPTIONAL):
- *   - registerLifecycleHook — if present, handleCharacterDeath and
- *     removeAllReferencesTo register death/delete handlers.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -637,18 +647,6 @@
     // =========================================================================
     // 8. NUMBERING ISSUES
     // =========================================================================
-    //
-    // Detects holders of a numbered rank whose number is either missing or
-    // does not match what a renumber would assign.
-    //
-    // Rather than reproduce the renumber logic here, this check consults
-    // RankAssignment.getNextRankNumber for each holder in each group, and
-    // compares against the recorded number. A mismatch is a single issue per
-    // (rank, holder) with a fix that calls RankCommands.renumberRankHolders.
-    //
-    // This produces at most one issue per rank in practice, since a
-    // renumber fixes all holders of a rank. To keep the report compact, only
-    // the first mismatch per rank is reported.
 
     function _checkNumberingIssues() {
         var allCharacters = _readAllCharacters();
@@ -711,13 +709,6 @@
         return issues;
     }
 
-    /**
-     * Finds the first (rank, holder) whose number is wrong. Returns null
-     * when the rank's numbering is consistent.
-     *
-     * Walks the group structure the same way renumberRankHolders does, so
-     * the expected number matches what the fix will produce.
-     */
     function _findFirstNumberingDiscrepancy(rankId) {
         var rank = RS.getRank(rankId);
         if (!rank || rank.numbered !== true) return null;
@@ -907,10 +898,6 @@
 
             var parentRank = RS.getRank(parentId);
             if (!parentRank) {
-                // Parent missing entirely. The rank record is gone but rules
-                // persist. Report one issue per orphan parent; fix is not
-                // automatic because we cannot tell whether to remove the
-                // parent id or the rules.
                 var orphanIssue = new RankIssue(
                     'Broken Inheritance Rule',
                     'error',
@@ -951,7 +938,6 @@
 
             var fix = (function (pid, idxs) {
                 return function () {
-                    // Remove from the end so earlier indices stay valid.
                     idxs.sort(function (a, b) { return b - a; });
                     var removed = 0;
                     for (var i = 0; i < idxs.length; i++) {
@@ -990,20 +976,6 @@
     // 11. BATCH FIX APPLIER
     // =========================================================================
 
-    /**
-     * Applies every issue.fix() in order.
-     *
-     * options:
-     *   {
-     *     filter  function(issue) -> boolean
-     *             Only apply fixes where filter returns true. Default: all
-     *             issues that have a fix.
-     *   }
-     *
-     * Returns { applied, failed, skipped, errors }.
-     *
-     * Does NOT persist. Caller calls RankCommands.persist() after.
-     */
     function applyFixes(issues, options) {
         options = options || {};
         var filter = typeof options.filter === 'function' ? options.filter : null;
@@ -1065,34 +1037,6 @@
     // 12. ANNUAL PIPELINE
     // =========================================================================
 
-    /**
-     * Runs the rank annual pipeline.
-     *
-     * Pipeline order:
-     *   1. Detect issues (checkAll).
-     *   2. Apply fixes for issues that have an automatic fix.
-     *   3. Rebuild all numbering (catches anything step 2 missed).
-     *   4. Persist once (unless persist: false).
-     *
-     * options:
-     *   {
-     *     persist:          boolean  default true
-     *     skipFixes:        boolean  default false — if true, only report
-     *     filter:           function(issue) -> boolean  — applied to fixes
-     *   }
-     *
-     * Returns:
-     *   {
-     *     year,
-     *     status:                 'completed' | 'completed_with_errors' | 'partial',
-     *     issueCount,
-     *     issuesBySeverity:       { error, warning, info },
-     *     fixResults:             { applied, failed, skipped, errors },
-     *     renumberResults:        { totalFixed, fixedCounts, errors },
-     *     persisted:              boolean,
-     *     persistError:           string | null
-     *   }
-     */
     function processAnnualRank(year, options) {
         options = options || {};
         var currentYear = (typeof year === 'number' && Number.isFinite(year))
@@ -1159,9 +1103,10 @@
     /**
      * Handles a character death from the rank domain's perspective.
      *
-     * Delegates the deprecate-on-death + renumber work to
-     * RankCommands.deprecateRanksOnDeath. Does not persist — the death
-     * cascade's orchestrator persists once at the end.
+     * Called by CharacterLifecycle._notifyCrossDomainDeath. Delegates the
+     * deprecate-on-death + renumber work to RankCommands.deprecateRanksOnDeath.
+     * Does not persist — the death cascade's orchestrator persists once at
+     * the end.
      *
      * options: { deathYear }
      */
@@ -1186,10 +1131,10 @@
      * Removes every reference to a deleted character from other characters'
      * rank assignments.
      *
-     * The character's own assignments vanish with the record. What remains
-     * are inheritedFrom pointers on *other* characters' assignments that
-     * named the deleted character. This function nulls them and renumbers
-     * the affected ranks.
+     * Called by CharacterDeletionCommands._dispatchCleanup. The character's
+     * own assignments vanish with the record. What remains are inheritedFrom
+     * pointers on *other* characters' assignments that named the deleted
+     * character. This function nulls them and renumbers the affected ranks.
      *
      * Does NOT persist. Caller calls RankCommands.persist().
      */
@@ -1222,7 +1167,6 @@
             }
         }
 
-        // Renumber affected ranks.
         var renumberErrors = [];
         for (var rankId in touchedRanks) {
             if (!Object.prototype.hasOwnProperty.call(touchedRanks, rankId)) continue;
@@ -1241,26 +1185,7 @@
     }
 
     // =========================================================================
-    // 15. LIFECYCLE HOOK REGISTRATION
-    // =========================================================================
-
-    if (typeof window.registerLifecycleHook === 'function') {
-        window.registerLifecycleHook('death', function (payload) {
-            if (!payload || !_hasId(payload.characterId)) return;
-            handleCharacterDeath(payload.characterId, {
-                deathYear: (typeof payload.deathYear === 'number')
-                    ? payload.deathYear
-                    : undefined
-            });
-        });
-        window.registerLifecycleHook('delete', function (payload) {
-            if (!payload || !_hasId(payload.characterId)) return;
-            removeAllReferencesTo(payload.characterId);
-        });
-    }
-
-    // =========================================================================
-    // 16. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.RankIssues = {
