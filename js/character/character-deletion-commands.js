@@ -19,11 +19,13 @@
  *   - Field updates       -> character-commands.js
  *   - Family graph cleanup details      -> family-commands.js (called here)
  *   - Children domain cleanup details   -> children-commands.js (called here)
- *   - Relationship cleanup              -> future relationship-commands.js
+ *   - Relationship cleanup              -> relationship-integrations.js
+ *                                          (called here)
  *   - Household cleanup                 -> household-commands.js (if loaded)
  *   - World leader cleanup              -> world-commands.js (if loaded)
- *   - Rank cleanup                      -> rank-commands.js (if loaded)
- *   - Apprenticeship cleanup            -> future apprenticeship-commands.js
+ *   - Rank cleanup                      -> rank-issues.js (called here)
+ *   - Apprenticeship cleanup            -> apprenticeship-commands.js
+ *                                          (if loaded)
  *   - Persistence                       -> character-state.js
  *   - Events / toasts                   -> caller
  *
@@ -40,16 +42,23 @@
  *   their references are simply not cleaned. The response records which
  *   domains participated.
  *
+ * SOFT-DELETE FIELD OWNERSHIP:
+ *   isDeleted and deletedAt are domain-owned fields (they are listed in
+ *   CharacterCommands._DOMAIN_OWNED_FIELDS and are NOT in
+ *   CharacterState._CHARACTER_OWNED_FIELDS). The generic
+ *   CharacterState.updateCharacter path refuses them; this command writes
+ *   them via CharacterState.applyDomainFieldPatch.
+ *
  * CLEANUP CONTRACT:
  *   Each cross-domain module may expose a cleanup function with a
  *   documented name. This command calls the following if present:
  *
  *     FamilyCommands.removeAllReferencesTo(id)
  *     ChildrenCommands.removeAllReferencesTo(id)
- *     RelationshipCommands.removeAllReferencesTo(id)
+ *     RelationshipIntegrations.removeAllReferencesTo(id)
  *     HouseholdCommands.removeCharacterReferences(id)
  *     WorldCommands.removeLeaderReferences(id)
- *     RankCommands.removeCharacterReferences(id)
+ *     RankIssues.removeAllReferencesTo(id)
  *     ApprenticeshipCommands.removeAllReferencesTo(id)
  *
  *   Each is called only if the module and the method exist. The return
@@ -64,17 +73,17 @@
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js  (CharacterState.removeCharacter,
  *                          CharacterState.removeCharacters,
- *                          CharacterState.updateCharacter,
+ *                          CharacterState.applyDomainFieldPatch,
  *                          CharacterState.getAllCharacters,
  *                          CharacterState._getLiveCharacterForMutation)
  *
  * DEPENDENCIES (OPTIONAL, called only if present):
  *   - family-commands.js
  *   - children-commands.js
- *   - relationship-commands.js
+ *   - relationship-integrations.js
  *   - household-commands.js
  *   - world-commands.js
- *   - rank-commands.js
+ *   - rank-issues.js
  *   - apprenticeship-commands.js
  *
  * ICON POLICY: No emojis. No icons.
@@ -100,7 +109,7 @@
     var _required = [
         'removeCharacter',
         'removeCharacters',
-        'updateCharacter',
+        'applyDomainFieldPatch',
         'getAllCharacters',
         '_getLiveCharacterForMutation'
     ];
@@ -153,6 +162,20 @@
     // =========================================================================
     // 3. CROSS-DOMAIN CLEANUP
     // =========================================================================
+    //
+    // The (moduleName, methodName) pairs here must reflect the actual
+    // exported surface of each domain. If a module renames its cleanup
+    // function, this table is the single place to update.
+    //
+    // Relationship cleanup: the relationship domain owns its cross-domain
+    // hooks in RelationshipIntegrations, not RelationshipCommands.
+    // RelationshipCommands is the generic edge-command layer; it does not
+    // export removeAllReferencesTo.
+    //
+    // Rank cleanup: the rank domain owns its cross-domain hooks in
+    // RankIssues, not RankCommands. RankCommands is the write boundary for
+    // rank records; RankIssues exposes handleCharacterDeath and
+    // removeAllReferencesTo.
 
     var _CLEANUP_TARGETS = [
         {
@@ -167,7 +190,7 @@
         },
         {
             label: 'relationships',
-            moduleName: 'RelationshipCommands',
+            moduleName: 'RelationshipIntegrations',
             methodName: 'removeAllReferencesTo'
         },
         {
@@ -182,8 +205,8 @@
         },
         {
             label: 'rank',
-            moduleName: 'RankCommands',
-            methodName: 'removeCharacterReferences'
+            moduleName: 'RankIssues',
+            methodName: 'removeAllReferencesTo'
         },
         {
             label: 'apprenticeship',
@@ -253,7 +276,7 @@
 
     function _softDeleteInternal(characterId) {
         var now = Date.now();
-        var update = CS.updateCharacter(characterId, {
+        var update = CS.applyDomainFieldPatch(characterId, {
             isDeleted: true,
             deletedAt: now,
             updatedAt: now
@@ -266,7 +289,7 @@
 
     function _restoreInternal(characterId) {
         var now = Date.now();
-        var update = CS.updateCharacter(characterId, {
+        var update = CS.applyDomainFieldPatch(characterId, {
             isDeleted: false,
             deletedAt: null,
             updatedAt: now
