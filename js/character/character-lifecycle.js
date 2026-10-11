@@ -13,7 +13,10 @@
  *     MortalityRules catalogue)
  *   - Build a canonical death transition
  *   - Delegate the mutation to CharacterCommands.markDeceased
- *   - Dispatch family consequences through FamilyCommands
+ *   - Dispatch cross-domain consequences:
+ *       - family consequences via FamilyCommands.handleCharacterDeath
+ *       - relationship consequences via RelationshipIntegrations.handleCharacterDeath
+ *       - rank consequences via RankIssues.handleCharacterDeath
  *   - Life stage classification
  *   - Age group classification
  *   - Elderly check
@@ -28,8 +31,8 @@
  *   - Aggregate statistics             -> mortality-statistics.js
  *   - Childbirth orchestration         -> children-commands.js
  *   - Succession / inheritance         -> future succession domain
- *   - Relationship termination on death -> future relationship domain
- *   - Rank deprecation on death         -> future rank domain
+ *   - Relationship termination logic   -> relationship-integrations.js
+ *   - Rank deprecation logic           -> rank-issues.js
  *
  * CONTRACT:
  *   - One year of progression is processed per iteration. A multi-year
@@ -42,6 +45,24 @@
  *   - The death cause is a stable id. Detail text is passed separately.
  *   - Life stage helpers accept either a character projection or a
  *     numeric age. They never reach into state for a missing birth year.
+ *
+ * CROSS-DOMAIN DEATH DISPATCH:
+ *   After CharacterCommands.markDeceased succeeds, three subsystems are
+ *   notified, in this order:
+ *
+ *     1. FamilyCommands.handleCharacterDeath
+ *     2. RelationshipIntegrations.handleCharacterDeath
+ *     3. RankIssues.handleCharacterDeath
+ *
+ *   Each is called if and only if the module and method are present.
+ *   Failures are swallowed; the death has already been written and the
+ *   cascade proceeds. The death operation is NOT transactional across
+ *   domains. This is deliberate: each domain owns its own state, and a
+ *   failure in one subsystem's cleanup must not prevent another's.
+ *
+ *   If a registerLifecycleHook API exists in a future revision, the
+ *   direct dispatches here become redundant. They are harmless while
+ *   the API remains absent, and can be removed once the API is wired.
  *
  * AGE CLASSIFICATION:
  *   LIFE_STAGES comes from constants.js. It maps stage keys to
@@ -64,8 +85,10 @@
  *   - time.js:                   getCurrentYear
  *
  * DEPENDENCIES (OPTIONAL, called only if loaded):
- *   - family-commands.js:        FamilyCommands.handleCharacterDeath
- *   - event-log.js:              logEvent
+ *   - family-commands.js:              FamilyCommands.handleCharacterDeath
+ *   - relationship-integrations.js:    RelationshipIntegrations.handleCharacterDeath
+ *   - rank-issues.js:                  RankIssues.handleCharacterDeath
+ *   - event-log.js:                    logEvent
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -175,7 +198,54 @@
     }
 
     // =========================================================================
-    // 2. LIFE STAGE CLASSIFICATION
+    // 2. CROSS-DOMAIN DEATH DISPATCH
+    // =========================================================================
+    //
+    // Called exactly once per successful death, from _die and killCharacter.
+    // Family is notified first, then relationship, then rank. Each call is
+    // guarded: if the module or method is absent, that subsystem is skipped.
+    //
+    // Failures inside a sub-dispatch are swallowed. Each subsystem owns its
+    // own state; a failure in one must not prevent the others from running.
+
+    function _notifyCrossDomainDeath(characterId, year) {
+        if (!_hasId(characterId)) return;
+        if (typeof year !== 'number' || !Number.isFinite(year)) {
+            year = window.getCurrentYear();
+        }
+
+        // Family: structural parentage edges. Notified first because
+        // parent-child edges are structural and unrelated to the
+        // relationship or rank state.
+        if (window.FamilyCommands
+            && typeof window.FamilyCommands.handleCharacterDeath === 'function') {
+            window.FamilyCommands.handleCharacterDeath(characterId, year);
+        }
+
+        // Relationship: end every active edge. Committed relationships
+        // become widowed; others end. Notified before rank because rank
+        // inheritance sources may resolve through a spouse who has just
+        // died.
+        if (window.RelationshipIntegrations
+            && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
+            window.RelationshipIntegrations.handleCharacterDeath(characterId, {
+                deathYear: year
+            });
+        }
+
+        // Rank: deprecate any rank assignment with deprecateOnDeath, then
+        // renumber the affected ranks. Notified last so it reads the
+        // freshest relationship state.
+        if (window.RankIssues
+            && typeof window.RankIssues.handleCharacterDeath === 'function') {
+            window.RankIssues.handleCharacterDeath(characterId, {
+                deathYear: year
+            });
+        }
+    }
+
+    // =========================================================================
+    // 3. LIFE STAGE CLASSIFICATION
     // =========================================================================
 
     /**
@@ -217,7 +287,7 @@
     }
 
     // =========================================================================
-    // 3. AGE GROUP CLASSIFICATION
+    // 4. AGE GROUP CLASSIFICATION
     // =========================================================================
 
     /**
@@ -322,7 +392,7 @@
     }
 
     // =========================================================================
-    // 4. DEATH CAUSE SELECTION
+    // 5. DEATH CAUSE SELECTION
     // =========================================================================
 
     /**
@@ -362,7 +432,7 @@
     }
 
     // =========================================================================
-    // 5. MORTALITY RATE
+    // 6. MORTALITY RATE
     // =========================================================================
 
     function _getRateForCharacter(character, age, year, options) {
@@ -379,7 +449,7 @@
     }
 
     // =========================================================================
-    // 6. PER-CHARACTER MORTALITY EVALUATION
+    // 7. PER-CHARACTER MORTALITY EVALUATION
     // =========================================================================
 
     function _evaluateCharacterForYear(character, year, options) {
@@ -418,7 +488,7 @@
     }
 
     // =========================================================================
-    // 7. DEATH TRANSITION
+    // 8. DEATH TRANSITION
     // =========================================================================
 
     function _die(character, year, evaluation, options) {
@@ -454,16 +524,13 @@
             + ' in ' + year,
             [character]);
 
-        if (typeof window.FamilyCommands !== 'undefined'
-            && typeof window.FamilyCommands.handleCharacterDeath === 'function') {
-            window.FamilyCommands.handleCharacterDeath(character.id, year);
-        }
+        _notifyCrossDomainDeath(character.id, year);
 
         return deathResult;
     }
 
     // =========================================================================
-    // 8. TIME PROGRESSION
+    // 9. TIME PROGRESSION
     // =========================================================================
 
     /**
@@ -534,13 +601,14 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC DEATH COMMANDS
+    // 10. PUBLIC DEATH COMMANDS
     // =========================================================================
 
     /**
      * Kills a specific character with explicit death data.
      * Thin wrapper around CharacterCommands.markDeceased that adds
-     * lifecycle-level dispatch (family consequences) and event logging.
+     * lifecycle-level dispatch (family + relationship + rank consequences)
+     * and event logging.
      */
     function killCharacter(characterId, deathData) {
         if (!_hasId(characterId)) {
@@ -577,10 +645,7 @@
             + ' in ' + year,
             [character]);
 
-        if (typeof window.FamilyCommands !== 'undefined'
-            && typeof window.FamilyCommands.handleCharacterDeath === 'function') {
-            window.FamilyCommands.handleCharacterDeath(characterId, year);
-        }
+        _notifyCrossDomainDeath(characterId, year);
 
         return result;
     }
@@ -722,7 +787,7 @@
     }
 
     // =========================================================================
-    // 10. LIFESPAN ESTIMATION (DETERMINISTIC)
+    // 11. LIFESPAN ESTIMATION (DETERMINISTIC)
     // =========================================================================
     //
     // predictLifespan is a DETERMINISTIC query. It does not consume RNG.
@@ -772,7 +837,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.CharacterLifecycle = {
