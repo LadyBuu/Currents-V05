@@ -42,7 +42,9 @@
  *   - _showToast / showToast — toast helper, at window scope
  *
  * ICON POLICY: No emojis. Icons come from icons.js via Icons.NAME. No
- * inline Unicode glyphs.
+ * inline Unicode glyphs in buttons, badges, or select options. Level
+ * glyphs are not shown in the priority dropdown; the level name alone is
+ * the option label.
  *
  * =============================================================================
  */
@@ -176,6 +178,16 @@
         return html;
     }
 
+    /**
+     * Builds the priority select options.
+     *
+     * The option label is the level name alone. No glyph is rendered in
+     * the dropdown; the previous inline Unicode level indicator was removed
+     * when RANK_LEVELS[*].icon was stripped. If a glyph is ever wanted here,
+     * the correct source is RankQueries.getRankLevelIcon(p), which returns
+     * SVG markup — unsuitable for <option> content in some browsers. The
+     * level name alone is the deliberate choice.
+     */
     function _buildPriorityOptions(selected) {
         var levels = window.RANK_LEVELS || {};
         var keys = Object.keys(levels).map(function (k) { return parseInt(k, 10); })
@@ -188,8 +200,7 @@
             var lvl = levels[p] || {};
             var sel = p === selected ? ' selected' : '';
             html += '<option value="' + _esc(p) + '"' + sel + '>' +
-                _esc((lvl.name || ('Level ' + p))) +
-                (lvl.icon ? ' (' + _esc(lvl.icon) + ')' : '') +
+                _esc(lvl.name || ('Level ' + p)) +
                 '</option>';
         }
         return html;
@@ -813,10 +824,7 @@
     // 6. ASSIGN RANK MODAL
     // =========================================================================
     //
-    // Inline character picker. The old file depended on openCharacterSelector,
-    // which no longer exists. This modal renders an inline list, filters it
-    // client-side, and calls RankCommands.assignRankToCharacter on confirm.
-    //
+    // Inline character picker. No dependency on a separate selector modal.
     // Two modes are supported through options.mode:
     //   'single'  — one character is selected; the list is single-select
     //   'bulk'    — many characters are selected via checkboxes
@@ -840,7 +848,6 @@
             selectedRankId = ranks[0].id;
         }
 
-        // Draft selection state.
         var selectedCharacterIds = [];
         if (preselectedCharacterId) {
             selectedCharacterIds = [preselectedCharacterId];
@@ -982,7 +989,6 @@
                                 else selectedCharacterIds.splice(idx, 1);
                             }
                         }
-                        // Re-render for selection styles.
                         renderList();
                         updateCounter();
                     });
