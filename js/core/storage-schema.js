@@ -80,7 +80,7 @@
 
     // Envelope schema version. See SCHEMA VERSIONING in the file header for
     // the relationship between this and any application data version.
-    var SCHEMA_VERSION = 2;
+    var SCHEMA_VERSION = 3;
 
     // =========================================================================
     // 2. INTERNAL HELPERS
@@ -156,6 +156,29 @@
         return {};
     }
 
+    /**
+     * Ensures a field on an entity object is an array. Mutates in place.
+     * Uses explicit missing/type checks; truthiness is not a predicate.
+     * @private
+     */
+    function _ensureArrayField(obj, fieldName) {
+        if (!obj || typeof obj !== 'object') return;
+        if (_isMissing(obj[fieldName]) || !Array.isArray(obj[fieldName])) {
+            obj[fieldName] = [];
+        }
+    }
+
+    /**
+     * Ensures a field on an entity object is a plain object. Mutates in place.
+     * @private
+     */
+    function _ensurePlainObjectField(obj, fieldName) {
+        if (!obj || typeof obj !== 'object') return;
+        if (!_isPlainObject(obj[fieldName])) {
+            obj[fieldName] = {};
+        }
+    }
+
     // =========================================================================
     // 3. DEFAULT FACTORY
     // =========================================================================
@@ -189,6 +212,7 @@
                 households: [],
                 residences: [],
                 rankInheritanceRules: {},
+                parentChildEdges: [],
                 disasters: [],
                 eventLog: [],
                 currentYear: window.TIME_CONSTANTS.DEFAULT_YEAR,
@@ -229,7 +253,8 @@
         var arrayKeys = [
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
             'governmentTypes', 'governments', 'households', 'residences',
-            'disasters', 'eventLog', 'educationalInstitutions'
+            'disasters', 'eventLog', 'educationalInstitutions',
+            'parentChildEdges'
         ];
         for (var i = 0; i < arrayKeys.length; i++) {
             var k = arrayKeys[i];
@@ -262,48 +287,34 @@
         }
 
         // --- Entity field defaults (characters) ---
+        //
+        // Embedded domain-owned containers on the character record are
+        // guaranteed to be present with the correct shape. Contents are
+        // owned by the domains; the schema owns the container shape only.
+        //
+        // Removed fields (motherId, fatherId, children, adoptedParents,
+        // adoptedChildren) are NOT normalized. Parentage lives in
+        // parentChildEdges; if an old save carries these fields, they are
+        // ignored rather than resurrected.
         for (var c = 0; c < out.characters.length; c++) {
             var char = out.characters[c];
             if (!char || typeof char !== 'object') continue;
 
-            if (_isMissing(char.relationships) || !Array.isArray(char.relationships)) {
-                char.relationships = [];
-            }
-            if (_isMissing(char.friends) || !Array.isArray(char.friends)) {
-                char.friends = [];
-            }
-            if (_isMissing(char.moves) || !Array.isArray(char.moves)) {
-                char.moves = [];
-            }
-            if (_isMissing(char.professions) || !Array.isArray(char.professions)) {
-                char.professions = [];
-            }
-            if (_isMissing(char.adoptedParents) || !Array.isArray(char.adoptedParents)) {
-                char.adoptedParents = [];
-            }
-            if (_isMissing(char.rankAssignments) || !Array.isArray(char.rankAssignments)) {
-                char.rankAssignments = [];
-            }
-            if (_isMissing(char.apprentices)) {
-                char.apprentices = [];
-            } else if (!Array.isArray(char.apprentices)) {
-                char.apprentices = [];
-            }
+            _ensureArrayField(char, 'relationships');
+            _ensureArrayField(char, 'friends');
+            _ensureArrayField(char, 'moves');
+            _ensureArrayField(char, 'professions');
+            _ensureArrayField(char, 'rankAssignments');
+            _ensureArrayField(char, 'apprentices');
 
             if (char.isDeceased === undefined) char.isDeceased = false;
             if (char.isMaster === undefined) char.isMaster = false;
             if (char.masterId === undefined) char.masterId = null;
             if (char.masterProfessionId === undefined) char.masterProfessionId = null;
 
-            if (!_isPlainObject(char.apprenticeshipDetails)) {
-                char.apprenticeshipDetails = {};
-            }
-            if (!_isPlainObject(char.friendshipDetails)) {
-                char.friendshipDetails = {};
-            }
-            if (!_isPlainObject(char.appearance)) {
-                char.appearance = {};
-            }
+            _ensurePlainObjectField(char, 'apprenticeshipDetails');
+            _ensurePlainObjectField(char, 'friendshipDetails');
+            _ensurePlainObjectField(char, 'appearance');
         }
 
         // --- Entity field defaults (places) ---
@@ -314,9 +325,7 @@
             if (place.governmentTypeId === undefined) place.governmentTypeId = null;
             if (place.governmentStyle === undefined) place.governmentStyle = null;
 
-            if (_isMissing(place.leaderAssignments) || !Array.isArray(place.leaderAssignments)) {
-                place.leaderAssignments = [];
-            }
+            _ensureArrayField(place, 'leaderAssignments');
         }
 
         // --- Entity field defaults (ranks) ---
@@ -337,21 +346,15 @@
         for (var g = 0; g < out.governmentTypes.length; g++) {
             var govType = out.governmentTypes[g];
             if (!govType || typeof govType !== 'object') continue;
-            if (_isMissing(govType.allowedRankIds) || !Array.isArray(govType.allowedRankIds)) {
-                govType.allowedRankIds = [];
-            }
+            _ensureArrayField(govType, 'allowedRankIds');
         }
 
         // --- Entity field defaults (households) ---
         for (var h = 0; h < out.households.length; h++) {
             var household = out.households[h];
             if (!household || typeof household !== 'object') continue;
-            if (_isMissing(household.departments) || !Array.isArray(household.departments)) {
-                household.departments = [];
-            }
-            if (_isMissing(household.members) || !Array.isArray(household.members)) {
-                household.members = [];
-            }
+            _ensureArrayField(household, 'departments');
+            _ensureArrayField(household, 'members');
         }
 
         // --- Entity field defaults (roles) ---
@@ -359,9 +362,7 @@
             var role = out.roles[ro];
             if (!role || typeof role !== 'object') continue;
             if (role.genderRestriction === undefined) role.genderRestriction = 'both';
-            if (_isMissing(role.specializations) || !Array.isArray(role.specializations)) {
-                role.specializations = [];
-            }
+            _ensureArrayField(role, 'specializations');
             if (role.notes === undefined) role.notes = '';
         }
 
