@@ -1,636 +1,1199 @@
-# COMPLETE RANK SYSTEM DOCUMENTATION
+# File 12 of N: `rank-doc.md`
 
-## SYSTEM OVERVIEW
+Full replacement for `rank-docs.txt`. Same format as `education-doc.md`, `apprenticeship-doc.md`, and `roles-doc.md`.
 
-The Rank System manages hierarchical ranks, titles, and nobility structures in the game world. Ranks define a character's social standing, inherited positions, and formal titles. The system supports numbered ranks (e.g., King Henry VIII), inheritance rules, surname generation, spouse inheritance, and automatic issue detection with one-click fixes.
+**Structure:**
 
-**Key Principles:**
-- **Single Source of Truth:** `rank-state.js` holds all rank data
-- **Command-Query Separation:** Commands vs Queries separated
-- **Numbered Ranks:** Automatic numbering with ordinal or reign-based systems
-- **Inheritance Rules:** Define which ranks inherit from others
-- **Surname Rules:** Auto-generate surnames based on rank and location
-- **Spouse Inheritance:** Ranks can be inherited through marriage
-- **Gender Restrictions:** Ranks can be restricted to specific genders
-- **Deprecation:** Ranks can be deprecated on death
-- **Issue Detection:** Auto-detection of rank configuration problems with auto-fix
-- **Integration:** Works with Relationship System, Family System, and Character System
+1. Overview
+2. Principles
+3. File manifest
+4. Load order
+5. Ownership contract
+6. Data schemas
+7. State
+8. Queries
+9. Rules
+10. Commands
+11. Assignment (numbering)
+12. Issues
+13. Modals and UI
+14. Cross-domain integration
+15. Persistence
+16. Lifecycle hooks
+17. Recursion guards (why there are none)
+18. Known deferrals
+19. Rules of use
+20. Anti-patterns
+21. Version history
 
----
-
-## TABLE OF CONTENTS
-
-1. [Rank System Files](#rank-system-files)
-2. [Rank Constants](#rank-constants)
-3. [Rank State](#rank-state)
-4. [Rank Commands](#rank-commands)
-5. [Rank Queries](#rank-queries)
-6. [Rank Assignment](#rank-assignment)
-7. [Rank UI List](#rank-ui-list)
-8. [Rank Modals](#rank-modals)
-9. [Rank Issues System](#rank-issues-system)
-10. [Complete API Reference](#complete-api-reference)
-11. [Data Schemas](#data-schemas)
-12. [Dependency Map](#dependency-map)
-13. [Recursion Guards](#recursion-guards)
-14. [Integration with Other Systems](#integration-with-other-systems)
+Nothing here is invented. Every function, constant, field, and behaviour described is present in the code I delivered. Where the code makes a decision, the doc explains the decision. Where the code defers a decision, the doc says so.
 
 ---
 
-## RANK SYSTEM FILES
+```markdown
+# Still Waters — Rank System
+
+**Location:** `js/core/rank/`
+**Version:** 3.0
+**Last regenerated from:** the code in this folder after the
+rank integration refactor.
+
+---
+
+## 1. Overview
+
+The rank domain owns the **catalogue of formal ranks** and the
+**assignment of those ranks to characters**.
+
+A rank is a record in a catalogue: a name, a level, a symbol, a set of
+policy flags (numbered, gender-restricted, deprecate-on-death), optional
+inheritance configuration, and an optional surname rule. A rank is not
+attached to a character — it exists independently.
+
+A rank **assignment** is a record on a character: which rank they hold,
+since when, with what number, whether it is active, whether it is
+deprecated, and from whom it was inherited.
+
+The rank domain owns:
+
+- the rank catalogue (`RankState`)
+- inheritance rules between ranks (`RankState`)
+- the arithmetic of numbering holders (`RankAssignment`)
+- detection and repair of rank configuration problems (`RankIssues`)
+- the modal and list UI for managing ranks (`RankModals`, `RankUI`)
+
+The rank domain does **not** own:
+
+- the character record (`CharacterState`)
+- the write path for character fields, including rank assignments
+  (`CharacterCommands`)
+- relationship facts — who is married to whom (`RomanceQueries`)
+- family facts — who is whose parent (`FamilyQueries`)
+- numbering display vocabulary — ordinal / roman formatting (`RankRules`)
+- role skill (education and apprenticeship own that; rank does not
+  interact with role skill at all)
+
+The rank catalogue answers "what does a Duke look like." It does not
+answer "is Bruna a Duke." A character's rank assignments answer that
+question, and they live on the character record.
+
+---
+
+## 2. Principles
+
+| Principle | Rule |
+|---|---|
+| **Single source of truth** | `RankState` owns the rank catalogue. `CharacterState` owns the character record. No other module stores rank data. |
+| **Command-query separation** | `RankQueries` reads. `RankCommands` writes. `RankState` provides the state primitives that `RankCommands` calls. |
+| **One writer per field** | Rank records: `RankCommands`. Inheritance rules: `RankCommands`. Character rank assignments: `CharacterCommands`. |
+| **Fail loud** | Missing required dependency throws at load. Missing required method throws at load. Nothing fabricates `0`, `[]`, `null`, or `1250`. |
+| **Reads return clones** | `RankState` public reads return defensive projections. Live records never leave the state layer. |
+| **One persist per batch** | Commands mutate in memory and call `markDataDirty` via `RankState`. The caller calls `RankCommands.persist()` once. |
+| **No recursion guards** | Mutations are synchronous and side-effect explicit. Commands may chain freely. |
+| **Policy is pure** | `RankRules` has no state access, no I/O, no randomness. |
+| **Numbering is arithmetic, not policy** | `RankAssignment` computes numbers. `RankRules` classifies which numbering group a holder belongs to. |
+| **Issues detect; callers apply** | `RankIssues.checkAll()` returns issues with fix closures. `RankIssues.applyFixes()` applies them. Nothing auto-fixes silently. |
+
+---
+
+## 3. File manifest
+
+| File | Purpose |
+|---|---|
+| `rank-constants.js` | Level vocabulary, symbol list, inheritance source vocabulary, numbering group vocabulary, `DEFAULT_RANK` shape. Pure constants. No logic. |
+| `rank-rules.js` | Pure policy. `applyDefaults`, `validate`, `validatePatch`, `validateInheritanceRule`, `canAssignRank`, `canDeprecateRankAssignment`, `allowsMultipleSpouses`, `classifyNumberingGroup`, `formatNumber`. No state access. |
+| `rank-state.js` | The authoritative in-memory rank catalogue and inheritance rule store. Explicit hydration. Clone-returning reads. `_`-prefixed mutators reserved for `RankCommands`. `validateIntegrity()`. Reload on `masterDataUpdated`. |
+| `rank-queries.js` | Read-only projections. Rank reads delegate to `RankState`. Character rank reads read `character.rankAssignments` off the projection. Spouse inheritance reads go through `RomanceQueries`. `getInheritanceSource` is the single canonical implementation. |
+| `rank-commands.js` | The write boundary. Rank CRUD, inheritance rule writes, rank assignment writes (delegated to `CharacterCommands`), surname rule updates, death hook (`deprecateRanksOnDeath`), and `persist()`. |
+| `rank-assignment.js` | Numbering arithmetic. `getNextRankNumber`, `renumberRankHolders`, `fixAllNumberingForCharacter`, `generateSurnameFromRankRule`, `checkAndFixSpouseInheritance`, `updateRankSurnameRule` (delegating shim). |
+| `rank-issues.js` | Issue detection with auto-fix closures. `checkAll`, `applyFixes`, `processAnnualRank`, `handleCharacterDeath`, `removeAllReferencesTo`. |
+| `rank-ui-list.js` | Presentation. `renderRankList`, `renderRankCard`, `renderRankHierarchy`, `renderRankTree`, `renderRankSelector`, `renderRankStatistics`, `registerContainer`, `refresh`, `refreshAll`. |
+| `modals-rank.js` | Create / edit / assign / details modals. All writes go through `RankCommands`. Inline character picker for assignment. |
+| `rank-bootstrap.js` | Load-order manifest, dependency verification, explicit hydration, integrity check, lifecycle hook registration. Exposes `window.Rank`. |
+| `rank-doc.md` | This document. |
+
+The old `rank-docs.txt` is replaced by this file. The old
+`rank-system.js` shim — if present — is deleted; every legacy alias
+has a canonical replacement, and new code uses `window.Rank`.
+
+---
+
+## 4. Load order
+
+```html
+<!-- Core -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/storage.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/modals-core.js"></script>
+
+<!-- Character -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+
+<!-- Family -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- Relationship (only RomanceQueries is required by rank) -->
+<script src="js/social/relationship-types.js"></script>
+<script src="js/social/relationship-utils.js"></script>
+<script src="js/social/relationship-state.js"></script>
+<script src="js/social/relationship-queries.js"></script>
+<script src="js/social/relationship-commands.js"></script>
+<script src="js/social/romance-rules.js"></script>
+<script src="js/social/romance-queries.js"></script>
+
+<!-- Rank -->
+<script src="js/core/rank/rank-constants.js"></script>
+<script src="js/core/rank/rank-rules.js"></script>
+<script src="js/core/rank/rank-state.js"></script>
+<script src="js/core/rank/rank-queries.js"></script>
+<script src="js/core/rank/rank-assignment.js"></script>
+<script src="js/core/rank/rank-commands.js"></script>
+<script src="js/core/rank/rank-issues.js"></script>
+<script src="js/core/rank/rank-ui-list.js"></script>
+<script src="js/core/rank/modals-rank.js"></script>
+<script src="js/core/rank/rank-bootstrap.js"></script>
+```
+
+`rank-bootstrap.js` must be last. It verifies every dependency,
+hydrates `RankState` from `masterData.data.ranks` and
+`masterData.data.rankInheritanceRules`, and throws if the load order
+is broken.
+
+Rank modules reference `RomanceQueries` and `FamilyQueries` at **call
+time**, not at load time. This means the rank block can load before the
+relationship block, as long as both are loaded before any rank query
+runs. Loading them first (as shown) is the safe arrangement.
+
+---
+
+## 5. Ownership contract
+
+| Concept | Owner | Readers |
+|---|---|---|
+| Rank catalogue | `RankState` | `RankQueries` |
+| Inheritance rules | `RankState` | `RankQueries` |
+| Rank record mutations | `RankCommands` (via `RankState._` methods) | — |
+| Inheritance rule mutations | `RankCommands` (via `RankState._` methods) | — |
+| Rank policy | `RankRules` | `RankCommands`, `RankAssignment`, `RankIssues` |
+| Numbering arithmetic | `RankAssignment` | `RankCommands` |
+| Character rank assignments | `CharacterState` (record), `CharacterCommands` (writes) | `RankQueries`, `RankIssues` |
+| Numbering info (`number`, `activeRankId`) | `CharacterCommands` (derived) | everyone |
+| Rank-to-character lookup | `RankQueries.getCharactersWithRank` | cross-domain callers |
+| Inheritance source resolution | `RankQueries.getInheritanceSource` | `RankAssignment`, `RankIssues` |
+| Committed-partner facts | `RomanceQueries` | `RankQueries`, `RankAssignment`, `RankIssues` |
+| Parent facts | `FamilyQueries` | `RankQueries`, `RankAssignment`, `RankIssues` |
+| Persistence | `RankCommands.persist` (the only `saveMasterData` call site) | — |
+| Annual pipeline | `RankIssues.processAnnualRank` | callers |
+| Death cascade | `RankIssues.handleCharacterDeath` | `CharacterLifecycle` (directly or via hook) |
+| Hard-delete cleanup | `RankIssues.removeAllReferencesTo` | `CharacterDeletionCommands` (directly or via hook) |
+
+**Reads outside the owning domain:** only through the owner's query
+surface. No module outside `RomanceQueries` may read committed-partner
+facts by walking `character.relationships`. No module outside
+`CharacterState` may hold a live character record.
+
+---
+
+## 6. Data schemas
+
+### Rank record (in `RankState`)
 
 ```
-js/core/rank/
-├── rank-constants.js             # All constants (levels, symbols)
-├── rank-state.js                 # Single source of truth + cache + notifications
-├── rank-commands.js              # All write operations (CRUD, assignment)
-├── rank-queries.js               # All read operations (search, filter, stats)
-├── rank-assignment.js            # Complex assignment and numbering logic
-├── rank-ui-list.js               # UI rendering (list, hierarchy, tree, selector)
-├── modals-rank.js                # UI modals (create, edit, assign, details)
-├── rank-issues.js                # Issue detection and auto-fix system
-└── rank-docs.txt                 # This documentation
-```
-
----
-
-## RANK-CONSTANTS.JS
-
-**PURPOSE:** All rank-related constants. Pure constants - no dependencies.
-
-### RANK LEVELS
-
-| Level | Name | Icon | Description |
-|-------|------|------|-------------|
-| 1 | Sovereign | ◉ | Highest level - Rulers, monarchs, emperors |
-| 2 | High Noble | ◧ | Dukes, princes, high lords |
-| 3 | Noble | ◈ | Counts, earls, barons |
-| 4 | Gentry | ⟡ | Knights, esquires, landed gentry |
-| 5 | Commoner | ⌂ | Merchants, artisans, peasants |
-
-### AVAILABLE SYMBOLS (60+)
-
-**Level Symbols:** `◉`, `◧`, `◈`, `⟡`, `⌂`
-
-**Star Variants:** `✦`, `✧`, `✪`, `✴`, `✺`, `✵`, `🟊`, `⚝`
-
-**Circle Variants:** `◍`, `◯`, `⊙`, `◐`, `◑`, `◒`, `◓`, `◖`, `◗`, `◎`, `◉`, `◍`
-
-**Dot Variants:** `⨀`, `⚬`, `⊕`, `⚲`, `⌾`, `⫷`, `⟁`, `⟐`
-
-**Shape Variants:** `▲`, `▽`, `■`, `▣`, `⬔`, `⬖`, `⎔`, `⌇`
-
-**Decorative:** `⌘`, `❖`, `☯`, `⚜`, `✠`, `ⴾ`, `⦚`, `⳩`
-
-**Rare Symbols:** `𐃏`, `⛤`, `ᨒ`, `꤮`, `𑁍`, `𖦹`
-
-**Celestial:** `⚴`, `⚷`, `⚳`, `☉`, `☾`, `☋`
-
-### DEFAULT RANK STRUCTURE
-
-```javascript
 {
-    id: null,
-    name: "New Rank",
-    priority: 5,
-    numbered: false,
-    numberingType: 'reign',
-    numberingPrefix: '',
-    numberingSuffix: '',
-    symbol: '⟡',
-    genderRestriction: 'either',
-    locationTypeId: null,
-    deprecateOnDeath: false,
-    spouseInheritance: null,
-    allowsMultipleSpouses: false,
-    parentRankId: null,
-    customSurnameRule: false,
-    surnameConnector: 'of',
-    surnamePrefix: '',
-    surnameSuffix: '',
-    createdAt: null,
-    updatedAt: null
+    id:                     string,   unique
+    name:                   string,
+    priority:               number,   1..10
+    numbered:               boolean,
+    numberingType:          'reign' | 'ordinal' | 'roman',
+    numberingGroup:         'global' | 'parent' | 'spouse' | 'source',
+    numberingPrefix:        string,
+    numberingSuffix:        string,
+    sourceRankId:           string | null,
+    inheritanceSource:      'none' | 'parent' | 'spouse',
+    symbol:                 string,
+    genderRestriction:      'either' | 'male' | 'female',
+    locationTypeId:         string | null,
+    deprecateOnDeath:       boolean,
+    spouseInheritance:      string | null,   // legacy; prefer sourceRankId
+    allowsMultipleSpouses:  boolean,
+    parentRankId:           string | null,
+    customSurnameRule:      boolean,
+    surnameConnector:       string,
+    surnamePrefix:          string,
+    surnameSuffix:          string,
+    createdAt:              number | null,
+    updatedAt:              number | null
 }
 ```
 
+### Inheritance rule (in `RankState`)
+
+```
+{
+    childRankId:            string | null,
+    childRankIdFemale:      string | null,
+    minChildAge:            number,    default 0
+    maxChildren:            number | null,
+    order:                  number,    default 10
+}
+```
+
+Stored as `{ [parentRankId]: RankRule[] }`.
+
+### Rank assignment (on the character record)
+
+Written only by `CharacterCommands`.
+
+```
+{
+    rankId:                 string,
+    customTitle:            string | null,
+    address:                string | null,
+    number: {
+        rawNumber:          number,
+        display:            string,
+        type:               'ordinal' | 'roman' | 'custom',
+        groupId:            string | null,
+        holdersInGroup:     number | null
+    } | null,
+    order:                  number,
+    isActive:               boolean,
+    isDeprecated:           boolean,
+    assignedYear:           number | null,
+    notes:                  string,
+    inheritedFrom:          string | null
+}
+```
+
+### Character rank pointers
+
+Derived by `CharacterCommands._reconcileRankActives` on every write.
+Never written directly.
+
+```
+activeRankId:               string | null
+activeRankNumber:           number | null
+```
+
+Invariant: exactly one non-deprecated assignment has `isActive: true`
+when any non-deprecated assignment exists. `activeRankId` matches that
+assignment's `rankId`. When no non-deprecated assignment exists,
+`activeRankId` and `activeRankNumber` are `null`.
+
 ---
 
-## RANK-STATE.JS
+## 7. State — `rank-state.js`
 
-**PURPOSE:** Single source of truth for all rank data. Manages caching, subscriptions, and persistence.
+The single in-memory catalogue for ranks and inheritance rules.
 
-### Data Access Functions
+### Hydration
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankState.getRank(id)` | `id` (string) | `Object\|null` | Gets rank by ID |
-| `RankState.getAllRanks()` | None | `Array` | Gets all ranks |
-| `RankState.getRanksByPriority(priority)` | `priority` (number) | `Array` | Gets ranks by priority |
-| `RankState.getRankHierarchy()` | None | `Array` | Gets hierarchical rank structure |
-| `RankState.getInheritanceRules()` | None | `Object` | Gets all inheritance rules |
-| `RankState.getInheritanceRulesForRank(rankId)` | `rankId` (string) | `Array` | Gets rules for a rank |
-| `RankState.getRankCount()` | None | `number` | Gets total rank count |
+```
+RankState.hydrateFromMasterData(ranks, inheritanceRules)
+RankState.isHydrated()
+```
 
-### Commands
+Hydration is explicit. `rank-bootstrap.js` calls it once. Rehydrating is
+allowed (`masterDataUpdated` triggers it automatically). Duplicate rank
+ids throw.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankState.addRank(rankData)` | `rankData` (Object) | `Object` | Adds a new rank |
-| `RankState.updateRank(rankId, updates)` | `rankId`, `updates` | `Object` | Updates a rank |
-| `RankState.deleteRank(rankId)` | `rankId` (string) | `Object` | Deletes a rank |
-| `RankState.addInheritanceRule(parentRankId, childRankId, minChildAge, order)` | Various | `Object` | Adds inheritance rule |
-| `RankState.removeInheritanceRule(parentRankId, ruleIndex)` | `parentRankId`, `ruleIndex` | `Object` | Removes inheritance rule |
+### Public reads (clones)
+
+| Function | Returns |
+|---|---|
+| `getAllRanks()` | Clone of the rank array |
+| `getRank(id)` | Clone or null |
+| `getRanksByPriority(p)` | Clone array |
+| `getRankHierarchy()` | Array of nodes with `children` arrays |
+| `getRankCount()` | Number |
+| `getInheritanceRules()` | Clone of the rules map |
+| `getInheritanceRulesForRank(id)` | Clone of the rule array |
 
 ### Subscriptions
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankState.subscribe(callback)` | `callback` (function) | `function` | Subscribes to state changes |
+```
+RankState.subscribe(callback) -> unsubscribe
+```
 
-### Cache Management
+Receives `{ type, data }` on every mutation. Types: `rankAdded`,
+`rankUpdated`, `rankDeleted`, `inheritanceRuleAdded`,
+`inheritanceRuleRemoved`, `inheritanceRulesSet`, `stateReloaded`.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankState.invalidateCache()` | None | None | Clears all caches |
+### Diagnostics
+
+```
+RankState.validateIntegrity() -> { valid: boolean, errors: string[] }
+```
+
+Checks: every rank has a valid id, no duplicate ids, priority 1–10,
+parent and source references resolve, no self-parent or self-source,
+inheritance rules reference existing parents and children. Never throws.
+
+### Internal (reserved for `RankCommands`)
+
+`_getRankCanonical(id)`, `_getAllRanksCanonical()`, `_addRank`,
+`_updateRank`, `_removeRank`, `_addInheritanceRule`,
+`_removeInheritanceRule`, `_setInheritanceRules`, `_indexesRebuild`.
+
+Every mutator syncs `masterData.data.ranks` and
+`masterData.data.rankInheritanceRules` in memory, then calls
+`markDataDirty`. It does not call `saveMasterData`.
 
 ---
 
-## RANK-COMMANDS.JS
+## 8. Queries — `rank-queries.js`
 
-**PURPOSE:** All write operations for ranks.
+### Rank queries
+
+Delegate to `RankState`. Every function returns clones.
+
+`getRank`, `getAllRanks`, `getRanksByPriority`, `getRankHierarchy`,
+`getRankCount`, `getInheritanceRules`, `getInheritanceRulesForRank`.
+
+### Level helpers
+
+| Function | Source |
+|---|---|
+| `getRankLevelName(priority)` | `RANK_LEVELS` in `rank-constants.js` |
+| `getRankLevelDescription(priority)` | `RANK_LEVELS` |
+| `getRankLevelIcon(priority)` | `icons.js` via `getRankLevelIcon` |
+| `getAvailableSymbols()` | `AVAILABLE_SYMBOLS` |
+
+The icon and the name are separate concerns. Level names come from
+constants. Level icons come from `icons.js` and return SVG markup.
+
+### Character queries
+
+| Function | Behaviour |
+|---|---|
+| `getCharactersWithRank(rankId, includeDeprecated)` | Reads `character.rankAssignments` from the projection. Includes any character whose active pointer matches even if the assignment array is stale (defensive). |
+| `getRankHolderCount(rankId, includeDeprecated)` | Length of the above. |
+| `getRankHolderStats(rankId)` | Counts by gender, living/deceased, age band. Characters whose age cannot be resolved are counted separately, not as minors. |
+| `getRankAssignmentsForCharacter(characterId, includeDeprecated)` | Assignment array from the projection, sorted by `order`. |
+| `getActiveRankAssignment(characterId)` | The assignment matching the active pointer, or the first `isActive` one. |
+
+### Spouse inheritance queries
+
+`getSpouseInheritanceRanks(characterId)` — the ranks the character is
+**entitled** to by virtue of their current committed partner's rank.
+
+`getReceivedSpouseInheritanceRanks(characterId)` — the ranks the
+character **actually holds** where `inheritedFrom` is set.
+
+Both read committed partners via
+`RomanceQueries.getActiveCommittedPartners`. Neither walks
+`character.relationships`.
+
+### Inheritance source (canonical)
+
+```
+RankQueries.getInheritanceSource(characterId, rankId) -> string | null
+```
+
+The single implementation. Previously duplicated in `rank-assignment.js`
+and `rank-issues.js`. Uses `RomanceQueries` for spouse inheritance and
+`FamilyQueries.getParents` for parent inheritance.
+
+`getParents` may return an object (`{ father, mother }`) or an array of
+edges. Both shapes are handled. The parent reference may be a string id,
+a character projection with `id` and `activeRankId`, or an edge with
+`parentId`. All three are normalised.
+
+### Surname rule queries
+
+`getRanksWithSurnameRules()`, `getRankSurnameRule(rankId)`.
+
+### Validation helper
+
+`isValidRank(rank)` — delegates to `RankRules.validate`.
+
+---
+
+## 9. Rules — `rank-rules.js`
+
+Pure policy. No state access. No side effects.
+
+### Shape
+
+```
+RankRules.applyDefaults(raw) -> RankRecord
+```
+
+Produces a normalised record shape from raw input. Does not assign `id`
+or timestamps — that is the command layer's job.
+
+The function preserves unknown fields (forward compatibility). It
+coerces known fields. It enforces coherence: `sourceRankId` requires an
+`inheritanceSource` other than `'none'`; `numberingGroup: 'source'`
+requires `inheritanceSource` to be set. Falls back to `DEFAULT_RANK`
+values when a field is missing, and to hardcoded literals when
+`DEFAULT_RANK` itself is not loaded.
+
+### Validation
+
+```
+RankRules.validate(rank) -> { valid, errors }
+RankRules.validatePatch(current, patch) -> { valid, errors }
+RankRules.validateInheritanceRule(rule) -> { valid, errors }
+```
+
+`validate` checks: name non-empty, priority integer 1–10, symbol
+non-empty and in `AVAILABLE_SYMBOLS`, gender restriction valid, numbering
+config coherent, inheritance config coherent, surname rule coherent,
+no self-parent, no self-source.
+
+`validatePatch` merges the patch onto the current record and validates
+the result. This catches coherence errors a per-field check would miss.
+
+`validateInheritanceRule` checks shape and coherence. It does not check
+that referenced ranks exist — that is a state question.
+
+### Assignment policy
+
+```
+RankRules.canAssignRank(character, rank, options) -> { valid, reason? }
+RankRules.canDeprecateRankAssignment(character, rankId) -> { valid, reason? }
+```
+
+`canAssignRank` checks: character exists and is not deleted or deceased,
+gender restriction, no duplicate non-deprecated assignment,
+`numberingGroup: 'source'` ranks require a source. It reads only from the
+supplied arguments and never touches state.
+
+### Romance bridge
+
+```
+RankRules.allowsMultipleSpouses(rank) -> boolean
+```
+
+Exists so that `RomanceCommands` can ask "does this rank permit multiple
+spouses" without reading the field directly. The answer is a policy
+question and belongs to rank.
+
+### Numbering classification
+
+```
+RankRules.classifyNumberingGroup(rank, sourceId) -> string
+```
+
+Returns the bucket key for a holder: `'global'` or a source character id.
+When the rank wants grouping but no source is available, returns
+`'global'` rather than erroring. The assignment layer decides whether the
+missing source is a hard error.
+
+### Number formatting
+
+```
+RankRules.formatNumber(n, type) -> string
+```
+
+`'ordinal'` → `'1st'`, `'2nd'`, `'3rd'`, `'4th'`, `'11th'`, `'21st'`…
+`'roman'` / `'reign'` → `'I'`, `'II'`, `'III'`… up to XXXIX; arabic
+above.
+
+Handles the teen exceptions correctly (`11th`, `12th`, `13th`). The old
+`RankAssignment.toOrdinal` did not.
+
+---
+
+## 10. Commands — `rank-commands.js`
+
+The write boundary. Every public command returns
+`{ success: true, ... }` or `{ success: false, reason }`. Domain errors
+never throw.
+
+### Persistence
+
+```
+RankCommands.persist() -> { success, reason? }
+```
+
+The only `saveMasterData` call site in the rank domain. Callers batch:
+mutate, then persist once.
 
 ### Rank CRUD
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankCommands.createRank(rankData)` | `rankData` (Object) | `Object` | Creates a rank |
-| `RankCommands.updateRank(rankId, updates)` | `rankId`, `updates` | `Object` | Updates a rank |
-| `RankCommands.deleteRank(rankId)` | `rankId` (string) | `Object` | Deletes a rank |
+```
+createRank(rankData)              -> { success, rank? }
+updateRank(rankId, updates)       -> { success, rank? }
+deleteRank(rankId, options)       -> { success, ... }
+```
 
-**createRank Data Fields:**
+`createRank` runs `RankRules.applyDefaults`, checks cross-rank
+references, runs `RankRules.validate`, stamps the id and timestamps,
+writes via `RankState._addRank`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | string | Rank name (required) |
-| `priority` | number | Priority level (1-5) |
-| `symbol` | string | Icon symbol |
-| `genderRestriction` | string | 'either', 'male', 'female' |
-| `parentRankId` | string | Parent rank ID |
-| `numbered` | boolean | Numbered rank |
-| `numberingType` | string | 'reign' or 'ordinal' |
-| `deprecateOnDeath` | boolean | Deprecate on death |
-| `customSurnameRule` | boolean | Custom surname rule |
-| `surnameConnector` | string | Connector (e.g., 'of', 'von') |
-| `surnamePrefix` | string | Prefix |
-| `surnameSuffix` | string | Suffix |
+`updateRank` checks that any new parent or source reference exists,
+runs `RankRules.validatePatch`, writes via `RankState._updateRank`.
 
-### Inheritance Rules
+`deleteRank` refuses if there are non-deprecated holders or referencing
+ranks, unless `{ force: true }`. With force: it removes every holder's
+assignment via `CharacterCommands.removeRankAssignment`, nulls every
+`parentRankId` and `sourceRankId` reference in other ranks, drops the
+rank's own inheritance rules (via `RankState._removeRank`), and deletes
+the record. Returns counts of everything cleaned.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankCommands.addInheritanceRule(parentRankId, childRankId, minChildAge, order)` | Various | `Object` | Adds inheritance rule |
-| `RankCommands.removeInheritanceRule(parentRankId, ruleIndex)` | `parentRankId`, `ruleIndex` | `Object` | Removes inheritance rule |
+### Inheritance rules
 
-### Assignment Commands
+```
+addInheritanceRule(parentRankId, rule)         -> { success, rule? }
+removeInheritanceRule(parentRankId, ruleIndex) -> { success }
+setInheritanceRules(parentRankId, rules)       -> { success }
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankCommands.assignRankToCharacter(characterId, rankId, options)` | `characterId`, `rankId`, `options` | `Object` | Assigns rank to character |
-| `RankCommands.deprecateRankAssignment(characterId, rankId)` | `characterId`, `rankId` | `Object` | Deprecates rank assignment |
-| `RankCommands.renumberRankHolders(rankId)` | `rankId` (string) | `Object` | Renumbers rank holders |
-| `RankCommands.updateRankSurnameRule(rankId, ruleSettings)` | `rankId`, `ruleSettings` | `Object` | Updates surname rule |
-| `RankCommands.applySpouseInheritanceFixes(fixes)` | `fixes` (Array) | `Object` | Applies spouse inheritance fixes |
+`setInheritanceRules` is bulk replacement. Useful for a full edit.
 
-### Bulk Operations
+### Assignment (delegates to `CharacterCommands`)
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankCommands.bulkAssignRank(characterIds, rankId, options)` | `characterIds`, `rankId`, `options` | `Object` | Bulk assigns ranks |
-| `RankCommands.bulkDeprecateRank(characterIds, rankId)` | `characterIds`, `rankId` | `Object` | Bulk deprecates ranks |
-| `RankCommands.rebuildAllRankNumbering()` | None | `Object` | Rebuilds all numbering |
+```
+assignRankToCharacter(characterId, rankId, options) -> { success, assignment?, ... }
+deprecateRankAssignment(characterId, rankId)        -> { success, unchanged? }
+removeRankAssignment(characterId, rankId)           -> { success }
+setActiveRank(characterId, rankId)                  -> { success, unchanged? }
+clearActiveRank(characterId)                        -> { success, unchanged? }
+```
 
----
+`assignRankToCharacter` validates via `RankRules.canAssignRank`, computes
+the numbering info (see §11), and writes via
+`CharacterCommands.addRankAssignment`. The `options.number` field accepts
+four forms: undefined (auto-compute for numbered ranks), `null` (no
+number), a number (raw; display computed via `RankRules.formatNumber`),
+or an object (passed through as-is).
 
-## RANK-QUERIES.JS
+`deprecateRankAssignment` validates via
+`RankRules.canDeprecateRankAssignment` and writes via
+`CharacterCommands.deprecateRankAssignment`. The record stays on the
+character, marked deprecated. The active pointer is recomputed.
 
-**PURPOSE:** All read-only operations for ranks.
+`removeRankAssignment` hard-removes. Distinct from deprecate: the record
+ceases to exist.
 
-### Rank Queries
+`setActiveRank` requires the rank to exist on the character and not be
+deprecated. Idempotent.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankQueries.getRank(id)` | `id` (string) | `Object\|null` | Gets rank by ID |
-| `RankQueries.getAllRanks()` | None | `Array` | Gets all ranks |
-| `RankQueries.getRanksByPriority(priority)` | `priority` (number) | `Array` | Gets ranks by priority |
-| `RankQueries.getRankHierarchy()` | None | `Array` | Gets hierarchical structure |
-| `RankQueries.getInheritanceRules()` | None | `Object` | Gets inheritance rules |
-| `RankQueries.getInheritanceRulesForRank(rankId)` | `rankId` (string) | `Array` | Gets rules for a rank |
-| `RankQueries.getRankCount()` | None | `number` | Gets rank count |
+`clearActiveRank` forces a reselection among the remaining non-deprecated
+assignments (or `null` if none).
 
-### Level Helpers
+### Bulk operations
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankQueries.getRankLevelName(priority)` | `priority` (number) | `string` | Gets level name |
-| `RankQueries.getRankLevelIcon(priority)` | `priority` (number) | `string` | Gets level icon |
-| `RankQueries.getRankLevelDescription(priority)` | `priority` (number) | `string` | Gets level description |
-| `RankQueries.getAvailableSymbols()` | None | `Array` | Gets available symbols |
+```
+bulkAssignRank(characterIds, rankId, options) -> { totalProcessed, successful, failed, results, errors }
+bulkDeprecateRank(characterIds, rankId)       -> { totalProcessed, successful, failed, succeeded, errors }
+```
 
-### Character Rank Queries
+Each character is attempted independently. The envelope reports counts
+and per-character errors.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankQueries.getCharactersWithRank(rankId, includeDeprecated)` | `rankId`, `includeDeprecated` | `Array` | Gets characters with rank |
-| `RankQueries.getRankHolderCount(rankId, includeDeprecated)` | `rankId`, `includeDeprecated` | `number` | Gets holder count |
-| `RankQueries.getRankHolderStats(rankId)` | `rankId` (string) | `Object` | Gets holder statistics |
+### Numbering
 
-### Spouse Inheritance Queries
+```
+renumberRankHolders(rankId)      -> { success, fixedCount, errors }
+rebuildAllRankNumbering()        -> { success, totalFixed, fixedCounts, errors }
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankQueries.getSpouseInheritanceRanks(characterId)` | `characterId` (string) | `Array` | Gets ranks inherited from spouse |
+Both delegate to `RankAssignment`. `rebuildAllRankNumbering` iterates
+every numbered rank.
 
-### Surname Rule Queries
+### Surname rule
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankQueries.getRanksWithSurnameRules()` | None | `Array` | Gets ranks with surname rules |
-| `RankQueries.getRankSurnameRule(rankId)` | `rankId` (string) | `Object\|null` | Gets surname rule for a rank |
+```
+updateRankSurnameRule(rankId, ruleSettings) -> { success, rank? }
+```
 
----
+`ruleSettings` shape: `{ enabled, connector, prefix, suffix }`. Delegates
+to `updateRank` so coherence checks apply.
 
-## RANK-ASSIGNMENT.JS
+### Spouse inheritance
 
-**PURPOSE:** Complex rank assignment and numbering logic.
+```
+applySpouseInheritanceFixes(fixes) -> { applied, failed, errors }
+```
 
-### Numbering Helpers
+`fixes` is an array shaped as produced by
+`RankIssues.checkSpouseInheritance`: `{ characterId, rankId, spouseId,
+spouseName, sourceRankName, ... }`. The command assigns each rank with
+`inheritedFrom` set to `spouseId`. Does not persist — the caller persists
+once after the batch.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankAssignment.toOrdinal(n)` | `n` (number) | `string` | Converts to ordinal (1st, 2nd, 3rd) |
-| `RankAssignment.toRoman(n)` | `n` (number) | `string` | Converts to Roman numeral (I, II, III) |
+### Death hook
 
-### Assignment Functions
+```
+deprecateRanksOnDeath(characterId, options) -> { deprecated, renumbered, errors }
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankAssignment.assignRankToCharacter(characterId, rankId, options)` | `characterId`, `rankId`, `options` | `Object` | Assigns rank to character |
-| `RankAssignment.deprecateRankAssignment(characterId, rankId)` | `characterId`, `rankId` | `Object` | Deprecates rank assignment |
-| `RankAssignment.renumberRankHolders(rankId)` | `rankId` (string) | `Object` | Renumbers rank holders |
-| `RankAssignment.fixAllNumberingForCharacter(characterId)` | `characterId` (string) | `Object` | Fixes numbering for character |
-| `RankAssignment.getNextRankNumber(rankId, characterId, characterName, gender)` | Various | `Object\|null` | Gets next number for rank |
-
-### Surname Rule Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankAssignment.generateSurnameFromRankRule(character, context)` | `character`, `context` | `string\|null` | Generates surname from rule |
-| `RankAssignment.updateRankSurnameRule(rankId, ruleSettings)` | `rankId`, `ruleSettings` | `Object` | Updates surname rule |
-
-### Spouse Inheritance Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankAssignment.checkAndFixSpouseInheritance()` | None | `Object` | Checks spouse inheritance issues |
-| `RankAssignment.applySpouseInheritanceFixes(fixes)` | `fixes` (Array) | `Object` | Applies spouse inheritance fixes |
+Scans the character's non-deprecated assignments, finds every rank with
+`deprecateOnDeath: true`, deprecates each, and renumbers the affected
+ranks. Does not persist. Called by `RankIssues.handleCharacterDeath` and
+by the death cascade.
 
 ---
 
-## RANK-UI-LIST.JS
+## 11. Assignment — `rank-assignment.js`
 
-**PURPOSE:** UI rendering for rank lists, hierarchy, trees, and selectors.
+Numbering arithmetic. No assignment writes.
 
-### Render Functions
+### Get next number
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankUI.renderRankList(containerId, options)` | `containerId`, `options` | `boolean` | Renders rank list |
-| `RankUI.renderRankHierarchy(containerId, options)` | `containerId`, `options` | `boolean` | Renders rank hierarchy |
-| `RankUI.renderRankTree(containerId, options)` | `containerId`, `options` | `boolean` | Renders compact rank tree |
-| `RankUI.renderRankSelector(containerId, options)` | `containerId`, `options` | `boolean` | Renders rank dropdown |
+```
+RankAssignment.getNextRankNumber(rankId, characterId, characterName, gender, sourceCharacterId) -> NumberInfo | null
+```
 
-### Refresh
+Returns `null` for unnumbered ranks. Otherwise returns
+`{ rawNumber, display, type, groupId, holdersInGroup }`.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankUI.refreshAll()` | None | None | Refreshes all rank UI components |
+Algorithm:
+
+1. Collect every character other than `characterId` who holds a
+   non-deprecated assignment for `rankId`.
+2. Filter to the holder's numbering group. Group key comes from
+   `RankRules.classifyNumberingGroup(rank, sourceCharacterId)`.
+   - `'global'` → all holders
+   - source id → holders whose parent / spouse / inheritance source
+     matches that id
+3. Sort. Reign-numbered ranks sort by assignment year ascending.
+   Ordinal-numbered ranks sort by birth year ascending. Both tie-break
+   by character name.
+4. `nextRaw = filtered.length + 1`.
+5. `display = RankRules.formatNumber(nextRaw, rank.numberingType)`.
+
+### Renumber holders
+
+```
+RankAssignment.renumberRankHolders(rankId) -> { success, fixedCount, errors }
+```
+
+Groups holders, sorts each group, walks each holder in order, and
+compares the recorded number against the expected one. On mismatch,
+writes via `CharacterCommands.updateRankAssignment`. Returns a count of
+what was actually changed.
+
+Group key precedence:
+
+1. `assignment.inheritedFrom` (what the assignment was created with)
+2. `RankQueries.getInheritanceSource(characterId, rankId)` (resolves
+   from current state)
+3. `'unknown'` bucket
+
+This means a character whose spouse has died still groups under the
+deceased spouse's id, matching the historical assignment.
+
+### Fix all numbering for a character
+
+```
+RankAssignment.fixAllNumberingForCharacter(characterId) -> { fixedCount, ranksProcessed, errors }
+```
+
+For each numbered rank the character holds, renumbers the whole rank.
+
+### Surname generation
+
+```
+RankAssignment.generateSurnameFromRankRule(character, context) -> string | null
+```
+
+`context.locationName` is the base. The rank's
+`connector` / `prefix` / `suffix` are applied. Capitalises the first
+letter.
+
+### Spouse inheritance detection
+
+```
+RankAssignment.checkAndFixSpouseInheritance() -> { success, fixes, count }
+```
+
+Scans the population for characters who should hold a rank by virtue of
+spouse inheritance but do not. Returns a list of fixes shaped for
+`RankCommands.applySpouseInheritanceFixes`. Does not write.
+
+Reads committed partners via `RomanceQueries`. Never walks
+`character.relationships`.
+
+### Surname rule shim
+
+`RankAssignment.updateRankSurnameRule(rankId, ruleSettings)` — delegating
+shim to `RankCommands.updateRankSurnameRule`. Kept for callers that only
+import `RankAssignment`. Prefer `RankCommands` directly. Scheduled for
+deletion once callers migrate.
 
 ---
 
-## MODALS-RANK.JS
+## 12. Issues — `rank-issues.js`
 
-**PURPOSE:** UI modals for rank operations.
+Detection and repair. Every issue carries a `fix` closure that returns
+`{ success, reason? }`.
 
-### Create Rank Modal
+### Main checker
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankModals.openCreateRankModal(options)` | `options` (Object) | `Object\|null` | Opens create rank modal |
+```
+RankIssues.checkAll() -> { success, issues, count, bySeverity }
+```
 
-### Edit Rank Modal
+`bySeverity` is `{ error, warning, info }`, each an array.
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankModals.openEditRankModal(rankId, options)` | `rankId`, `options` | `Object\|null` | Opens edit rank modal |
+### Issue types
 
-### Assign Rank Modal
+| Type | Severity | Fix |
+|---|---|---|
+| Spouse Inheritance | error | `RankCommands.assignRankToCharacter` with `inheritedFrom` set |
+| Child Inheritance | warning | `RankCommands.assignRankToCharacter` |
+| Gender Mismatch | error | `RankCommands.deprecateRankAssignment` |
+| Numbering Error | error | `RankCommands.renumberRankHolders` |
+| Deprecation Error | error | `RankCommands.deprecateRankAssignment` |
+| Broken Inheritance Rule | error | `RankCommands.removeInheritanceRule` (or manual for orphan parents) |
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankModals.openAssignRankModal(options)` | `options` (Object) | `Object\|null` | Opens assign rank modal |
+### Batch apply
 
-### Rank Details Modal
+```
+RankIssues.applyFixes(issues, options) -> { applied, failed, skipped, errors }
+```
 
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankModals.openRankDetailsModal(rankId)` | `rankId` (string) | `Object\|null` | Opens rank details modal |
+Applies every `issue.fix()` in order. `options.filter` can restrict which
+issues are applied. Does not persist.
 
----
+### Annual pipeline
 
-## RANK-ISSUES.JS
+```
+RankIssues.processAnnualRank(year, options) -> AnnualEnvelope
+```
 
-**PURPOSE:** Auto-detection and auto-fix of rank configuration issues. Integrates with the Relationship System and Family System.
+Envelope shape:
 
-### Issue Types Checked
-
-| Issue Type | Severity | Description | Auto-Fix |
-|------------|----------|-------------|----------|
-| **Spouse Inheritance** | Error | Spouse not receiving rank upon marriage | ✅ Adds inherited rank |
-| **Child Inheritance** | Warning | Children not receiving parent's rank | ✅ Adds inherited rank |
-| **Gender Mismatch** | Error | Wrong gender holding restricted rank | ✅ Deprecates rank |
-| **Numbering Issues** | Error/Warning | Incorrect birth order numbering | ✅ Renumbers all holders |
-| **Deprecation Issues** | Error | Rank not deprecated on death | ✅ Deprecates rank |
-| **Broken Inheritance Rules** | Error | Rules referencing non-existent ranks | ✅ Removes broken rules |
-
-### Main Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `RankIssues.checkAll()` | None | `Object` | Checks all issues and returns results |
-| `RankIssues.checkSpouseInheritance()` | None | `Array` | Checks spouse inheritance issues |
-| `RankIssues.checkChildInheritance()` | None | `Array` | Checks child inheritance issues |
-| `RankIssues.checkGenderMismatch()` | None | `Array` | Checks gender mismatch issues |
-| `RankIssues.checkNumberingIssues()` | None | `Array` | Checks numbering issues |
-| `RankIssues.checkDeprecationIssues()` | None | `Array` | Checks deprecation issues |
-| `RankIssues.checkBrokenInheritanceRules()` | None | `Array` | Checks broken inheritance rules |
-
-### Return Structure
-
-```javascript
+```
 {
-    success: true,
-    issues: [RankIssue, ...],
-    count: 3,
-    bySeverity: {
-        error: [...],
-        warning: [...],
-        info: [...]
-    }
+    year,
+    status:                 'completed' | 'completed_with_errors' | 'partial',
+    issueCount,
+    issuesBySeverity:       { error, warning, info },
+    fixResults:             { applied, failed, skipped, errors },
+    renumberResults:        { totalFixed, fixedCounts, errors },
+    persisted:              boolean,
+    persistError:           string | null
 }
 ```
 
-### RankIssue Object
+Pipeline: detect → apply fixes → rebuild all numbering → persist once.
+`options.skipFixes: true` runs detection only. `options.persist: false`
+skips the final save.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | Issue type (e.g., 'Spouse Inheritance') |
-| `severity` | string | 'error', 'warning', or 'info' |
-| `message` | string | Human-readable description |
-| `rankId` | string | Related rank ID (if applicable) |
-| `characterId` | string | Related character ID (if applicable) |
-| `rankName` | string | Rank name (resolved) |
-| `characterName` | string | Character name (resolved) |
-| `fix` | function | Auto-fix function (if available) |
-| `fixLabel` | string | Human-readable fix label |
-| `fixData` | object | Data used for the fix |
-
-### Integration with Relationship System
-
-The Issues System uses the REAL relationship system:
-
-| Check | Uses |
-|-------|------|
-| **Spouse Inheritance** | `RomanceLogic.getPrimaryPartner()` |
-| **Child Inheritance** | `FamilyLogic.getParents()` |
-| **Inheritance Source** | `FamilyLogic.getParents()` + `RomanceLogic.getPrimaryPartner()` |
-
----
-
-## COMPLETE DATA SCHEMAS
-
-### Rank Object Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Rank name |
-| `priority` | number | Priority level (1-5) |
-| `numbered` | boolean | Numbered rank |
-| `numberingType` | string | 'reign' or 'ordinal' |
-| `numberingPrefix` | string | Numbering prefix |
-| `numberingSuffix` | string | Numbering suffix |
-| `symbol` | string | Icon symbol |
-| `genderRestriction` | string | 'either', 'male', 'female' |
-| `locationTypeId` | string | Location type restriction |
-| `deprecateOnDeath` | boolean | Deprecate on death |
-| `spouseInheritance` | string | Inherited rank ID |
-| `allowsMultipleSpouses` | boolean | Allows multiple spouses |
-| `parentRankId` | string | Parent rank ID |
-| `customSurnameRule` | boolean | Custom surname rule |
-| `surnameConnector` | string | Connector (e.g., 'of') |
-| `surnamePrefix` | string | Prefix |
-| `surnameSuffix` | string | Suffix |
-| `createdAt` | number | Creation timestamp |
-| `updatedAt` | number | Update timestamp |
-
-### Rank Assignment Schema (on Character)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `rankId` | string | Rank ID |
-| `customTitle` | string | Custom title |
-| `address` | string | Address format |
-| `number` | object | Number info |
-| `order` | number | Display order |
-| `isActive` | boolean | Active assignment |
-| `isDeprecated` | boolean | Deprecated flag |
-| `assignedYear` | number | Year assigned |
-| `notes` | string | Assignment notes |
-
-### Number Info Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `rawNumber` | number | Raw number |
-| `display` | string | Display string |
-| `type` | string | 'roman' or 'ordinal' |
-
-### Inheritance Rule Schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `childRankId` | string | Child rank ID |
-| `childRankIdFemale` | string | Female version |
-| `minChildAge` | number | Minimum age |
-| `maxChildren` | number | Max children |
-| `order` | number | Inheritance order |
-
----
-
-## DEPENDENCY MAP
+### Death hook
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    RANK SYSTEM DEPENDENCIES                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  rank-constants.js ──────────────────────────────────────────────────────┐ │
-│  └── None (pure constants)                                               │ │
-│                                                                             │
-│  rank-state.js ─────────────────────────────────────────────────────────┐ │
-│  ├── ids.js (generateId)                                                  │ │
-│  ├── accessors.js (getRanks)                                              │ │
-│  └── storage.js (saveMasterData)                                          │ │
-│                                                                             │
-│  rank-queries.js ───────────────────────────────────────────────────────┐ │
-│  ├── rank-state.js                                                        │ │
-│  ├── rank-constants.js                                                    │ │
-│  ├── accessors.js (getCharacterById, getCharacters)                      │ │
-│  └── time.js (getCurrentYearSafe, calculateAge)                           │ │
-│                                                                             │
-│  rank-commands.js ──────────────────────────────────────────────────────┐ │
-│  ├── rank-state.js                                                        │ │
-│  ├── rank-queries.js                                                      │ │
-│  ├── rank-assignment.js                                                   │ │
-│  ├── accessors.js                                                         │ │
-│  └── storage.js                                                           │ │
-│                                                                             │
-│  rank-assignment.js ────────────────────────────────────────────────────┐ │
-│  ├── rank-state.js                                                        │ │
-│  ├── rank-queries.js                                                      │ │
-│  ├── accessors.js                                                         │ │
-│  └── time.js                                                              │ │
-│                                                                             │
-│  rank-ui-list.js ───────────────────────────────────────────────────────┐ │
-│  ├── rank-queries.js                                                      │ │
-│  ├── rank-commands.js                                                     │ │
-│  ├── modals-rank.js                                                       │ │
-│  ├── formatting.js                                                        │ │
-│  └── icons.js                                                             │ │
-│                                                                             │
-│  modals-rank.js ────────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                       │ │
-│  ├── modals-char-select.js                                                │ │
-│  ├── rank-state.js                                                        │ │
-│  ├── rank-queries.js                                                      │ │
-│  ├── rank-assignment.js                                                   │ │
-│  └── icons.js                                                             │ │
-│                                                                             │
-│  rank-issues.js ────────────────────────────────────────────────────────┐ │
-│  ├── rank-queries.js                                                      │ │
-│  ├── rank-commands.js                                                     │ │
-│  ├── RomanceLogic (getPrimaryPartner)                                    │ │
-│  ├── FamilyLogic (getParents, getChildren)                              │ │
-│  └── accessors.js                                                         │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+RankIssues.handleCharacterDeath(characterId, options) -> { success, deprecated, renumbered, errors }
+```
+
+Delegates to `RankCommands.deprecateRanksOnDeath`. Does not persist.
+
+If `registerLifecycleHook` exists, `rank-issues.js` registers itself for
+`'death'` at load. Otherwise the caller invokes this directly.
+
+### Hard-delete cleanup
+
+```
+RankIssues.removeAllReferencesTo(characterId) -> { success, cleaned, ranksRenumbered, renumberErrors }
+```
+
+The character's own assignments vanish with the record. This function
+scans every other character for assignments whose `inheritedFrom` names
+the deleted character, nulls those pointers, and renumbers the affected
+ranks. Does not persist.
+
+If `registerLifecycleHook` exists, `rank-issues.js` registers itself for
+`'delete'` at load.
+
+---
+
+## 13. Modals and UI
+
+### Modals — `modals-rank.js`
+
+| Function | Purpose |
+|---|---|
+| `RankModals.openCreateRankModal(options)` | Create rank modal. Exposes name, priority, symbol, gender restriction, parent, numbered + numbering config, deprecate-on-death, allows-multiple-spouses, inheritance source + source rank, surname rule. |
+| `RankModals.openEditRankModal(rankId, options)` | Same fields, pre-populated. |
+| `RankModals.openAssignRankModal(options)` | Inline character picker. `options.mode: 'bulk'` enables multi-select. |
+| `RankModals.openRankDetailsModal(rankId, options)` | Detail view with stats, config, inheritance rules. |
+
+Every modal:
+
+- passes `titleHtml` and `contentHtml` to `openModal` (the modal core
+  reads these names)
+- calls `RankCommands.*` only
+- calls `RankCommands.persist()` exactly once per successful write
+- shows a toast on success or failure via `_showToast`
+- has no `_processingModal` guard (the modal core enforces the stack)
+
+The character picker is inline. There is no dependency on a separate
+`openCharacterSelector`.
+
+### UI list — `rank-ui-list.js`
+
+| Function | Purpose |
+|---|---|
+| `RankUI.renderRankList(containerOrId, options)` | Flat list, grouped by priority level |
+| `RankUI.renderRankCard(rankId, containerOrId?, options?)` | Single card. Returns HTML when `containerOrId` is omitted. |
+| `RankUI.renderRankHierarchy(containerOrId, options)` | Hierarchy tree |
+| `RankUI.renderRankTree(containerOrId, options)` | Compact tree, used as a picker |
+| `RankUI.renderRankSelector(containerOrId, options)` | Dropdown |
+| `RankUI.renderRankStatistics(rankId, containerOrId?, options?)` | Stats grid |
+
+`RankUI.registerContainer(containerId, kind, options)` registers a
+container for `RankUI.refreshAll()`. Every render registers itself by
+default unless `autoRegister: false` is passed.
+
+`RankUI.refresh(containerId)` refreshes one container.
+`RankUI.refreshAll()` iterates registered containers and prunes any whose
+element is no longer in the document.
+
+Click handling is delegated: one listener per container, tracked via
+`WeakMap`, replaced on re-render. Actions are dispatched by
+`data-rank-action`: `details`, `edit`, `select`. Callers can override
+with `options.onAction`.
+
+Icons come from `Icons.NAME` via `_icon(name)`. Missing icon throws. No
+silent empty-string fallback.
+
+Level icons route through `RankQueries.getRankLevelIcon` → `icons.js`.
+Rank symbols are displayed as-is (they are user data, and the
+`AVAILABLE_SYMBOLS` list is Unicode punctuation, not emoji).
+
+---
+
+## 14. Cross-domain integration
+
+### Character
+
+| Read | Source |
+|---|---|
+| Character projection | `CharacterState.getCharacter(id)` |
+| All characters | `CharacterState.getAllCharacters()` |
+
+| Write | Caller |
+|---|---|
+| Rank assignments | `CharacterCommands.addRankAssignment` etc. |
+| `activeRankId` / `activeRankNumber` | `CharacterCommands` (derived) |
+
+Rank does not read `CharacterState._getLiveCharacterForMutation`. It does
+not write to the character record directly. The `rankAssignments` array
+and the two active pointers are domain-owned fields on the character
+record; `CharacterCommands` is the only writer.
+
+### Relationship
+
+| Read | Source |
+|---|---|
+| Committed partners | `RomanceQueries.getActiveCommittedPartners(id)` |
+
+Rank does not read `character.relationships` anywhere. The old fallback
+chain is gone.
+
+### Family
+
+| Read | Source |
+|---|---|
+| Parents of a character | `FamilyQueries.getParents(id)` |
+| Children of a character | `FamilyQueries.getChildIds(id)` or `getChildren(id)` (both shapes accepted) |
+
+### Role
+
+`role-queries.js` exposes `getRankSummary(rankId)` which reads rank fields
+via `accessors.getRankById`. This means the four fields `id`, `name`,
+`symbol`, `priority` must remain on every rank record. They do.
+
+### Romance (reverse direction)
+
+`romance-commands._getExternalMultiPartnerFacts` reads
+`character.activeRankId` and asks the rank record for
+`allowsMultipleSpouses`. The field must remain on every rank record. It
+does. `RankRules.allowsMultipleSpouses(rank)` is the semantic wrapper if
+romance wants to route through it.
+
+### Education / Apprenticeship
+
+Rank has **no** interaction with education or apprenticeship. Rank skill
+and role skill are separate concepts. If a future feature needs "only a
+scholar may hold this rank," the correct place for that policy is
+`RankRules.canAssignRank` reading the education domain via a query. It is
+not implemented today.
+
+### Death cascade
+
+`RankIssues.handleCharacterDeath` and `RankIssues.removeAllReferencesTo`
+are the two integration points. They register via
+`registerLifecycleHook('death' | 'delete', ...)` if that API exists, and
+are exported for direct call otherwise.
+
+**Caller responsibility:** `CharacterLifecycle.killCharacter` must
+trigger `handleCharacterDeath`, either by dispatching the hook or by
+calling it directly. `CharacterDeletionCommands.deleteCharacter` must
+call `removeAllReferencesTo`. This is not something the rank domain can
+enforce from its own code.
+
+---
+
+## 15. Persistence
+
+Every mutation writes into `masterData.data.ranks` and
+`masterData.data.rankInheritanceRules` in memory, then calls
+`markDataDirty` via `RankState._syncToMasterData`. Storage flushes on
+its own schedule.
+
+`RankCommands.persist()` calls `saveMasterData()` once. It is the only
+`saveMasterData` call site in the rank domain.
+
+Batch callers:
+
+- `RankIssues.processAnnualRank` persists once at the end.
+- `modals-rank.js` persists once per successful modal.
+- External orchestrators persist once after their batch.
+
+Character rank assignments are on the character record and are persisted
+by `CharacterState` when `CharacterCommands` writes them. Rank has no
+separate storage for assignments.
+
+---
+
+## 16. Lifecycle hooks
+
+`rank-issues.js` and `rank-bootstrap.js` attempt to register:
+
+- `registerLifecycleHook('death', payload)` → `handleCharacterDeath(payload.characterId, { deathYear })`
+- `registerLifecycleHook('delete', payload)` → `removeAllReferencesTo(payload.characterId)`
+
+If `registerLifecycleHook` is not defined, both registration attempts are
+skipped silently. The exported functions remain available for direct
+call. This is the fallback path:
+
+- `CharacterLifecycle.killCharacter` → `RankIssues.handleCharacterDeath`
+- `CharacterDeletionCommands.deleteCharacter` → `RankIssues.removeAllReferencesTo`
+
+The rank domain does not reach into the character lifecycle. It exposes
+the functions; the character subsystem decides when to invoke them.
+
+---
+
+## 17. Recursion guards
+
+There are none.
+
+The old `rank-state.js` had `_processingState`. The old
+`rank-commands.js` had `_processingCommand`. The old
+`rank-assignment.js` had `_processingAssignment`. The old
+`modals-rank.js` had `_processingModal`. They are all removed.
+
+Rationale: mutations are synchronous. Commands may call other commands.
+The recursion guard on `modals-rank.js` was cleared in a `finally` block
+that ran before the modal's `onConfirm` was invoked, so it protected
+nothing. The state guard prevented nothing that a single-writer-per-field
+discipline does not prevent. The role, education, and apprenticeship
+domains have none. Rank now matches.
+
+The one place a re-entrancy concern could theoretically arise is the
+lifecycle hook: `handleCharacterDeath` deprecates rank assignments and
+triggers a renumber. The renumber reads projections and writes through
+`CharacterCommands.updateRankAssignment`, which itself does not emit a
+character-death event. No cycle.
+
+---
+
+## 18. Known deferrals
+
+- **`RankRules.applyDefaults` and `RankState._normaliseRank` are two
+  implementations of the same shape.** They are kept separate to avoid a
+  load-time dependency between `rank-rules.js` and `rank-state.js`.
+  They must be kept in sync. A future consolidation could make
+  `RankState` call `RankRules.applyDefaults` if the load order is
+  adjusted.
+
+- **`RankAssignment.updateRankSurnameRule` is a delegating shim.** It
+  exists because the old file exported it. Once callers are confirmed to
+  use `RankCommands.updateRankSurnameRule`, the shim can be removed.
+
+- **`RankAssignment.checkAndFixSpouseInheritance` and
+  `RankIssues.checkSpouseInheritance` overlap.** `RankAssignment`'s
+  version returns a fix list; `RankIssues`' version returns issue records
+  with fix closures. Both are used. The `RankAssignment` version exists
+  because `applySpouseInheritanceFixes` in `RankCommands` accepts its
+  output shape. A consolidation pass could make `RankIssues` consume
+  `RankAssignment.checkAndFixSpouseInheritance` and drop the duplicate
+  scan.
+
+- **`RankIssues._findFirstNumberingDiscrepancy` duplicates the grouping
+  logic of `RankAssignment.renumberRankHolders`.** Issues must predict
+  what the fix will produce. An alternative is a
+  `RankAssignment.previewRenumber(rankId)` that returns the diffs without
+  writing. Deferred; the current design keeps `RankAssignment` free of a
+  read-only preview API.
+
+- **`RankState._normaliseInheritanceRules` drops rules with no child
+  reference.** A rule with both `childRankId` and `childRankIdFemale`
+  null is dropped at hydration. This is a silent repair of structural
+  damage. If you would rather it throw, change the function.
+
+- **`RankIssues.checkNumberingIssues` reports one issue per rank, not
+  one per holder.** The fix renumbers the whole rank. For a large rank
+  with many discrepancies, only the first is named in the message. The
+  fix corrects all of them. This is deliberate.
+
+- **`RomanceCommands._getExternalMultiPartnerFacts` still reads
+  `rank.allowsMultipleSpouses` directly.** The rank policy wrapper
+  `RankRules.allowsMultipleSpouses` exists; romance has not been updated
+  to call it. That is a romance-side change, not a rank-side change.
+
+- **No annual orchestrator at the top level.** `RankIssues.processAnnualRank`
+  exists. The application-level annual tick that would call it, along
+  with `EducationAnnual.processAnnualEducation` and the mortality
+  pipeline, is not written. Out of scope for this domain.
+
+- **`RankState.validateIntegrity` runs at bootstrap but does not throw.**
+  Integrity failures are logged as warnings. The application starts so
+  that repair tooling is reachable. If you would rather a broken
+  catalogue halt boot, change `rank-bootstrap.js`.
+
+---
+
+## 19. Rules of use
+
+### Do
+
+- Use `RankQueries` for every read.
+- Use `RankCommands` for every write.
+- Call `RankCommands.persist()` once per batch.
+- Read character rank assignments from the character projection, not
+  from live character state.
+- Read committed partners via `RomanceQueries.getActiveCommittedPartners`.
+- Read parents via `FamilyQueries.getParents`.
+- Use `RankRules.formatNumber` for display formatting.
+- Use `RankRules.classifyNumberingGroup` for grouping decisions.
+- Use `RankQueries.getInheritanceSource` — never reimplement it.
+- Route character rank assignment writes through `CharacterCommands`.
+- Register containers for refresh via `RankUI.registerContainer`.
+
+### Don't
+
+- Don't call `saveMasterData` outside `RankCommands.persist`.
+- Don't hold a live rank record outside `RankCommands` — use
+  `RankQueries.getRank` (clone) or `RankState.getRank` (clone).
+- Don't write `character.rankAssignments`, `character.activeRankId`, or
+  `character.activeRankNumber` directly. Use `CharacterCommands`.
+- Don't read `character.relationships`. Use `RomanceQueries`.
+- Don't call `Math.random` in rules or commands.
+- Don't fabricate `0`, `[]`, `null`, or `1250` when a dependency is
+  missing. Throw.
+- Don't use `||` for numeric values where `0` is valid.
+- Don't reintroduce the `_processing` recursion guards.
+- Don't reintroduce `RankAssignment.assignRankToCharacter`,
+  `deprecateRankAssignment`, `applySpouseInheritanceFixes`, or
+  `getInheritanceSource`. All four now live in `RankCommands` or
+  `RankQueries`.
+- Don't reintroduce `RankCommands.*Direct` helpers. They bypassed every
+  boundary.
+- Don't read `character.rankAssignments` from `_getLiveCharacterForMutation`.
+  Read it off the projection.
+
+---
+
+## 20. Anti-patterns (removed)
+
+The following patterns existed in the old code and are banned:
+
+- Lazy `_initialize()` on first read. Replaced by explicit
+  `hydrateFromMasterData`.
+- `saveMasterData` inside every mutation. Replaced by
+  `markDataDirty` + one `persist`.
+- Public reads returning live canonical records. Replaced by clones.
+- `character.relationships` walking for spouse detection. Replaced by
+  `RomanceQueries.getActiveCommittedPartners`.
+- Duplicated `getInheritanceSource` in two files. Consolidated to
+  `RankQueries.getInheritanceSource`.
+- `toOrdinal` / `toRoman` hand-rolled in `RankAssignment`. Replaced by
+  `RankRules.formatNumber`.
+- `1250` year fallback in four files. Removed; `time.js` owns the
+  fallback.
+- Per-fix `_saveMasterData` calls in `RankIssues`. Replaced by batch
+  persist.
+- `openCharacterSelector` dependency that did not exist. Replaced by an
+  inline character picker.
+- `title` / `content` modal options. Replaced by `titleHtml` /
+  `contentHtml`.
+- `_processingModal` guard that was cleared before the modal closed.
+  Removed.
+- `refreshAll` walking `.parentElement`. Replaced by container
+  registration.
+- `_getIcon` with an empty-string fallback. Replaced by `_icon(name)`
+  which throws on unknown names.
+- Raw Unicode level glyphs in the UI. Replaced by
+  `RankQueries.getRankLevelIcon` → `icons.js`.
+
+---
+
+## 21. Version history
+
+**v1 — original design.** Rank catalogue plus assignment, both in the
+rank folder. Lazy state init. `saveMasterData` on every mutation.
+Assignment logic in `rank-assignment.js` with its own write path.
+
+**v2 — issue detection added.** `rank-issues.js` introduced.
+Auto-fix closures. Still coupled to `character.relationships` and
+`masterData` directly.
+
+**v3 — integration refactor.**
+
+- `RankState` rewritten: explicit hydration, clone-returning reads,
+  `_`-prefixed mutators, `validateIntegrity`, reload on
+  `masterDataUpdated`, no internal persistence.
+- `rank-rules.js` introduced as a pure policy layer.
+- `rank-queries.js` rewritten to read `character.rankAssignments` off
+  the character projection and to use `RomanceQueries` for spouse facts.
+- `rank-commands.js` rewritten as the single write boundary with
+  `persist()`, `deprecateRanksOnDeath`, and cross-rank reference checks.
+- `rank-assignment.js` trimmed to numbering arithmetic only.
+- `rank-issues.js` rewritten with `processAnnualRank`,
+  `handleCharacterDeath`, and `removeAllReferencesTo`.
+- `modals-rank.js` rewritten with `titleHtml` / `contentHtml`, inline
+  character picker, `RankCommands`-only writes, one persist per modal.
+- `rank-ui-list.js` rewritten with semantic classes, delegated click
+  handling, container registration, and `icons.js` icons.
+- `rank-bootstrap.js` introduced.
+- `character-commands.js` extended with the rank-assignment API.
+- `character-state.js` extended with `rankAssignments` on the projection
+  and `activeRankNumber`.
+
+**End of documentation.**
 ```
 
 ---
 
-## RECURSION GUARDS
+## What this closes
 
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingState` | rank-state.js | Prevent state mutation re-entry |
-| `_processingCommand` | rank-commands.js | Prevent command re-entry |
-| `_processingAssignment` | rank-assignment.js | Prevent assignment re-entry |
-| `_processingRender` | rank-ui-list.js | Prevent render re-entry |
-| `_processingModal` | modals-rank.js | Prevent modal re-entry |
-| `_processingIssues` | rank-issues.js | Prevent issues re-entry |
+The rank module is now fully documented in the format you've established for `education-doc.md`, `apprenticeship-doc.md`, and `roles-doc.md`:
 
----
+- Every public function is listed with its signature and behaviour.
+- Every schema is spelled out.
+- The ownership contract is explicit.
+- The load order is provided.
+- The cross-domain integration points are named.
+- The known deferrals are listed honestly.
+- The anti-patterns are documented so they don't come back.
 
-## INTEGRATION WITH OTHER SYSTEMS
+Two things remain for the full rank pass:
 
-### Rank ↔ Character Integration
+1. **The integration checklist** — a one-page summary of the four changes that need to happen **outside** the rank folder:
+   - `registerLifecycleHook` existence check
+   - `CharacterLifecycle.killCharacter` → `RankIssues.handleCharacterDeath`
+   - `CharacterDeletionCommands.deleteCharacter` → `RankIssues.removeAllReferencesTo`
+   - `storage-schema.js` default envelope includes `ranks: []` and `rankInheritanceRules: {}`
 
-| Integration Point | Status | Description |
-|-------------------|--------|-------------|
-| **Character → Rank (Assignment)** | ✅ Implemented | Characters can have rank assignments |
-| **Character → Rank (Active)** | ✅ Implemented | Characters have active rank |
-| **Rank → Character (Surname)** | ✅ Implemented | Ranks can generate surnames |
+2. **`rank-constants.js` and `rank-docs.txt` cleanup** — the old `rank-docs.txt` should be deleted; this `rank-doc.md` replaces it. `rank-constants.js` should be checked against the doc's `DEFAULT_RANK` shape (I did not rewrite `rank-constants.js` in this pass; it's still the original, and the doc describes the shape the refactored code expects).
 
-### Rank ↔ Relationship System Integration
-
-| Integration Point | Status | Description |
-|-------------------|--------|-------------|
-| **Spouse Inheritance** | ✅ Implemented | Uses `RomanceLogic.getPrimaryPartner()` |
-| **Child Inheritance** | ✅ Implemented | Uses `FamilyLogic.getParents()` |
-| **Inheritance Source** | ✅ Implemented | Uses both systems to find source |
-| **Issues Detection** | ✅ Implemented | RankIssues uses relationship system |
-
-### Rank ↔ Household Integration
-
-| Integration Point | Status | Description |
-|-------------------|--------|-------------|
-| **Rank → Household (Head)** | ✅ Implemented | Household heads can have ranks |
-| **Household → Rank (Inheritance)** | ✅ Implemented | Ranks can be inherited by household |
-
----
-
-## QUICK REFERENCE: AUTO-FIX ACTIONS
-
-| Issue Type | Auto-Fix Action | Button Label |
-|------------|-----------------|--------------|
-| Spouse Inheritance | Adds inherited rank to spouse | "Add [rank] to [character]" |
-| Child Inheritance | Adds inherited rank to child | "Add [rank] to [character]" |
-| Gender Mismatch | Deprecates rank from character | "Deprecate [rank] from [character]" |
-| Numbering Issues | Re-numbers all holders | "Re-number all [rank] holders" |
-| Deprecation Issues | Deprecates rank for deceased | "Deprecate [rank] from [character]" |
-| Broken Inheritance Rules | Removes broken rule references | "Remove broken rules from [rank]" |
-
----
-
-## QUICK TEST COMMANDS
-
-```javascript
-// Get all ranks
-var ranks = RankQueries.getAllRanks();
-console.log('Total ranks:', ranks.length);
-
-// Get rank hierarchy
-var hierarchy = RankQueries.getRankHierarchy();
-console.log('Hierarchy levels:', hierarchy.length);
-
-// Get characters with a rank
-var holders = RankQueries.getCharactersWithRank('rank_king');
-console.log('King holders:', holders.length);
-
-// Check all issues
-var issues = RankIssues.checkAll();
-console.log('Issues found:', issues.count);
-console.log('Errors:', issues.bySeverity.error.length);
-console.log('Warnings:', issues.bySeverity.warning.length);
-
-// Assign rank to character
-var result = RankCommands.assignRankToCharacter('char_123', 'rank_duke', {
-    notes: 'Appointed by the King'
-});
-console.log('Assignment result:', result);
-
-// Fix all issues
-var fixResults = issues.issues.forEach(function(issue) {
-    if (issue.fix) {
-        issue.fix();
-    }
-});
-```
-
----
-
-# END OF DOCUMENTATION
-
-**Generated:** 2026-07-13
-**Version:** 3.0
-**Files:** 9 core modules
+Say the word for the integration checklist. If you also want me to do a pass on `rank-constants.js` to align `DEFAULT_RANK` with what the doc says, that's a small file and I can do it next.
