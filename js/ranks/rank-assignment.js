@@ -26,6 +26,7 @@
  *     owner of committed-partner facts)
  *   - format numbers (RankRules.formatNumber owns that)
  *   - decide whether an assignment is valid (RankRules.canAssignRank)
+ *   - update a rank's surname rule (RankCommands.updateRankSurnameRule)
  *
  * OWNERSHIP:
  *   Rank assignment writes        -> RankCommands
@@ -59,6 +60,9 @@
  *
  * DEPENDENCIES (REQUIRED AT CALL TIME for spouse inheritance checks):
  *   - RomanceQueries.getActiveCommittedPartners
+ *
+ * DEPENDENCIES (REQUIRED AT CALL TIME for numbering group filtering):
+ *   - FamilyQueries.getParents
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -138,6 +142,11 @@
             return null;
         }
         return window.RomanceQueries;
+    }
+
+    function _readFamilyQueries() {
+        if (typeof window.FamilyQueries === 'undefined') return null;
+        return window.FamilyQueries;
     }
 
     function _fail(reason) {
@@ -238,9 +247,6 @@
             });
         } else {
             // Ordinal order: by birth year ascending, then character name.
-            // The old logic sorted by birth year and did not tie-break; the
-            // tie-break makes the ordering deterministic when two holders
-            // share a birth year.
             filtered.sort(function (a, b) {
                 var ay = a.character.birthYear;
                 var by = b.character.birthYear;
@@ -308,7 +314,7 @@
     }
 
     function _getParentIds(characterId) {
-        var family = window.FamilyQueries;
+        var family = _readFamilyQueries();
         if (!family || typeof family.getParents !== 'function') return [];
 
         var parents;
@@ -624,19 +630,6 @@
         return str.charAt(0).toUpperCase() + str.slice(1);
     }
 
-    /**
-     * Delegating shim. The real implementation lives in
-     * RankCommands.updateRankSurnameRule. Kept here so callers that only
-     * import RankAssignment still work. Prefer RankCommands directly.
-     */
-    function updateRankSurnameRule(rankId, ruleSettings) {
-        if (typeof window.RankCommands === 'undefined'
-            || typeof window.RankCommands.updateRankSurnameRule !== 'function') {
-            return _fail('RankCommands.updateRankSurnameRule is not available.');
-        }
-        return window.RankCommands.updateRankSurnameRule(rankId, ruleSettings);
-    }
-
     // =========================================================================
     // 7. SPOUSE INHERITANCE DETECTION
     // =========================================================================
@@ -770,12 +763,15 @@
 
         // Surname rule
         generateSurnameFromRankRule: generateSurnameFromRankRule,
-        updateRankSurnameRule: updateRankSurnameRule,
 
         // Spouse inheritance
         checkAndFixSpouseInheritance: checkAndFixSpouseInheritance
 
         // Removed:
+        //   _getChildIds                -> dead code, never called
+        //   updateRankSurnameRule       -> use RankCommands.updateRankSurnameRule
+        //
+        // The following were removed in an earlier pass:
         //   assignRankToCharacter       -> RankCommands.assignRankToCharacter
         //   deprecateRankAssignment     -> RankCommands.deprecateRankAssignment
         //   applySpouseInheritanceFixes -> RankCommands.applySpouseInheritanceFixes
