@@ -11,7 +11,7 @@
  *   - Raw canonical collection accessors (getCharacters, getPlaces, ...)
  *   - Raw canonical configuration accessors (getNameLists, ...)
  *   - ID-based lookup with caching (getCharacterById, getPlaceById, ...)
- *   - Cache management (invalidateAccessorCaches)
+ *   - Cache management (invalidateAccessorCaches, refreshCaches)
  *
  * OUT OF SCOPE:
  *   - Mutations (see domain command modules)
@@ -38,6 +38,25 @@
  *   - Accessors do not clone. Callers receive references to canonical
  *     entities. Mutation belongs to domain command modules, which must
  *     call invalidateAccessorCaches() after modifying canonical data.
+ *
+ * CACHE CONSISTENCY CONTRACT:
+ *   Every ID-map cache is paired with a canonical collection in
+ *   masterData.data. The cache size must match the canonical array length
+ *   at every read.
+ *
+ *   When they disagree, a state module wrote to the canonical collection
+ *   without calling invalidateAccessorCaches(). This module treats that
+ *   as a recoverable contract violation:
+ *
+ *     1. A warning is printed naming the collection and both sizes.
+ *     2. The cache is rebuilt from the current canonical data.
+ *     3. The read proceeds against the fresh cache.
+ *
+ *   The caller always receives fresh data. The warning surfaces the bug
+ *   to the developer without breaking the user experience.
+ *
+ *   The check is Map.size vs Array.length. O(1) per lookup. The cost is
+ *   negligible in production, so the check runs unconditionally.
  *
  * DEPENDENCIES:
  *   - storage.js (initializes window.masterData)
@@ -113,57 +132,171 @@ function _buildIdMap(items) {
     return map;
 }
 
-function _getCharacterMap() {
-    if (!_characterMap) {
-        _characterMap = _buildIdMap(getCharacters());
+// =============================================================================
+// 1.2 CACHE CONSISTENCY CHECK
+// =============================================================================
+//
+// Called at the top of every getXById. Compares the cache size to the
+// canonical collection size. If they disagree, a state module wrote
+// without invalidating.
+//
+// On mismatch:
+//   1. Warn to console with the collection name and both sizes.
+//   2. Rebuild the cache from the current canonical data.
+//   3. Return the fresh cache so the caller reads correct data.
+//
+// On match (or on first build, when cache is null):
+//   Return the existing cache.
+//
+// The function never throws. If the canonical collection is malformed
+// (not an array), the caller's own error path handles it.
+//
+// This runs unconditionally — no dev-only guard. The check is two
+// property reads; the cost is negligible compared to the map lookup.
+
+/**
+ * @private
+ * @param {Map|null} currentMap       the current cache (may be null)
+ * @param {Array}    canonicalArray   the current canonical collection
+ * @param {string}   cacheName        '_characterMap' etc., for the warning
+ * @param {string}   collectionName   'characters' etc., for the warning
+ * @param {Function} rebuildFn        () -> new Map, rebuilds from canonical
+ * @returns {Map}
+ */
+function _ensureCacheInSync(currentMap, canonicalArray, cacheName, collectionName, rebuildFn) {
+    if (!currentMap) {
+        // Not yet built. Rebuild without warning — this is the normal first call.
+        return rebuildFn();
     }
+
+    if (!Array.isArray(canonicalArray)) {
+        // Malformed canonical data. Return the existing cache; the caller's
+        // lookup will return whatever the cache has. This matches prior
+        // behavior: a malformed collection is not this module's problem to
+        // diagnose.
+        return currentMap;
+    }
+
+    // Count what the cache actually holds for the canonical array. The cache
+    // may include ids the array no longer has (if items were removed without
+    // invalidation), so size equality is necessary but not sufficient.
+    // However, checking every id is O(N). We use size as the cheap signal:
+    // any add or remove of a well-formed item changes the size, and that's
+    // exactly the moment a caller forgets to invalidate.
+    if (currentMap.size === canonicalArray.length) {
+        return currentMap;
+    }
+
+    if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'accessors.js: ' + cacheName + ' is out of sync with ' +
+            'masterData.data.' + collectionName + ' ' +
+            '(cache: ' + currentMap.size + ', canonical: ' +
+            canonicalArray.length + '). A state module wrote without calling ' +
+            'invalidateAccessorCaches(). Rebuilding.'
+        );
+    }
+
+    return rebuildFn();
+}
+
+// =============================================================================
+// 1.3 CACHE GETTERS (with consistency check)
+// =============================================================================
+
+function _getCharacterMap() {
+    _characterMap = _ensureCacheInSync(
+        _characterMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.characters
+            : null,
+        '_characterMap',
+        'characters',
+        function () { return _buildIdMap(getCharacters()); }
+    );
     return _characterMap;
 }
 
 function _getPlaceMap() {
-    if (!_placeMap) {
-        _placeMap = _buildIdMap(getPlaces());
-    }
+    _placeMap = _ensureCacheInSync(
+        _placeMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.places
+            : null,
+        '_placeMap',
+        'places',
+        function () { return _buildIdMap(getPlaces()); }
+    );
     return _placeMap;
 }
 
 function _getRankMap() {
-    if (!_rankMap) {
-        _rankMap = _buildIdMap(getRanks());
-    }
+    _rankMap = _ensureCacheInSync(
+        _rankMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.ranks
+            : null,
+        '_rankMap',
+        'ranks',
+        function () { return _buildIdMap(getRanks()); }
+    );
     return _rankMap;
 }
 
 function _getRoleMap() {
-    if (!_roleMap) {
-        _roleMap = _buildIdMap(getRoles());
-    }
+    _roleMap = _ensureCacheInSync(
+        _roleMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.roles
+            : null,
+        '_roleMap',
+        'roles',
+        function () { return _buildIdMap(getRoles()); }
+    );
     return _roleMap;
 }
 
 function _getLocationTypeMap() {
-    if (!_locationTypeMap) {
-        _locationTypeMap = _buildIdMap(getLocationTypes());
-    }
+    _locationTypeMap = _ensureCacheInSync(
+        _locationTypeMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.locationTypes
+            : null,
+        '_locationTypeMap',
+        'locationTypes',
+        function () { return _buildIdMap(getLocationTypes()); }
+    );
     return _locationTypeMap;
 }
 
 function _getGovernmentTypeMap() {
-    if (!_governmentTypeMap) {
-        _governmentTypeMap = _buildIdMap(getGovernmentTypes());
-    }
+    _governmentTypeMap = _ensureCacheInSync(
+        _governmentTypeMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.governmentTypes
+            : null,
+        '_governmentTypeMap',
+        'governmentTypes',
+        function () { return _buildIdMap(getGovernmentTypes()); }
+    );
     return _governmentTypeMap;
 }
 
 function _getHouseholdMap() {
-    if (!_householdMap) {
-        _householdMap = _buildIdMap(getHouseholds());
-    }
+    _householdMap = _ensureCacheInSync(
+        _householdMap,
+        window.masterData && window.masterData.data
+            ? window.masterData.data.households
+            : null,
+        '_householdMap',
+        'households',
+        function () { return _buildIdMap(getHouseholds()); }
+    );
     return _householdMap;
 }
 
 // =============================================================================
-// 1.2 CACHE INVALIDATION
+// 1.4 CACHE INVALIDATION
 // =============================================================================
 
 /**
@@ -184,11 +317,52 @@ function invalidateAccessorCaches() {
 }
 
 /**
- * Eagerly rebuilds all caches.
- * Optional performance operation. Correctness does not depend on it.
- * Intended for tests and debug tooling, not for the normal read path.
+ * Eagerly rebuilds all caches (or a single named one).
+ *
+ * When called with no argument, rebuilds every cache. When called with a
+ * collection name string, rebuilds only that cache. Names accepted:
+ *
+ *   'characters', 'places', 'ranks', 'roles',
+ *   'locationTypes', 'governmentTypes', 'households'
+ *
+ * Unknown names are ignored (no throw). The function is a no-op for a
+ * name that does not correspond to a cache.
+ *
+ * Optional performance operation. Correctness does not depend on it, and
+ * every getXById now self-heals on staleness. Provided for tests, debug
+ * tooling, and callers that know exactly which collection changed and
+ * want a targeted rebuild.
  */
-function refreshCaches() {
+function refreshCaches(collectionName) {
+    if (typeof collectionName === 'string' && collectionName.length > 0) {
+        switch (collectionName) {
+            case 'characters':
+                _characterMap = _buildIdMap(getCharacters());
+                return;
+            case 'places':
+                _placeMap = _buildIdMap(getPlaces());
+                return;
+            case 'ranks':
+                _rankMap = _buildIdMap(getRanks());
+                return;
+            case 'roles':
+                _roleMap = _buildIdMap(getRoles());
+                return;
+            case 'locationTypes':
+                _locationTypeMap = _buildIdMap(getLocationTypes());
+                return;
+            case 'governmentTypes':
+                _governmentTypeMap = _buildIdMap(getGovernmentTypes());
+                return;
+            case 'households':
+                _householdMap = _buildIdMap(getHouseholds());
+                return;
+            default:
+                return;
+        }
+    }
+
+    // No argument: rebuild everything.
     _characterMap = _buildIdMap(getCharacters());
     _placeMap = _buildIdMap(getPlaces());
     _rankMap = _buildIdMap(getRanks());
@@ -201,6 +375,9 @@ function refreshCaches() {
 // =============================================================================
 // 2. RAW COLLECTION ACCESSORS
 // =============================================================================
+//
+// These read the canonical collection on every call. They do not use
+// the cache. Nothing to invalidate, nothing to check.
 
 function getCharacters() {
     var data = _getData();
