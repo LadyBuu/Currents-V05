@@ -8,6 +8,20 @@
  * call. It contains no policy of its own: every function delegates to
  * the appropriate domain command or query.
  *
+ * DISPATCH MODEL:
+ *   The character subsystem dispatches directly. It does NOT route
+ *   through a listener registry.
+ *
+ *     CharacterLifecycle.killCharacter
+ *         -> RelationshipIntegrations.handleCharacterDeath
+ *
+ *     CharacterDeletionCommands.deleteCharacter
+ *         -> RelationshipIntegrations.removeAllReferencesTo
+ *
+ *   Both call sites live in the character subsystem. This module is a
+ *   plain library: it exposes the functions, the caller invokes them.
+ *   There is no registerLifecycleHook mechanism.
+ *
  * Owns:
  *   - death termination: end every active relationship for a deceased
  *     character, across romance, friendship, rivalry, and professional
@@ -115,7 +129,8 @@
     // -------------------------------------------------------------------------
     // DEATH TERMINATION
     //
-    // Called by CharacterLifecycle.killCharacter. Ends every active
+    // Called by CharacterLifecycle.killCharacter (via
+    // CharacterLifecycle._notifyCrossDomainDeath). Ends every active
     // relationship the deceased character participates in, across every
     // archetype.
     //
@@ -217,38 +232,22 @@
             var p = professional[n];
             var endResult;
             if (p.type === A.APPRENTICESHIP) {
-                var masterId = p.participantA === characterId ? p.participantB : p.participantA;
-                var apprenticeId = p.participantA === characterId ? p.participantA : p.participantB;
-                // Determine which side is master
-                if (p.participantA === characterId) {
-                    // character is master; apprentice is other
-                    endResult = PrC.endApprenticeship(p.participantA, p.participantB, {
-                        endYear: deathYear,
-                        reason: 'death_of_participant'
-                    });
-                } else {
-                    // character is apprentice; master is other
-                    endResult = PrC.endApprenticeship(p.participantA, p.participantB, {
-                        endYear: deathYear,
-                        reason: 'death_of_participant'
-                    });
-                }
+                endResult = PrC.endApprenticeship(p.participantA, p.participantB, {
+                    endYear: deathYear,
+                    reason: 'death_of_participant'
+                });
             } else if (p.type === A.MASTERSHIP) {
                 endResult = PrC.endMastership(p.participantA, p.participantB, {
                     endYear: deathYear,
                     reason: 'death_of_participant'
                 });
             } else if (p.type === A.EMPLOYMENT) {
-                var employerId = p.participantA;
-                var employeeId = p.participantB;
-                endResult = PrC.endEmployment(employerId, employeeId, {
+                endResult = PrC.endEmployment(p.participantA, p.participantB, {
                     endYear: deathYear,
                     reason: 'death_of_participant'
                 });
             } else if (p.type === A.GUILD_MEMBERSHIP) {
-                var guildId = p.participantA;
-                var memberId = p.participantB;
-                endResult = PrC.removeGuildMembership(guildId, memberId, {
+                endResult = PrC.removeGuildMembership(p.participantA, p.participantB, {
                     endYear: deathYear,
                     reason: 'death_of_participant'
                 });
@@ -282,9 +281,10 @@
     // -------------------------------------------------------------------------
     // HARD-DELETE CLEANUP
     //
-    // Called by CharacterDeletionCommands on hard delete. Removes every
-    // relationship record referencing the character. This is a hard
-    // remove, not an end; the record ceases to exist.
+    // Called by CharacterDeletionCommands.deleteCharacter and by
+    // CharacterDeletionCommands.purgeSoftDeletedCharacters. Removes
+    // every relationship record referencing the character. This is a
+    // hard remove, not an end; the record ceases to exist.
     //
     // One State batch, one markDataDirty, one subscriber notification.
     // -------------------------------------------------------------------------
@@ -514,25 +514,21 @@
     };
 
     // -------------------------------------------------------------------------
-    // DEATH INTEGRATION HOOK
+    // DISPATCH MODEL
     //
-    // CharacterLifecycle.killCharacter currently dispatches family
-    // cleanup directly. It should also dispatch relationship cleanup.
-    // Rather than require the lifecycle to know this module's name, we
-    // register a hook on window.
+    // This module does not register itself anywhere. The character
+    // subsystem calls the two lifecycle functions directly:
+    //
+    //   CharacterLifecycle.killCharacter
+    //       -> RelationshipIntegrations.handleCharacterDeath(characterId, { deathYear })
+    //
+    //   CharacterDeletionCommands.deleteCharacter
+    //       -> RelationshipIntegrations.removeAllReferencesTo(characterId)
+    //
+    // There is no listener registry. Adding a new cross-domain
+    // consequence means editing the character subsystem's dispatch
+    // table, which is exactly where the knowledge of "what happens when
+    // a character dies" belongs.
     // -------------------------------------------------------------------------
-
-    if (typeof window.registerLifecycleHook === 'function') {
-        window.registerLifecycleHook('death', function(payload) {
-            if (!payload || typeof payload.characterId !== 'string') return;
-            handleCharacterDeath(payload.characterId, {
-                deathYear: (typeof payload.deathYear === 'number') ? payload.deathYear : undefined
-            });
-        });
-        window.registerLifecycleHook('delete', function(payload) {
-            if (!payload || typeof payload.characterId !== 'string') return;
-            removeAllReferencesTo(payload.characterId);
-        });
-    }
 
 })();
