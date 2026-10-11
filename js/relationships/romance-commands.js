@@ -19,6 +19,8 @@
  *     cultural attribute is present in the request)
  *   - RelationshipCommands for the state write
  *   - Character accessors for ages, names, traits, rank
+ *   - RankRules for rank policy reads (optional, falls back to direct
+ *     field reads if absent)
  *
  * Does NOT own:
  *   - direct state access (goes through RelationshipCommands)
@@ -30,7 +32,8 @@
  * { success: false, code, message }. Never throws for domain errors.
  *
  * Load order: after relationship-commands.js, romance-rules.js,
- * romance-queries.js.
+ * romance-queries.js. RankRules is optional; if loaded before this
+ * module, rank policy reads route through it.
  */
 
 (function() {
@@ -110,11 +113,26 @@
     }
 
     // -------------------------------------------------------------------------
-    // EXTERNAL MULTI-PARTNER FACTS
+    // RANK POLICY
     //
-    // Rank and trait facts live outside romance. We read them from the
-    // character record and rank domain here, at the boundary.
+    // The rank domain exports RankRules.allowsMultipleSpouses(rank) as the
+    // semantic query for "does this rank permit its holder to have multiple
+    // spouses." Romance routes through it when RankRules is present.
+    //
+    // If RankRules is absent (rank domain not loaded, or loaded after this
+    // module), the same answer is produced by reading the field directly.
+    // The direct read is a fallback, not an alternate source of truth —
+    // the field is the same field RankRules reads.
     // -------------------------------------------------------------------------
+
+    function _rankAllowsMultipleSpouses(rank) {
+        if (!rank || typeof rank !== 'object') return false;
+        if (window.RankRules
+            && typeof window.RankRules.allowsMultipleSpouses === 'function') {
+            return window.RankRules.allowsMultipleSpouses(rank) === true;
+        }
+        return rank.allowsMultipleSpouses === true;
+    }
 
     function _getExternalMultiPartnerFacts(character) {
         var facts = {};
@@ -122,7 +140,7 @@
 
         if (character.activeRankId && typeof window.getRankById === 'function') {
             var rank = window.getRankById(character.activeRankId);
-            if (rank && rank.allowsMultipleSpouses) {
+            if (rank && _rankAllowsMultipleSpouses(rank)) {
                 facts.allowsMultipleByRank = true;
             }
         }
@@ -137,10 +155,6 @@
 
     // -------------------------------------------------------------------------
     // CULTURE RESOLUTION
-    //
-    // Participants' culture ids come from the character record. If a
-    // cultural attribute is requested, both must be present. This is
-    // where a missing culture becomes a hard rejection, not a default.
     // -------------------------------------------------------------------------
 
     function _resolveCultureId(character) {
@@ -165,9 +179,6 @@
 
     // -------------------------------------------------------------------------
     // INTERNAL: BASIC ROMANTIC CREATE
-    //
-    // Used by casual and one-night creation. Does not run affair
-    // classification (not applicable to those archetypes).
     // -------------------------------------------------------------------------
 
     function _createSimpleRomantic(archetype, idA, idB, startYear, notes) {
@@ -290,7 +301,6 @@
             ' had a one night stand in ' + startYear,
             [charA, charB]);
 
-        var projection = RoQ.getAllCommittedBetween(idA, idB); // empty; here for symmetry
         var all = RoQ.getRomanticRelationshipsBetween(idA, idB);
         var oneNightProjection = null;
         for (var i = 0; i < all.length; i++) {
@@ -447,12 +457,6 @@
             return _fail('MISSING_ID', 'relationshipId required');
         }
 
-        var record = RC._getLiveRecord ? null : null; // not used; go via queries
-        var projection = RoQ.getRomanticRelationshipsBetween.__proto__ ? null : null;
-
-        // Fetch via RelationshipQueries through RomanceQueries
-        var current = RC._getLiveRecord ? null : null;
-        // Use the public path: inspect via queries
         var rec = window.RelationshipQueries.getById(relationshipId);
         if (!rec) return _fail('NOT_FOUND', 'relationship not found');
         if (rec.type !== COMMITTED) {
