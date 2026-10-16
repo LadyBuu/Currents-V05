@@ -20,27 +20,47 @@
  *
  * Persistence contract:
  *
- *     Every mutation explicitly writes the canonical representation into
- *     masterData.data before calling storage. There is no object aliasing
- *     between _state.roles and masterData.data.roles. The two are kept in
- *     sync by assignment, not by sharing a reference.
+ *     Every mutation writes the canonical representation into
+ *     masterData.data in memory and calls window.markDataDirty(). It
+ *     does NOT call window.saveMasterData().
+ *
+ *     The caller is responsible for calling RoleCommands.persist() once
+ *     per batch. This matches the rank and character domains.
+ *
+ *     There is no object aliasing between _roles and
+ *     masterData.data.roles. The two are kept in sync by assignment, not
+ *     by sharing a reference.
+ *
+ * Accessor cache contract:
+ *
+ *     accessors.js maintains an id -> record cache used by getRoleById.
+ *     Every mutation of the role catalogue invalidates that cache via
+ *     window.invalidateAccessorCaches(). Without this, getRoleById
+ *     returns stale records after a role write.
+ *
+ *     The invalidation happens at the memory-write boundary
+ *     (_syncToMasterData), not at persistence time, because the cache
+ *     mirrors canonical memory, not storage.
  *
  * Initialisation contract:
  *
  *     RoleState must be explicitly initialised via RoleState.init() AFTER
- *     masterData has loaded. Calling any public reader before init() throws.
- *     This is deliberate: silent initialisation against an empty store is
- *     how "where did all the roles go?" bugs are born.
+ *     masterData has loaded. Calling any public reader before init()
+ *     throws. This is deliberate: silent initialisation against an empty
+ *     store is how "where did all the roles go?" bugs are born.
  *
  * Schema normalisation:
  *
- *     Roles arriving from persistence may be missing fields that were added
- *     in later versions of the schema. Normalisation runs once, at init()
- *     time, over the persisted array. Reads do not mutate roles.
+ *     Roles arriving from persistence may be missing fields that were
+ *     added in later versions of the schema. Normalisation runs once, at
+ *     init() time, over the persisted array. Reads do not mutate roles.
  *
  * DEPENDENCIES:
  *   - role-constants.js (RoleConstants)
- *   - storage.js        (saveMasterData)
+ *   - storage.js        (masterData, markDataDirty)
+ *
+ * DEPENDENCIES (OPTIONAL, called defensively):
+ *   - accessors.js      (invalidateAccessorCaches). If absent, no-op.
  *
  * =============================================================================
  */
@@ -75,17 +95,23 @@
     var _initialized = false;
 
     // =========================================================================
-    // 3. DEPENDENCY WRAPPERS (storage)
+    // 3. DEPENDENCY WRAPPERS (storage + accessors)
     // =========================================================================
 
-    function _persist() {
-        if (typeof window.saveMasterData !== 'function') {
+    function _markDirty() {
+        if (typeof window.markDataDirty !== 'function') {
             throw new Error(
-                'role-state.js: saveMasterData is not available. ' +
+                'role-state.js: markDataDirty is not available. ' +
                 'storage.js must be loaded before state mutations occur.'
             );
         }
-        window.saveMasterData();
+        window.markDataDirty();
+    }
+
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
     }
 
     // =========================================================================
@@ -208,16 +234,17 @@
     }
 
     // =========================================================================
-    // 6. PERSISTENCE SYNC (explicit, one-way)
+    // 6. PERSISTENCE SYNC (in-memory write only)
     // =========================================================================
     //
     // After every mutation:
     //   - masterData.data.roles is reassigned to a plain-array copy of _roles
     //   - masterData.data.roleCategories is reassigned to a plain-object copy
-    //   - storage is notified
+    //   - the accessor cache is invalidated (getRoleById reads fresh data)
+    //   - markDataDirty() is called
     //
-    // There is no sharing of references between _state and masterData. Both
-    // are authored by this module and written together.
+    // Storage flushes on its own schedule, or when RoleCommands.persist()
+    // calls saveMasterData().
 
     function _syncToMasterData() {
         if (!window.masterData || !window.masterData.data) {
@@ -229,6 +256,8 @@
 
         window.masterData.data.roles = _roles.slice();
         window.masterData.data.roleCategories = _cloneCategories(_categories);
+        _invalidateAccessorCaches();
+        _markDirty();
     }
 
     function _cloneCategories(source) {
@@ -243,11 +272,6 @@
     // =========================================================================
     // 7. NOTIFICATION
     // =========================================================================
-    //
-    // Notifications are synchronous and compositional. A subscriber may mutate
-    // state in response to an event; that mutation will emit its own event.
-    // There is no blanket suppression guard. If a cycle exists, it is solved
-    // at the command/event boundary, not here.
 
     function _notify(type, data) {
         var subscribers = _subscribers.slice();
@@ -255,9 +279,6 @@
             try {
                 subscribers[i]({ type: type, data: data });
             } catch (err) {
-                // A broken subscriber must not silently corrupt unrelated
-                // state updates. Surface the failure in the console so it
-                // can be diagnosed, but continue notifying other subscribers.
                 if (window.console && typeof window.console.error === 'function') {
                     window.console.error('RoleState subscriber threw:', err);
                 }
@@ -363,6 +384,9 @@
     // without a leading underscore because they are the state's public
     // mutation API, not a private back door. RoleCommands is their sole
     // intended caller.
+    //
+    // Each mutation marks data dirty. None of them flush to localStorage.
+    // RoleCommands.persist() is the flush boundary.
 
     function addRole(role) {
         _assertInitialised();
@@ -371,7 +395,6 @@
         _roles.push(normalised);
         _rebuildCaches();
         _syncToMasterData();
-        _persist();
         _notify('roleAdded', _cloneRoleForSubscriber(normalised));
         return _cloneRoleForSubscriber(normalised);
     }
@@ -382,9 +405,6 @@
         var role = _cache.byId.get(id);
         if (!role) return null;
 
-        // Build a candidate record, normalise it, then commit. If normalisation
-        // rejects a field (e.g. invalid literacy level), the committed record
-        // reflects the corrected value rather than the raw input.
         var candidate = {
             id: role.id,
             name: updates.name !== undefined ? updates.name : role.name,
@@ -416,7 +436,6 @@
 
         _rebuildCaches();
         _syncToMasterData();
-        _persist();
         _notify('roleUpdated', _cloneRoleForSubscriber(normalised));
         return _cloneRoleForSubscriber(normalised);
     }
@@ -435,7 +454,6 @@
 
         _rebuildCaches();
         _syncToMasterData();
-        _persist();
         _notify('roleDeleted', _cloneRoleForSubscriber(removed));
         return true;
     }
@@ -456,7 +474,6 @@
 
         _rebuildCaches();
         _syncToMasterData();
-        _persist();
         _notify('rolesSet', getAllRoles());
         return true;
     }
@@ -464,9 +481,6 @@
     // =========================================================================
     // 12. SUBSCRIBER-SAFE ROLE COPIES
     // =========================================================================
-    //
-    // Subscribers receive frozen snapshots. They may read freely. They may not
-    // mutate state by accident through a shared reference.
 
     function _cloneRoleForSubscriber(role) {
         return Object.freeze({
@@ -495,7 +509,6 @@
         }
         _categories[id] = { id: id, name: name };
         _syncToMasterData();
-        _persist();
         _notify('categoryAdded', { id: id, name: name });
     }
 
@@ -506,7 +519,6 @@
         if (!category) return false;
         if (updates.name !== undefined) category.name = updates.name;
         _syncToMasterData();
-        _persist();
         _notify('categoryUpdated', { id: id, name: category.name });
         return true;
     }
@@ -519,7 +531,6 @@
         }
         if (!_categories[id]) return false;
 
-        // Reassign every role in this category to uncategorized.
         var touched = [];
         for (var i = 0; i < _roles.length; i++) {
             if (_roles[i].category === id) {
@@ -532,7 +543,6 @@
 
         _rebuildCaches();
         _syncToMasterData();
-        _persist();
         _notify('categoryDeleted', { id: id, reassignedRoleIds: touched });
         return true;
     }
