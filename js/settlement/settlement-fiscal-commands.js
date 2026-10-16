@@ -49,6 +49,12 @@
  *     A call that provides no fields at all is a no-op and returns a
  *     structured success without committing.
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file wrapped
+ *   time behind window.Time, which does not exist. This module now calls
+ *   the time helper directly, matching role, romance, and education.
+ *
  * =============================================================================
  */
 
@@ -69,10 +75,6 @@
 
     function _getCommit() {
         return window.SettlementCommandCommit;
-    }
-
-    function _getTime() {
-        return window.Time;
     }
 
     // =========================================================================
@@ -98,6 +100,15 @@
             copy[overrideKey] = overrides[overrideKey];
         }
         return copy;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-fiscal-commands.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
@@ -350,7 +361,7 @@
             if (!Object.prototype.hasOwnProperty.call(normalized, k)) continue;
             overrides[k] = normalized[k];
         }
-        overrides.budgetAllocationYear = _getTime().getCurrentYear();
+        overrides.budgetAllocationYear = _currentYear();
 
         var candidate = _copyWith(settlement, overrides);
 
