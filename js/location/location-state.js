@@ -6,12 +6,14 @@
  * Owns:
  *   - Derived indexes over masterData.data.places / .locationTypes
  *   - Subscriptions (change notification)
- *   - Explicit rebuild from canonical data
+ *   - Explicit hydration from canonical data
+ *   - Live-reference access for authorized commands
+ *   - Mutation primitives for LocationCommands
  *
  * Does NOT own:
  *   - Canonical place/type records (those live in masterData.data)
- *   - Persistence (Commands persist)
- *   - Mutations (Commands mutate)
+ *   - Persistence (Commands call markDataDirty; storage flushes)
+ *   - Mutations (Commands mutate through primitives)
  *   - Queries (LocationQueries interprets)
  *   - Cross-domain reads (LocationQueries composes)
  *   - UI state (LocationUIState owns that)
@@ -22,7 +24,17 @@
  *   masterData.data.locationTypes
  *
  * Acceptance test:
- *   Delete every index. Rebuild from masterData. App behaves identically.
+ *   Delete every index. Hydrate from masterData. App behaves identically.
+ *
+ * Public reads return clones. Callers cannot mutate state through a returned
+ * object. Commands use _getPlaceCanonical / _getLocationTypeCanonical during a
+ * transaction and then write through _addPlace / _removePlace / _addLocationType
+ * / _removeLocationType.
+ *
+ * Persistence:
+ *   Mutation primitives call window.markDataDirty() after a successful write.
+ *   LocationCommands owns the batch persist boundary (LocationCommands.persist).
+ *   State does not call saveMasterData.
  *
  * =============================================================================
  */
@@ -31,7 +43,20 @@
     'use strict';
 
     // -------------------------------------------------------------------------
-    // INDEXES (all rebuildable from canonical data)
+    // 1. HARD DEPENDENCIES
+    // -------------------------------------------------------------------------
+    //
+    // markDataDirty is required. A missing module is a load-order bug, not a
+    // recoverable condition. Checked at load, not at call time.
+
+    if (typeof window.markDataDirty !== 'function') {
+        throw new Error(
+            'location-state.js requires storage.js (markDataDirty) to load first.'
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. INDEXES (all rebuildable from canonical data)
     // -------------------------------------------------------------------------
 
     var _placeById = new Map();
@@ -40,47 +65,73 @@
     var _typeById = new Map();
 
     // -------------------------------------------------------------------------
-    // SUBSCRIPTIONS
+    // 3. SUBSCRIPTIONS
     // -------------------------------------------------------------------------
 
     var _subscribers = [];
 
     // -------------------------------------------------------------------------
-    // CANONICAL ACCESS
+    // 4. CANONICAL ACCESS
     // -------------------------------------------------------------------------
 
     function _canonicalPlaces() {
-        if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.places)) {
-            throw new Error('LocationState: masterData.data.places is not available. Bootstrap has not run.');
+        if (!window.masterData || !window.masterData.data ||
+            !Array.isArray(window.masterData.data.places)) {
+            throw new Error(
+                'LocationState: masterData.data.places is not available. ' +
+                'Bootstrap has not run.'
+            );
         }
         return window.masterData.data.places;
     }
 
     function _canonicalTypes() {
-        if (!window.masterData || !window.masterData.data || !Array.isArray(window.masterData.data.locationTypes)) {
-            throw new Error('LocationState: masterData.data.locationTypes is not available. Bootstrap has not run.');
+        if (!window.masterData || !window.masterData.data ||
+            !Array.isArray(window.masterData.data.locationTypes)) {
+            throw new Error(
+                'LocationState: masterData.data.locationTypes is not available. ' +
+                'Bootstrap has not run.'
+            );
         }
         return window.masterData.data.locationTypes;
     }
 
     // -------------------------------------------------------------------------
-    // REBUILD
+    // 5. HYDRATION
     // -------------------------------------------------------------------------
 
     /**
-     * Rebuilds all indexes from canonical data.
-     * This is the ONLY way State learns about world changes.
-     * Called by Commands after a successful mutation, and by bootstrap.
+     * Hydrates all indexes from canonical data.
+     *
+     * This is the ONLY way State learns about world changes. Called by
+     * LocationBootstrap at load, and by LocationCommands after a successful
+     * mutation (before persist/publish).
+     *
+     * Throws on corrupted canonical data: duplicate ids, missing ids.
+     * A corrupted canonical world is a hard failure, not a soft skip.
      */
-    function rebuildIndexes() {
+    function hydrateFromMasterData() {
         _placeById.clear();
         _placesByParent.clear();
         _placesByType.clear();
         _typeById.clear();
 
         var places = _canonicalPlaces();
+        var seenPlaceIds = {};
         for (var i = 0; i < places.length; i++) {
             var p = places[i];
+
+            if (!p || !p.id) {
+                throw new Error(
+                    'LocationState: canonical place missing id at index ' + i
+                );
+            }
+            if (seenPlaceIds[p.id]) {
+                throw new Error(
+                    'LocationState: duplicate place id in canonical data: ' + p.id
+                );
+            }
+            seenPlaceIds[p.id] = true;
 
             _placeById.set(p.id, p);
 
@@ -101,35 +152,136 @@
         }
 
         var types = _canonicalTypes();
+        var seenTypeIds = {};
         for (var j = 0; j < types.length; j++) {
-            _typeById.set(types[j].id, types[j]);
+            var t = types[j];
+            if (!t || !t.id) {
+                throw new Error(
+                    'LocationState: canonical locationType missing id at index ' + j
+                );
+            }
+            if (seenTypeIds[t.id]) {
+                throw new Error(
+                    'LocationState: duplicate locationType id: ' + t.id
+                );
+            }
+            seenTypeIds[t.id] = true;
+            _typeById.set(t.id, t);
         }
     }
 
     // -------------------------------------------------------------------------
-    // PRIMITIVE INDEX ACCESSORS
+    // 6. INTERNAL LIVE-REFERENCE ACCESSORS
     // -------------------------------------------------------------------------
+    //
+    // Reserved for LocationCommands and LocationHierarchy, which operate on
+    // live records during a transaction. Public reads below return clones.
+    //
+    // Callers must not mutate the returned object. The canonical record is
+    // the source of truth; mutation goes through the primitives below.
 
-    function getPlaceById(placeId) {
+    function _getPlaceCanonical(placeId) {
         if (!placeId) return null;
         return _placeById.get(placeId) || null;
     }
 
-    function getLocationTypeById(typeId) {
+    function _getLocationTypeCanonical(typeId) {
         if (!typeId) return null;
         return _typeById.get(typeId) || null;
     }
 
-    function getPlacesByParentId(parentId) {
+    function _getPlacesByParentIdCanonical(parentId) {
         var key = parentId === undefined ? null : parentId;
         var list = _placesByParent.get(key);
         return list ? list.slice() : [];
     }
 
-    function getPlacesByTypeId(typeId) {
+    function _getPlacesByTypeIdCanonical(typeId) {
         if (!typeId) return [];
         var list = _placesByType.get(typeId);
         return list ? list.slice() : [];
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. CLONING
+    // -------------------------------------------------------------------------
+
+    /**
+     * Deep-enough clone for a place record. Container arrays and one-level
+     * nested objects are copied. Deeper nesting is shared by reference —
+     * mutating a nested value through a returned clone is a caller bug, not a
+     * state bug.
+     */
+    function _clonePlace(place) {
+        if (!place) return null;
+        var copy = {};
+        for (var k in place) {
+            if (!Object.prototype.hasOwnProperty.call(place, k)) continue;
+            var v = place[k];
+            if (Array.isArray(v)) {
+                copy[k] = v.slice();
+            } else if (v && typeof v === 'object') {
+                var nested = {};
+                for (var nk in v) {
+                    if (Object.prototype.hasOwnProperty.call(v, nk)) {
+                        nested[nk] = v[nk];
+                    }
+                }
+                copy[k] = nested;
+            } else {
+                copy[k] = v;
+            }
+        }
+        return copy;
+    }
+
+    function _cloneLocationType(type) {
+        if (!type) return null;
+        var copy = {};
+        for (var k in type) {
+            if (!Object.prototype.hasOwnProperty.call(type, k)) continue;
+            var v = type[k];
+            if (Array.isArray(v)) {
+                copy[k] = v.slice();
+            } else if (v && typeof v === 'object') {
+                var nested = {};
+                for (var nk in v) {
+                    if (Object.prototype.hasOwnProperty.call(v, nk)) {
+                        nested[nk] = v[nk];
+                    }
+                }
+                copy[k] = nested;
+            } else {
+                copy[k] = v;
+            }
+        }
+        return copy;
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. PUBLIC READ ACCESSORS (clones)
+    // -------------------------------------------------------------------------
+
+    function getPlaceById(placeId) {
+        return _clonePlace(_getPlaceCanonical(placeId));
+    }
+
+    function getLocationTypeById(typeId) {
+        return _cloneLocationType(_getLocationTypeCanonical(typeId));
+    }
+
+    function getPlacesByParentId(parentId) {
+        var list = _getPlacesByParentIdCanonical(parentId);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(_clonePlace(list[i]));
+        return out;
+    }
+
+    function getPlacesByTypeId(typeId) {
+        var list = _getPlacesByTypeIdCanonical(typeId);
+        var out = [];
+        for (var i = 0; i < list.length; i++) out.push(_clonePlace(list[i]));
+        return out;
     }
 
     function getAllPlaceIds() {
@@ -145,7 +297,73 @@
     }
 
     // -------------------------------------------------------------------------
-    // SUBSCRIPTIONS
+    // 9. MUTATION PRIMITIVES (reserved for LocationCommands)
+    // -------------------------------------------------------------------------
+    //
+    // Operate on the canonical arrays. They do NOT hydrate, persist, or
+    // publish. LocationCommands is responsible for calling
+    // hydrateFromMasterData after a batch, then markDataDirty + publish.
+    //
+    // Each primitive calls window.markDataDirty() after a successful write so
+    // the dirty flag is set even if the caller forgets the commit tail.
+    // LocationCommands still owns the batched persist boundary.
+
+    function _addPlace(place) {
+        if (!place || !place.id) {
+            throw new Error('LocationState._addPlace: place with id is required');
+        }
+        if (_placeById.has(place.id)) {
+            throw new Error(
+                'LocationState._addPlace: duplicate place id: ' + place.id
+            );
+        }
+        _canonicalPlaces().push(place);
+        window.markDataDirty();
+    }
+
+    function _removePlace(placeId) {
+        if (!placeId) return false;
+        var places = _canonicalPlaces();
+        for (var i = places.length - 1; i >= 0; i--) {
+            if (places[i].id === placeId) {
+                places.splice(i, 1);
+                window.markDataDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function _addLocationType(type) {
+        if (!type || !type.id) {
+            throw new Error(
+                'LocationState._addLocationType: type with id is required'
+            );
+        }
+        if (_typeById.has(type.id)) {
+            throw new Error(
+                'LocationState._addLocationType: duplicate type id: ' + type.id
+            );
+        }
+        _canonicalTypes().push(type);
+        window.markDataDirty();
+    }
+
+    function _removeLocationType(typeId) {
+        if (!typeId) return false;
+        var types = _canonicalTypes();
+        for (var i = types.length - 1; i >= 0; i--) {
+            if (types[i].id === typeId) {
+                types.splice(i, 1);
+                window.markDataDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // 10. SUBSCRIPTIONS
     // -------------------------------------------------------------------------
 
     /**
@@ -165,7 +383,9 @@
     }
 
     /**
-     * Publish a change event. Called by Commands after successful mutation.
+     * Publish a change event. Called by LocationCommands after a successful
+     * mutation and hydration.
+     *
      * Delivery is non-reentrant by design: if a subscriber synchronously
      * triggers another publish, the nested publish is queued and delivered
      * after the current dispatch completes. No events are silently dropped.
@@ -185,8 +405,6 @@
                     try {
                         _subscribers[i](evt);
                     } catch (err) {
-                        // Subscriber errors must not break delivery of other events.
-                        // The subscriber is responsible for its own error handling.
                         if (typeof console !== 'undefined' && console.error) {
                             console.error('LocationState subscriber error:', err);
                         }
@@ -199,20 +417,35 @@
     }
 
     // -------------------------------------------------------------------------
-    // EXPORTS
+    // 11. EXPORTS
     // -------------------------------------------------------------------------
 
     window.LocationState = {
         // Lifecycle
-        rebuildIndexes: rebuildIndexes,
+        hydrateFromMasterData: hydrateFromMasterData,
 
-        // Primitive indexed accessors
+        // Public reads (clones)
         getPlaceById: getPlaceById,
         getLocationTypeById: getLocationTypeById,
         getPlacesByParentId: getPlacesByParentId,
         getPlacesByTypeId: getPlacesByTypeId,
         getAllPlaceIds: getAllPlaceIds,
         getAllLocationTypeIds: getAllLocationTypeIds,
+
+        // Internal live-reference accessors
+        // Reserved for LocationCommands and LocationHierarchy during a
+        // transaction. Do not mutate the returned record.
+        _getPlaceCanonical: _getPlaceCanonical,
+        _getLocationTypeCanonical: _getLocationTypeCanonical,
+        _getPlacesByParentIdCanonical: _getPlacesByParentIdCanonical,
+        _getPlacesByTypeIdCanonical: _getPlacesByTypeIdCanonical,
+
+        // Internal mutation primitives
+        // Reserved for LocationCommands. Each calls markDataDirty on success.
+        _addPlace: _addPlace,
+        _removePlace: _removePlace,
+        _addLocationType: _addLocationType,
+        _removeLocationType: _removeLocationType,
 
         // Subscriptions
         subscribe: subscribe,
