@@ -51,6 +51,12 @@
  *   exposes an `availability` marker when a UI needs to render an empty
  *   state.
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file called
+ *   window.Time.getCurrentYear() in buildFinancialReportView, which
+ *   would have thrown. It now uses the canonical helper directly.
+ *
  * =============================================================================
  */
 
@@ -112,6 +118,15 @@
             if (severities[i].id === severityId) return severities[i].name;
         }
         return null;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-view-models.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
@@ -214,13 +229,13 @@
         var lawCount = _getLawQueries().getCivilLawCount(locationId);
         var placeCount = _getReligionQueries().getActivePlaceOfWorshipCount(locationId);
 
+        var population = _getPopulationAccessor()(locationId);
+
         return {
             locationId: locationId,
             name: _placeName(locationId),
             rank: rank ? { id: rank.id, name: rank.name } : null,
-            population: _isFiniteNumber(_getPopulationAccessor()(locationId))
-                ? _getPopulationAccessor()(locationId)
-                : null,
+            population: _isFiniteNumber(population) ? population : null,
             wealth: _isFiniteNumber(settlement.wealth) ? settlement.wealth : null,
             totalDebt: _isFiniteNumber(settlement.totalDebt) ? settlement.totalDebt : null,
             prosperity: prosperity
@@ -445,7 +460,7 @@
             locationId: locationId,
             name: _placeName(locationId),
             isHistorical: false,
-            currentYear: window.Time.getCurrentYear(),
+            currentYear: _currentYear(),
             income: budget.income,
             expenses: budget.expenses,
             surplus: budget.surplus,
