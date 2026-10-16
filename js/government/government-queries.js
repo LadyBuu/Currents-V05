@@ -1,734 +1,997 @@
 /**
- * government-commands.js
- * Write layer. Single transaction boundary per command. No toasts.
- * Result contract: { success: true, data } | { success: false, reason, code? }
+ * government-queries.js
+ * Read layer. Composes canonical data (via GovernmentState clones) and other
+ * domains' queries. Returns clones or defensive projections. No fallbacks.
  *
- * Cross-domain mutations (leader, place government, justice, watch, salary
- * payment) delegate to the owning domain. This module does not write to
- * Location, Settlement, Household, or Character canonical data directly.
+ * Contract:
+ *   - Never returns a live canonical record.
+ *   - Never mutates anything.
+ *   - Never calls saveMasterData / markDataDirty.
+ *   - Missing cross-domain modules throw at load, not at call time.
+ *   - No fabricated fallbacks. No inline numbers that belong to
+ *     GovernmentConstants.
  */
 (function() {
     'use strict';
 
-    var _CharacterCommands   = window.CharacterCommands;
-    var _CharacterQueries    = window.CharacterQueries;
-    var _LocationQueries     = window.LocationQueries;
-    var _LocationCommands    = window.LocationCommands;
-    var _HouseholdCommands   = window.HouseholdCommands;
-    var _HouseholdQueries    = window.HouseholdQueries;
-    var _SettlementQueries   = window.SettlementQueries;
-    var _SettlementGovCmds   = window.SettlementGovernmentCommands;
-    var _Rules               = window.GovernmentRules;
-
-    if (!_CharacterQueries)  throw new Error('government-commands.js requires CharacterQueries');
-    if (!_LocationQueries)   throw new Error('government-commands.js requires LocationQueries');
-    if (!_LocationCommands)  throw new Error('government-commands.js requires LocationCommands');
-    if (!_SettlementQueries) throw new Error('government-commands.js requires SettlementQueries');
-    if (!_SettlementGovCmds) throw new Error('government-commands.js requires SettlementGovernmentCommands');
-    if (!window.GovernmentQueries) throw new Error('government-commands.js requires GovernmentQueries');
-    if (!window.GovernmentState)   throw new Error('government-commands.js requires GovernmentState');
-    if (!_Rules)                   throw new Error('government-commands.js requires GovernmentRules');
-
+    var C = window.GovernmentConstants;
     var State = window.GovernmentState;
-    var Queries = window.GovernmentQueries;
+    var Rules = window.GovernmentRules;
+    var _CharacterQueries = window.CharacterQueries;
+    var _LocationQueries = window.LocationQueries;
+    var _RoleQueries = window.RoleQueries;
+    var _SettlementQueries = window.SettlementQueries;
+    var _SettlementProsperity = window.SettlementProsperityQueries;
+    var _IndustryQueries = window.IndustryQueries;
+
+    if (!C) throw new Error('government-queries.js requires GovernmentConstants');
+    if (!State) throw new Error('government-queries.js requires GovernmentState');
+    if (!Rules) throw new Error('government-queries.js requires GovernmentRules');
+    if (!_CharacterQueries) throw new Error('government-queries.js requires CharacterQueries');
+    if (!_LocationQueries) throw new Error('government-queries.js requires LocationQueries');
+    if (!_RoleQueries) throw new Error('government-queries.js requires RoleQueries');
+    if (!_SettlementQueries) throw new Error('government-queries.js requires SettlementQueries');
+    if (!_SettlementProsperity) throw new Error('government-queries.js requires SettlementProsperityQueries');
+    if (!_IndustryQueries) throw new Error('government-queries.js requires IndustryQueries');
+
+    // ---- Helpers -------------------------------------------------------------
 
     function _now() { return window.getCurrentYearSafe(); }
 
-    function _ok(data) { return { success: true, data: data }; }
-    function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
-
-    // ---- Transaction boundary ------------------------------------------------
-
-    function _commit() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
-        State.invalidateCache();
-        if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
+    function _isActiveAssignment(a) {
+        return a.endYear === null || a.endYear === undefined;
     }
 
-    function _log(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') window.logEvent(category, type, message, subjects || []);
-    }
-
-    var _warnedMissingHousehold = false;
-    function _warnHouseholdOnce() {
-        if (_warnedMissingHousehold) return;
-        _warnedMissingHousehold = true;
-        if (typeof console !== 'undefined' && console.warn) {
-            console.warn('government-commands.js: HouseholdCommands/HouseholdQueries not loaded; salary payment skipped.');
-        }
-    }
-
-    // ---- Salary payment (cross-domain delegation) ----------------------------
-    // Called immediately after a successful assignment. Salary is a cross-domain
-    // side effect, not a validity condition: if Household is unavailable the
-    // assignment still succeeds; the salary is skipped and logged once.
-    //
-    // Returns { paid: bool, amount?: number, householdId?: string, reason?: string }
-    // so the caller can include the outcome in the assignment result.
-
-    function _payAssignmentSalary(characterId, position, dept) {
-        if (!_HouseholdCommands || !_HouseholdQueries) {
-            _warnHouseholdOnce();
-            return { paid: false, reason: 'household-modules-unavailable' };
-        }
-        if (!window.GovernmentEconomy ||
-            typeof window.GovernmentEconomy.calculatePositionSalary !== 'function') {
-            return { paid: false, reason: 'economy-unavailable' };
-        }
-
-        var salary = window.GovernmentEconomy.calculatePositionSalary(dept.id, position.id);
-        if (salary == null || salary <= 0) {
-            return { paid: false, reason: 'no-salary' };
-        }
-
-        var household = _HouseholdQueries.getCharacterHousehold(characterId);
-        if (!household) {
-            return { paid: false, reason: 'no-household' };
-        }
-
-        var reason = 'Government salary: ' + position.name + ' (' + dept.name + ')';
-        var result = null;
-
-        if (typeof _HouseholdCommands.adjustWealth === 'function') {
-            result = _HouseholdCommands.adjustWealth(household.id, salary, { reason: reason });
-        } else if (typeof _HouseholdCommands.creditWealth === 'function') {
-            result = _HouseholdCommands.creditWealth(household.id, salary, reason);
-        } else {
-            return { paid: false, reason: 'no-wealth-command' };
-        }
-
-        if (!result || result.success === false) {
-            _log('economy', 'government_salary_failed',
-                'Failed to pay salary to ' + characterId + ': ' +
-                ((result && result.reason) || 'unknown'), []);
-            return { paid: false, reason: (result && result.reason) || 'command-failed' };
-        }
-
-        _log('economy', 'government_salary_paid',
-            'Salary ' + salary + ' gold paid to household "' + household.name + '" for ' + position.name,
-            []);
-
-        return { paid: true, amount: salary, householdId: household.id };
-    }
-
-    // ---- Department commands -------------------------------------------------
-
-    function createDepartment(data) {
-        var v = _Rules.validateDepartment(data, false);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        var dept = {
-            id: window.generateId('govdept'),
-            name: data.name.trim(),
-            description: data.description || '',
-            locationId: data.locationId,
-            parentDepartmentId: data.parentDepartmentId || null,
-            positions: [],
-            assignments: [],
-            isDeprecated: false,
-            createdAt: _now(),
-            updatedAt: _now()
-        };
-
-        State._addDepartmentRecord(dept);
-        _commit();
-
-        var loc = _LocationQueries.getPlaceSummary
-            ? _LocationQueries.getPlaceSummary(dept.locationId)
+    function _placeSummary(locationId) {
+        if (!locationId) return null;
+        return _LocationQueries.getPlaceSummary
+            ? _LocationQueries.getPlaceSummary(locationId)
             : null;
-        _log('government', 'department_created',
-            'Department "' + dept.name + '" created at ' +
-            (loc ? loc.displayName : dept.locationId), []);
-
-        return _ok({ id: dept.id, departmentId: dept.id });
     }
 
-    function updateDepartment(departmentId, updates) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var v = _Rules.validateDepartment(updates, true, departmentId);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        State._updateDepartmentRecord(departmentId, updates);
-        _commit();
-
-        _log('government', 'department_updated', 'Department "' + dept.name + '" updated', []);
-        return _ok({ id: departmentId, departmentId: departmentId });
+    function _roleSummary(roleId) {
+        if (!roleId) return null;
+        return _RoleQueries.getRoleSummary ? _RoleQueries.getRoleSummary(roleId) : null;
     }
 
-    function deleteDepartment(departmentId, options) {
+    function _rankSummary(rankId) {
+        if (!rankId) return null;
+        return _RoleQueries.getRankSummary ? _RoleQueries.getRankSummary(rankId) : null;
+    }
+
+    function _charFacts(characterId) {
+        if (!characterId) return null;
+        return _CharacterQueries.getCharacterFacts(characterId);
+    }
+
+    // ---- Department reads ----------------------------------------------------
+
+    function getDepartment(departmentId) {
+        var dept = State.getDepartmentById(departmentId);
+        if (!dept) return null;
+        return _projectDepartment(dept);
+    }
+
+    function getDepartments(options) {
         options = options || {};
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+        var all = State.getAllDepartments();
+        var out = [];
 
-        var cascade = !!options.cascade;
-        var impact = Queries.getDepartmentDeletionImpact(departmentId);
-
-        if (!cascade) {
-            if (impact.hasChildren) {
-                return _fail('Department has ' + impact.childDepartmentCount +
-                    ' child departments. Use cascade to delete them.', 'HAS_CHILDREN');
+        for (var i = 0; i < all.length; i++) {
+            var d = all[i];
+            if (!options.includeDeprecated && d.isDeprecated) continue;
+            if (options.locationId && d.locationId !== options.locationId) continue;
+            if (options.parentDepartmentId !== undefined) {
+                if (options.parentDepartmentId === null && d.parentDepartmentId) continue;
+                if (options.parentDepartmentId !== null && d.parentDepartmentId !== options.parentDepartmentId) continue;
             }
-            if (impact.hasActiveAssignments) {
-                return _fail('Department has ' + impact.activeAssignmentCount +
-                    ' active assignments. Use cascade to remove them.', 'HAS_ASSIGNMENTS');
-            }
+            out.push(_projectDepartment(d));
         }
 
-        var name = dept.name;
-        _deleteDepartmentCascadeInternal(departmentId);
-        _commit();
-
-        _log('government', 'department_deleted',
-            'Department "' + name + '" deleted' + (cascade ? ' (cascade)' : ''), []);
-
-        return _ok({ id: departmentId });
+        _sortDepartments(out, options.sortBy, options.sortOrder);
+        return out;
     }
 
-    function _deleteDepartmentCascadeInternal(departmentId) {
-        var children = State._getDepartmentRecordsByParent(departmentId);
-        for (var i = 0; i < children.length; i++) {
-            _deleteDepartmentCascadeInternal(children[i].id);
+    function getDepartmentsByLocation(locationId, options) {
+        options = options || {};
+        var all = State.getDepartmentsByLocationId(locationId);
+        var out = [];
+        for (var i = 0; i < all.length; i++) {
+            if (!options.includeDeprecated && all[i].isDeprecated) continue;
+            out.push(_projectDepartment(all[i]));
         }
-        State._deleteDepartmentRecord(departmentId);
+        _sortDepartments(out, options.sortBy, options.sortOrder);
+        return out;
     }
 
-    // ---- Position commands ---------------------------------------------------
+    function getDepartmentChildren(departmentId) {
+        var arr = State.getDepartmentsByParentId(departmentId);
+        var out = [];
+        for (var i = 0; i < arr.length; i++) out.push(_projectDepartment(arr[i]));
+        return out;
+    }
 
-    function addPosition(departmentId, data) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+    function getDepartmentDescendants(departmentId) {
+        var out = [];
+        var queue = [departmentId];
+        while (queue.length > 0) {
+            var current = queue.shift();
+            var children = State.getDepartmentsByParentId(current);
+            for (var i = 0; i < children.length; i++) {
+                out.push(_projectDepartment(children[i]));
+                queue.push(children[i].id);
+            }
+        }
+        return out;
+    }
 
-        var v = _Rules.validatePosition(data, false);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
+    function getDepartmentPath(departmentId) {
+        var path = [];
+        var current = State.getDepartmentById(departmentId);
+        var guard = 0;
+        while (current && guard < 100) {
+            path.unshift(_projectDepartment(current));
+            if (!current.parentDepartmentId) break;
+            current = State.getDepartmentById(current.parentDepartmentId);
+            guard++;
+        }
+        return path;
+    }
 
-        var position = {
-            id: window.generateId('govpos'),
-            name: data.name.trim(),
-            description: data.description || '',
-            priority: data.priority != null ? data.priority : _Rules.DEFAULT_POSITION_PRIORITY,
-            parentPositionId: data.parentPositionId || null,
-            requiredRoleId: data.requiredRoleId || null,
-            minSkillLevel: data.minSkillLevel != null ? data.minSkillLevel : _Rules.DEFAULT_MIN_SKILL_LEVEL,
-            genderRestriction: data.genderRestriction || 'either',
-            requiredRankId: data.requiredRankId || null,
-            minExperience: data.minExperience != null ? data.minExperience : 0,
-            salaryOverrides: []
+    function getDepartmentTree(options) {
+        options = options || {};
+        var roots = getDepartments({
+            locationId: options.locationId,
+            includeDeprecated: options.includeDeprecated,
+            sortBy: options.sortBy,
+            sortOrder: options.sortOrder
+        }).filter(function(d) { return !d.parentDepartmentId; });
+
+        function _attach(node) {
+            var children = getDepartmentChildren(node.id);
+            node.children = [];
+            for (var i = 0; i < children.length; i++) {
+                children[i].children = _attach(children[i]).children;
+                node.children.push(children[i]);
+            }
+            return node;
+        }
+
+        for (var i = 0; i < roots.length; i++) _attach(roots[i]);
+        return roots;
+    }
+
+    function getDepartmentDetails(departmentId) {
+        var dept = State.getDepartmentById(departmentId);
+        if (!dept) return null;
+
+        var projected = _projectDepartment(dept);
+        var positions = State.getPositionsByDepartmentId(departmentId);
+        var assignments = State.getAssignmentsByDepartmentId(departmentId, false);
+
+        var projectedPositions = [];
+        for (var p = 0; p < positions.length; p++) {
+            projectedPositions.push(_projectPosition(departmentId, positions[p]));
+        }
+
+        var projectedAssignments = [];
+        for (var a = 0; a < assignments.length; a++) {
+            projectedAssignments.push(_projectAssignment(departmentId, assignments[a]));
+        }
+
+        return {
+            id: projected.id,
+            name: projected.name,
+            description: projected.description,
+            locationId: projected.locationId,
+            locationName: projected.locationName,
+            parentDepartmentId: projected.parentDepartmentId,
+            parentDepartmentName: projected.parentDepartmentName,
+            isDeprecated: projected.isDeprecated,
+            createdAt: projected.createdAt,
+            updatedAt: projected.updatedAt,
+            positionCount: projected.positionCount,
+            rolePositionCount: projected.rolePositionCount,
+            assignmentCount: projected.assignmentCount,
+            activeAssignmentCount: projected.activeAssignmentCount,
+            positions: projectedPositions,
+            assignments: projectedAssignments
         };
-
-        State._addPositionRecord(departmentId, position);
-        _commit();
-
-        _log('government', 'position_added',
-            'Position "' + position.name + '" added to "' + dept.name + '"', []);
-
-        return _ok({ id: position.id, positionId: position.id, departmentId: departmentId });
     }
 
-    function updatePosition(departmentId, positionId, updates) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+    function getDepartmentDeletionImpact(departmentId) {
+        var dept = State.getDepartmentById(departmentId);
+        if (!dept) return null;
 
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
+        var children = State.getDepartmentsByParentId(departmentId);
+        var descendants = getDepartmentDescendants(departmentId);
+        var activeAssignments = State.getAssignmentsByDepartmentId(departmentId, true);
 
-        var v = _Rules.validatePosition(updates, true);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        if (updates.parentPositionId !== undefined && updates.parentPositionId) {
-            var hier = _Rules.validatePositionHierarchy(
-                departmentId,
-                positionId,
-                updates.parentPositionId,
-                State._getPositionRecord
-            );
-            if (!hier.valid) return _fail(hier.reason, 'CYCLE');
-        }
-
-        State._updatePositionRecord(departmentId, positionId, updates);
-        _commit();
-
-        _log('government', 'position_updated',
-            'Position "' + pos.name + '" updated in "' + dept.name + '"', []);
-
-        return _ok({ id: positionId, positionId: positionId, departmentId: departmentId });
-    }
-
-    function deletePosition(departmentId, positionId) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var active = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
-        if (active.length > 0) {
-            return _fail('Position has ' + active.length + ' active assignment(s). Remove them first.', 'HAS_ASSIGNMENTS');
-        }
-
-        State._deletePositionRecord(departmentId, positionId);
-        _commit();
-
-        _log('government', 'position_deleted',
-            'Position "' + pos.name + '" deleted from "' + dept.name + '"', []);
-
-        return _ok({ id: positionId });
-    }
-
-    // ---- Assignment commands -------------------------------------------------
-
-    function assignCharacterToPosition(departmentId, positionId, characterId, options) {
-        var result = _assignInternal(departmentId, positionId, characterId, options || {});
-        if (!result.success) return result;
-
-        _commit();
-        _emitAssignmentEvent(result.data);
-
-        // Salary payment is a cross-domain side effect. It runs after the
-        // assignment commit so a salary failure cannot leave a half-applied
-        // assignment. The outcome is included in the result.
-        var salaryOutcome = _payAssignmentSalary(
-            characterId,
-            State._getPositionRecord(departmentId, positionId),
-            State._getDepartmentRecord(departmentId)
-        );
-        result.data.salary = salaryOutcome;
-
-        return result;
-    }
-
-    function _assignInternal(departmentId, positionId, characterId, options) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
-        if (!charFacts) return _fail('Character not found', 'NOT_FOUND');
-        if (charFacts.isDeceased) return _fail('Character is deceased', 'DECEASED');
-
-        var existing = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
-        for (var i = 0; i < existing.length; i++) {
-            if (existing[i].characterId === characterId) {
-                return _fail('Character already assigned to this position', 'ALREADY_ASSIGNED');
-            }
-        }
-
-        var plan = _Rules.planAssignment({
-            position: {
-                requiredRoleId: pos.requiredRoleId,
-                minSkillLevel: pos.minSkillLevel,
-                genderRestriction: pos.genderRestriction,
-                requiredRankId: pos.requiredRankId,
-                minExperience: pos.minExperience
-            },
-            character: charFacts,
-            options: {
-                startYear: options.startYear != null ? options.startYear : _now(),
-                defaultSkillLevel: options.defaultSkillLevel != null
-                    ? options.defaultSkillLevel
-                    : _Rules.DEFAULT_SKILL_LEVEL,
-                addRoleIfMissing: options.addRoleIfMissing !== false
-            }
-        });
-
-        if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
-
-        if (plan.roleToAdd && _CharacterCommands) {
-            var addResult = _CharacterCommands.addProfession(characterId, plan.roleToAdd.roleId, {
-                skillLevel: plan.roleToAdd.skillLevel,
-                startYear: plan.startYear
-            });
-            if (!addResult || !addResult.success) {
-                return _fail('Failed to add required profession', 'PROFESSION_FAILED');
-            }
-        }
-
-        var assignment = {
-            id: window.generateId('govassign'),
-            positionId: positionId,
-            characterId: characterId,
-            characterName: charFacts.fullName,
-            startYear: plan.startYear,
-            endYear: options.endYear != null ? options.endYear : null,
-            endReason: null,
-            title: options.title || pos.name,
-            notes: options.notes || '',
-            roleIdAtAssignment: pos.requiredRoleId || null,
-            skillLevelAtAssignment: plan.skillLevel != null ? plan.skillLevel : null
-        };
-
-        State._addAssignmentRecord(departmentId, assignment);
-        return _ok({
-            assignmentId: assignment.id,
+        return {
             departmentId: departmentId,
-            characterId: characterId
-        });
+            hasChildren: children.length > 0,
+            childDepartmentCount: children.length,
+            descendantDepartmentCount: descendants.length,
+            hasActiveAssignments: activeAssignments.length > 0,
+            activeAssignmentCount: activeAssignments.length
+        };
     }
 
-    function _emitAssignmentEvent(data) {
-        var dept = State._getDepartmentRecord(data.departmentId);
-        var asg = State._getAssignmentRecord(data.departmentId, data.assignmentId);
-        var pos = asg ? State._getPositionRecord(data.departmentId, asg.positionId) : null;
-        var charFacts = _CharacterQueries.getCharacterFacts(data.characterId);
-        _log('government', 'character_assigned',
-            (charFacts ? charFacts.fullName : data.characterId) +
-            ' assigned to "' + (pos ? pos.name : '?') + '" in "' + (dept ? dept.name : '?') + '"', []);
-    }
+    function _projectDepartment(d) {
+        if (!d) return null;
 
-    function endAssignment(departmentId, assignmentId, endYear, reason) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+        var loc = _placeSummary(d.locationId);
+        var parent = d.parentDepartmentId ? State.getDepartmentById(d.parentDepartmentId) : null;
 
-        var a = State._getAssignmentRecord(departmentId, assignmentId);
-        if (!a) return _fail('Assignment not found', 'NOT_FOUND');
-        if (a.endYear !== null && a.endYear !== undefined) return _fail('Assignment already ended', 'ALREADY_ENDED');
+        var positions = d.positions || [];
+        var assignments = d.assignments || [];
 
-        var endYearValue = endYear != null ? endYear : _now();
-        if (endYearValue <= a.startYear) {
-            return _fail('End year must be after start year (' + a.startYear + ')', 'VALIDATION');
+        var rolePositionCount = 0;
+        for (var p = 0; p < positions.length; p++) {
+            if (positions[p].requiredRoleId) rolePositionCount++;
         }
 
-        State._updateAssignmentRecord(departmentId, assignmentId, {
-            endYear: endYearValue,
-            endReason: reason || 'Term ended'
+        var activeCount = 0;
+        for (var a = 0; a < assignments.length; a++) {
+            if (_isActiveAssignment(assignments[a])) activeCount++;
+        }
+
+        return {
+            id: d.id,
+            name: d.name,
+            description: d.description || '',
+            locationId: d.locationId,
+            locationName: loc ? loc.displayName : null,
+            parentDepartmentId: d.parentDepartmentId || null,
+            parentDepartmentName: parent ? parent.name : null,
+            isDeprecated: !!d.isDeprecated,
+            createdAt: d.createdAt,
+            updatedAt: d.updatedAt,
+            positionCount: positions.length,
+            rolePositionCount: rolePositionCount,
+            assignmentCount: assignments.length,
+            activeAssignmentCount: activeCount
+        };
+    }
+
+    function _sortDepartments(arr, sortBy, sortOrder) {
+        var key = sortBy || 'name';
+        var dir = sortOrder === 'desc' ? -1 : 1;
+        arr.sort(function(a, b) {
+            var av, bv;
+            switch (key) {
+                case 'createdAt': av = a.createdAt || 0; bv = b.createdAt || 0; break;
+                case 'positionCount': av = a.positionCount; bv = b.positionCount; break;
+                case 'activeAssignmentCount': av = a.activeAssignmentCount; bv = b.activeAssignmentCount; break;
+                case 'assignmentCount': av = a.assignmentCount; bv = b.assignmentCount; break;
+                case 'name':
+                default: av = (a.name || '').toLowerCase(); bv = (b.name || '').toLowerCase();
+            }
+            if (av < bv) return -1 * dir;
+            if (av > bv) return 1 * dir;
+            return String(a.id).localeCompare(String(b.id));
         });
-        _commit();
-
-        var charFacts = _CharacterQueries.getCharacterFacts(a.characterId);
-        _log('government', 'assignment_ended',
-            (charFacts ? charFacts.fullName : a.characterId) + ' ended assignment at "' + dept.name + '"' +
-            (reason ? ' (' + reason + ')' : ''), []);
-
-        return _ok({ id: assignmentId });
     }
 
-    function removeAssignment(departmentId, assignmentId) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
+    // ---- Position reads ------------------------------------------------------
 
-        var a = State._getAssignmentRecord(departmentId, assignmentId);
-        if (!a) return _fail('Assignment not found', 'NOT_FOUND');
-
-        State._deleteAssignmentRecord(departmentId, assignmentId);
-        _commit();
-
-        var charFacts = _CharacterQueries.getCharacterFacts(a.characterId);
-        _log('government', 'assignment_removed',
-            (charFacts ? charFacts.fullName : a.characterId) + ' removed from assignment at "' + dept.name + '"', []);
-
-        return _ok({ id: assignmentId });
+    function getPosition(departmentId, positionId) {
+        var pos = State.getPositionById(departmentId, positionId);
+        if (!pos) return null;
+        return _projectPosition(departmentId, pos);
     }
 
-    function bulkAssignCharacters(departmentId, positionId, assignments, options) {
+    function getPositionsForDepartment(departmentId, options) {
         options = options || {};
-        var mode = options.mode === 'atomic' ? 'atomic' : 'best-effort';
-        var applied = [];
-        var failures = [];
+        var arr = State.getPositionsByDepartmentId(departmentId);
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+            out.push(_projectPosition(departmentId, arr[i]));
+        }
+        _sortPositions(out, options.sortBy, options.sortOrder);
+        return out;
+    }
 
-        var plans = [];
+    function getPositionPath(departmentId, positionId) {
+        var path = [];
+        var current = State.getPositionById(departmentId, positionId);
+        var guard = 0;
+        while (current && guard < 100) {
+            path.unshift(_projectPosition(departmentId, current));
+            if (!current.parentPositionId) break;
+            current = State.getPositionById(departmentId, current.parentPositionId);
+            guard++;
+        }
+        return path;
+    }
+
+    function searchPositions(options) {
+        options = options || {};
+        var term = options.term ? String(options.term).toLowerCase() : '';
+        var departmentId = options.departmentId || null;
+        var requiredRoleId = options.requiredRoleId || null;
+
+        var pool = [];
+        if (departmentId) {
+            pool = State.getPositionsByDepartmentId(departmentId);
+        } else {
+            var depts = State.getAllDepartments();
+            for (var i = 0; i < depts.length; i++) {
+                var pos = State.getPositionsByDepartmentId(depts[i].id);
+                for (var j = 0; j < pos.length; j++) pool.push({ deptId: depts[i].id, position: pos[j] });
+            }
+        }
+
+        var out = [];
+        for (var k = 0; k < pool.length; k++) {
+            var entry = pool[k];
+            var deptId = entry.deptId || departmentId;
+            var pos = entry.position || entry;
+
+            if (requiredRoleId && pos.requiredRoleId !== requiredRoleId) continue;
+            if (term) {
+                var name = (pos.name || '').toLowerCase();
+                var desc = (pos.description || '').toLowerCase();
+                if (name.indexOf(term) === -1 && desc.indexOf(term) === -1) continue;
+            }
+            out.push(_projectPosition(deptId, pos));
+        }
+        return out;
+    }
+
+    function _projectPosition(departmentId, p) {
+        if (!p) return null;
+
+        var role = _roleSummary(p.requiredRoleId);
+        var rank = _rankSummary(p.requiredRankId);
+        var parent = p.parentPositionId ? State.getPositionById(departmentId, p.parentPositionId) : null;
+
+        var assignments = State.getAssignmentsByPositionId(departmentId, p.id, false);
+        var activeCount = 0;
         for (var i = 0; i < assignments.length; i++) {
-            var input = assignments[i];
-            var plan = _planAssignmentStandalone(departmentId, positionId, input.characterId, input);
-            if (plan.success) plans.push({ input: input, data: plan.data });
-            else failures.push({ input: input, reason: plan.reason, code: plan.code });
+            if (_isActiveAssignment(assignments[i])) activeCount++;
         }
 
-        if (mode === 'atomic' && failures.length > 0) {
-            return _fail('Bulk assignment aborted: ' + failures.length + ' invalid input(s)', 'ATOMIC_ABORT');
-        }
-
-        var dept = State._getDepartmentRecord(departmentId);
-        var pos = State._getPositionRecord(departmentId, positionId);
-
-        for (var j = 0; j < plans.length; j++) {
-            var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
-            if (res.success) {
-                applied.push(res.data);
-                // Pay salary per successful assignment.
-                var salary = _payAssignmentSalary(plans[j].data.characterId, pos, dept);
-                res.data.salary = salary;
-            } else {
-                failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
-            }
-        }
-
-        if (applied.length > 0) _commit();
-
-        return _ok({
-            applied: applied.length,
-            failed: failures.length,
-            results: applied,
-            failures: failures
-        });
-    }
-
-    function _planAssignmentStandalone(departmentId, positionId, characterId, options) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
-        if (!charFacts) return _fail('Character not found', 'NOT_FOUND');
-        if (charFacts.isDeceased) return _fail('Character is deceased', 'DECEASED');
-
-        var existing = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
-        for (var i = 0; i < existing.length; i++) {
-            if (existing[i].characterId === characterId) return _fail('Already assigned', 'ALREADY_ASSIGNED');
-        }
-
-        var plan = _Rules.planAssignment({
-            position: {
-                requiredRoleId: pos.requiredRoleId,
-                minSkillLevel: pos.minSkillLevel,
-                genderRestriction: pos.genderRestriction,
-                requiredRankId: pos.requiredRankId,
-                minExperience: pos.minExperience
-            },
-            character: charFacts,
-            options: {
-                startYear: options.startYear != null ? options.startYear : _now(),
-                defaultSkillLevel: options.defaultSkillLevel != null
-                    ? options.defaultSkillLevel
-                    : _Rules.DEFAULT_SKILL_LEVEL,
-                addRoleIfMissing: options.addRoleIfMissing !== false
-            }
-        });
-        if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
-
-        return _ok({
-            characterId: characterId,
-            pos: pos,
-            charFacts: charFacts,
-            plan: plan,
-            options: options
-        });
-    }
-
-    function _applyAssignmentPlan(departmentId, positionId, planData) {
-        var plan = planData.plan;
-        var pos = planData.pos;
-        var charFacts = planData.charFacts;
-        var options = planData.options;
-
-        if (plan.roleToAdd && _CharacterCommands) {
-            var addResult = _CharacterCommands.addProfession(planData.characterId, plan.roleToAdd.roleId, {
-                skillLevel: plan.roleToAdd.skillLevel,
-                startYear: plan.startYear
-            });
-            if (!addResult || !addResult.success) {
-                return _fail('Failed to add required profession', 'PROFESSION_FAILED');
-            }
-        }
-
-        var assignment = {
-            id: window.generateId('govassign'),
-            positionId: positionId,
-            characterId: planData.characterId,
-            characterName: charFacts.fullName,
-            startYear: plan.startYear,
-            endYear: options.endYear != null ? options.endYear : null,
-            endReason: null,
-            title: options.title || pos.name,
-            notes: options.notes || '',
-            roleIdAtAssignment: pos.requiredRoleId || null,
-            skillLevelAtAssignment: plan.skillLevel != null ? plan.skillLevel : null
+        return {
+            id: p.id,
+            departmentId: departmentId,
+            name: p.name,
+            description: p.description || '',
+            priority: p.priority,
+            parentPositionId: p.parentPositionId || null,
+            parentPositionName: parent ? parent.name : null,
+            requiredRoleId: p.requiredRoleId || null,
+            requiredRoleName: role ? role.name : null,
+            minSkillLevel: p.minSkillLevel,
+            genderRestriction: p.genderRestriction || C.GENDER_EITHER,
+            requiredRankId: p.requiredRankId || null,
+            requiredRankName: rank ? rank.name : null,
+            minExperience: p.minExperience != null ? p.minExperience : 0,
+            assignmentCount: assignments.length,
+            activeAssignmentCount: activeCount,
+            salaryOverrides: (p.salaryOverrides || []).slice()
         };
-        State._addAssignmentRecord(departmentId, assignment);
-        _log('government', 'character_assigned',
-            charFacts.fullName + ' assigned to "' + pos.name + '" (bulk)', []);
-        return _ok({ assignmentId: assignment.id, characterId: planData.characterId });
     }
 
-    // ---- Salary override (position) ------------------------------------------
+    function _sortPositions(arr, sortBy, sortOrder) {
+        var key = sortBy || 'priority';
+        var dir = sortOrder === 'desc' ? -1 : 1;
+        arr.sort(function(a, b) {
+            var av, bv;
+            switch (key) {
+                case 'name': av = (a.name || '').toLowerCase(); bv = (b.name || '').toLowerCase(); break;
+                case 'assignmentCount': av = a.assignmentCount; bv = b.assignmentCount; break;
+                case 'priority':
+                default: av = a.priority; bv = b.priority;
+            }
+            if (av < bv) return -1 * dir;
+            if (av > bv) return 1 * dir;
+            return String(a.id).localeCompare(String(b.id));
+        });
+    }
 
-    function updatePositionSalary(departmentId, positionId, newSalary, options) {
+    // ---- Assignment reads ----------------------------------------------------
+
+    function getAssignment(departmentId, assignmentId) {
+        var a = State.getAssignmentById(departmentId, assignmentId);
+        if (!a) return null;
+        return _projectAssignment(departmentId, a);
+    }
+
+    function getAssignmentsForDepartment(departmentId, options) {
         options = options || {};
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var v = _Rules.validateSalaryUpdate(positionId, newSalary);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        State._appendSalaryOverrideRecord(departmentId, positionId, {
-            salary: newSalary,
-            year: options.year != null ? options.year : _now(),
-            reason: options.reason || 'Manual adjustment'
-        });
-        _commit();
-
-        _log('economy', 'salary_overridden',
-            'Salary for "' + pos.name + '" in "' + dept.name + '" set to ' + newSalary, []);
-
-        return _ok({ positionId: positionId, salary: newSalary });
+        var activeOnly = !!options.activeOnly;
+        var arr = State.getAssignmentsByDepartmentId(departmentId, activeOnly);
+        var out = [];
+        for (var i = 0; i < arr.length; i++) out.push(_projectAssignment(departmentId, arr[i]));
+        return out;
     }
 
-    // ---- Government type commands --------------------------------------------
+    function getAssignmentsForPosition(departmentId, positionId, options) {
+        options = options || {};
+        var activeOnly = !!options.activeOnly;
+        var arr = State.getAssignmentsByPositionId(departmentId, positionId, activeOnly);
+        var out = [];
+        for (var i = 0; i < arr.length; i++) out.push(_projectAssignment(departmentId, arr[i]));
+        return out;
+    }
 
-    function createGovernmentType(data) {
-        var v = _Rules.validateGovernmentType(data, false);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
+    function getAssignmentsForCharacter(characterId, options) {
+        options = options || {};
+        var activeOnly = !!options.activeOnly;
+        var pairs = State.getAssignmentsByCharacterId(characterId, activeOnly);
+        var out = [];
+        for (var i = 0; i < pairs.length; i++) {
+            out.push(_projectAssignment(pairs[i].departmentId, pairs[i].assignment));
+        }
+        return out;
+    }
 
-        var type = {
-            id: window.generateId('govtype'),
-            name: data.name.trim(),
-            description: data.description || '',
-            allowedRankIds: (data.allowedRankIds || []).slice(),
-            icon: data.icon || ''
+    function getAssignmentHistory(departmentId, positionId, characterId, options) {
+        options = options || {};
+        var limit = options.limit != null ? options.limit : null;
+
+        var out = [];
+
+        if (departmentId && positionId) {
+            var arr = State.getAssignmentsByPositionId(departmentId, positionId, false);
+            for (var i = 0; i < arr.length; i++) {
+                if (characterId && arr[i].characterId !== characterId) continue;
+                out.push(_projectAssignmentHistoryEntry(departmentId, arr[i]));
+            }
+        } else if (departmentId) {
+            var all = State.getAssignmentsByDepartmentId(departmentId, false);
+            for (var j = 0; j < all.length; j++) {
+                if (characterId && all[j].characterId !== characterId) continue;
+                out.push(_projectAssignmentHistoryEntry(departmentId, all[j]));
+            }
+        } else if (characterId) {
+            var pairs = State.getAssignmentsByCharacterId(characterId, false);
+            for (var k = 0; k < pairs.length; k++) {
+                out.push(_projectAssignmentHistoryEntry(pairs[k].departmentId, pairs[k].assignment));
+            }
+        }
+
+        out.sort(function(a, b) {
+            var ay = a.startYear != null ? a.startYear : 0;
+            var by = b.startYear != null ? b.startYear : 0;
+            if (by !== ay) return by - ay;
+            return String(a.id).localeCompare(String(b.id));
+        });
+
+        if (limit != null && limit > 0) out = out.slice(0, limit);
+        return out;
+    }
+
+    function _projectAssignment(departmentId, a) {
+        if (!a) return null;
+        var position = a.positionId ? State.getPositionById(departmentId, a.positionId) : null;
+        var role = a.roleIdAtAssignment ? _roleSummary(a.roleIdAtAssignment) : null;
+
+        return {
+            id: a.id,
+            departmentId: departmentId,
+            positionId: a.positionId,
+            positionName: position ? position.name : null,
+            characterId: a.characterId,
+            characterName: a.characterName,
+            startYear: a.startYear,
+            endYear: a.endYear != null ? a.endYear : null,
+            endReason: a.endReason || null,
+            title: a.title || null,
+            notes: a.notes || '',
+            roleIdAtAssignment: a.roleIdAtAssignment || null,
+            roleNameAtAssignment: role ? role.name : null,
+            skillLevelAtAssignment: a.skillLevelAtAssignment != null ? a.skillLevelAtAssignment : null,
+            isActive: _isActiveAssignment(a)
+        };
+    }
+
+    function _projectAssignmentHistoryEntry(departmentId, a) {
+        var projected = _projectAssignment(departmentId, a);
+        var duration = null;
+        if (a.startYear != null && a.endYear != null) {
+            duration = Math.max(0, a.endYear - a.startYear);
+        }
+        projected.duration = duration;
+        return projected;
+    }
+
+    // ---- Candidate / succession ---------------------------------------------
+
+    function getQualifiedCandidates(departmentId, positionId, options) {
+        options = options || {};
+        var limit = options.limit != null ? options.limit : null;
+
+        var position = State.getPositionById(departmentId, positionId);
+        if (!position) return [];
+
+        var positionFacts = {
+            requiredRoleId: position.requiredRoleId,
+            minSkillLevel: position.minSkillLevel,
+            genderRestriction: position.genderRestriction,
+            requiredRankId: position.requiredRankId,
+            minExperience: position.minExperience
         };
 
-        State._addGovernmentTypeRecord(type);
-        _commit();
+        var existing = State.getAssignmentsByPositionId(departmentId, positionId, true);
+        var assigned = {};
+        for (var e = 0; e < existing.length; e++) assigned[existing[e].characterId] = true;
 
-        _log('government', 'type_created', 'Government type "' + type.name + '" created', []);
-        return _ok({ id: type.id, governmentTypeId: type.id });
-    }
+        var allFacts = _CharacterQueries.getAllCharacterFacts();
+        var out = [];
+        for (var i = 0; i < allFacts.length; i++) {
+            var f = allFacts[i];
+            if (f.isDeceased) continue;
+            if (assigned[f.id]) continue;
 
-    function updateGovernmentType(typeId, updates) {
-        var type = State._getGovernmentTypeRecord(typeId);
-        if (!type) return _fail('Government type not found', 'NOT_FOUND');
+            var elig = Rules.checkPositionEligibility(f, positionFacts);
+            if (!elig.eligible) continue;
 
-        var v = _Rules.validateGovernmentType(updates, true);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
+            var rankSummary = _rankSummary(f.activeRankId);
+            var rankPriority = rankSummary && rankSummary.priority != null ? rankSummary.priority : null;
 
-        State._updateGovernmentTypeRecord(typeId, {
-            name: updates.name !== undefined ? updates.name : undefined,
-            description: updates.description,
-            allowedRankIds: updates.allowedRankIds,
-            icon: updates.icon
+            var score = Rules.scoreCandidate({
+                age: f.age,
+                experienceYears: f.experienceYears,
+                rankPriority: rankPriority
+            });
+
+            var skillLevel = position.requiredRoleId && f.skillLevels
+                ? f.skillLevels[position.requiredRoleId]
+                : null;
+
+            out.push({
+                characterId: f.id,
+                characterName: f.fullName,
+                age: f.age,
+                experience: f.experienceYears || 0,
+                rankId: f.activeRankId || null,
+                rankName: rankSummary ? rankSummary.name : null,
+                skillLevel: skillLevel != null ? skillLevel : null,
+                score: score,
+                isReady: Rules.isCandidateReady({
+                    age: f.age,
+                    experienceYears: f.experienceYears
+                })
+            });
+        }
+
+        out.sort(function(a, b) {
+            return Rules.compareCandidates(
+                { score: a.score, experienceYears: a.experience, age: a.age, characterId: a.characterId },
+                { score: b.score, experienceYears: b.experience, age: b.age, characterId: b.characterId }
+            );
         });
-        _commit();
 
-        _log('government', 'type_updated', 'Government type "' + type.name + '" updated', []);
-        return _ok({ id: typeId, governmentTypeId: typeId });
+        if (limit != null && limit > 0) out = out.slice(0, limit);
+        return out;
     }
 
-    function deleteGovernmentType(typeId) {
-        var type = State._getGovernmentTypeRecord(typeId);
-        if (!type) return _fail('Government type not found', 'NOT_FOUND');
+    function getSuccessionPlan(departmentId, positionId) {
+        var position = State.getPositionById(departmentId, positionId);
+        if (!position) return null;
 
-        var usage = _LocationQueries.getPlacesUsingGovernmentType
-            ? _LocationQueries.getPlacesUsingGovernmentType(typeId)
-            : [];
-        if (usage && usage.length > 0) {
-            return _fail('Cannot delete: used by ' + usage.length + ' location(s)', 'IN_USE');
-        }
+        var currentAssignments = State.getAssignmentsByPositionId(departmentId, positionId, true);
+        var currentHolder = currentAssignments.length > 0 ? {
+            assignmentId: currentAssignments[0].id,
+            characterId: currentAssignments[0].characterId,
+            characterName: currentAssignments[0].characterName,
+            startYear: currentAssignments[0].startYear,
+            title: currentAssignments[0].title
+        } : null;
 
-        var name = type.name;
-        State._deleteGovernmentTypeRecord(typeId);
-        _commit();
-
-        _log('government', 'type_deleted', 'Government type "' + name + '" deleted', []);
-        return _ok({ id: typeId });
-    }
-
-    // ---- Leader / place government (delegated to Location) -------------------
-
-    function assignLeader(placeId, characterId, startYear, title) {
-        var result = _LocationCommands.assignLeader(placeId, characterId, startYear, title);
-        if (result && result.success !== false) {
-            var c = _CharacterQueries.getCharacterFacts(characterId);
-            _log('leadership', 'assigned',
-                (c ? c.fullName : characterId) + ' assigned as leader of ' + placeId, []);
-        }
-        return _wrapLocationResult(result);
-    }
-
-    function endLeaderTerm(placeId, characterId, endYear) {
-        var result = _LocationCommands.endLeaderTerm(placeId, characterId, endYear);
-        if (result && result.success !== false) {
-            _log('leadership', 'term_ended', 'Leader term ended at ' + placeId, []);
-        }
-        return _wrapLocationResult(result);
-    }
-
-    function assignGovernmentToPlace(placeId, govTypeId, govStyle) {
-        var result = _LocationCommands.assignGovernment(placeId, govTypeId, govStyle);
-        if (result && result.success !== false) {
-            _log('government', 'assigned_to_place', 'Government assigned to ' + placeId, []);
-        }
-        return _wrapLocationResult(result);
-    }
-
-    function _wrapLocationResult(result) {
-        if (result === true || (result && result.success !== false)) {
-            return _ok(result === true ? null : result.data || null);
-        }
-        return _fail((result && result.reason) || 'Location command failed', 'LOCATION_FAILED');
-    }
-
-    // ---- Justice / watch (delegated to Settlement) ---------------------------
-
-    function updateJusticeSeverity(locationId, severity) {
-        var result = _SettlementGovCmds.setJusticeSeverity(locationId, severity);
-        if (result && result.success) {
-            _log('justice', 'severity_updated',
-                'Justice severity at ' + locationId + ' set to ' + severity, []);
-        }
-        return _wrapSettlementResult(result);
-    }
-
-    function updateWatch(locationId, hasWatch, size) {
-        var result = _SettlementGovCmds.setWatch(locationId, {
-            hasWatch: !!hasWatch,
-            watchSize: hasWatch ? (size != null ? size : 0) : 0
+        var candidates = getQualifiedCandidates(departmentId, positionId, {
+            limit: C.SUCCESSION_CANDIDATE_LIMIT
         });
-        if (result && result.success) {
-            _log('justice', 'watch_updated', 'Watch at ' + locationId + ' updated', []);
-        }
-        return _wrapSettlementResult(result);
+
+        return {
+            positionId: positionId,
+            positionName: position.name,
+            departmentId: departmentId,
+            currentHolder: currentHolder,
+            candidates: candidates.map(function(c) {
+                return {
+                    characterId: c.characterId,
+                    characterName: c.characterName,
+                    age: c.age,
+                    experience: c.experience,
+                    rank: c.rankName,
+                    isReady: c.isReady,
+                    score: c.score
+                };
+            }),
+            hasSuccessor: candidates.length > 0,
+            successorCount: candidates.length,
+            topCandidate: candidates.length > 0 ? {
+                characterId: candidates[0].characterId,
+                characterName: candidates[0].characterName
+            } : null
+        };
     }
 
-    function _wrapSettlementResult(result) {
-        if (result && result.success) return _ok(result);
-        if (result && result.code) return _fail(result.reason || result.code, result.code);
-        return _fail('Settlement command failed', 'SETTLEMENT_FAILED');
+    function analyzeAssignmentHistory(departmentId) {
+        var dept = State.getDepartmentById(departmentId);
+        if (!dept) return null;
+
+        var assignments = State.getAssignmentsByDepartmentId(departmentId, false);
+
+        var analysis = {
+            departmentId: departmentId,
+            departmentName: dept.name,
+            totalAssignments: assignments.length,
+            activeAssignments: 0,
+            endedAssignments: 0,
+            averageTenure: 0,
+            byPosition: {},
+            byYear: {},
+            byCharacter: {},
+            longestServing: null,
+            shortestServing: null,
+            mostRecent: null,
+            referenceYear: _now()
+        };
+
+        var totalTenure = 0;
+        var tenureCount = 0;
+
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            var isActive = _isActiveAssignment(a);
+
+            if (isActive) analysis.activeAssignments++;
+            else analysis.endedAssignments++;
+
+            if (a.positionId) {
+                analysis.byPosition[a.positionId] = (analysis.byPosition[a.positionId] || 0) + 1;
+            }
+            if (a.startYear != null) {
+                analysis.byYear[a.startYear] = (analysis.byYear[a.startYear] || 0) + 1;
+            }
+            if (a.characterId) {
+                analysis.byCharacter[a.characterId] = (analysis.byCharacter[a.characterId] || 0) + 1;
+            }
+
+            if (!isActive && a.startYear != null && a.endYear != null) {
+                var tenure = a.endYear - a.startYear;
+                if (tenure < 0) tenure = 0;
+                totalTenure += tenure;
+                tenureCount++;
+
+                if (!analysis.longestServing || tenure > analysis.longestServing.tenure) {
+                    analysis.longestServing = {
+                        characterId: a.characterId,
+                        characterName: a.characterName,
+                        startYear: a.startYear,
+                        endYear: a.endYear,
+                        tenure: tenure,
+                        positionId: a.positionId
+                    };
+                }
+                if (!analysis.shortestServing || tenure < analysis.shortestServing.tenure) {
+                    analysis.shortestServing = {
+                        characterId: a.characterId,
+                        characterName: a.characterName,
+                        startYear: a.startYear,
+                        endYear: a.endYear,
+                        tenure: tenure,
+                        positionId: a.positionId
+                    };
+                }
+            }
+
+            if (a.startYear != null) {
+                if (!analysis.mostRecent || a.startYear > analysis.mostRecent.startYear) {
+                    analysis.mostRecent = {
+                        characterId: a.characterId,
+                        characterName: a.characterName,
+                        startYear: a.startYear,
+                        positionId: a.positionId
+                    };
+                }
+            }
+        }
+
+        analysis.averageTenure = tenureCount > 0
+            ? Math.round((totalTenure / tenureCount) * 10) / 10
+            : 0;
+
+        return analysis;
+    }
+
+    // ---- Statistics ----------------------------------------------------------
+
+    function getStatistics() {
+        var departments = State.getAllDepartments();
+        var types = State.getAllGovernmentTypes();
+
+        var totalPositions = 0;
+        var totalAssignments = 0;
+        var totalActive = 0;
+        var totalRolePositions = 0;
+
+        for (var i = 0; i < departments.length; i++) {
+            var d = departments[i];
+            var positions = d.positions || [];
+            var assignments = d.assignments || [];
+            totalPositions += positions.length;
+            totalAssignments += assignments.length;
+            for (var p = 0; p < positions.length; p++) {
+                if (positions[p].requiredRoleId) totalRolePositions++;
+            }
+            for (var a = 0; a < assignments.length; a++) {
+                if (_isActiveAssignment(assignments[a])) totalActive++;
+            }
+        }
+
+        return {
+            departmentCount: departments.length,
+            governmentTypeCount: types.length,
+            positionCount: totalPositions,
+            rolePositionCount: totalRolePositions,
+            assignmentCount: totalAssignments,
+            activeAssignmentCount: totalActive,
+            vacantPositionCount: totalPositions - totalActive
+        };
+    }
+
+    function getPositionStatistics(departmentId, positionId) {
+        var position = State.getPositionById(departmentId, positionId);
+        if (!position) return null;
+
+        var assignments = State.getAssignmentsByPositionId(departmentId, positionId, false);
+        var active = 0;
+        var totalTenure = 0;
+        var ended = 0;
+
+        for (var i = 0; i < assignments.length; i++) {
+            var a = assignments[i];
+            if (_isActiveAssignment(a)) { active++; continue; }
+            if (a.startYear != null && a.endYear != null) {
+                totalTenure += Math.max(0, a.endYear - a.startYear);
+                ended++;
+            }
+        }
+
+        return {
+            positionId: positionId,
+            departmentId: departmentId,
+            name: position.name,
+            priority: position.priority,
+            totalAssignments: assignments.length,
+            activeAssignments: active,
+            endedAssignments: ended,
+            averageTenure: ended > 0 ? Math.round((totalTenure / ended) * 10) / 10 : 0,
+            isVacant: active === 0
+        };
+    }
+
+    function getAssignmentStatistics(departmentId) {
+        return analyzeAssignmentHistory(departmentId);
+    }
+
+    // ---- Comparisons ---------------------------------------------------------
+
+    function compareDepartments(a, b) {
+        return {
+            a: { id: a.id, name: a.name, positionCount: a.positionCount, activeAssignmentCount: a.activeAssignmentCount },
+            b: { id: b.id, name: b.name, positionCount: b.positionCount, activeAssignmentCount: b.activeAssignmentCount },
+            positionDelta: a.positionCount - b.positionCount,
+            activeDelta: a.activeAssignmentCount - b.activeAssignmentCount
+        };
+    }
+
+    function getLargestDepartments(limit) {
+        var all = getDepartments({});
+        all.sort(function(a, b) { return b.positionCount - a.positionCount; });
+        return limit != null ? all.slice(0, limit) : all;
+    }
+
+    function getMostActiveDepartments(limit) {
+        var all = getDepartments({});
+        all.sort(function(a, b) { return b.activeAssignmentCount - a.activeAssignmentCount; });
+        return limit != null ? all.slice(0, limit) : all;
+    }
+
+    function getPositionsByRoleRequirement(roleId) {
+        var out = [];
+        var depts = State.getAllDepartments();
+        for (var i = 0; i < depts.length; i++) {
+            var positions = State.getPositionsByDepartmentId(depts[i].id);
+            for (var p = 0; p < positions.length; p++) {
+                if (positions[p].requiredRoleId === roleId) {
+                    out.push(_projectPosition(depts[i].id, positions[p]));
+                }
+            }
+        }
+        return out;
+    }
+
+    function getPositionsRequiringRole() {
+        var out = [];
+        var depts = State.getAllDepartments();
+        for (var i = 0; i < depts.length; i++) {
+            var positions = State.getPositionsByDepartmentId(depts[i].id);
+            for (var p = 0; p < positions.length; p++) {
+                if (positions[p].requiredRoleId) {
+                    out.push(_projectPosition(depts[i].id, positions[p]));
+                }
+            }
+        }
+        return out;
+    }
+
+    // ---- Government types ----------------------------------------------------
+
+    function getGovernmentTypes() {
+        return State.getAllGovernmentTypes();
+    }
+
+    function getGovernmentType(typeId) {
+        return State.getGovernmentTypeById(typeId);
+    }
+
+    function getGovernmentHistory(locationId) {
+        return State.getGovernmentHistory(locationId);
+    }
+
+    // ---- Leader / place government -------------------------------------------
+    // Delegated to LocationQueries. Government does not own leader data.
+
+    function getCurrentLeader(placeId) {
+        if (!_LocationQueries.getCurrentLeader) return null;
+        return _LocationQueries.getCurrentLeader(placeId);
+    }
+
+    function getLeaderHistory(placeId) {
+        if (!_LocationQueries.getLeaderHistory) return [];
+        return _LocationQueries.getLeaderHistory(placeId);
+    }
+
+    function getLeaderCount(placeId) {
+        var history = getLeaderHistory(placeId);
+        return history.length;
+    }
+
+    function getActiveLeaderCount() {
+        if (!_LocationQueries.getActiveLeaderCount) return 0;
+        return _LocationQueries.getActiveLeaderCount();
+    }
+
+    function getLeadersByLocation(locationId) {
+        if (!_LocationQueries.getLeadersByLocation) return [];
+        return _LocationQueries.getLeadersByLocation(locationId);
+    }
+
+    function getLocationGovernmentSummary(locationId) {
+        if (_LocationQueries.getPlaceGovernmentSummary) {
+            return _LocationQueries.getPlaceGovernmentSummary(locationId);
+        }
+        // Fallback composition using only existing Location projections.
+        var place = _placeSummary(locationId);
+        if (!place) return null;
+        return {
+            locationId: locationId,
+            locationName: place.displayName,
+            governmentTypeId: place.governmentTypeId || null,
+            governmentStyle: place.governmentStyle || null,
+            currentLeader: getCurrentLeader(locationId),
+            departments: getDepartmentsByLocation(locationId, {})
+        };
+    }
+
+    // ---- Industry / economy projections --------------------------------------
+
+    function getIndustryTaxRate(locationId) {
+        return _SettlementQueries.getIndustryTaxRate(locationId);
+    }
+
+    function getIndustryTaxRevenue(locationId) {
+        if (!_IndustryQueries.getIndustryTaxRevenue) return 0;
+        return _IndustryQueries.getIndustryTaxRevenue(locationId);
+    }
+
+    function getIndustryEnterpriseStats(locationId) {
+        if (!_IndustryQueries.getIndustryEnterpriseStats) return null;
+        return _IndustryQueries.getIndustryEnterpriseStats(locationId);
+    }
+
+    function getGovernmentIndustrySummary(locationId) {
+        return {
+            locationId: locationId,
+            taxRate: getIndustryTaxRate(locationId),
+            taxRevenue: getIndustryTaxRevenue(locationId),
+            enterprises: getIndustryEnterpriseStats(locationId)
+        };
+    }
+
+    function getIndustryHealthScore(locationId) {
+        var stats = getIndustryEnterpriseStats(locationId);
+        return stats ? stats.healthScore : null;
+    }
+
+    function getSalaryBudgetSufficiency(locationId) {
+        var budget = _SettlementQueries.getGovernmentSalaryBudget
+            ? _SettlementQueries.getGovernmentSalaryBudget(locationId)
+            : null;
+
+        // Total required comes from the economy module; Query layer doesn't
+        // compute salaries. The caller (modal / view-model) reads both and
+        // combines. This function returns the raw inputs.
+        return {
+            locationId: locationId,
+            allocatedBudget: budget,
+            prosperity: _SettlementProsperity.getProsperityValue(locationId)
+        };
     }
 
     // ---- Export --------------------------------------------------------------
 
-    window.GovernmentCommands = {
+    window.GovernmentQueries = {
         // Departments
-        createDepartment: createDepartment,
-        updateDepartment: updateDepartment,
-        deleteDepartment: deleteDepartment,
+        getDepartment: getDepartment,
+        getDepartments: getDepartments,
+        getDepartmentsByLocation: getDepartmentsByLocation,
+        getDepartmentChildren: getDepartmentChildren,
+        getDepartmentDescendants: getDepartmentDescendants,
+        getDepartmentPath: getDepartmentPath,
+        getDepartmentTree: getDepartmentTree,
+        getDepartmentDetails: getDepartmentDetails,
+        getDepartmentDeletionImpact: getDepartmentDeletionImpact,
 
         // Positions
-        addPosition: addPosition,
-        updatePosition: updatePosition,
-        deletePosition: deletePosition,
-        updatePositionSalary: updatePositionSalary,
+        getPosition: getPosition,
+        getPositionsForDepartment: getPositionsForDepartment,
+        getPositionPath: getPositionPath,
+        searchPositions: searchPositions,
 
         // Assignments
-        assignCharacterToPosition: assignCharacterToPosition,
-        endAssignment: endAssignment,
-        removeAssignment: removeAssignment,
-        bulkAssignCharacters: bulkAssignCharacters,
+        getAssignment: getAssignment,
+        getAssignmentsForDepartment: getAssignmentsForDepartment,
+        getAssignmentsForPosition: getAssignmentsForPosition,
+        getAssignmentsForCharacter: getAssignmentsForCharacter,
+        getAssignmentHistory: getAssignmentHistory,
+
+        // Candidates / succession
+        getQualifiedCandidates: getQualifiedCandidates,
+        getSuccessionPlan: getSuccessionPlan,
+        analyzeAssignmentHistory: analyzeAssignmentHistory,
+
+        // Statistics
+        getStatistics: getStatistics,
+        getPositionStatistics: getPositionStatistics,
+        getAssignmentStatistics: getAssignmentStatistics,
+
+        // Comparisons
+        compareDepartments: compareDepartments,
+        getLargestDepartments: getLargestDepartments,
+        getMostActiveDepartments: getMostActiveDepartments,
+        getPositionsByRoleRequirement: getPositionsByRoleRequirement,
+        getPositionsRequiringRole: getPositionsRequiringRole,
 
         // Government types
-        createGovernmentType: createGovernmentType,
-        updateGovernmentType: updateGovernmentType,
-        deleteGovernmentType: deleteGovernmentType,
+        getGovernmentTypes: getGovernmentTypes,
+        getGovernmentType: getGovernmentType,
+        getGovernmentHistory: getGovernmentHistory,
 
-        // Leader / place government (delegated)
-        assignLeader: assignLeader,
-        endLeaderTerm: endLeaderTerm,
-        assignGovernmentToPlace: assignGovernmentToPlace,
+        // Leader (delegated to Location)
+        getCurrentLeader: getCurrentLeader,
+        getLeaderHistory: getLeaderHistory,
+        getLeaderCount: getLeaderCount,
+        getActiveLeaderCount: getActiveLeaderCount,
+        getLeadersByLocation: getLeadersByLocation,
+        getLocationGovernmentSummary: getLocationGovernmentSummary,
 
-        // Justice (delegated)
-        updateJusticeSeverity: updateJusticeSeverity,
-        updateWatch: updateWatch,
-
-        // Transaction helper
-        _commit: _commit
+        // Economy projections
+        getIndustryTaxRate: getIndustryTaxRate,
+        getIndustryTaxRevenue: getIndustryTaxRevenue,
+        getIndustryEnterpriseStats: getIndustryEnterpriseStats,
+        getGovernmentIndustrySummary: getGovernmentIndustrySummary,
+        getIndustryHealthScore: getIndustryHealthScore,
+        getSalaryBudgetSufficiency: getSalaryBudgetSufficiency
     };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.GovernmentCommands;
+        module.exports = window.GovernmentQueries;
     }
 })();
