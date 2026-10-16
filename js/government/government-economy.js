@@ -1,25 +1,34 @@
 /**
  * government-economy.js
  * Pure Government salary calculations. No mutations. No toasts. No State writes.
+ * Reads via GovernmentQueries. Constants from GovernmentConstants.
+ *
+ * All coefficients come from GovernmentConstants. No inline numbers.
  */
 (function() {
     'use strict';
 
+    var C = window.GovernmentConstants;
     var Rules = window.GovernmentRules;
     var Queries = window.GovernmentQueries;
     var _LocationQueries = window.LocationQueries;
-    var _SettlementQueries = window.SettlementQueries;
     var _ProsperityQueries = window.SettlementProsperityQueries;
 
-    if (!Rules)               throw new Error('government-economy.js requires GovernmentRules');
-    if (!Queries)             throw new Error('government-economy.js requires GovernmentQueries');
-    if (!_LocationQueries)    throw new Error('government-economy.js requires LocationQueries');
-    if (!_SettlementQueries)  throw new Error('government-economy.js requires SettlementQueries');
-    if (!_ProsperityQueries)  throw new Error('government-economy.js requires SettlementProsperityQueries');
+    if (!C)                    throw new Error('government-economy.js requires GovernmentConstants');
+    if (!Rules)                throw new Error('government-economy.js requires GovernmentRules');
+    if (!Queries)              throw new Error('government-economy.js requires GovernmentQueries');
+    if (!_LocationQueries)     throw new Error('government-economy.js requires LocationQueries');
+    if (!_ProsperityQueries)   throw new Error('government-economy.js requires SettlementProsperityQueries');
+
+    if (typeof _ProsperityQueries.getProsperityValue !== 'function') {
+        throw new Error('government-economy.js: SettlementProsperityQueries.getProsperityValue required');
+    }
 
     function _now() { return window.getCurrentYearSafe(); }
 
     // ---- Salary calculation (pure) -------------------------------------------
+    // positionFacts: { priority, salaryOverrides }
+    // context:       { prosperity, experienceYears, currentYear }
 
     function calculateSalaryFromFacts(positionFacts, context) {
         if (!positionFacts) return null;
@@ -36,13 +45,15 @@
         var prosperity = context.prosperity;
         var locationModifier = 1.0;
         if (prosperity != null) {
-            locationModifier = 0.8 + (prosperity / 250);
+            locationModifier = C.SALARY_PROSPERITY_BASE_MODIFIER +
+                (prosperity / C.SALARY_PROSPERITY_DIVISOR);
         }
 
-        var experienceModifier = 1.0;
+        var experienceModifier = C.SALARY_EXPERIENCE_BASE_MODIFIER;
         var expYears = context.experienceYears;
         if (expYears != null && expYears > 0) {
-            experienceModifier = 1 + (Math.min(expYears, 20) / 50);
+            experienceModifier = C.SALARY_EXPERIENCE_BASE_MODIFIER +
+                (Math.min(expYears, C.SALARY_EXPERIENCE_CAP_YEARS) / C.SALARY_EXPERIENCE_DIVISOR);
         }
 
         var salary = tier.base * tier.multiplier * locationModifier * experienceModifier;
@@ -69,7 +80,7 @@
         if (!dept) return null;
 
         var prosperity = null;
-        if (dept.locationId && typeof _ProsperityQueries.getProsperityValue === 'function') {
+        if (dept.locationId) {
             prosperity = _ProsperityQueries.getProsperityValue(dept.locationId);
         }
 
@@ -82,14 +93,16 @@
         }
 
         return calculateSalaryFromFacts(
-            { priority: position.priority, salaryOverrides: _getOverrides(departmentId, positionId) },
-            { prosperity: prosperity, experienceYears: experienceYears, currentYear: currentYear }
+            {
+                priority: position.priority,
+                salaryOverrides: position.salaryOverrides || []
+            },
+            {
+                prosperity: prosperity,
+                experienceYears: experienceYears,
+                currentYear: currentYear
+            }
         );
-    }
-
-    function _getOverrides(departmentId, positionId) {
-        var pos = window.GovernmentState._getPositionRecord(departmentId, positionId);
-        return pos && pos.salaryOverrides ? pos.salaryOverrides : [];
     }
 
     // ---- Department salary requirements --------------------------------------
@@ -99,6 +112,8 @@
         if (!dept) return null;
 
         var assignments = Queries.getAssignmentsForDepartment(departmentId, { activeOnly: true });
+        var positions = Queries.getPositionsForDepartment(departmentId, {});
+
         var details = [];
         var total = 0;
 
@@ -117,7 +132,6 @@
             });
         }
 
-        var positions = Queries.getPositionsForDepartment(departmentId, {});
         return {
             departmentId: departmentId,
             departmentName: dept.name,
@@ -126,7 +140,9 @@
             filledPositions: assignments.length,
             vacantPositions: positions.length - assignments.length,
             totalSalaryRequirement: Math.round(total),
-            averageSalary: assignments.length > 0 ? Math.round(total / assignments.length) : 0,
+            averageSalary: assignments.length > 0
+                ? Math.round(total / assignments.length)
+                : 0,
             details: details
         };
     }
@@ -135,6 +151,7 @@
         var departments = Queries.getDepartmentsByLocation(locationId, {});
         var total = 0;
         var details = [];
+
         for (var i = 0; i < departments.length; i++) {
             var req = calculateDepartmentSalaryRequirements(departments[i].id);
             if (req) {
@@ -142,6 +159,7 @@
                 details.push(req);
             }
         }
+
         return {
             locationId: locationId,
             totalSalaryRequirement: Math.round(total),
@@ -155,11 +173,13 @@
     function getPositionSalaryHistory(departmentId, positionId) {
         var dept = Queries.getDepartment(departmentId);
         if (!dept) return null;
+
         var position = Queries.getPosition(departmentId, positionId);
         if (!position) return null;
 
-        var overrides = _getOverrides(departmentId, positionId);
+        var overrides = position.salaryOverrides || [];
         var history = [];
+
         for (var i = 0; i < overrides.length; i++) {
             var o = overrides[i];
             history.push({
@@ -184,6 +204,7 @@
             var by = b.year != null ? b.year : -Infinity;
             return ay - by;
         });
+
         return history;
     }
 
