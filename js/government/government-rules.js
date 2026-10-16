@@ -1,182 +1,207 @@
 /**
  * government-rules.js
- * Pure policy + validation. Facts-only inputs. No State reads, no side effects.
+ * Pure policy. Facts-only inputs. No State reads, no side effects, no I/O.
+ *
+ * All thresholds, tiers, and enumerations come from GovernmentConstants.
+ * No inline numbers. No inline enums. No randomness.
+ *
+ * Validators return { valid: boolean, reason: string|null }.
+ * Eligibility returns { eligible: boolean, reason: string|null, code: string|null }.
+ * Planning returns { valid, reason?, code?, roleToAdd?, skillLevel?, startYear? }.
  */
 (function() {
     'use strict';
 
-    // ---- Defaults (single source of truth) -----------------------------------
+    var C = window.GovernmentConstants;
 
-    var DEFAULT_POSITION_PRIORITY = 10;
-    var DEFAULT_MIN_SKILL_LEVEL = 0;
-    var DEFAULT_SKILL_LEVEL = 10;
-    var MIN_CHARACTER_AGE = 18;
+    if (!C) throw new Error('government-rules.js requires GovernmentConstants');
 
-    var SALARY_TIERS = [
-        { maxPriority: 3,  name: 'Minister', base: 100, multiplier: 1.5 },
-        { maxPriority: 5,  name: 'Director', base: 60,  multiplier: 1.2 },
-        { maxPriority: 8,  name: 'Officer',  base: 35,  multiplier: 1.0 },
-        { maxPriority: 12, name: 'Clerk',    base: 20,  multiplier: 0.8 },
-        { maxPriority: Infinity, name: 'Staff', base: 12, multiplier: 0.6 }
-    ];
-
-    // ---- Fact extraction helpers (pure) --------------------------------------
+    // ---- Local helpers (pure) ------------------------------------------------
 
     function _normStr(s) {
         return typeof s === 'string' ? s.trim() : '';
     }
 
-    function _isMissing(v) {
-        return v === undefined || v === null;
+    function _fail(reason) { return { valid: false, reason: reason }; }
+    function _ok() { return { valid: true, reason: null }; }
+
+    function _eligFail(reason, code) {
+        return { eligible: false, reason: reason, code: code || null };
+    }
+    function _eligOk() {
+        return { eligible: true, reason: null, code: null };
     }
 
     // ---- Department validation ----------------------------------------------
 
     function validateDepartment(data, isUpdate, departmentId) {
         isUpdate = !!isUpdate;
-        if (!data) return { valid: false, reason: 'No data provided' };
+        if (!data) return _fail('No data provided');
 
         if (!isUpdate) {
             var name = _normStr(data.name);
-            if (!name) return { valid: false, reason: 'Department name is required' };
-            if (name.length < 2) return { valid: false, reason: 'Department name must be at least 2 characters' };
-            if (!data.locationId) return { valid: false, reason: 'Location is required' };
+            if (!name) return _fail('Department name is required');
+            if (name.length < C.MIN_DEPARTMENT_NAME_LENGTH) {
+                return _fail('Department name must be at least ' + C.MIN_DEPARTMENT_NAME_LENGTH + ' characters');
+            }
+            if (!data.locationId) return _fail('Location is required');
         } else if (data.name !== undefined) {
             var uname = _normStr(data.name);
-            if (!uname) return { valid: false, reason: 'Department name cannot be empty' };
-            if (uname.length < 2) return { valid: false, reason: 'Department name must be at least 2 characters' };
+            if (!uname) return _fail('Department name cannot be empty');
+            if (uname.length < C.MIN_DEPARTMENT_NAME_LENGTH) {
+                return _fail('Department name must be at least ' + C.MIN_DEPARTMENT_NAME_LENGTH + ' characters');
+            }
         }
 
         if (isUpdate && data.parentDepartmentId !== undefined && data.parentDepartmentId) {
             if (departmentId && data.parentDepartmentId === departmentId) {
-                return { valid: false, reason: 'Department cannot be its own parent' };
+                return _fail('Department cannot be its own parent');
             }
         }
 
-        return { valid: true };
+        return _ok();
     }
 
     // ---- Position validation -------------------------------------------------
 
     function validatePosition(data, isUpdate) {
         isUpdate = !!isUpdate;
-        if (!data) return { valid: false, reason: 'No data provided' };
+        if (!data) return _fail('No data provided');
 
         if (!isUpdate) {
             var name = _normStr(data.name);
-            if (!name) return { valid: false, reason: 'Position name is required' };
-            if (name.length < 2) return { valid: false, reason: 'Position name must be at least 2 characters' };
+            if (!name) return _fail('Position name is required');
+            if (name.length < C.MIN_POSITION_NAME_LENGTH) {
+                return _fail('Position name must be at least ' + C.MIN_POSITION_NAME_LENGTH + ' characters');
+            }
         } else if (data.name !== undefined) {
             var uname = _normStr(data.name);
-            if (!uname) return { valid: false, reason: 'Position name cannot be empty' };
-            if (uname.length < 2) return { valid: false, reason: 'Position name must be at least 2 characters' };
+            if (!uname) return _fail('Position name cannot be empty');
+            if (uname.length < C.MIN_POSITION_NAME_LENGTH) {
+                return _fail('Position name must be at least ' + C.MIN_POSITION_NAME_LENGTH + ' characters');
+            }
         }
 
         if (data.priority !== undefined && data.priority !== null) {
-            if (typeof data.priority !== 'number' || data.priority < 1 || data.priority > 100) {
-                return { valid: false, reason: 'Priority must be between 1 and 100' };
+            if (typeof data.priority !== 'number' ||
+                data.priority < C.MIN_POSITION_PRIORITY ||
+                data.priority > C.MAX_POSITION_PRIORITY) {
+                return _fail('Priority must be between ' +
+                    C.MIN_POSITION_PRIORITY + ' and ' + C.MAX_POSITION_PRIORITY);
             }
         }
         if (data.minSkillLevel !== undefined && data.minSkillLevel !== null) {
-            if (typeof data.minSkillLevel !== 'number' || data.minSkillLevel < 0 || data.minSkillLevel > 100) {
-                return { valid: false, reason: 'Minimum skill level must be between 0 and 100' };
+            if (typeof data.minSkillLevel !== 'number' ||
+                data.minSkillLevel < C.MIN_SKILL_LEVEL ||
+                data.minSkillLevel > C.MAX_SKILL_LEVEL) {
+                return _fail('Minimum skill level must be between ' +
+                    C.MIN_SKILL_LEVEL + ' and ' + C.MAX_SKILL_LEVEL);
             }
         }
         if (data.minExperience !== undefined && data.minExperience !== null) {
             if (typeof data.minExperience !== 'number' || data.minExperience < 0) {
-                return { valid: false, reason: 'Minimum experience cannot be negative' };
+                return _fail('Minimum experience cannot be negative');
             }
         }
         if (data.genderRestriction !== undefined && data.genderRestriction !== null) {
-            var allowed = ['either', 'male', 'female'];
-            if (allowed.indexOf(data.genderRestriction) === -1) {
-                return { valid: false, reason: 'Invalid gender restriction' };
+            if (C.GENDER_RESTRICTIONS.indexOf(data.genderRestriction) === -1) {
+                return _fail('Invalid gender restriction');
             }
         }
 
-        return { valid: true };
+        return _ok();
     }
 
     // ---- Position hierarchy validation (cycle detection) ---------------------
+    // getPositionRecord is injected. Rules stays pure; the caller supplies the
+    // lookup. Must return a canonical or cloned record with id + parentPositionId.
 
     function validatePositionHierarchy(departmentId, positionId, newParentId, getPositionRecord) {
-        if (!newParentId) return { valid: true };
+        if (!newParentId) return _ok();
         if (newParentId === positionId) {
-            return { valid: false, reason: 'Position cannot be its own parent' };
+            return _fail('Position cannot be its own parent');
         }
         if (typeof getPositionRecord !== 'function') {
-            return { valid: false, reason: 'getPositionRecord is required for hierarchy validation' };
+            return _fail('getPositionRecord is required for hierarchy validation');
         }
         var visited = {};
         var current = newParentId;
         while (current) {
-            if (visited[current]) return { valid: false, reason: 'Hierarchy cycle detected' };
-            if (current === positionId) return { valid: false, reason: 'Cycle detected: parent is a descendant' };
+            if (visited[current]) return _fail('Hierarchy cycle detected');
+            if (current === positionId) return _fail('Cycle detected: parent is a descendant');
             visited[current] = true;
             var rec = getPositionRecord(departmentId, current);
             if (!rec) break;
             current = rec.parentPositionId;
         }
-        return { valid: true };
+        return _ok();
     }
 
     // ---- Government type validation ------------------------------------------
 
     function validateGovernmentType(data, isUpdate) {
         isUpdate = !!isUpdate;
-        if (!data) return { valid: false, reason: 'No data provided' };
+        if (!data) return _fail('No data provided');
 
         if (!isUpdate) {
             var name = _normStr(data.name);
-            if (!name) return { valid: false, reason: 'Government type name is required' };
-            if (name.length < 2) return { valid: false, reason: 'Government type name must be at least 2 characters' };
+            if (!name) return _fail('Government type name is required');
+            if (name.length < C.MIN_GOVERNMENT_TYPE_NAME_LENGTH) {
+                return _fail('Government type name must be at least ' +
+                    C.MIN_GOVERNMENT_TYPE_NAME_LENGTH + ' characters');
+            }
         } else if (data.name !== undefined) {
             var uname = _normStr(data.name);
-            if (!uname) return { valid: false, reason: 'Government type name cannot be empty' };
-            if (uname.length < 2) return { valid: false, reason: 'Government type name must be at least 2 characters' };
+            if (!uname) return _fail('Government type name cannot be empty');
+            if (uname.length < C.MIN_GOVERNMENT_TYPE_NAME_LENGTH) {
+                return _fail('Government type name must be at least ' +
+                    C.MIN_GOVERNMENT_TYPE_NAME_LENGTH + ' characters');
+            }
         }
 
         if (data.allowedRankIds !== undefined && data.allowedRankIds !== null) {
             if (!Array.isArray(data.allowedRankIds)) {
-                return { valid: false, reason: 'Allowed ranks must be an array' };
+                return _fail('Allowed ranks must be an array');
             }
         }
 
-        return { valid: true };
+        return _ok();
     }
 
     // ---- Leader assignment validation (fact-based) ---------------------------
 
     function validateLeaderAssignment(facts) {
-        if (!facts) return { valid: false, reason: 'No data provided' };
-        if (!facts.place) return { valid: false, reason: 'Place not found' };
-        if (!facts.character) return { valid: false, reason: 'Character not found' };
-        if (facts.character.isDeceased) return { valid: false, reason: 'Character is deceased' };
+        if (!facts) return _fail('No data provided');
+        if (!facts.place) return _fail('Place not found');
+        if (!facts.character) return _fail('Character not found');
+        if (facts.character.isDeceased) return _fail('Character is deceased');
         if (typeof facts.startYear !== 'number') {
-            return { valid: false, reason: 'Valid start year is required' };
+            return _fail('Valid start year is required');
         }
-        if (facts.startYear > facts.currentYear + 10) {
-            return { valid: false, reason: 'Start year cannot be more than 10 years in the future' };
+        if (typeof facts.currentYear === 'number' &&
+            facts.startYear > facts.currentYear + C.MAX_LEADER_START_YEAR_FUTURE_OFFSET) {
+            return _fail('Start year cannot be more than ' +
+                C.MAX_LEADER_START_YEAR_FUTURE_OFFSET + ' years in the future');
         }
         if (facts.character.birthYear != null && facts.startYear < facts.character.birthYear) {
-            return { valid: false, reason: 'Start year cannot be before character birth' };
+            return _fail('Start year cannot be before character birth');
         }
-        return { valid: true };
+        return _ok();
     }
 
     // ---- Salary validation ---------------------------------------------------
 
     function validateSalaryUpdate(positionId, newSalary) {
         if (typeof newSalary !== 'number' || !isFinite(newSalary)) {
-            return { valid: false, reason: 'Salary must be a finite number' };
+            return _fail('Salary must be a finite number');
         }
-        if (newSalary < 0) {
-            return { valid: false, reason: 'Salary cannot be negative' };
+        if (newSalary < C.MIN_SALARY) {
+            return _fail('Salary cannot be negative');
         }
-        if (newSalary > 1000000) {
-            return { valid: false, reason: 'Salary exceeds reasonable maximum' };
+        if (newSalary > C.MAX_SALARY) {
+            return _fail('Salary exceeds reasonable maximum');
         }
-        return { valid: true };
+        return _ok();
     }
 
     // ---- Eligibility (fact-based, pure) --------------------------------------
@@ -184,51 +209,50 @@
     // positionFacts:  { requiredRoleId, minSkillLevel, genderRestriction, requiredRankId, minExperience }
 
     function checkPositionEligibility(characterFacts, positionFacts) {
-        if (!characterFacts) return { eligible: false, reason: 'Character facts missing', code: 'NO_FACTS' };
-        if (!positionFacts) return { eligible: false, reason: 'Position facts missing', code: 'NO_FACTS' };
+        if (!characterFacts) return _eligFail('Character facts missing', C.CODES.NO_FACTS);
+        if (!positionFacts) return _eligFail('Position facts missing', C.CODES.NO_FACTS);
 
         if (characterFacts.isDeceased) {
-            return { eligible: false, reason: 'Character is deceased', code: 'DECEASED' };
+            return _eligFail('Character is deceased', C.CODES.DECEASED);
         }
-        if (characterFacts.age != null && characterFacts.age < MIN_CHARACTER_AGE) {
-            return { eligible: false, reason: 'Character is under ' + MIN_CHARACTER_AGE, code: 'TOO_YOUNG' };
+        if (characterFacts.age != null && characterFacts.age < C.MIN_CHARACTER_AGE) {
+            return _eligFail('Character is under ' + C.MIN_CHARACTER_AGE, C.CODES.TOO_YOUNG);
         }
         if (positionFacts.requiredRankId &&
             characterFacts.activeRankId !== positionFacts.requiredRankId) {
-            return { eligible: false, reason: 'Character does not hold the required rank', code: 'RANK' };
+            return _eligFail('Character does not hold the required rank', C.CODES.RANK);
         }
         if (positionFacts.genderRestriction &&
-            positionFacts.genderRestriction !== 'either' &&
+            positionFacts.genderRestriction !== C.GENDER_EITHER &&
             characterFacts.gender !== positionFacts.genderRestriction) {
-            return { eligible: false, reason: 'Character gender does not meet position requirement', code: 'GENDER' };
+            return _eligFail('Character gender does not meet position requirement', C.CODES.GENDER);
         }
         if (positionFacts.requiredRoleId) {
             var hasRole = characterFacts.roleIds &&
                 characterFacts.roleIds.indexOf(positionFacts.requiredRoleId) !== -1;
             if (!hasRole) {
-                return { eligible: false, reason: 'Character does not have the required role', code: 'ROLE' };
+                return _eligFail('Character does not have the required role', C.CODES.ROLE);
             }
             var skill = characterFacts.skillLevels && characterFacts.skillLevels[positionFacts.requiredRoleId];
             if (positionFacts.minSkillLevel != null && (skill == null || skill < positionFacts.minSkillLevel)) {
-                return {
-                    eligible: false,
-                    reason: 'Character skill level (' + (skill == null ? 'none' : skill) +
-                        ') is below requirement (' + positionFacts.minSkillLevel + ')',
-                    code: 'SKILL'
-                };
+                return _eligFail(
+                    'Character skill level (' + (skill == null ? 'none' : skill) +
+                    ') is below requirement (' + positionFacts.minSkillLevel + ')',
+                    C.CODES.SKILL
+                );
             }
         }
         if (positionFacts.minExperience != null && positionFacts.minExperience > 0) {
             var exp = characterFacts.experienceYears || 0;
             if (exp < positionFacts.minExperience) {
-                return {
-                    eligible: false,
-                    reason: 'Character experience (' + exp + ') is below requirement (' + positionFacts.minExperience + ')',
-                    code: 'EXPERIENCE'
-                };
+                return _eligFail(
+                    'Character experience (' + exp +
+                    ') is below requirement (' + positionFacts.minExperience + ')',
+                    C.CODES.EXPERIENCE
+                );
             }
         }
-        return { eligible: true, reason: null, code: null };
+        return _eligOk();
     }
 
     // ---- Assignment planning (pure) ------------------------------------------
@@ -236,7 +260,7 @@
 
     function planAssignment(input) {
         if (!input || !input.position || !input.character) {
-            return { valid: false, reason: 'Missing position or character facts', code: 'NO_FACTS' };
+            return { valid: false, reason: 'Missing position or character facts', code: C.CODES.NO_FACTS };
         }
         var positionFacts = input.position;
         var characterFacts = input.character;
@@ -244,7 +268,7 @@
 
         var startYear = options.startYear != null ? options.startYear : null;
         if (startYear == null) {
-            return { valid: false, reason: 'Start year is required', code: 'NO_START_YEAR' };
+            return { valid: false, reason: 'Start year is required', code: C.CODES.NO_START_YEAR };
         }
 
         var roleToAdd = null;
@@ -255,13 +279,13 @@
                 characterFacts.roleIds.indexOf(positionFacts.requiredRoleId) !== -1;
             if (!hasRole) {
                 if (options.addRoleIfMissing === false) {
-                    return { valid: false, reason: 'Character does not have the required role', code: 'ROLE' };
+                    return { valid: false, reason: 'Character does not have the required role', code: C.CODES.ROLE };
                 }
                 roleToAdd = {
                     roleId: positionFacts.requiredRoleId,
                     skillLevel: options.defaultSkillLevel != null
                         ? options.defaultSkillLevel
-                        : DEFAULT_SKILL_LEVEL
+                        : C.DEFAULT_SKILL_LEVEL
                 };
                 skillLevel = roleToAdd.skillLevel;
             } else {
@@ -271,8 +295,7 @@
             }
         }
 
-        // Build a modified fact set reflecting what the character will look like
-        // after any role is added, then run eligibility against it.
+        // Build the post-add fact set to run eligibility against.
         var factsAfter = {
             isDeceased: characterFacts.isDeceased,
             age: characterFacts.age,
@@ -288,46 +311,59 @@
         }
 
         var elig = checkPositionEligibility(factsAfter, positionFacts);
-        if (!elig.eligible) return { valid: false, reason: elig.reason, code: elig.code };
+        if (!elig.eligible) {
+            return { valid: false, reason: elig.reason, code: elig.code };
+        }
+
+        var resolvedSkillLevel = skillLevel != null
+            ? skillLevel
+            : (options.defaultSkillLevel != null ? options.defaultSkillLevel : null);
 
         return {
             valid: true,
             roleToAdd: roleToAdd,
-            skillLevel: skillLevel != null ? skillLevel : (options.defaultSkillLevel != null ? options.defaultSkillLevel : null),
+            skillLevel: resolvedSkillLevel,
             startYear: startYear
         };
     }
 
     // ---- Candidate scoring (pure, deterministic) -----------------------------
     // candidateFacts: { age, experienceYears, rankPriority }
-    // Ties are broken by experience desc, then age desc, then characterId asc.
 
     function scoreCandidate(candidateFacts) {
+        if (!candidateFacts) return C.SCORING_MIN;
+
         var score = 0;
 
         if (candidateFacts.rankPriority != null) {
-            score += (6 - candidateFacts.rankPriority) * 10;
+            score += (C.SCORING_RANK_PRIORITY_BASE - candidateFacts.rankPriority) *
+                     C.SCORING_RANK_PRIORITY_MULTIPLIER;
         }
+
         var exp = candidateFacts.experienceYears || 0;
-        score += Math.min(exp, 20) * 2;
+        score += Math.min(exp, C.SCORING_EXPERIENCE_CAP_YEARS) * C.SCORING_EXPERIENCE_MULTIPLIER;
 
         var age = candidateFacts.age;
         if (age != null) {
-            if (age >= 30 && age <= 50) score += 20;
-            else if (age >= 25 && age <= 55) score += 10;
+            if (age >= C.SCORING_AGE_PRIME_MIN && age <= C.SCORING_AGE_PRIME_MAX) {
+                score += C.SCORING_AGE_PRIME_BONUS;
+            } else if (age >= C.SCORING_AGE_ACCEPTABLE_MIN && age <= C.SCORING_AGE_ACCEPTABLE_MAX) {
+                score += C.SCORING_AGE_ACCEPTABLE_BONUS;
+            }
         }
 
-        // Clamp to [0, 100]
-        if (score < 0) score = 0;
-        if (score > 100) score = 100;
-
+        if (score < C.SCORING_MIN) score = C.SCORING_MIN;
+        if (score > C.SCORING_MAX) score = C.SCORING_MAX;
         return score;
     }
 
     function isCandidateReady(candidateFacts) {
+        if (!candidateFacts) return false;
         var age = candidateFacts.age;
         var exp = candidateFacts.experienceYears || 0;
-        return age != null && age >= 25 && exp >= 5;
+        return age != null &&
+            age >= C.READY_MIN_AGE &&
+            exp >= C.READY_MIN_EXPERIENCE_YEARS;
     }
 
     function compareCandidates(a, b) {
@@ -348,23 +384,17 @@
     // ---- Salary tier (pure) --------------------------------------------------
 
     function getSalaryTier(priority) {
-        var p = priority != null ? priority : DEFAULT_POSITION_PRIORITY;
-        for (var i = 0; i < SALARY_TIERS.length; i++) {
-            if (p <= SALARY_TIERS[i].maxPriority) return SALARY_TIERS[i];
+        var p = priority != null ? priority : C.DEFAULT_POSITION_PRIORITY;
+        var tiers = C.SALARY_TIERS;
+        for (var i = 0; i < tiers.length; i++) {
+            if (p <= tiers[i].maxPriority) return tiers[i];
         }
-        return SALARY_TIERS[SALARY_TIERS.length - 1];
+        return tiers[tiers.length - 1];
     }
 
     // ---- Export --------------------------------------------------------------
 
     window.GovernmentRules = {
-        // Defaults
-        DEFAULT_POSITION_PRIORITY: DEFAULT_POSITION_PRIORITY,
-        DEFAULT_MIN_SKILL_LEVEL: DEFAULT_MIN_SKILL_LEVEL,
-        DEFAULT_SKILL_LEVEL: DEFAULT_SKILL_LEVEL,
-        MIN_CHARACTER_AGE: MIN_CHARACTER_AGE,
-        SALARY_TIERS: SALARY_TIERS,
-
         // Validation
         validateDepartment: validateDepartment,
         validatePosition: validatePosition,
