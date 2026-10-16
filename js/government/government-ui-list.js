@@ -1,13 +1,21 @@
 /**
  * government-ui-list.js
- * UI renderer. Consumes GovernmentQueries projections only.
- * No State reads. No cross-domain lookups. No fabricated fallbacks.
+ * UI renderer. Consumes GovernmentViewModels only. No queries. No state.
+ *
+ * Contract:
+ *   - Every public renderer takes a container id (or element) and a view model
+ *     produced by GovernmentViewModels.
+ *   - Icons via window._getIcon. No inline domain numbers. No fabricated values.
+ *   - No direct query calls. The caller fetches and shapes; this module paints.
+ *   - Structural inline styles only (flex, gap, borders). No domain data inline.
  */
 (function() {
     'use strict';
 
-    var Queries = window.GovernmentQueries;
-    if (!Queries) throw new Error('government-ui-list.js requires GovernmentQueries');
+    var VM = window.GovernmentViewModels;
+    if (!VM) throw new Error('government-ui-list.js requires GovernmentViewModels');
+
+    // ---- Presentation helpers ------------------------------------------------
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
@@ -29,47 +37,30 @@
 
     function _iconSpan(name) {
         var i = _icon(name);
-        return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
+        return i
+            ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>'
+            : '';
+    }
+
+    function _resolveContainer(containerIdOrEl) {
+        if (!containerIdOrEl) return null;
+        if (typeof containerIdOrEl === 'string') {
+            return document.getElementById(containerIdOrEl);
+        }
+        return containerIdOrEl;
     }
 
     // ---- Department list -----------------------------------------------------
 
-    function renderDepartmentList(containerId, options) {
+    function renderDepartmentList(container, viewModels, options) {
+        var el = _resolveContainer(container);
+        if (!el) return;
         options = options || {};
-        var container = document.getElementById(containerId);
-        if (!container) return;
 
-        var listOptions = {
-            includeDeprecated: !!options.includeDeprecated,
-            sortBy: options.sortBy || 'name',
-            sortOrder: options.sortOrder || 'asc'
-        };
-        var departments;
-        if (options.locationId) {
-            departments = Queries.getDepartmentsByLocation(options.locationId, listOptions);
-        } else {
-            departments = Queries.getDepartments(listOptions);
-        }
-
-        if (options.searchTerm) {
-            var lower = options.searchTerm.toLowerCase();
-            departments = departments.filter(function(d) {
-                return (d.name && d.name.toLowerCase().indexOf(lower) !== -1) ||
-                       (d.description && d.description.toLowerCase().indexOf(lower) !== -1);
-            });
-        }
-
-        if (typeof options.selectedId === 'string') {
-            departments = departments.map(function(d) {
-                d._selected = d.id === options.selectedId;
-                return d;
-            });
-        }
-
+        var items = Array.isArray(viewModels) ? viewModels : [];
+        var onSelect = options.onSelect || null;
         var showStats = options.showStats !== false;
         var showActions = options.showActions !== false;
-        var onSelect = options.onSelect || null;
-        var selectedId = options.selectedId || null;
 
         var homeIcon = _iconSpan('HOME');
         var personIcon = _iconSpan('PERSON');
@@ -79,22 +70,19 @@
 
         var html = '<div class="government-department-list">';
 
-        if (departments.length === 0) {
+        if (items.length === 0) {
             html += '<div style="text-align:center;padding:40px;color:var(--dim);font-size:0.65rem;">No departments found</div>';
         } else {
-            for (var i = 0; i < departments.length; i++) {
-                var d = departments[i];
-                var isSelected = selectedId === d.id;
-
-                var locationName = d.locationName || 'No location';
-                var parentName = d.parentDepartmentName;
+            for (var i = 0; i < items.length; i++) {
+                var d = items[i];
+                if (!d) continue;
 
                 var statsHtml = '';
                 if (showStats) {
                     statsHtml = '<div style="font-size:0.5rem;color:var(--dim);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;">' +
-                        '<span>Role positions: ' + d.rolePositionCount + '</span>' +
-                        '<span>Active: ' + d.activeAssignmentCount + '</span>' +
-                        '<span>Total: ' + d.assignmentCount + '</span>' +
+                        '<span>Role positions: ' + d.stats.rolePositionCount + '</span>' +
+                        '<span>Active: ' + d.stats.activeAssignmentCount + '</span>' +
+                        '<span>Total: ' + d.stats.assignmentCount + '</span>' +
                         '</div>';
                 }
 
@@ -109,21 +97,21 @@
 
                 html +=
                     '<div class="department-item" data-dept-id="' + _attr(d.id) + '" style="' +
-                    'background:' + (isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg3)') + ';' +
-                    'border:1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
+                    'background:' + (d.isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg3)') + ';' +
+                    'border:1px solid ' + (d.isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
                     'border-radius:6px;padding:10px 14px;margin-bottom:6px;cursor:pointer;transition:all 0.1s;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
                     '<div style="flex:1;min-width:0;">' +
                     '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
                     '<strong style="font-size:0.85rem;">' + homeIcon + ' ' + _escapeHtml(d.name) + '</strong>' +
-                    (parentName ? '<span style="font-size:0.55rem;color:var(--dim);">(Child of ' + _escapeHtml(parentName) + ')</span>' : '') +
-                    (isSelected ? '<span style="font-size:0.55rem;background:var(--accent);padding:2px 8px;border-radius:12px;color:white;">Selected</span>' : '') +
+                    (d.parentDepartmentLabel ? '<span style="font-size:0.55rem;color:var(--dim);">(Child of ' + _escapeHtml(d.parentDepartmentLabel) + ')</span>' : '') +
+                    (d.isSelected ? '<span style="font-size:0.55rem;background:var(--accent);padding:2px 8px;border-radius:12px;color:white;">Selected</span>' : '') +
                     '</div>' +
                     (d.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' + _escapeHtml(d.description) + '</div>' : '') +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;">' +
-                    '<span>' + locationIcon + ' ' + _escapeHtml(locationName) + '</span>' +
-                    '<span>' + personIcon + ' ' + d.positionCount + ' positions (' + d.rolePositionCount + ' with role)</span>' +
-                    '<span>' + d.activeAssignmentCount + ' active / ' + d.assignmentCount + ' total</span>' +
+                    '<span>' + locationIcon + ' ' + _escapeHtml(d.locationLabel) + '</span>' +
+                    '<span>' + personIcon + ' ' + d.stats.positionCount + ' positions (' + d.stats.rolePositionCount + ' with role)</span>' +
+                    '<span>' + d.stats.activeAssignmentCount + ' active / ' + d.stats.assignmentCount + ' total</span>' +
                     '</div>' +
                     statsHtml +
                     '</div>' +
@@ -137,23 +125,25 @@
         }
 
         html += '</div>';
-        container.innerHTML = html;
+        el.innerHTML = html;
 
-        // Container-scoped event delegation
         if (onSelect) {
-            container.addEventListener('click', function(e) {
+            el.addEventListener('click', function(e) {
                 var item = e.target.closest('.department-item');
-                if (!item || !container.contains(item)) return;
+                if (!item || !el.contains(item)) return;
                 if (e.target.closest('button')) return;
                 var id = item.dataset.deptId;
-                var dept = Queries.getDepartment(id);
-                if (dept) onSelect(dept);
+                var found = null;
+                for (var k = 0; k < items.length; k++) {
+                    if (items[k] && items[k].id === id) { found = items[k]; break; }
+                }
+                if (found) onSelect(found);
             });
         }
 
-        container.addEventListener('click', function(e) {
+        el.addEventListener('click', function(e) {
             var editBtn = e.target.closest('.dept-edit-btn');
-            if (editBtn && container.contains(editBtn)) {
+            if (editBtn && el.contains(editBtn)) {
                 e.stopPropagation();
                 if (typeof window.openEditGovernmentDepartmentModal === 'function') {
                     window.openEditGovernmentDepartmentModal(editBtn.dataset.deptId);
@@ -161,7 +151,7 @@
                 return;
             }
             var delBtn = e.target.closest('.dept-delete-btn');
-            if (delBtn && container.contains(delBtn)) {
+            if (delBtn && el.contains(delBtn)) {
                 e.stopPropagation();
                 if (typeof window.openDeleteGovernmentDepartmentModal === 'function') {
                     window.openDeleteGovernmentDepartmentModal(delBtn.dataset.deptId);
@@ -172,16 +162,12 @@
 
     // ---- Position list -------------------------------------------------------
 
-    function renderPositionList(containerId, departmentId, options) {
+    function renderPositionList(container, viewModels, options) {
+        var el = _resolveContainer(container);
+        if (!el) return;
         options = options || {};
-        var container = document.getElementById(containerId);
-        if (!container) return;
 
-        var positions = Queries.getPositionsForDepartment(departmentId, {
-            sortBy: options.sortBy || 'priority',
-            sortOrder: options.sortOrder || 'asc'
-        });
-        var selectedId = options.selectedId || null;
+        var items = Array.isArray(viewModels) ? viewModels : [];
         var onSelect = options.onSelect || null;
         var showRoleInfo = options.showRoleInfo !== false;
         var showActions = options.showActions !== false;
@@ -192,17 +178,16 @@
 
         var html = '<div class="government-position-list">';
 
-        if (positions.length === 0) {
+        if (items.length === 0) {
             html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No positions found</div>';
         } else {
-            for (var i = 0; i < positions.length; i++) {
-                var p = positions[i];
-                var isSelected = selectedId === p.id;
-                var hasRoleReq = !!p.requiredRoleId;
+            for (var i = 0; i < items.length; i++) {
+                var p = items[i];
+                if (!p) continue;
 
                 var roleInfoHtml = '';
-                if (showRoleInfo && hasRoleReq) {
-                    roleInfoHtml = '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(p.requiredRoleName) +
+                if (showRoleInfo && p.hasRoleRequirement) {
+                    roleInfoHtml = '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(p.requiredRoleLabel || 'Unknown') +
                         (p.minSkillLevel != null && p.minSkillLevel > 0 ? ' (Min: ' + p.minSkillLevel + ')' : '') + '</span>';
                 }
 
@@ -210,22 +195,22 @@
                 if (showActions) {
                     actionsHtml =
                         '<div style="display:flex;gap:4px;">' +
-                        '<button type="button" class="pos-edit-btn" data-pos-id="' + _attr(p.id) + '" style="background:none;border:none;cursor:pointer;color:var(--accent);padding:2px 4px;font-size:0.5rem;">' + editIcon + '</button>' +
-                        '<button type="button" class="pos-delete-btn" data-pos-id="' + _attr(p.id) + '" style="background:none;border:none;cursor:pointer;color:var(--dim);padding:2px 4px;font-size:0.5rem;">' + deleteIcon + '</button>' +
+                        '<button type="button" class="pos-edit-btn" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" style="background:none;border:none;cursor:pointer;color:var(--accent);padding:2px 4px;font-size:0.5rem;">' + editIcon + '</button>' +
+                        '<button type="button" class="pos-delete-btn" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" style="background:none;border:none;cursor:pointer;color:var(--dim);padding:2px 4px;font-size:0.5rem;">' + deleteIcon + '</button>' +
                         '</div>';
                 }
 
                 html +=
-                    '<div class="position-item" data-pos-id="' + _attr(p.id) + '" data-selected="' + (isSelected ? 'true' : 'false') + '" style="' +
-                    'background:' + (isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg3)') + ';' +
-                    'border:1px solid ' + (isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
-                    'border-left:3px solid ' + (hasRoleReq ? 'var(--accent)' : 'var(--border)') + ';' +
+                    '<div class="position-item" data-pos-id="' + _attr(p.id) + '" data-dept-id="' + _attr(p.departmentId) + '" data-selected="' + (p.isSelected ? 'true' : 'false') + '" style="' +
+                    'background:' + (p.isSelected ? 'rgba(var(--accent-rgb),0.12)' : 'var(--bg3)') + ';' +
+                    'border:1px solid ' + (p.isSelected ? 'var(--accent)' : 'var(--border)') + ';' +
+                    'border-left:3px solid ' + (p.hasRoleRequirement ? 'var(--accent)' : 'var(--border)') + ';' +
                     'border-radius:4px;padding:8px 12px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
                     '<div>' +
                     '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(p.name) + '</span>' +
                     roleInfoHtml +
-                    (p.parentPositionId ? ' <span style="font-size:0.5rem;color:var(--dim);">(Child)</span>' : '') +
+                    (p.hasParent ? ' <span style="font-size:0.5rem;color:var(--dim);">(Child)</span>' : '') +
                     '</div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:8px;align-items:center;">' +
                     '<span>Priority: ' + p.priority + '</span>' +
@@ -239,32 +224,36 @@
         }
 
         html += '</div>';
-        container.innerHTML = html;
+        el.innerHTML = html;
 
         if (onSelect) {
-            container.addEventListener('click', function(e) {
+            el.addEventListener('click', function(e) {
                 var item = e.target.closest('.position-item');
-                if (!item || !container.contains(item)) return;
+                if (!item || !el.contains(item)) return;
                 if (e.target.closest('button')) return;
-                var pos = Queries.getPosition(departmentId, item.dataset.posId);
-                if (pos) onSelect(pos);
+                var id = item.dataset.posId;
+                var found = null;
+                for (var k = 0; k < items.length; k++) {
+                    if (items[k] && items[k].id === id) { found = items[k]; break; }
+                }
+                if (found) onSelect(found);
             });
         }
 
-        container.addEventListener('click', function(e) {
+        el.addEventListener('click', function(e) {
             var editBtn = e.target.closest('.pos-edit-btn');
-            if (editBtn && container.contains(editBtn)) {
+            if (editBtn && el.contains(editBtn)) {
                 e.stopPropagation();
                 if (typeof window.openEditPositionModal === 'function') {
-                    window.openEditPositionModal(departmentId, editBtn.dataset.posId);
+                    window.openEditPositionModal(editBtn.dataset.deptId, editBtn.dataset.posId);
                 }
                 return;
             }
             var delBtn = e.target.closest('.pos-delete-btn');
-            if (delBtn && container.contains(delBtn)) {
+            if (delBtn && el.contains(delBtn)) {
                 e.stopPropagation();
                 if (typeof window.openDeletePositionModal === 'function') {
-                    window.openDeletePositionModal(departmentId, delBtn.dataset.posId);
+                    window.openDeletePositionModal(delBtn.dataset.deptId, delBtn.dataset.posId);
                 }
             }
         });
@@ -272,55 +261,54 @@
 
     // ---- Assignment list -----------------------------------------------------
 
-    function renderAssignmentList(containerId, departmentId, positionId, options) {
+    function renderAssignmentList(container, viewModels, options) {
+        var el = _resolveContainer(container);
+        if (!el) return;
         options = options || {};
-        var container = document.getElementById(containerId);
-        if (!container) return;
 
-        var assignments = Queries.getAssignmentsForPosition(departmentId, positionId, {});
-        assignments.sort(function(a, b) {
-            return (b.startYear || 0) - (a.startYear || 0);
-        });
-
-        var selectedId = options.selectedId || null;
+        var items = Array.isArray(viewModels) ? viewModels : [];
         var onSelect = options.onSelect || null;
         var showRoleInfo = options.showRoleInfo !== false;
+        var showEndButton = options.showEndButton !== false;
+        var departmentId = options.departmentId || null;
 
         var personIcon = _iconSpan('PERSON');
 
         var html = '<div class="government-assignment-list">';
 
-        if (assignments.length === 0) {
+        if (items.length === 0) {
             html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No assignments found</div>';
         } else {
-            for (var i = 0; i < assignments.length; i++) {
-                var a = assignments[i];
-                var isActive = a.isActive;
-                var isSelected = selectedId === a.id;
+            for (var i = 0; i < items.length; i++) {
+                var a = items[i];
+                if (!a) continue;
 
                 var roleInfoHtml = '';
-                if (showRoleInfo && a.roleIdAtAssignment) {
-                    roleInfoHtml = '<span style="font-size:0.45rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(a.roleNameAtAssignment || 'Unknown') +
-                        (a.skillLevelAtAssignment != null && a.skillLevelAtAssignment > 0 ? ' (Skill: ' + a.skillLevelAtAssignment + ')' : '') + '</span>';
+                if (showRoleInfo && a.roleLabel) {
+                    roleInfoHtml = '<span style="font-size:0.45rem;color:var(--accent);margin-left:6px;">Role: ' + _escapeHtml(a.roleLabel) +
+                        (a.skillLevel != null && a.skillLevel > 0 ? ' (Skill: ' + a.skillLevel + ')' : '') + '</span>';
                 }
 
-                var endLabel = a.endYear != null ? ' - ' + a.endYear : ' - Present';
+                var endBtnHtml = '';
+                if (showEndButton && a.isActive) {
+                    endBtnHtml = '<button type="button" class="assign-end-btn" data-assign-id="' + _attr(a.id) + '" style="background:none;border:none;cursor:pointer;color:var(--warn);padding:2px 4px;font-size:0.45rem;">End</button>';
+                }
 
                 html +=
-                    '<div class="assignment-item" data-assign-id="' + _attr(a.id) + '" data-active="' + (isActive ? 'true' : 'false') + '" data-selected="' + (isSelected ? 'true' : 'false') + '" style="' +
-                    'background:' + (isSelected ? 'rgba(var(--accent-rgb),0.12)' : (isActive ? 'rgba(74,158,106,0.08)' : 'var(--bg3)')) + ';' +
-                    'border-left:3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';' +
+                    '<div class="assignment-item" data-assign-id="' + _attr(a.id) + '" data-active="' + (a.isActive ? 'true' : 'false') + '" data-selected="' + (a.isSelected ? 'true' : 'false') + '" style="' +
+                    'background:' + (a.isSelected ? 'rgba(var(--accent-rgb),0.12)' : (a.isActive ? 'rgba(74,158,106,0.08)' : 'var(--bg3)')) + ';' +
+                    'border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';' +
                     'padding:6px 12px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
                     '<div>' +
-                    '<span style="font-size:0.65rem;">' + personIcon + ' ' + _escapeHtml(a.characterName || 'Unknown') + '</span>' +
+                    '<span style="font-size:0.65rem;">' + personIcon + ' ' + _escapeHtml(a.characterName) + '</span>' +
                     (a.title ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(a.title) + ')</span>' : '') +
                     roleInfoHtml +
                     '</div>' +
                     '<div style="font-size:0.5rem;color:var(--dim);display:flex;gap:8px;align-items:center;">' +
-                    '<span>' + a.startYear + endLabel + '</span>' +
-                    (isActive ? '<span style="color:var(--success);">Active</span>' : '<span style="color:var(--dim);">Ended</span>') +
-                    '<button type="button" class="assign-end-btn" data-assign-id="' + _attr(a.id) + '" style="background:none;border:none;cursor:pointer;color:var(--warn);padding:2px 4px;font-size:0.45rem;">End</button>' +
+                    '<span>' + a.startYear + ' - ' + a.endLabel + '</span>' +
+                    (a.isActive ? '<span style="color:var(--success);">Active</span>' : '<span style="color:var(--dim);">Ended</span>') +
+                    endBtnHtml +
                     '</div>' +
                     '</div>' +
                     (a.notes ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' + _escapeHtml(a.notes) + '</div>' : '') +
@@ -329,23 +317,27 @@
         }
 
         html += '</div>';
-        container.innerHTML = html;
+        el.innerHTML = html;
 
         if (onSelect) {
-            container.addEventListener('click', function(e) {
+            el.addEventListener('click', function(e) {
                 var item = e.target.closest('.assignment-item');
-                if (!item || !container.contains(item)) return;
+                if (!item || !el.contains(item)) return;
                 if (e.target.closest('button')) return;
-                var asg = Queries.getAssignment(departmentId, item.dataset.assignId);
-                if (asg) onSelect(asg);
+                var id = item.dataset.assignId;
+                var found = null;
+                for (var k = 0; k < items.length; k++) {
+                    if (items[k] && items[k].id === id) { found = items[k]; break; }
+                }
+                if (found) onSelect(found);
             });
         }
 
-        container.addEventListener('click', function(e) {
+        el.addEventListener('click', function(e) {
             var endBtn = e.target.closest('.assign-end-btn');
-            if (endBtn && container.contains(endBtn)) {
+            if (endBtn && el.contains(endBtn)) {
                 e.stopPropagation();
-                if (typeof window.openRemoveAssignmentModal === 'function') {
+                if (typeof window.openRemoveAssignmentModal === 'function' && departmentId) {
                     window.openRemoveAssignmentModal(departmentId, endBtn.dataset.assignId);
                 }
             }
@@ -354,41 +346,40 @@
 
     // ---- Summary cards -------------------------------------------------------
 
-    function renderPositionSummaryCard(containerId, position) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-        if (!position) {
-            container.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No position data</div>';
+    function renderPositionSummaryCard(container, vm) {
+        var el = _resolveContainer(container);
+        if (!el) return;
+        if (!vm) {
+            el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No position data</div>';
             return;
         }
-        var hasRoleReq = !!position.requiredRoleId;
         var personIcon = _iconSpan('PERSON');
         var html =
-            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (hasRoleReq ? 'var(--accent)' : 'var(--border)') + ';">' +
+            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (vm.hasRoleRequirement ? 'var(--accent)' : 'var(--border)') + ';">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + personIcon + ' ' + _escapeHtml(position.name) + '</div>' +
+            '<div style="font-size:0.9rem;font-weight:bold;">' + personIcon + ' ' + _escapeHtml(vm.name) + '</div>' +
             '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
-            'Priority: ' + position.priority +
-            (position.parentPositionName ? ' · Parent: ' + _escapeHtml(position.parentPositionName) : '') +
+            'Priority: ' + vm.priority +
+            (vm.parentLabel ? ' · Parent: ' + _escapeHtml(vm.parentLabel) : '') +
             '</div>' +
             '</div>' +
             '<div style="text-align:right;font-size:0.55rem;color:var(--accent);">' +
-            '<div>Required Role: ' + _escapeHtml(position.requiredRoleName || 'None') + '</div>' +
-            (position.minSkillLevel != null && position.minSkillLevel > 0 ? '<div>Min Skill: ' + position.minSkillLevel + '</div>' : '') +
-            (position.genderRestriction && position.genderRestriction !== 'either' ? '<div>Gender: ' + _escapeHtml(position.genderRestriction) + '</div>' : '') +
+            '<div>Required Role: ' + _escapeHtml(vm.requiredRoleLabel || 'None') + '</div>' +
+            (vm.minSkillLevel != null && vm.minSkillLevel > 0 ? '<div>Min Skill: ' + vm.minSkillLevel + '</div>' : '') +
+            (vm.genderRestriction && vm.genderRestriction !== 'either' ? '<div>Gender: ' + _escapeHtml(vm.genderLabel) + '</div>' : '') +
             '</div>' +
             '</div>' +
-            (position.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(position.description) + '</div>' : '') +
+            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>';
-        container.innerHTML = html;
+        el.innerHTML = html;
     }
 
-    function renderDepartmentSummaryCard(containerId, department) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-        if (!department) {
-            container.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No department data</div>';
+    function renderDepartmentSummaryCard(container, vm) {
+        var el = _resolveContainer(container);
+        if (!el) return;
+        if (!vm) {
+            el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No department data</div>';
             return;
         }
         var locationIcon = _iconSpan('LOCATION');
@@ -397,52 +388,89 @@
             '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid var(--accent);">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(department.name) + '</div>' +
+            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(vm.name) + '</div>' +
             '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
-            locationIcon + ' ' + _escapeHtml(department.locationName || 'None') +
-            (department.parentDepartmentName ? ' · Parent: ' + _escapeHtml(department.parentDepartmentName) : '') +
+            locationIcon + ' ' + _escapeHtml(vm.locationLabel) +
+            (vm.parentLabel ? ' · Parent: ' + _escapeHtml(vm.parentLabel) : '') +
             '</div>' +
             '</div>' +
             '<div style="text-align:right;font-size:0.55rem;color:var(--accent);">' +
-            '<div>' + personIcon + ' ' + department.positionCount + ' positions</div>' +
-            '<div>Role positions: ' + department.rolePositionCount + '</div>' +
-            '<div>Active: ' + department.activeAssignmentCount + ' / ' + department.assignmentCount + '</div>' +
+            '<div>' + personIcon + ' ' + vm.positionCount + ' positions</div>' +
+            '<div>Role positions: ' + vm.rolePositionCount + '</div>' +
+            '<div>Active: ' + vm.activeAssignmentCount + ' / ' + vm.assignmentCount + '</div>' +
             '</div>' +
             '</div>' +
-            (department.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(department.description) + '</div>' : '') +
+            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>';
-        container.innerHTML = html;
+        el.innerHTML = html;
     }
 
-    function renderAssignmentSummaryCard(containerId, assignment) {
-        var container = document.getElementById(containerId);
-        if (!container) return;
-        if (!assignment) {
-            container.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No assignment data</div>';
+    function renderAssignmentSummaryCard(container, vm) {
+        var el = _resolveContainer(container);
+        if (!el) return;
+        if (!vm) {
+            el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">No assignment data</div>';
             return;
         }
-        var isActive = assignment.isActive;
         var personIcon = _iconSpan('PERSON');
         var html =
-            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+            '<div style="background:var(--bg2);border-radius:8px;padding:12px;border-left:3px solid ' + (vm.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + personIcon + ' ' + _escapeHtml(assignment.characterName || 'Unknown') + '</div>' +
+            '<div style="font-size:0.9rem;font-weight:bold;">' + personIcon + ' ' + _escapeHtml(vm.characterName) + '</div>' +
             '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
-            'Title: ' + _escapeHtml(assignment.title || 'Unknown') +
-            (assignment.roleNameAtAssignment ? ' · Role: ' + _escapeHtml(assignment.roleNameAtAssignment) : '') +
-            (assignment.skillLevelAtAssignment != null ? ' · Skill: ' + assignment.skillLevelAtAssignment : '') +
+            'Title: ' + _escapeHtml(vm.title) +
+            (vm.roleLabel ? ' · Role: ' + _escapeHtml(vm.roleLabel) : '') +
+            (vm.skillLevel != null ? ' · Skill: ' + vm.skillLevel : '') +
             '</div>' +
             '</div>' +
-            '<div style="text-align:right;font-size:0.55rem;color:' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
-            '<div>' + assignment.startYear + (assignment.endYear != null ? ' - ' + assignment.endYear : ' - Present') + '</div>' +
-            '<div>' + (isActive ? 'Active' : 'Ended') + '</div>' +
-            (assignment.endReason ? '<div style="font-size:0.5rem;">' + _escapeHtml(assignment.endReason) + '</div>' : '') +
+            '<div style="text-align:right;font-size:0.55rem;color:' + (vm.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+            '<div>' + vm.startYear + ' - ' + vm.endLabel + '</div>' +
+            '<div>' + (vm.isActive ? 'Active' : 'Ended') + '</div>' +
+            (vm.endReason ? '<div style="font-size:0.5rem;">' + _escapeHtml(vm.endReason) + '</div>' : '') +
             '</div>' +
             '</div>' +
-            (assignment.notes ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(assignment.notes) + '</div>' : '') +
+            (vm.notes ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.notes) + '</div>' : '') +
             '</div>';
-        container.innerHTML = html;
+        el.innerHTML = html;
+    }
+
+    // ---- Candidate list (bulk assign) ----------------------------------------
+
+    function renderCandidateList(container, candidateVms) {
+        var el = _resolveContainer(container);
+        if (!el) return;
+        var items = Array.isArray(candidateVms) ? candidateVms : [];
+
+        var personIcon = _iconSpan('PERSON');
+
+        if (items.length === 0) {
+            el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim);">No qualified candidates found</div>';
+            return;
+        }
+
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            var c = items[i];
+            html +=
+                '<label class="candidate-item" data-char-id="' + _attr(c.characterId) + '" style="' +
+                'display:flex;align-items:center;gap:8px;' +
+                'background:var(--bg3);border:1px solid var(--border);border-radius:4px;' +
+                'padding:6px 10px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
+                '<input type="checkbox" class="candidate-checkbox" value="' + _attr(c.characterId) + '" style="cursor:pointer;">' +
+                '<div style="flex:1;min-width:0;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
+                '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(c.characterName) + '</span>' +
+                '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:8px;">' +
+                '<span>Age: ' + c.age + '</span>' +
+                '<span>Exp: ' + c.experience + 'y</span>' +
+                (c.rankLabel ? '<span style="color:var(--accent);">' + _escapeHtml(c.rankLabel) + '</span>' : '') +
+                '</div>' +
+                '</div>' +
+                '</div>' +
+                '</label>';
+        }
+        el.innerHTML = html;
     }
 
     // ---- Export --------------------------------------------------------------
@@ -453,7 +481,8 @@
         renderAssignmentList: renderAssignmentList,
         renderPositionSummaryCard: renderPositionSummaryCard,
         renderDepartmentSummaryCard: renderDepartmentSummaryCard,
-        renderAssignmentSummaryCard: renderAssignmentSummaryCard
+        renderAssignmentSummaryCard: renderAssignmentSummaryCard,
+        renderCandidateList: renderCandidateList
     };
 
     if (typeof module !== 'undefined' && module.exports) {
