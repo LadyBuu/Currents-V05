@@ -1,17 +1,25 @@
 /**
  * modals-government-positions.js
- * Position CRUD and assignment modals.
- * Reads via GovernmentQueries. Writes via GovernmentCommands.
+ * Position CRUD and assign-character modals.
+ * Reads via GovernmentQueries + GovernmentViewModels.
+ * Writes via GovernmentCommands. Persist once per successful batch.
+ *
+ * Salary payment after assignment is a separate command and lives in the
+ * economy modal / assignment flow that needs it. This module does not pay.
  */
 (function() {
     'use strict';
 
+    var C = window.GovernmentConstants;
     var Queries = window.GovernmentQueries;
     var Commands = window.GovernmentCommands;
+    var VM = window.GovernmentViewModels;
     var _RoleQueries = window.RoleQueries;
 
+    if (!C) throw new Error('modals-government-positions.js requires GovernmentConstants');
     if (!Queries) throw new Error('modals-government-positions.js requires GovernmentQueries');
     if (!Commands) throw new Error('modals-government-positions.js requires GovernmentCommands');
+    if (!VM) throw new Error('modals-government-positions.js requires GovernmentViewModels');
     if (!_RoleQueries) throw new Error('modals-government-positions.js requires RoleQueries');
 
     function _escapeHtml(str) {
@@ -60,6 +68,20 @@
         return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
     }
 
+    function _commitAndPersist() {
+        var p = Commands.persist();
+        if (!p.success) {
+            _toast('Saved in memory, but persisting failed: ' + (p.reason || 'unknown'), 'warning');
+        }
+    }
+
+    function _parseIntStrict(value) {
+        var n = Number(value);
+        return Number.isInteger(n) ? n : null;
+    }
+
+    // ---- Option builders (UI-only, not domain data) --------------------------
+
     function _buildRoleOptions(selectedRoleId, includeNone) {
         var roles = _RoleQueries.getAllRoleSummaries ? _RoleQueries.getAllRoleSummaries() : [];
         var html = includeNone ? '<option value="">No role required</option>' : '';
@@ -87,11 +109,6 @@
         return html;
     }
 
-    function _parseIntStrict(value) {
-        var n = Number(value);
-        return Number.isInteger(n) ? n : null;
-    }
-
     // ---- Add position --------------------------------------------------------
 
     function openAddPositionModal(deptId, onSuccess) {
@@ -114,8 +131,8 @@
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Priority (lower = higher rank)</label>' +
-            '<input type="number" id="newPosPriority" value="10" min="1" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-            '<small style="font-size:0.55rem;color:var(--dim);">1 = highest, 100 = lowest</small>' +
+            '<input type="number" id="newPosPriority" value="' + C.DEFAULT_POSITION_PRIORITY + '" min="' + C.MIN_POSITION_PRIORITY + '" max="' + C.MAX_POSITION_PRIORITY + '" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<small style="font-size:0.55rem;color:var(--dim);">' + C.MIN_POSITION_PRIORITY + ' = highest, ' + C.MAX_POSITION_PRIORITY + ' = lowest</small>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Position</label>' +
@@ -130,15 +147,15 @@
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Minimum Skill Level</label>' +
-            '<input type="number" id="newPosMinSkill" value="0" min="0" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<input type="number" id="newPosMinSkill" value="' + C.DEFAULT_MIN_SKILL_LEVEL + '" min="' + C.MIN_SKILL_LEVEL + '" max="' + C.MAX_SKILL_LEVEL + '" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             '<small style="font-size:0.55rem;color:var(--dim);">Only applies if a role is selected</small>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Gender Restriction</label>' +
             '<select id="newPosGender" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-            '<option value="either">Either Gender</option>' +
-            '<option value="male">Male Only</option>' +
-            '<option value="female">Female Only</option>' +
+            '<option value="' + C.GENDER_EITHER + '">Either Gender</option>' +
+            '<option value="' + C.GENDER_MALE + '">Male Only</option>' +
+            '<option value="' + C.GENDER_FEMALE + '">Female Only</option>' +
             '</select>' +
             '</div>' +
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
@@ -171,12 +188,13 @@
                     parentPositionId: root.querySelector('#newPosParent').value || null,
                     requiredRoleId: root.querySelector('#newPosRequiredRole').value || null,
                     minSkillLevel: minSkill,
-                    genderRestriction: root.querySelector('#newPosGender').value || 'either'
+                    genderRestriction: root.querySelector('#newPosGender').value || C.GENDER_EITHER
                 });
                 if (!result.success) {
                     _toast(result.reason || 'Failed to add position', 'error');
                     return false;
                 }
+                _commitAndPersist();
                 _closeTopModal();
                 _toast('Position "' + name + '" added', 'success');
                 if (onSuccess) onSuccess(result.data);
@@ -210,7 +228,7 @@
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Priority</label>' +
-            '<input type="number" id="editPosPriority" value="' + position.priority + '" min="1" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<input type="number" id="editPosPriority" value="' + position.priority + '" min="' + C.MIN_POSITION_PRIORITY + '" max="' + C.MAX_POSITION_PRIORITY + '" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Parent Position</label>' +
@@ -224,14 +242,14 @@
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Minimum Skill Level</label>' +
-            '<input type="number" id="editPosMinSkill" value="' + (position.minSkillLevel != null ? position.minSkillLevel : 0) + '" min="0" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
+            '<input type="number" id="editPosMinSkill" value="' + (position.minSkillLevel != null ? position.minSkillLevel : C.DEFAULT_MIN_SKILL_LEVEL) + '" min="' + C.MIN_SKILL_LEVEL + '" max="' + C.MAX_SKILL_LEVEL + '" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:12px;">' +
             '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Gender Restriction</label>' +
             '<select id="editPosGender" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
-            '<option value="either"' + (position.genderRestriction === 'either' || !position.genderRestriction ? ' selected' : '') + '>Either Gender</option>' +
-            '<option value="male"' + (position.genderRestriction === 'male' ? ' selected' : '') + '>Male Only</option>' +
-            '<option value="female"' + (position.genderRestriction === 'female' ? ' selected' : '') + '>Female Only</option>' +
+            '<option value="' + C.GENDER_EITHER + '"' + (position.genderRestriction === C.GENDER_EITHER || !position.genderRestriction ? ' selected' : '') + '>Either Gender</option>' +
+            '<option value="' + C.GENDER_MALE + '"' + (position.genderRestriction === C.GENDER_MALE ? ' selected' : '') + '>Male Only</option>' +
+            '<option value="' + C.GENDER_FEMALE + '"' + (position.genderRestriction === C.GENDER_FEMALE ? ' selected' : '') + '>Female Only</option>' +
             '</select>' +
             '</div>' +
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
@@ -260,12 +278,13 @@
                     parentPositionId: root.querySelector('#editPosParent').value || null,
                     requiredRoleId: root.querySelector('#editPosRequiredRole').value || null,
                     minSkillLevel: minSkill,
-                    genderRestriction: root.querySelector('#editPosGender').value || 'either'
+                    genderRestriction: root.querySelector('#editPosGender').value || C.GENDER_EITHER
                 });
                 if (!result.success) {
                     _toast(result.reason || 'Failed to update position', 'error');
                     return false;
                 }
+                _commitAndPersist();
                 _closeTopModal();
                 _toast('Position updated', 'success');
                 if (onSuccess) onSuccess(result.data);
@@ -297,6 +316,7 @@
                 _toast(result.reason || 'Failed to delete position', 'error');
                 return;
             }
+            _commitAndPersist();
             _toast('Position deleted', 'info');
             if (onSuccess) onSuccess(result.data);
         });
@@ -312,61 +332,61 @@
         if (!position) { _toast('Position not found', 'error'); return; }
 
         var assignments = Queries.getAssignmentsForPosition(deptId, positionId, {});
+        var vm = VM.toPositionDetailsViewModel(
+            Object.assign({}, position, { departmentName: dept.name }),
+            assignments,
+            10
+        );
+        if (!vm) { _toast('Position details unavailable', 'error'); return; }
 
-        var assignmentHtml = '';
-        if (assignments.length === 0) {
+        var assignmentHtml;
+        if (vm.assignments.length === 0) {
             assignmentHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No assignments</div>';
         } else {
             assignmentHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
-            for (var i = 0; i < Math.min(assignments.length, 10); i++) {
-                var a = assignments[i];
-                var isActive = a.isActive;
-                var endLabel = a.endYear != null ? ' - ' + a.endYear : ' - Present';
+            for (var i = 0; i < vm.assignments.length; i++) {
+                var a = vm.assignments[i];
                 assignmentHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
                     '<div>' +
-                    '<span>' + _escapeHtml(a.characterName || 'Unknown') + '</span>' +
-                    (a.title && a.title !== position.name ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(a.title) + ')</span>' : '') +
-                    (a.roleIdAtAssignment ? ' <span style="font-size:0.45rem;color:var(--accent);">Role: ' + _escapeHtml(a.roleNameAtAssignment || 'Unknown') + '</span>' : '') +
-                    (a.skillLevelAtAssignment != null ? ' <span style="font-size:0.45rem;color:var(--dim);">(Skill: ' + a.skillLevelAtAssignment + ')</span>' : '') +
+                    '<span>' + _escapeHtml(a.characterName) + '</span>' +
+                    (a.title ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(a.title) + ')</span>' : '') +
+                    (a.roleLabel ? ' <span style="font-size:0.45rem;color:var(--accent);">Role: ' + _escapeHtml(a.roleLabel) + '</span>' : '') +
+                    (a.skillLevel != null ? ' <span style="font-size:0.45rem;color:var(--dim);">(Skill: ' + a.skillLevel + ')</span>' : '') +
                     '</div>' +
-                    '<span style="color:' + (isActive ? 'var(--success)' : 'var(--dim)') + ';font-size:0.5rem;">' + a.startYear + endLabel + '</span>' +
+                    '<span style="color:' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';font-size:0.5rem;">' + a.startYear + ' - ' + a.endLabel + '</span>' +
                     '</div>';
             }
-            if (assignments.length > 10) {
-                assignmentHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + (assignments.length - 10) + ' more</div>';
+            if (vm.assignmentsOverflow > 0) {
+                assignmentHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + vm.assignmentsOverflow + ' more</div>';
             }
             assignmentHtml += '</div>';
         }
 
-        var genderText = position.genderRestriction === 'either' ? 'Either' :
-                         position.genderRestriction === 'male' ? 'Male Only' :
-                         position.genderRestriction === 'female' ? 'Female Only' : position.genderRestriction;
-
         var html =
-            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;border-left:3px solid ' + (position.requiredRoleId ? 'var(--accent)' : 'var(--border)') + ';">' +
+            '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;border-left:3px solid ' + (vm.requiredRoleLabel !== 'None' ? 'var(--accent)' : 'var(--border)') + ';">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(position.name) + '</div>' +
+            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(vm.name) + '</div>' +
             '<div style="font-size:0.6rem;color:var(--dim);">' +
-            'Department: ' + _escapeHtml(dept.name) +
-            (position.parentPositionName ? ' · Parent: ' + _escapeHtml(position.parentPositionName) : '') +
+            'Department: ' + _escapeHtml(vm.departmentName || '') +
+            (vm.parentLabel ? ' · Parent: ' + _escapeHtml(vm.parentLabel) : '') +
             '</div>' +
             '<div style="font-size:0.6rem;color:var(--accent);">' +
-            'Required Role: ' + _escapeHtml(position.requiredRoleName || 'None') +
-            (position.minSkillLevel != null && position.minSkillLevel > 0 ? ' · Min Skill: ' + position.minSkillLevel : '') +
-            ' · Gender: ' + _escapeHtml(genderText) +
+            'Required Role: ' + _escapeHtml(vm.requiredRoleLabel) +
+            (vm.minSkillLevel != null && vm.minSkillLevel > 0 ? ' · Min Skill: ' + vm.minSkillLevel : '') +
+            ' · Gender: ' + _escapeHtml(vm.genderLabel) +
             '</div>' +
             '</div>' +
             '<div style="font-size:0.55rem;color:var(--accent);text-align:right;">' +
-            '<div>Priority: ' + position.priority + '</div>' +
-            '<div>' + position.activeAssignmentCount + ' active · ' + position.assignmentCount + ' total</div>' +
+            '<div>Priority: ' + vm.priority + '</div>' +
+            '<div>' + vm.activeAssignmentCount + ' active · ' + vm.assignmentCount + ' total</div>' +
             '</div>' +
             '</div>' +
-            (position.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(position.description) + '</div>' : '') +
+            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>' +
             '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Assignments (' + assignments.length + ')</div>' +
+            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Assignments (' + vm.totalAssignments + ')</div>' +
             assignmentHtml +
             '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;">' +
@@ -377,7 +397,7 @@
             '</div>';
 
         _openModal({
-            title: 'Position Details: ' + position.name,
+            title: 'Position Details: ' + vm.name,
             content: html,
             confirmText: '',
             cancelText: '',
@@ -433,8 +453,6 @@
                 showDeceased: false
             },
             onSelect: function(character) {
-                // The Command is authoritative. UI does not pre-check
-                // qualification, existing assignments, or age.
                 var result = Commands.assignCharacterToPosition(
                     departmentId,
                     positionId,
@@ -447,6 +465,7 @@
                     return;
                 }
 
+                _commitAndPersist();
                 _toast(character.name + ' assigned to ' + position.name, 'success');
                 if (onSuccess) onSuccess(result.data);
             }
