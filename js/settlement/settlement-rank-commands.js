@@ -41,6 +41,18 @@
  *     consult upgrade rules. It validates that the target rank exists.
  *   - `lastUpgraded` is set to the current world year on a rank change.
  *
+ * Prosperity source:
+ *   Prosperity is a derived value owned by SettlementProsperityQueries.
+ *   The settlement record does not store it. upgradeSettlementRank
+ *   reads it through the prosperity query. There is no fallback to a
+ *   persisted field — a persisted field does not exist under the new
+ *   architecture and pretending it might would hide configuration bugs.
+ *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file wrapped
+ *   time behind window.Time, which does not exist.
+ *
  * =============================================================================
  */
 
@@ -67,12 +79,12 @@
         return window.SettlementCommandCommit;
     }
 
-    function _getTime() {
-        return window.Time;
-    }
-
     function _getPopulationAccessor() {
         return window.getLocationPopulationCount;
+    }
+
+    function _getProsperityQueries() {
+        return window.SettlementProsperityQueries;
     }
 
     // =========================================================================
@@ -104,6 +116,15 @@
         return typeof value === 'number' && isFinite(value);
     }
 
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-rank-commands.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
+    }
+
     // =========================================================================
     // 3. UPGRADE SETTLEMENT RANK
     // =========================================================================
@@ -111,6 +132,14 @@
     // The command consults the upgrade rule and rejects if the settlement
     // is not eligible. It does not clamp, coerce, or fabricate any input
     // the rule needs.
+    //
+    // Prosperity is read exclusively from SettlementProsperityQueries.
+    // The previous version of this file fell back to settlement.prosperity
+    // if the prosperity query module was missing. That field is not
+    // written by SettlementFactory, so the fallback never succeeded. It
+    // also masked the real failure — the prosperity module not being
+    // loaded — behind a false "PROSPERITY_UNAVAILABLE". The fallback is
+    // removed.
     //
 
     /**
@@ -130,23 +159,7 @@
             });
         }
 
-        // Prosperity is derived. The settlement record may not store it
-        // under the new architecture. Read it from the prosperity query
-        // module.
-        var prosperity = null;
-        if (window.SettlementProsperityQueries
-            && typeof window.SettlementProsperityQueries.getProsperityValue === 'function') {
-            prosperity = window.SettlementProsperityQueries.getProsperityValue(locationId);
-        } else {
-            // Fallback: if the settlement record still stores a
-            // prosperity value during migration, use it. This branch is
-            // removed once the migration to derived prosperity is
-            // complete.
-            prosperity = _isFiniteNumber(settlement.prosperity)
-                ? settlement.prosperity
-                : null;
-        }
-
+        var prosperity = _getProsperityQueries().getProsperityValue(locationId);
         if (!_isFiniteNumber(prosperity)) {
             return _failure('PROSPERITY_UNAVAILABLE', {
                 locationId: locationId
@@ -169,7 +182,7 @@
         var currentRank = evaluation.currentRank;
         var nextRank = evaluation.nextRank;
 
-        var currentYear = _getTime().getCurrentYear();
+        var currentYear = _currentYear();
 
         var candidate = _copyWith(settlement, {
             rankId: nextRank.id,
@@ -238,7 +251,7 @@
         }
 
         var previousRankId = settlement.rankId;
-        var currentYear = _getTime().getCurrentYear();
+        var currentYear = _currentYear();
 
         var candidate = _copyWith(settlement, {
             rankId: rank.id,
