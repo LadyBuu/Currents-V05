@@ -16,10 +16,23 @@
  *   - Contains NO UI concerns: no toasts, no DOM, no browser-specific events
  *     beyond a single CustomEvent dispatch.
  *
+ * PERSISTENCE
+ *
+ *   Every mutation writes to masterData in memory and marks the data
+ *   dirty via RoleState. Commands do NOT flush to localStorage. The
+ *   caller is responsible for calling RoleCommands.persist() once per
+ *   batch, after every command in the batch has succeeded.
+ *
+ *   Batch callers (modal onConfirm, education graduation, annual
+ *   pipeline) call persist() exactly once at the end. Single-operation
+ *   callers may call persist() immediately after a successful command.
+ *
+ *   This matches the rank and character domains. The role domain no
+ *   longer flushes eagerly per mutation.
+ *
  * SKILL PROGRESSION vs SKILL OVERRIDE
  *
- *   Two commands exist for writing character role skill, and they have
- *   different semantics on purpose:
+ *   Two commands exist for writing character role skill:
  *
  *     updateCharacterSkill(cid, rid, level)
  *         Administrative override. Can raise OR lower. Blind write.
@@ -27,27 +40,23 @@
  *
  *     recordCharacterSkillProgress(cid, rid, level)
  *         Domain progression. Can raise. Never lowers.
- *         If level <= current, succeeds with { unchanged: true } and
- *         writes nothing. Used by process paths (education, and future
- *         callers that model progression rather than administration).
+ *         If level <= current, succeeds with { unchanged: true }.
+ *         Used by process paths (education, future systems).
  *
- *   The invariant: no progression system may reduce a character's canonical
- *   role skill. An administrator can, deliberately.
- *
- *   Apprenticeship already implements this policy internally by reading
- *   current skill, incrementing, and writing. It does not need to switch
- *   to recordCharacterSkillProgress to be correct, but it may.
+ *   The invariant: no progression system may reduce a character's
+ *   canonical role skill. An administrator can, deliberately.
  *
  * Reentrancy:
- *   There is no module-wide guard. Commands may call other commands freely
- *   because every operation is synchronous and side-effect explicit.
+ *   There is no module-wide guard. Commands may call other commands
+ *   freely because every operation is synchronous and side-effect
+ *   explicit.
  *
  * Ownership:
  *   Roles belong to RoleState.
  *   Professions belong to CharacterCommands.
  *   Categories belong to RoleState.
- *   This module orchestrates those three domains; it never mutates another
- *   domain's state directly.
+ *   This module orchestrates those three domains; it never mutates
+ *   another domain's state directly.
  *
  * DEPENDENCIES (must be loaded first):
  *   - role-constants.js
@@ -57,6 +66,7 @@
  *   - accessors.js           (getCharacterById)
  *   - ids.js                 (generateId)
  *   - time.js                (getCurrentYearSafe, optional)
+ *   - storage.js             (saveMasterData — persist boundary only)
  *
  * =============================================================================
  */
@@ -137,7 +147,35 @@
     }
 
     // =========================================================================
-    // 3. NOTIFICATION
+    // 3. PERSISTENCE
+    // =========================================================================
+
+    /**
+     * Forces a synchronous flush of masterData to storage.
+     *
+     * The only call site of saveMasterData in this domain. Every command
+     * has already mutated in-memory state and called markDataDirty via
+     * RoleState. persist() is the caller's explicit "I am done; write it
+     * out" signal.
+     *
+     * Returns { success: true } if the write succeeded, { success: false,
+     * reason } otherwise.
+     */
+    function persist() {
+        if (typeof window.saveMasterData !== 'function') {
+            return _fail('saveMasterData is not available.');
+        }
+        try {
+            var ok = window.saveMasterData();
+            if (ok === true) return _ok();
+            return _fail('saveMasterData returned false');
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'saveMasterData threw');
+        }
+    }
+
+    // =========================================================================
+    // 4. NOTIFICATION
     // =========================================================================
 
     function _notify(eventName, detail) {
@@ -155,7 +193,7 @@
     }
 
     // =========================================================================
-    // 4. INPUT VALIDATION
+    // 5. INPUT VALIDATION
     // =========================================================================
 
     function _validString(v) {
@@ -189,7 +227,7 @@
     }
 
     // =========================================================================
-    // 5. ROLE CRUD
+    // 6. ROLE CRUD
     // =========================================================================
 
     function createRole(data) {
@@ -329,7 +367,6 @@
             patch.specializations = cleaned;
         }
 
-        // Literacy invariant: requiresLiteracy === false → literacyLevel === null
         var requiresLiteracy = updates.requiresLiteracy !== undefined
             ? updates.requiresLiteracy === true
             : current.requiresLiteracy;
@@ -426,7 +463,7 @@
     }
 
     // =========================================================================
-    // 6. CATEGORY MANAGEMENT
+    // 7. CATEGORY MANAGEMENT
     // =========================================================================
 
     function addCategory(id, name) {
@@ -483,7 +520,7 @@
     }
 
     // =========================================================================
-    // 7. SPECIALIZATION MANAGEMENT (role-level catalogue)
+    // 8. SPECIALIZATION MANAGEMENT (role-level catalogue)
     // =========================================================================
 
     function addRoleSpecialization(roleId, specialization) {
@@ -533,13 +570,9 @@
     }
 
     // =========================================================================
-    // 8. ROLE ASSIGNMENT
+    // 9. ROLE ASSIGNMENT
     // =========================================================================
 
-    /**
-     * Internal, unguarded assignment. Safe to call from any command that
-     * already holds the role/character references.
-     */
     function _assignRoleInternal(characterId, role, options) {
         options = options || {};
 
@@ -654,12 +687,6 @@
 
     /**
      * Administrative override. Can raise OR lower skill. Blind write.
-     *
-     * Used by the role edit-skill modal, where the admin deliberately
-     * chooses the target value and expects it to take effect.
-     *
-     * Do NOT use this from a process path. Use recordCharacterSkillProgress
-     * for anything that models progression (education, future systems).
      */
     function updateCharacterSkill(characterId, roleId, skillLevel) {
         if (!_validString(characterId)) return _fail('Character id is required.');
@@ -687,15 +714,6 @@
 
     /**
      * Domain progression. Can raise skill. Never lowers it.
-     *
-     * If the incoming level is less than or equal to the character's current
-     * role skill, the command succeeds with { unchanged: true } and writes
-     * nothing. If the character does not hold the role yet, the command
-     * fails: progression presumes an existing profession record, and the
-     * caller must decide whether to assign one first.
-     *
-     * Emits a `characterSkillProgressed` event with `previousSkill` and
-     * `skillLevel` so subscribers can observe the change.
      */
     function recordCharacterSkillProgress(characterId, roleId, skillLevel) {
         if (!_validString(characterId)) return _fail('Character id is required.');
@@ -752,12 +770,6 @@
         });
     }
 
-    /**
-     * Assigns a role to many characters.
-     *
-     * Calls _assignRoleInternal directly so composition works without a
-     * module-wide reentrancy guard.
-     */
     function bulkAssignRole(characterIds, roleId, options) {
         if (!Array.isArray(characterIds)) {
             return { success: 0, failed: 0, errors: [{ reason: 'characterIds must be an array' }] };
@@ -798,7 +810,7 @@
     }
 
     // =========================================================================
-    // 9. SALARY MANAGEMENT
+    // 10. SALARY MANAGEMENT
     // =========================================================================
 
     function updateRoleSalary(roleId, newSalary, reason) {
@@ -871,10 +883,13 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.RoleCommands = {
+        // Persistence
+        persist: persist,
+
         // Role CRUD
         createRole: createRole,
         updateRole: updateRole,
