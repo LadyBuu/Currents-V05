@@ -54,6 +54,14 @@
  *     current watch was founded". It is documented here so future
  *     readers do not mistake it for a bug.
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file wrapped
+ *   time behind window.Time, which does not exist. setWatch stamps
+ *   watchFounded with the current world year the first time a watch is
+ *   established; without the fix this command would have thrown on the
+ *   first watch establishment.
+ *
  * =============================================================================
  */
 
@@ -74,10 +82,6 @@
 
     function _getCommit() {
         return window.SettlementCommandCommit;
-    }
-
-    function _getTime() {
-        return window.Time;
     }
 
     // =========================================================================
@@ -103,6 +107,15 @@
             copy[overrideKey] = overrides[overrideKey];
         }
         return copy;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-government-commands.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
@@ -312,7 +325,7 @@
         // Record founding year the first time a watch is established.
         if (normalized.hasWatch === true) {
             if (settlement.watchFounded === null || settlement.watchFounded === undefined) {
-                overrides.watchFounded = _getTime().getCurrentYear();
+                overrides.watchFounded = _currentYear();
             }
         }
 
