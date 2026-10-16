@@ -1,16 +1,27 @@
 /**
  * modals-government-assign.js
  * Bulk assignment, assignment history, succession plan, statistics modals.
- * Reads via GovernmentQueries. Writes via GovernmentCommands.
+ * Reads via GovernmentQueries + GovernmentViewModels + GovernmentUI.
+ * Writes via GovernmentCommands. One persist per modal action.
+ *
+ * No GovernmentAssignment fallbacks. The façade is dead once
+ * GovernmentQueries.getQualifiedCandidates / getSuccessionPlan /
+ * analyzeAssignmentHistory exist — which they do.
  */
 (function() {
     'use strict';
 
+    var C = window.GovernmentConstants;
     var Queries = window.GovernmentQueries;
     var Commands = window.GovernmentCommands;
+    var VM = window.GovernmentViewModels;
+    var UI = window.GovernmentUI;
 
+    if (!C) throw new Error('modals-government-assign.js requires GovernmentConstants');
     if (!Queries) throw new Error('modals-government-assign.js requires GovernmentQueries');
     if (!Commands) throw new Error('modals-government-assign.js requires GovernmentCommands');
+    if (!VM) throw new Error('modals-government-assign.js requires GovernmentViewModels');
+    if (!UI) throw new Error('modals-government-assign.js requires GovernmentUI');
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
@@ -42,6 +53,14 @@
         var i = _getIcon(name);
         return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
     }
+
+    function _commitAndPersist() {
+        var p = Commands.persist();
+        if (!p.success) {
+            _toast('Saved in memory, but persisting failed: ' + (p.reason || 'unknown'), 'warning');
+        }
+    }
+
     function _parseIntStrict(value) {
         var n = Number(value);
         return Number.isInteger(n) ? n : null;
@@ -56,41 +75,11 @@
         var position = Queries.getPosition(departmentId, positionId);
         if (!position) { _toast('Position not found', 'error'); return; }
 
-        // Query layer produces the candidate projection (uses GovernmentRules internally).
-        var candidates = Queries.getQualifiedCandidates
-            ? Queries.getQualifiedCandidates(departmentId, positionId, { limit: 20 })
-            : (window.GovernmentAssignment && window.GovernmentAssignment.getQualifiedCandidates
-                ? window.GovernmentAssignment.getQualifiedCandidates(departmentId, positionId, { limit: 20 })
-                : []);
+        // Query layer produces the candidate projection; view model shapes it.
+        var candidates = Queries.getQualifiedCandidates(departmentId, positionId, { limit: 20 });
+        var candidateVms = VM.toCandidateRows(candidates);
 
         var infoIcon = _iconSpan('CIRCLE_DOT');
-        var personIcon = _iconSpan('PERSON');
-
-        var candidatesHtml = '';
-        if (candidates.length === 0) {
-            candidatesHtml = '<div style="text-align:center;padding:20px;color:var(--dim);">No qualified candidates found</div>';
-        } else {
-            for (var i = 0; i < candidates.length; i++) {
-                var c = candidates[i];
-                candidatesHtml +=
-                    '<label class="candidate-item" data-char-id="' + _attr(c.characterId) + '" style="' +
-                    'display:flex;align-items:center;gap:8px;' +
-                    'background:var(--bg3);border:1px solid var(--border);border-radius:4px;' +
-                    'padding:6px 10px;margin-bottom:4px;cursor:pointer;transition:all 0.1s;">' +
-                    '<input type="checkbox" class="candidate-checkbox" value="' + _attr(c.characterId) + '" style="cursor:pointer;">' +
-                    '<div style="flex:1;min-width:0;">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;">' +
-                    '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(c.characterName) + '</span>' +
-                    '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:8px;">' +
-                    '<span>Age: ' + c.age + '</span>' +
-                    '<span>Exp: ' + c.experience + 'y</span>' +
-                    (c.rankName ? '<span style="color:var(--accent);">' + _escapeHtml(c.rankName) + '</span>' : '') +
-                    '</div>' +
-                    '</div>' +
-                    '</div>' +
-                    '</label>';
-            }
-        }
 
         var html =
             '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
@@ -98,10 +87,8 @@
             '<strong>Position:</strong> ' + _escapeHtml(position.name) +
             '</div>' +
             '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Qualified Candidates (' + candidates.length + ')</div>' +
-            '<div id="bulkCandidateList" style="max-height:300px;overflow-y:auto;">' +
-            candidatesHtml +
-            '</div>' +
+            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Qualified Candidates (' + candidateVms.length + ')</div>' +
+            '<div id="bulkCandidateList" style="max-height:300px;overflow-y:auto;"></div>' +
             '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
             '<button type="button" id="bulkSelectAllBtn" class="btn small" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Select All</button>' +
@@ -122,7 +109,9 @@
             confirmText: 'Assign Selected',
             cancelText: 'Cancel',
             onMount: function(root) {
-                _wireBulkAssign(root, departmentId, positionId, position, onSuccess);
+                var list = root.querySelector('#bulkCandidateList');
+                UI.renderCandidateList(list, candidateVms);
+                _wireBulkAssign(root, list);
             },
             onConfirm: function(root) {
                 return _submitBulkAssign(root, departmentId, positionId, position, onSuccess);
@@ -130,14 +119,12 @@
         });
     }
 
-    function _wireBulkAssign(root, departmentId, positionId, position, onSuccess) {
-        var list = root.querySelector('#bulkCandidateList');
+    function _wireBulkAssign(root, list) {
         var countEl = root.querySelector('#bulkSelectedCount');
 
         function updateCount() {
             var checked = list.querySelectorAll('.candidate-checkbox:checked');
             countEl.textContent = String(checked.length);
-            // Visual highlight per item
             var items = list.querySelectorAll('.candidate-item');
             for (var i = 0; i < items.length; i++) {
                 var cb = items[i].querySelector('.candidate-checkbox');
@@ -190,15 +177,23 @@
             });
         }
 
-        var result = Commands.bulkAssignCharacters(departmentId, positionId, assignments, { mode: 'best-effort' });
+        var result = Commands.bulkAssignCharacters(
+            departmentId,
+            positionId,
+            assignments,
+            { mode: 'best-effort' }
+        );
         if (!result.success) {
             _toast(result.reason || 'Bulk assignment failed', 'error');
             return false;
         }
 
         var data = result.data;
+        if (data.applied > 0) _commitAndPersist();
+
         if (data.failed > 0 && data.applied > 0) {
-            _toast('Assigned ' + data.applied + ' of ' + (data.applied + data.failed) + ' characters (' + data.failed + ' failed)', 'warning');
+            _toast('Assigned ' + data.applied + ' of ' + (data.applied + data.failed) +
+                ' characters (' + data.failed + ' failed)', 'warning');
         } else if (data.applied > 0) {
             _toast('Assigned ' + data.applied + ' character(s)', 'success');
         } else {
@@ -222,39 +217,42 @@
         }
 
         var dept = departmentId ? Queries.getDepartment(departmentId) : null;
-        var position = (departmentId && positionId) ? Queries.getPosition(departmentId, positionId) : null;
+        var position = (departmentId && positionId)
+            ? Queries.getPosition(departmentId, positionId)
+            : null;
 
         var title = 'Assignment History';
         if (dept) title += ': ' + dept.name;
         if (position) title += ' - ' + position.name;
 
+        var rows = VM.toAssignmentHistoryRows(history);
+
         var infoIcon = _iconSpan('CIRCLE_DOT');
         var personIcon = _iconSpan('PERSON');
 
         var historyHtml = '';
-        for (var i = 0; i < history.length; i++) {
-            var h = history[i];
-            var isActive = h.isActive;
-            var endLabel = h.endYear != null ? h.endYear : 'Present';
+        for (var i = 0; i < rows.length; i++) {
+            var h = rows[i];
             var durationPart = h.duration != null ? ' (' + h.duration + 'y)' : '';
             var reasonPart = h.endReason ? ' - ' + _escapeHtml(h.endReason) : '';
 
             historyHtml +=
                 '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">' +
                 '<div>' +
-                '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(h.characterName || 'Unknown') + '</span>' +
-                (h.positionName ? ' <span style="font-size:0.55rem;color:var(--dim);">→ ' + _escapeHtml(h.positionName) + '</span>' : '') +
-                (h.title && h.title !== h.positionName ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(h.title) + ')</span>' : '') +
+                '<span style="font-size:0.7rem;">' + personIcon + ' ' + _escapeHtml(h.characterName) + '</span>' +
+                (h.positionLabel ? ' <span style="font-size:0.55rem;color:var(--dim);">→ ' + _escapeHtml(h.positionLabel) + '</span>' : '') +
+                (h.title ? ' <span style="font-size:0.5rem;color:var(--dim);">(' + _escapeHtml(h.title) + ')</span>' : '') +
+                (h.roleLabel ? ' <span style="font-size:0.5rem;color:var(--accent);">Role: ' + _escapeHtml(h.roleLabel) + '</span>' : '') +
                 '</div>' +
-                '<div style="font-size:0.55rem;color:' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
-                h.startYear + ' - ' + endLabel + durationPart + reasonPart +
+                '<div style="font-size:0.55rem;color:' + (h.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                h.startYear + ' - ' + h.endLabel + durationPart + reasonPart +
                 '</div>' +
                 '</div>';
         }
 
         var html =
             '<div style="max-height:400px;overflow-y:auto;">' +
-            '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' + history.length + ' assignment(s) found</div>' +
+            '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' + rows.length + ' assignment(s) found</div>' +
             historyHtml +
             '</div>' +
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);margin-top:12px;">' +
@@ -273,46 +271,40 @@
     // ---- Succession plan -----------------------------------------------------
 
     function openSuccessionPlanningModal(departmentId, positionId) {
-        var plan = Queries.getSuccessionPlan
-            ? Queries.getSuccessionPlan(departmentId, positionId)
-            : (window.GovernmentAssignment && window.GovernmentAssignment.getSuccessionPlan
-                ? window.GovernmentAssignment.getSuccessionPlan(departmentId, positionId)
-                : null);
-
+        var plan = Queries.getSuccessionPlan(departmentId, positionId);
         if (!plan) { _toast('Succession plan not available', 'error'); return; }
+
+        var vm = VM.toSuccessionPlanViewModel(plan);
+        if (!vm) { _toast('Succession plan not available', 'error'); return; }
 
         var infoIcon = _iconSpan('CIRCLE_DOT');
         var crownIcon = _iconSpan('CROWN');
 
         var candidatesHtml = '';
-        if (plan.candidates.length === 0) {
+        if (vm.candidates.length === 0) {
             candidatesHtml = '<div style="text-align:center;padding:12px;color:var(--dim);font-size:0.6rem;">No candidates identified</div>';
         } else {
-            for (var i = 0; i < plan.candidates.length; i++) {
-                var c = plan.candidates[i];
+            for (var i = 0; i < vm.candidates.length; i++) {
+                var c = vm.candidates[i];
                 candidatesHtml +=
                     '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);font-size:0.6rem;">' +
                     '<span>' + (c.isReady ? '✓' : '•') + ' ' + _escapeHtml(c.characterName) + '</span>' +
                     '<span style="color:var(--dim);">' +
                     'Age: ' + c.age + ' · Exp: ' + c.experience + 'y' +
-                    (c.rank ? ' · ' + _escapeHtml(c.rank) : '') +
+                    (c.rankLabel ? ' · ' + _escapeHtml(c.rankLabel) : '') +
                     (c.isReady ? ' · <span style="color:var(--success);">Ready</span>' : '') +
                     '</span>' +
                     '</div>';
             }
         }
 
-        var holderHtml = plan.currentHolder
-            ? '<strong>Current Holder:</strong> ' + _escapeHtml(plan.currentHolder.characterName) + ' (since ' + plan.currentHolder.startYear + ')'
-            : '<strong>Current Holder:</strong> Vacant';
-
         var html =
             '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
-            '<strong>Position:</strong> ' + _escapeHtml(plan.positionName) + '<br>' +
-            holderHtml +
+            '<strong>Position:</strong> ' + _escapeHtml(vm.positionName) + '<br>' +
+            '<strong>Current Holder:</strong> ' + _escapeHtml(vm.holderLabel) +
             '</div>' +
             '<div style="margin-bottom:12px;">' +
-            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">' + crownIcon + ' Succession Candidates (' + plan.candidates.length + ')</div>' +
+            '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">' + crownIcon + ' Succession Candidates (' + vm.candidates.length + ')</div>' +
             '<div style="max-height:250px;overflow-y:auto;background:var(--bg3);padding:8px;border-radius:4px;">' +
             candidatesHtml +
             '</div>' +
@@ -322,7 +314,7 @@
             '</div>';
 
         _openModal({
-            title: 'Succession Plan: ' + plan.positionName,
+            title: 'Succession Plan: ' + vm.positionName,
             content: html,
             confirmText: 'Close',
             cancelText: '',
@@ -333,70 +325,72 @@
     // ---- Statistics ----------------------------------------------------------
 
     function openAssignmentStatsModal(departmentId) {
-        var stats = Queries.analyzeAssignmentHistory
-            ? Queries.analyzeAssignmentHistory(departmentId)
-            : (window.GovernmentAssignment && window.GovernmentAssignment.analyzeAssignmentHistory
-                ? window.GovernmentAssignment.analyzeAssignmentHistory(departmentId)
-                : null);
-
+        var stats = Queries.analyzeAssignmentHistory(departmentId);
         if (!stats) { _toast('Statistics not available', 'error'); return; }
+
+        // Build a position ID → name lookup closure for the view model. One
+        // query, cached locally, used by the view model to label rows.
+        var positions = Queries.getPositionsForDepartment(departmentId, {});
+        var posNameById = {};
+        for (var i = 0; i < positions.length; i++) {
+            posNameById[positions[i].id] = positions[i].name;
+        }
+        var lookup = function(posId) { return posNameById[posId] || null; };
+
+        var vm = VM.toAssignmentStatsViewModel(stats, lookup);
+        if (!vm) { _toast('Statistics not available', 'error'); return; }
 
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
+        var longestHtml = vm.longestServing
+            ? '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
+              '<span style="color:var(--dim);">Longest completed tenure:</span> ' +
+              _escapeHtml(vm.longestServing.label) +
+              '</div>'
+            : '';
+
         var byPositionHtml = '';
-        var positionKeys = Object.keys(stats.byPosition);
-        if (positionKeys.length === 0) {
+        if (vm.byPosition.length === 0) {
             byPositionHtml = '<div style="font-size:0.55rem;color:var(--dim);text-align:center;">No positions with assignments</div>';
         } else {
-            for (var i = 0; i < positionKeys.length; i++) {
-                var posId = positionKeys[i];
-                var p = Queries.getPosition(departmentId, posId);
+            for (var p = 0; p < vm.byPosition.length; p++) {
+                var row = vm.byPosition[p];
                 byPositionHtml +=
                     '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.55rem;border-bottom:1px solid var(--border);">' +
-                    '<span>' + _escapeHtml(p ? p.name : posId) + '</span>' +
-                    '<span>' + stats.byPosition[posId] + '</span>' +
+                    '<span>' + _escapeHtml(row.positionLabel) + '</span>' +
+                    '<span>' + row.count + '</span>' +
                     '</div>';
             }
         }
 
         var byYearHtml = '';
-        var yearKeys = Object.keys(stats.byYear).sort();
-        if (yearKeys.length === 0) {
+        if (vm.byYear.length === 0) {
             byYearHtml = '<div style="font-size:0.55rem;color:var(--dim);text-align:center;">No assignments recorded</div>';
         } else {
-            for (var j = 0; j < yearKeys.length; j++) {
-                var year = yearKeys[j];
+            for (var y = 0; y < vm.byYear.length; y++) {
+                var yRow = vm.byYear[y];
                 byYearHtml +=
                     '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.55rem;border-bottom:1px solid var(--border);">' +
-                    '<span>' + year + '</span>' +
-                    '<span>' + stats.byYear[year] + '</span>' +
+                    '<span>' + yRow.year + '</span>' +
+                    '<span>' + yRow.count + '</span>' +
                     '</div>';
             }
         }
-
-        var longestHtml = stats.longestServing
-            ? '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
-              '<span style="color:var(--dim);">Longest completed tenure:</span> ' +
-              _escapeHtml(stats.longestServing.characterName) +
-              ' (' + stats.longestServing.tenure + ' years, ' +
-              stats.longestServing.startYear + ' - ' + stats.longestServing.endYear + ')' +
-              '</div>'
-            : '';
 
         var html =
             '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
             '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">' +
             '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
             '<div style="font-size:0.55rem;color:var(--dim);">Total</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + stats.totalAssignments + '</div>' +
+            '<div style="font-size:1.2rem;font-weight:bold;">' + vm.summary.totalAssignments + '</div>' +
             '</div>' +
             '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
             '<div style="font-size:0.55rem;color:var(--dim);">Active</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;color:var(--success);">' + stats.activeAssignments + '</div>' +
+            '<div style="font-size:1.2rem;font-weight:bold;color:var(--success);">' + vm.summary.activeAssignments + '</div>' +
             '</div>' +
             '<div style="background:var(--bg2);padding:12px;border-radius:8px;text-align:center;">' +
             '<div style="font-size:0.55rem;color:var(--dim);">Avg Tenure</div>' +
-            '<div style="font-size:1.2rem;font-weight:bold;">' + stats.averageTenure + 'y</div>' +
+            '<div style="font-size:1.2rem;font-weight:bold;">' + vm.summary.averageTenure + 'y</div>' +
             '</div>' +
             '</div>' +
             longestHtml +
@@ -411,7 +405,7 @@
             '</div>' +
             '</div>' +
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);margin-top:12px;">' +
-            infoIcon + ' Department: ' + _escapeHtml(stats.departmentName) +
+            infoIcon + ' Department: ' + _escapeHtml(vm.departmentName) +
             '</div>' +
             '</div>';
 
