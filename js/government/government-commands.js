@@ -1,734 +1,333 @@
 /**
- * government-commands.js
- * Write layer. Single transaction boundary per command. No toasts.
- * Result contract: { success: true, data } | { success: false, reason, code? }
+ * government-constants.js
+ * Vocabulary, thresholds, and enumerations for the Government domain.
+ * Frozen exports. No logic. No state. No I/O.
  *
- * Cross-domain mutations (leader, place government, justice, watch, salary
- * payment) delegate to the owning domain. This module does not write to
- * Location, Settlement, Household, or Character canonical data directly.
+ * Every other Government module imports from here. No inline numbers,
+ * no inline enum arrays, no inline default values anywhere else.
  */
 (function() {
     'use strict';
 
-    var _CharacterCommands   = window.CharacterCommands;
-    var _CharacterQueries    = window.CharacterQueries;
-    var _LocationQueries     = window.LocationQueries;
-    var _LocationCommands    = window.LocationCommands;
-    var _HouseholdCommands   = window.HouseholdCommands;
-    var _HouseholdQueries    = window.HouseholdQueries;
-    var _SettlementQueries   = window.SettlementQueries;
-    var _SettlementGovCmds   = window.SettlementGovernmentCommands;
-    var _Rules               = window.GovernmentRules;
-
-    if (!_CharacterQueries)  throw new Error('government-commands.js requires CharacterQueries');
-    if (!_LocationQueries)   throw new Error('government-commands.js requires LocationQueries');
-    if (!_LocationCommands)  throw new Error('government-commands.js requires LocationCommands');
-    if (!_SettlementQueries) throw new Error('government-commands.js requires SettlementQueries');
-    if (!_SettlementGovCmds) throw new Error('government-commands.js requires SettlementGovernmentCommands');
-    if (!window.GovernmentQueries) throw new Error('government-commands.js requires GovernmentQueries');
-    if (!window.GovernmentState)   throw new Error('government-commands.js requires GovernmentState');
-    if (!_Rules)                   throw new Error('government-commands.js requires GovernmentRules');
-
-    var State = window.GovernmentState;
-    var Queries = window.GovernmentQueries;
-
-    function _now() { return window.getCurrentYearSafe(); }
-
-    function _ok(data) { return { success: true, data: data }; }
-    function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
-
-    // ---- Transaction boundary ------------------------------------------------
-
-    function _commit() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
-        State.invalidateCache();
-        if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
-    }
-
-    function _log(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') window.logEvent(category, type, message, subjects || []);
-    }
-
-    var _warnedMissingHousehold = false;
-    function _warnHouseholdOnce() {
-        if (_warnedMissingHousehold) return;
-        _warnedMissingHousehold = true;
-        if (typeof console !== 'undefined' && console.warn) {
-            console.warn('government-commands.js: HouseholdCommands/HouseholdQueries not loaded; salary payment skipped.');
-        }
-    }
-
-    // ---- Salary payment (cross-domain delegation) ----------------------------
-    // Called immediately after a successful assignment. Salary is a cross-domain
-    // side effect, not a validity condition: if Household is unavailable the
-    // assignment still succeeds; the salary is skipped and logged once.
-    //
-    // Returns { paid: bool, amount?: number, householdId?: string, reason?: string }
-    // so the caller can include the outcome in the assignment result.
-
-    function _payAssignmentSalary(characterId, position, dept) {
-        if (!_HouseholdCommands || !_HouseholdQueries) {
-            _warnHouseholdOnce();
-            return { paid: false, reason: 'household-modules-unavailable' };
-        }
-        if (!window.GovernmentEconomy ||
-            typeof window.GovernmentEconomy.calculatePositionSalary !== 'function') {
-            return { paid: false, reason: 'economy-unavailable' };
-        }
-
-        var salary = window.GovernmentEconomy.calculatePositionSalary(dept.id, position.id);
-        if (salary == null || salary <= 0) {
-            return { paid: false, reason: 'no-salary' };
-        }
-
-        var household = _HouseholdQueries.getCharacterHousehold(characterId);
-        if (!household) {
-            return { paid: false, reason: 'no-household' };
-        }
-
-        var reason = 'Government salary: ' + position.name + ' (' + dept.name + ')';
-        var result = null;
-
-        if (typeof _HouseholdCommands.adjustWealth === 'function') {
-            result = _HouseholdCommands.adjustWealth(household.id, salary, { reason: reason });
-        } else if (typeof _HouseholdCommands.creditWealth === 'function') {
-            result = _HouseholdCommands.creditWealth(household.id, salary, reason);
-        } else {
-            return { paid: false, reason: 'no-wealth-command' };
-        }
-
-        if (!result || result.success === false) {
-            _log('economy', 'government_salary_failed',
-                'Failed to pay salary to ' + characterId + ': ' +
-                ((result && result.reason) || 'unknown'), []);
-            return { paid: false, reason: (result && result.reason) || 'command-failed' };
-        }
-
-        _log('economy', 'government_salary_paid',
-            'Salary ' + salary + ' gold paid to household "' + household.name + '" for ' + position.name,
-            []);
-
-        return { paid: true, amount: salary, householdId: household.id };
-    }
-
-    // ---- Department commands -------------------------------------------------
-
-    function createDepartment(data) {
-        var v = _Rules.validateDepartment(data, false);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        var dept = {
-            id: window.generateId('govdept'),
-            name: data.name.trim(),
-            description: data.description || '',
-            locationId: data.locationId,
-            parentDepartmentId: data.parentDepartmentId || null,
-            positions: [],
-            assignments: [],
-            isDeprecated: false,
-            createdAt: _now(),
-            updatedAt: _now()
-        };
-
-        State._addDepartmentRecord(dept);
-        _commit();
-
-        var loc = _LocationQueries.getPlaceSummary
-            ? _LocationQueries.getPlaceSummary(dept.locationId)
-            : null;
-        _log('government', 'department_created',
-            'Department "' + dept.name + '" created at ' +
-            (loc ? loc.displayName : dept.locationId), []);
-
-        return _ok({ id: dept.id, departmentId: dept.id });
-    }
-
-    function updateDepartment(departmentId, updates) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var v = _Rules.validateDepartment(updates, true, departmentId);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        State._updateDepartmentRecord(departmentId, updates);
-        _commit();
-
-        _log('government', 'department_updated', 'Department "' + dept.name + '" updated', []);
-        return _ok({ id: departmentId, departmentId: departmentId });
-    }
-
-    function deleteDepartment(departmentId, options) {
-        options = options || {};
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var cascade = !!options.cascade;
-        var impact = Queries.getDepartmentDeletionImpact(departmentId);
-
-        if (!cascade) {
-            if (impact.hasChildren) {
-                return _fail('Department has ' + impact.childDepartmentCount +
-                    ' child departments. Use cascade to delete them.', 'HAS_CHILDREN');
-            }
-            if (impact.hasActiveAssignments) {
-                return _fail('Department has ' + impact.activeAssignmentCount +
-                    ' active assignments. Use cascade to remove them.', 'HAS_ASSIGNMENTS');
-            }
-        }
-
-        var name = dept.name;
-        _deleteDepartmentCascadeInternal(departmentId);
-        _commit();
-
-        _log('government', 'department_deleted',
-            'Department "' + name + '" deleted' + (cascade ? ' (cascade)' : ''), []);
-
-        return _ok({ id: departmentId });
-    }
-
-    function _deleteDepartmentCascadeInternal(departmentId) {
-        var children = State._getDepartmentRecordsByParent(departmentId);
-        for (var i = 0; i < children.length; i++) {
-            _deleteDepartmentCascadeInternal(children[i].id);
-        }
-        State._deleteDepartmentRecord(departmentId);
-    }
-
-    // ---- Position commands ---------------------------------------------------
-
-    function addPosition(departmentId, data) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var v = _Rules.validatePosition(data, false);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        var position = {
-            id: window.generateId('govpos'),
-            name: data.name.trim(),
-            description: data.description || '',
-            priority: data.priority != null ? data.priority : _Rules.DEFAULT_POSITION_PRIORITY,
-            parentPositionId: data.parentPositionId || null,
-            requiredRoleId: data.requiredRoleId || null,
-            minSkillLevel: data.minSkillLevel != null ? data.minSkillLevel : _Rules.DEFAULT_MIN_SKILL_LEVEL,
-            genderRestriction: data.genderRestriction || 'either',
-            requiredRankId: data.requiredRankId || null,
-            minExperience: data.minExperience != null ? data.minExperience : 0,
-            salaryOverrides: []
-        };
-
-        State._addPositionRecord(departmentId, position);
-        _commit();
-
-        _log('government', 'position_added',
-            'Position "' + position.name + '" added to "' + dept.name + '"', []);
-
-        return _ok({ id: position.id, positionId: position.id, departmentId: departmentId });
-    }
-
-    function updatePosition(departmentId, positionId, updates) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var v = _Rules.validatePosition(updates, true);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        if (updates.parentPositionId !== undefined && updates.parentPositionId) {
-            var hier = _Rules.validatePositionHierarchy(
-                departmentId,
-                positionId,
-                updates.parentPositionId,
-                State._getPositionRecord
-            );
-            if (!hier.valid) return _fail(hier.reason, 'CYCLE');
-        }
-
-        State._updatePositionRecord(departmentId, positionId, updates);
-        _commit();
-
-        _log('government', 'position_updated',
-            'Position "' + pos.name + '" updated in "' + dept.name + '"', []);
-
-        return _ok({ id: positionId, positionId: positionId, departmentId: departmentId });
-    }
-
-    function deletePosition(departmentId, positionId) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var active = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
-        if (active.length > 0) {
-            return _fail('Position has ' + active.length + ' active assignment(s). Remove them first.', 'HAS_ASSIGNMENTS');
-        }
-
-        State._deletePositionRecord(departmentId, positionId);
-        _commit();
-
-        _log('government', 'position_deleted',
-            'Position "' + pos.name + '" deleted from "' + dept.name + '"', []);
-
-        return _ok({ id: positionId });
-    }
-
-    // ---- Assignment commands -------------------------------------------------
-
-    function assignCharacterToPosition(departmentId, positionId, characterId, options) {
-        var result = _assignInternal(departmentId, positionId, characterId, options || {});
-        if (!result.success) return result;
-
-        _commit();
-        _emitAssignmentEvent(result.data);
-
-        // Salary payment is a cross-domain side effect. It runs after the
-        // assignment commit so a salary failure cannot leave a half-applied
-        // assignment. The outcome is included in the result.
-        var salaryOutcome = _payAssignmentSalary(
-            characterId,
-            State._getPositionRecord(departmentId, positionId),
-            State._getDepartmentRecord(departmentId)
-        );
-        result.data.salary = salaryOutcome;
-
-        return result;
-    }
-
-    function _assignInternal(departmentId, positionId, characterId, options) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
-        if (!charFacts) return _fail('Character not found', 'NOT_FOUND');
-        if (charFacts.isDeceased) return _fail('Character is deceased', 'DECEASED');
-
-        var existing = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
-        for (var i = 0; i < existing.length; i++) {
-            if (existing[i].characterId === characterId) {
-                return _fail('Character already assigned to this position', 'ALREADY_ASSIGNED');
-            }
-        }
-
-        var plan = _Rules.planAssignment({
-            position: {
-                requiredRoleId: pos.requiredRoleId,
-                minSkillLevel: pos.minSkillLevel,
-                genderRestriction: pos.genderRestriction,
-                requiredRankId: pos.requiredRankId,
-                minExperience: pos.minExperience
-            },
-            character: charFacts,
-            options: {
-                startYear: options.startYear != null ? options.startYear : _now(),
-                defaultSkillLevel: options.defaultSkillLevel != null
-                    ? options.defaultSkillLevel
-                    : _Rules.DEFAULT_SKILL_LEVEL,
-                addRoleIfMissing: options.addRoleIfMissing !== false
-            }
-        });
-
-        if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
-
-        if (plan.roleToAdd && _CharacterCommands) {
-            var addResult = _CharacterCommands.addProfession(characterId, plan.roleToAdd.roleId, {
-                skillLevel: plan.roleToAdd.skillLevel,
-                startYear: plan.startYear
-            });
-            if (!addResult || !addResult.success) {
-                return _fail('Failed to add required profession', 'PROFESSION_FAILED');
-            }
-        }
-
-        var assignment = {
-            id: window.generateId('govassign'),
-            positionId: positionId,
-            characterId: characterId,
-            characterName: charFacts.fullName,
-            startYear: plan.startYear,
-            endYear: options.endYear != null ? options.endYear : null,
-            endReason: null,
-            title: options.title || pos.name,
-            notes: options.notes || '',
-            roleIdAtAssignment: pos.requiredRoleId || null,
-            skillLevelAtAssignment: plan.skillLevel != null ? plan.skillLevel : null
-        };
-
-        State._addAssignmentRecord(departmentId, assignment);
-        return _ok({
-            assignmentId: assignment.id,
-            departmentId: departmentId,
-            characterId: characterId
-        });
-    }
-
-    function _emitAssignmentEvent(data) {
-        var dept = State._getDepartmentRecord(data.departmentId);
-        var asg = State._getAssignmentRecord(data.departmentId, data.assignmentId);
-        var pos = asg ? State._getPositionRecord(data.departmentId, asg.positionId) : null;
-        var charFacts = _CharacterQueries.getCharacterFacts(data.characterId);
-        _log('government', 'character_assigned',
-            (charFacts ? charFacts.fullName : data.characterId) +
-            ' assigned to "' + (pos ? pos.name : '?') + '" in "' + (dept ? dept.name : '?') + '"', []);
-    }
-
-    function endAssignment(departmentId, assignmentId, endYear, reason) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var a = State._getAssignmentRecord(departmentId, assignmentId);
-        if (!a) return _fail('Assignment not found', 'NOT_FOUND');
-        if (a.endYear !== null && a.endYear !== undefined) return _fail('Assignment already ended', 'ALREADY_ENDED');
-
-        var endYearValue = endYear != null ? endYear : _now();
-        if (endYearValue <= a.startYear) {
-            return _fail('End year must be after start year (' + a.startYear + ')', 'VALIDATION');
-        }
-
-        State._updateAssignmentRecord(departmentId, assignmentId, {
-            endYear: endYearValue,
-            endReason: reason || 'Term ended'
-        });
-        _commit();
-
-        var charFacts = _CharacterQueries.getCharacterFacts(a.characterId);
-        _log('government', 'assignment_ended',
-            (charFacts ? charFacts.fullName : a.characterId) + ' ended assignment at "' + dept.name + '"' +
-            (reason ? ' (' + reason + ')' : ''), []);
-
-        return _ok({ id: assignmentId });
-    }
-
-    function removeAssignment(departmentId, assignmentId) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var a = State._getAssignmentRecord(departmentId, assignmentId);
-        if (!a) return _fail('Assignment not found', 'NOT_FOUND');
-
-        State._deleteAssignmentRecord(departmentId, assignmentId);
-        _commit();
-
-        var charFacts = _CharacterQueries.getCharacterFacts(a.characterId);
-        _log('government', 'assignment_removed',
-            (charFacts ? charFacts.fullName : a.characterId) + ' removed from assignment at "' + dept.name + '"', []);
-
-        return _ok({ id: assignmentId });
-    }
-
-    function bulkAssignCharacters(departmentId, positionId, assignments, options) {
-        options = options || {};
-        var mode = options.mode === 'atomic' ? 'atomic' : 'best-effort';
-        var applied = [];
-        var failures = [];
-
-        var plans = [];
-        for (var i = 0; i < assignments.length; i++) {
-            var input = assignments[i];
-            var plan = _planAssignmentStandalone(departmentId, positionId, input.characterId, input);
-            if (plan.success) plans.push({ input: input, data: plan.data });
-            else failures.push({ input: input, reason: plan.reason, code: plan.code });
-        }
-
-        if (mode === 'atomic' && failures.length > 0) {
-            return _fail('Bulk assignment aborted: ' + failures.length + ' invalid input(s)', 'ATOMIC_ABORT');
-        }
-
-        var dept = State._getDepartmentRecord(departmentId);
-        var pos = State._getPositionRecord(departmentId, positionId);
-
-        for (var j = 0; j < plans.length; j++) {
-            var res = _applyAssignmentPlan(departmentId, positionId, plans[j].data);
-            if (res.success) {
-                applied.push(res.data);
-                // Pay salary per successful assignment.
-                var salary = _payAssignmentSalary(plans[j].data.characterId, pos, dept);
-                res.data.salary = salary;
-            } else {
-                failures.push({ input: plans[j].input, reason: res.reason, code: res.code });
-            }
-        }
-
-        if (applied.length > 0) _commit();
-
-        return _ok({
-            applied: applied.length,
-            failed: failures.length,
-            results: applied,
-            failures: failures
-        });
-    }
-
-    function _planAssignmentStandalone(departmentId, positionId, characterId, options) {
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-        var charFacts = _CharacterQueries.getCharacterFacts(characterId);
-        if (!charFacts) return _fail('Character not found', 'NOT_FOUND');
-        if (charFacts.isDeceased) return _fail('Character is deceased', 'DECEASED');
-
-        var existing = State._getAssignmentRecordsForPosition(departmentId, positionId, true);
-        for (var i = 0; i < existing.length; i++) {
-            if (existing[i].characterId === characterId) return _fail('Already assigned', 'ALREADY_ASSIGNED');
-        }
-
-        var plan = _Rules.planAssignment({
-            position: {
-                requiredRoleId: pos.requiredRoleId,
-                minSkillLevel: pos.minSkillLevel,
-                genderRestriction: pos.genderRestriction,
-                requiredRankId: pos.requiredRankId,
-                minExperience: pos.minExperience
-            },
-            character: charFacts,
-            options: {
-                startYear: options.startYear != null ? options.startYear : _now(),
-                defaultSkillLevel: options.defaultSkillLevel != null
-                    ? options.defaultSkillLevel
-                    : _Rules.DEFAULT_SKILL_LEVEL,
-                addRoleIfMissing: options.addRoleIfMissing !== false
-            }
-        });
-        if (!plan.valid) return _fail(plan.reason, plan.code || 'INELIGIBLE');
-
-        return _ok({
-            characterId: characterId,
-            pos: pos,
-            charFacts: charFacts,
-            plan: plan,
-            options: options
-        });
-    }
-
-    function _applyAssignmentPlan(departmentId, positionId, planData) {
-        var plan = planData.plan;
-        var pos = planData.pos;
-        var charFacts = planData.charFacts;
-        var options = planData.options;
-
-        if (plan.roleToAdd && _CharacterCommands) {
-            var addResult = _CharacterCommands.addProfession(planData.characterId, plan.roleToAdd.roleId, {
-                skillLevel: plan.roleToAdd.skillLevel,
-                startYear: plan.startYear
-            });
-            if (!addResult || !addResult.success) {
-                return _fail('Failed to add required profession', 'PROFESSION_FAILED');
-            }
-        }
-
-        var assignment = {
-            id: window.generateId('govassign'),
-            positionId: positionId,
-            characterId: planData.characterId,
-            characterName: charFacts.fullName,
-            startYear: plan.startYear,
-            endYear: options.endYear != null ? options.endYear : null,
-            endReason: null,
-            title: options.title || pos.name,
-            notes: options.notes || '',
-            roleIdAtAssignment: pos.requiredRoleId || null,
-            skillLevelAtAssignment: plan.skillLevel != null ? plan.skillLevel : null
-        };
-        State._addAssignmentRecord(departmentId, assignment);
-        _log('government', 'character_assigned',
-            charFacts.fullName + ' assigned to "' + pos.name + '" (bulk)', []);
-        return _ok({ assignmentId: assignment.id, characterId: planData.characterId });
-    }
-
-    // ---- Salary override (position) ------------------------------------------
-
-    function updatePositionSalary(departmentId, positionId, newSalary, options) {
-        options = options || {};
-        var dept = State._getDepartmentRecord(departmentId);
-        if (!dept) return _fail('Department not found', 'NOT_FOUND');
-
-        var pos = State._getPositionRecord(departmentId, positionId);
-        if (!pos) return _fail('Position not found', 'NOT_FOUND');
-
-        var v = _Rules.validateSalaryUpdate(positionId, newSalary);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        State._appendSalaryOverrideRecord(departmentId, positionId, {
-            salary: newSalary,
-            year: options.year != null ? options.year : _now(),
-            reason: options.reason || 'Manual adjustment'
-        });
-        _commit();
-
-        _log('economy', 'salary_overridden',
-            'Salary for "' + pos.name + '" in "' + dept.name + '" set to ' + newSalary, []);
-
-        return _ok({ positionId: positionId, salary: newSalary });
-    }
-
-    // ---- Government type commands --------------------------------------------
-
-    function createGovernmentType(data) {
-        var v = _Rules.validateGovernmentType(data, false);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        var type = {
-            id: window.generateId('govtype'),
-            name: data.name.trim(),
-            description: data.description || '',
-            allowedRankIds: (data.allowedRankIds || []).slice(),
-            icon: data.icon || ''
-        };
-
-        State._addGovernmentTypeRecord(type);
-        _commit();
-
-        _log('government', 'type_created', 'Government type "' + type.name + '" created', []);
-        return _ok({ id: type.id, governmentTypeId: type.id });
-    }
-
-    function updateGovernmentType(typeId, updates) {
-        var type = State._getGovernmentTypeRecord(typeId);
-        if (!type) return _fail('Government type not found', 'NOT_FOUND');
-
-        var v = _Rules.validateGovernmentType(updates, true);
-        if (!v.valid) return _fail(v.reason, 'VALIDATION');
-
-        State._updateGovernmentTypeRecord(typeId, {
-            name: updates.name !== undefined ? updates.name : undefined,
-            description: updates.description,
-            allowedRankIds: updates.allowedRankIds,
-            icon: updates.icon
-        });
-        _commit();
-
-        _log('government', 'type_updated', 'Government type "' + type.name + '" updated', []);
-        return _ok({ id: typeId, governmentTypeId: typeId });
-    }
-
-    function deleteGovernmentType(typeId) {
-        var type = State._getGovernmentTypeRecord(typeId);
-        if (!type) return _fail('Government type not found', 'NOT_FOUND');
-
-        var usage = _LocationQueries.getPlacesUsingGovernmentType
-            ? _LocationQueries.getPlacesUsingGovernmentType(typeId)
-            : [];
-        if (usage && usage.length > 0) {
-            return _fail('Cannot delete: used by ' + usage.length + ' location(s)', 'IN_USE');
-        }
-
-        var name = type.name;
-        State._deleteGovernmentTypeRecord(typeId);
-        _commit();
-
-        _log('government', 'type_deleted', 'Government type "' + name + '" deleted', []);
-        return _ok({ id: typeId });
-    }
-
-    // ---- Leader / place government (delegated to Location) -------------------
-
-    function assignLeader(placeId, characterId, startYear, title) {
-        var result = _LocationCommands.assignLeader(placeId, characterId, startYear, title);
-        if (result && result.success !== false) {
-            var c = _CharacterQueries.getCharacterFacts(characterId);
-            _log('leadership', 'assigned',
-                (c ? c.fullName : characterId) + ' assigned as leader of ' + placeId, []);
-        }
-        return _wrapLocationResult(result);
-    }
-
-    function endLeaderTerm(placeId, characterId, endYear) {
-        var result = _LocationCommands.endLeaderTerm(placeId, characterId, endYear);
-        if (result && result.success !== false) {
-            _log('leadership', 'term_ended', 'Leader term ended at ' + placeId, []);
-        }
-        return _wrapLocationResult(result);
-    }
-
-    function assignGovernmentToPlace(placeId, govTypeId, govStyle) {
-        var result = _LocationCommands.assignGovernment(placeId, govTypeId, govStyle);
-        if (result && result.success !== false) {
-            _log('government', 'assigned_to_place', 'Government assigned to ' + placeId, []);
-        }
-        return _wrapLocationResult(result);
-    }
-
-    function _wrapLocationResult(result) {
-        if (result === true || (result && result.success !== false)) {
-            return _ok(result === true ? null : result.data || null);
-        }
-        return _fail((result && result.reason) || 'Location command failed', 'LOCATION_FAILED');
-    }
-
-    // ---- Justice / watch (delegated to Settlement) ---------------------------
-
-    function updateJusticeSeverity(locationId, severity) {
-        var result = _SettlementGovCmds.setJusticeSeverity(locationId, severity);
-        if (result && result.success) {
-            _log('justice', 'severity_updated',
-                'Justice severity at ' + locationId + ' set to ' + severity, []);
-        }
-        return _wrapSettlementResult(result);
-    }
-
-    function updateWatch(locationId, hasWatch, size) {
-        var result = _SettlementGovCmds.setWatch(locationId, {
-            hasWatch: !!hasWatch,
-            watchSize: hasWatch ? (size != null ? size : 0) : 0
-        });
-        if (result && result.success) {
-            _log('justice', 'watch_updated', 'Watch at ' + locationId + ' updated', []);
-        }
-        return _wrapSettlementResult(result);
-    }
-
-    function _wrapSettlementResult(result) {
-        if (result && result.success) return _ok(result);
-        if (result && result.code) return _fail(result.reason || result.code, result.code);
-        return _fail('Settlement command failed', 'SETTLEMENT_FAILED');
-    }
+    // ---- Position / assignment defaults --------------------------------------
+
+    var DEFAULT_POSITION_PRIORITY = 10;
+    var DEFAULT_MIN_SKILL_LEVEL = 0;
+    var DEFAULT_SKILL_LEVEL = 10;
+
+    var MIN_POSITION_PRIORITY = 1;
+    var MAX_POSITION_PRIORITY = 100;
+    var MIN_SKILL_LEVEL = 0;
+    var MAX_SKILL_LEVEL = 100;
+
+    var MIN_DEPARTMENT_NAME_LENGTH = 2;
+    var MIN_POSITION_NAME_LENGTH = 2;
+    var MIN_GOVERNMENT_TYPE_NAME_LENGTH = 2;
+
+    var MIN_CHARACTER_AGE = 18;
+
+    // ---- Gender restrictions -------------------------------------------------
+
+    var GENDER_EITHER = 'either';
+    var GENDER_MALE = 'male';
+    var GENDER_FEMALE = 'female';
+
+    var GENDER_RESTRICTIONS = [GENDER_EITHER, GENDER_MALE, GENDER_FEMALE];
+
+    // ---- Salary --------------------------------------------------------------
+
+    // Tier selection is by position priority. Lower priority = higher tier.
+    // maxPriority is inclusive. The last tier uses Infinity as the catch-all.
+    var SALARY_TIERS = [
+        { maxPriority: 3,        name: 'Minister', base: 100, multiplier: 1.5 },
+        { maxPriority: 5,        name: 'Director', base: 60,  multiplier: 1.2 },
+        { maxPriority: 8,        name: 'Officer',  base: 35,  multiplier: 1.0 },
+        { maxPriority: 12,       name: 'Clerk',    base: 20,  multiplier: 0.8 },
+        { maxPriority: Infinity, name: 'Staff',    base: 12,  multiplier: 0.6 }
+    ];
+
+    // Prosperity modifier: 0.8 base, +1 per 250 prosperity.
+    var SALARY_PROSPERITY_BASE_MODIFIER = 0.8;
+    var SALARY_PROSPERITY_DIVISOR = 250;
+
+    // Experience modifier: +1 per 50 years, capped at 20 years.
+    var SALARY_EXPERIENCE_CAP_YEARS = 20;
+    var SALARY_EXPERIENCE_DIVISOR = 50;
+    var SALARY_EXPERIENCE_BASE_MODIFIER = 1.0;
+
+    var MAX_SALARY = 1000000;
+    var MIN_SALARY = 0;
+
+    // ---- Assignment lifecycle ------------------------------------------------
+
+    var ASSIGNMENT_DEFAULT_END_REASON = 'Term ended';
+
+    // Recognised end reasons. Not enforced — informational for UI dropdowns.
+    var ASSIGNMENT_END_REASONS = [
+        'Term ended',
+        'Resigned',
+        'Removed',
+        'Death',
+        'Promoted',
+        'Demoted',
+        'Retired',
+        'Dismissed'
+    ];
+
+    // ---- Leader assignment ---------------------------------------------------
+
+    var MAX_LEADER_START_YEAR_FUTURE_OFFSET = 10;
+
+    // ---- Candidate scoring ---------------------------------------------------
+
+    // scoreCandidate: rankPriority contributes (6 - priority) * 10.
+    var SCORING_RANK_PRIORITY_BASE = 6;
+    var SCORING_RANK_PRIORITY_MULTIPLIER = 10;
+
+    // Experience: +2 per year, capped at 20 years.
+    var SCORING_EXPERIENCE_CAP_YEARS = 20;
+    var SCORING_EXPERIENCE_MULTIPLIER = 2;
+
+    // Age bonuses.
+    var SCORING_AGE_PRIME_MIN = 30;
+    var SCORING_AGE_PRIME_MAX = 50;
+    var SCORING_AGE_PRIME_BONUS = 20;
+    var SCORING_AGE_ACCEPTABLE_MIN = 25;
+    var SCORING_AGE_ACCEPTABLE_MAX = 55;
+    var SCORING_AGE_ACCEPTABLE_BONUS = 10;
+
+    // Score is clamped to [0, 100].
+    var SCORING_MIN = 0;
+    var SCORING_MAX = 100;
+
+    // isCandidateReady thresholds.
+    var READY_MIN_AGE = 25;
+    var READY_MIN_EXPERIENCE_YEARS = 5;
+
+    // ---- Succession / candidate listing --------------------------------------
+
+    // Default cap on the successor candidate list.
+    var SUCCESSION_CANDIDATE_LIMIT = 10;
+
+    // ---- Deletion / cascade --------------------------------------------------
+
+    // Nothing to enumerate — cascade is a boolean option. Kept as a section
+    // marker so future options have a home.
+
+    // ---- Government history / event types ------------------------------------
+
+    var GOVERNMENT_HISTORY_EVENT_TYPES = {
+        LEADER_ASSIGNED: 'leader_assigned',
+        LEADER_TERM_ENDED: 'leader_term_ended',
+        GOVERNMENT_ASSIGNED: 'government_assigned',
+        GOVERNMENT_CHANGED: 'government_changed'
+    };
+
+    // ---- CustomEvent names (cross-domain) ------------------------------------
+
+    var EVENTS = {
+        DEPARTMENT_CREATED:   'governmentDepartmentCreated',
+        DEPARTMENT_UPDATED:   'governmentDepartmentUpdated',
+        DEPARTMENT_DELETED:   'governmentDepartmentDeleted',
+
+        POSITION_ADDED:       'governmentPositionAdded',
+        POSITION_UPDATED:     'governmentPositionUpdated',
+        POSITION_DELETED:     'governmentPositionDeleted',
+
+        CHARACTER_ASSIGNED:   'governmentCharacterAssigned',
+        ASSIGNMENT_ENDED:     'governmentAssignmentEnded',
+        ASSIGNMENT_REMOVED:   'governmentAssignmentRemoved',
+
+        SALARY_OVERRIDDEN:    'governmentSalaryOverridden',
+
+        TYPE_CREATED:         'governmentTypeCreated',
+        TYPE_UPDATED:         'governmentTypeUpdated',
+        TYPE_DELETED:         'governmentTypeDeleted',
+
+        LEADER_ASSIGNED:      'governmentLeaderAssigned',
+        LEADER_TERM_ENDED:    'governmentLeaderTermEnded',
+
+        GOVERNMENT_ASSIGNED_TO_PLACE: 'governmentAssignedToPlace',
+
+        JUSTICE_SEVERITY_UPDATED: 'governmentJusticeSeverityUpdated',
+        WATCH_UPDATED:            'governmentWatchUpdated'
+    };
+
+    // ---- In-process State subscription event names ---------------------------
+
+    var STATE_EVENTS = {
+        INITIALIZED:       'initialized',
+        HYDRATED:          'hydrated',
+        CACHE_INVALIDATED: 'cacheInvalidated',
+        UI_STATE_CHANGED:  'uiStateChanged'
+    };
+
+    // ---- Error codes ---------------------------------------------------------
+    // Used as the `code` field of failed Command results. Stable strings.
+
+    var CODES = {
+        VALIDATION:        'VALIDATION',
+        NOT_FOUND:         'NOT_FOUND',
+        ALREADY_ASSIGNED:  'ALREADY_ASSIGNED',
+        ALREADY_ENDED:     'ALREADY_ENDED',
+        DECEASED:          'DECEASED',
+        TOO_YOUNG:         'TOO_YOUNG',
+        INELIGIBLE:        'INELIGIBLE',
+        RANK:              'RANK',
+        GENDER:            'GENDER',
+        ROLE:              'ROLE',
+        SKILL:             'SKILL',
+        EXPERIENCE:        'EXPERIENCE',
+        NO_FACTS:          'NO_FACTS',
+        NO_START_YEAR:     'NO_START_YEAR',
+        HAS_CHILDREN:      'HAS_CHILDREN',
+        HAS_ASSIGNMENTS:   'HAS_ASSIGNMENTS',
+        CYCLE:             'CYCLE',
+        IN_USE:            'IN_USE',
+        PROFESSION_FAILED: 'PROFESSION_FAILED',
+        ATOMIC_ABORT:      'ATOMIC_ABORT',
+        LOCATION_FAILED:   'LOCATION_FAILED',
+        SETTLEMENT_FAILED: 'SETTLEMENT_FAILED',
+        SAVE_UNAVAILABLE:  'SAVE_UNAVAILABLE',
+        SAVE_FAILED:       'SAVE_FAILED'
+    };
+
+    // ---- Field allowlists ----------------------------------------------------
+    // Owned by Government. Any other field on an update payload is rejected.
+
+    var ALLOWED_DEPARTMENT_FIELDS = [
+        'name',
+        'description',
+        'locationId',
+        'parentDepartmentId',
+        'isDeprecated'
+    ];
+
+    var ALLOWED_POSITION_FIELDS = [
+        'name',
+        'description',
+        'priority',
+        'parentPositionId',
+        'requiredRoleId',
+        'minSkillLevel',
+        'genderRestriction',
+        'requiredRankId',
+        'minExperience'
+    ];
+
+    var ALLOWED_ASSIGNMENT_FIELDS = [
+        'endYear',
+        'endReason',
+        'notes',
+        'title',
+        'roleIdAtAssignment',
+        'skillLevelAtAssignment'
+    ];
+
+    var ALLOWED_GOVERNMENT_TYPE_FIELDS = [
+        'name',
+        'description',
+        'allowedRankIds',
+        'icon'
+    ];
+
+    // Fields owned by other domains. Rejected with a message pointing at the
+    // owning domain's commands.
+    var DOMAIN_OWNED_FIELDS = {
+        // Character-owned
+        characterName:      'CharacterCommands',
+        characterFullName:  'CharacterCommands',
+        // Location-owned
+        placeName:          'LocationCommands',
+        locationName:       'LocationCommands',
+        governmentTypeId:   'LocationCommands',
+        governmentStyle:    'LocationCommands',
+        leaderId:           'LocationCommands',
+        // Settlement-owned
+        justiceSeverity:    'SettlementGovernmentCommands',
+        hasWatch:           'SettlementGovernmentCommands',
+        watchSize:          'SettlementGovernmentCommands'
+    };
 
     // ---- Export --------------------------------------------------------------
 
-    window.GovernmentCommands = {
-        // Departments
-        createDepartment: createDepartment,
-        updateDepartment: updateDepartment,
-        deleteDepartment: deleteDepartment,
+    window.GovernmentConstants = {
+        // Defaults
+        DEFAULT_POSITION_PRIORITY: DEFAULT_POSITION_PRIORITY,
+        DEFAULT_MIN_SKILL_LEVEL: DEFAULT_MIN_SKILL_LEVEL,
+        DEFAULT_SKILL_LEVEL: DEFAULT_SKILL_LEVEL,
 
-        // Positions
-        addPosition: addPosition,
-        updatePosition: updatePosition,
-        deletePosition: deletePosition,
-        updatePositionSalary: updatePositionSalary,
+        // Bounds
+        MIN_POSITION_PRIORITY: MIN_POSITION_PRIORITY,
+        MAX_POSITION_PRIORITY: MAX_POSITION_PRIORITY,
+        MIN_SKILL_LEVEL: MIN_SKILL_LEVEL,
+        MAX_SKILL_LEVEL: MAX_SKILL_LEVEL,
 
-        // Assignments
-        assignCharacterToPosition: assignCharacterToPosition,
-        endAssignment: endAssignment,
-        removeAssignment: removeAssignment,
-        bulkAssignCharacters: bulkAssignCharacters,
+        MIN_DEPARTMENT_NAME_LENGTH: MIN_DEPARTMENT_NAME_LENGTH,
+        MIN_POSITION_NAME_LENGTH: MIN_POSITION_NAME_LENGTH,
+        MIN_GOVERNMENT_TYPE_NAME_LENGTH: MIN_GOVERNMENT_TYPE_NAME_LENGTH,
 
-        // Government types
-        createGovernmentType: createGovernmentType,
-        updateGovernmentType: updateGovernmentType,
-        deleteGovernmentType: deleteGovernmentType,
+        MIN_CHARACTER_AGE: MIN_CHARACTER_AGE,
 
-        // Leader / place government (delegated)
-        assignLeader: assignLeader,
-        endLeaderTerm: endLeaderTerm,
-        assignGovernmentToPlace: assignGovernmentToPlace,
+        // Gender
+        GENDER_EITHER: GENDER_EITHER,
+        GENDER_MALE: GENDER_MALE,
+        GENDER_FEMALE: GENDER_FEMALE,
+        GENDER_RESTRICTIONS: GENDER_RESTRICTIONS,
 
-        // Justice (delegated)
-        updateJusticeSeverity: updateJusticeSeverity,
-        updateWatch: updateWatch,
+        // Salary
+        SALARY_TIERS: SALARY_TIERS,
+        SALARY_PROSPERITY_BASE_MODIFIER: SALARY_PROSPERITY_BASE_MODIFIER,
+        SALARY_PROSPERITY_DIVISOR: SALARY_PROSPERITY_DIVISOR,
+        SALARY_EXPERIENCE_CAP_YEARS: SALARY_EXPERIENCE_CAP_YEARS,
+        SALARY_EXPERIENCE_DIVISOR: SALARY_EXPERIENCE_DIVISOR,
+        SALARY_EXPERIENCE_BASE_MODIFIER: SALARY_EXPERIENCE_BASE_MODIFIER,
+        MAX_SALARY: MAX_SALARY,
+        MIN_SALARY: MIN_SALARY,
 
-        // Transaction helper
-        _commit: _commit
+        // Assignment lifecycle
+        ASSIGNMENT_DEFAULT_END_REASON: ASSIGNMENT_DEFAULT_END_REASON,
+        ASSIGNMENT_END_REASONS: ASSIGNMENT_END_REASONS,
+
+        // Leader
+        MAX_LEADER_START_YEAR_FUTURE_OFFSET: MAX_LEADER_START_YEAR_FUTURE_OFFSET,
+
+        // Scoring
+        SCORING_RANK_PRIORITY_BASE: SCORING_RANK_PRIORITY_BASE,
+        SCORING_RANK_PRIORITY_MULTIPLIER: SCORING_RANK_PRIORITY_MULTIPLIER,
+        SCORING_EXPERIENCE_CAP_YEARS: SCORING_EXPERIENCE_CAP_YEARS,
+        SCORING_EXPERIENCE_MULTIPLIER: SCORING_EXPERIENCE_MULTIPLIER,
+        SCORING_AGE_PRIME_MIN: SCORING_AGE_PRIME_MIN,
+        SCORING_AGE_PRIME_MAX: SCORING_AGE_PRIME_MAX,
+        SCORING_AGE_PRIME_BONUS: SCORING_AGE_PRIME_BONUS,
+        SCORING_AGE_ACCEPTABLE_MIN: SCORING_AGE_ACCEPTABLE_MIN,
+        SCORING_AGE_ACCEPTABLE_MAX: SCORING_AGE_ACCEPTABLE_MAX,
+        SCORING_AGE_ACCEPTABLE_BONUS: SCORING_AGE_ACCEPTABLE_BONUS,
+        SCORING_MIN: SCORING_MIN,
+        SCORING_MAX: SCORING_MAX,
+
+        READY_MIN_AGE: READY_MIN_AGE,
+        READY_MIN_EXPERIENCE_YEARS: READY_MIN_EXPERIENCE_YEARS,
+
+        SUCCESSION_CANDIDATE_LIMIT: SUCCESSION_CANDIDATE_LIMIT,
+
+        // History + events
+        GOVERNMENT_HISTORY_EVENT_TYPES: GOVERNMENT_HISTORY_EVENT_TYPES,
+        EVENTS: EVENTS,
+        STATE_EVENTS: STATE_EVENTS,
+
+        // Codes
+        CODES: CODES,
+
+        // Allowlists
+        ALLOWED_DEPARTMENT_FIELDS: ALLOWED_DEPARTMENT_FIELDS,
+        ALLOWED_POSITION_FIELDS: ALLOWED_POSITION_FIELDS,
+        ALLOWED_ASSIGNMENT_FIELDS: ALLOWED_ASSIGNMENT_FIELDS,
+        ALLOWED_GOVERNMENT_TYPE_FIELDS: ALLOWED_GOVERNMENT_TYPE_FIELDS,
+        DOMAIN_OWNED_FIELDS: DOMAIN_OWNED_FIELDS
     };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.GovernmentCommands;
+        module.exports = window.GovernmentConstants;
     }
 })();
