@@ -15,6 +15,8 @@
  *
  * It is a query module. It:
  *   - composes RankRules with the canonical settlement read API
+ *   - reads population through the canonical population accessor
+ *   - reads prosperity through SettlementProsperityQueries
  *   - does not mutate anything
  *   - does not persist
  *   - does not display UI
@@ -23,16 +25,20 @@
  *
  * Contract reference: Settlement Architecture Contracts §10 (Query
  * Contract), §11 (Query Results and Missing Data), §17 (Rank Contract),
- * §32 (Completion Standard).
+ * §22 (Prosperity Contract), §32 (Completion Standard).
  *
  * Design notes:
  *   - Population is a foreign-domain input. This module reads it through
  *     the canonical population accessor when available, otherwise it
  *     reports the input as unavailable rather than substituting a number.
  *   - `rankId` is canonical. This module reads it but never writes it.
- *   - `prosperity` is a derived value owned by the prosperity calculation.
- *     This module reads it through the SettlementQueries read API so that
- *     it does not create a second source of truth.
+ *   - `prosperity` is a derived value owned by SettlementProsperityQueries.
+ *     This module reads it through that query, exclusively. The previous
+ *     version of this file fell back to settlement.prosperity, which is
+ *     not written by SettlementFactory; the fallback only ever produced
+ *     PROSPERITY_UNAVAILABLE and hid the real cause (a missing or
+ *     misloaded prosperity module). The fallback is removed here too,
+ *     matching the fix in settlement-rank-commands.js.
  *   - When a required input is unavailable, the query returns a structured
  *     result indicating that availability, rather than a fabricated value.
  *   - There is no `_processingQuery` guard. Queries may call one another.
@@ -59,6 +65,10 @@
 
     function _getSettlementQueries() {
         return window.SettlementQueries;
+    }
+
+    function _getProsperityQueries() {
+        return window.SettlementProsperityQueries;
     }
 
     function _getPopulationAccessor() {
@@ -137,6 +147,10 @@
     // unavailability in the reasons list rather than substituting a
     // fabricated number.
     //
+    // Prosperity is read exclusively through SettlementProsperityQueries.
+    // The settlement record does not store a derived prosperity value
+    // under the new architecture, so there is no fallback field to read.
+    //
 
     /**
      * @param {string} locationId
@@ -174,10 +188,10 @@
         var populationAvailable =
             typeof population === 'number' && isFinite(population);
 
-        // Prosperity is derived. If the settlement record contains a
-        // derived prosperity value, we use it; otherwise we report it as
-        // unavailable.
-        var prosperity = settlement.prosperity;
+        // Prosperity is derived. Read it from the prosperity query
+        // module. If that module is missing, this call throws — a
+        // load-order bug, not a fabricated value.
+        var prosperity = _getProsperityQueries().getProsperityValue(locationId);
         var prosperityAvailable =
             typeof prosperity === 'number' && isFinite(prosperity);
 
