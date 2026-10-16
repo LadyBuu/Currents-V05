@@ -1,17 +1,20 @@
 /**
  * modals-government-departments.js
  * Department create/edit/delete/details modals.
- * Reads via GovernmentQueries. Writes via GovernmentCommands.
+ * Reads via GovernmentQueries + GovernmentViewModels.
+ * Writes via GovernmentCommands. Persist once per successful batch.
  */
 (function() {
     'use strict';
 
     var Queries = window.GovernmentQueries;
     var Commands = window.GovernmentCommands;
+    var VM = window.GovernmentViewModels;
     var _LocationQueries = window.LocationQueries;
 
     if (!Queries) throw new Error('modals-government-departments.js requires GovernmentQueries');
     if (!Commands) throw new Error('modals-government-departments.js requires GovernmentCommands');
+    if (!VM) throw new Error('modals-government-departments.js requires GovernmentViewModels');
     if (!_LocationQueries) throw new Error('modals-government-departments.js requires LocationQueries');
 
     function _escapeHtml(str) {
@@ -51,6 +54,13 @@
         return i ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' + i + '</span>' : '';
     }
 
+    function _commitAndPersist() {
+        var p = Commands.persist();
+        if (!p.success) {
+            _toast('Saved in memory, but persisting failed: ' + (p.reason || 'unknown'), 'warning');
+        }
+    }
+
     function _buildLocationOptions(selectedId, placeholder, includeAll) {
         if (typeof window.buildLocationDropdown === 'function') {
             return window.buildLocationDropdown(selectedId, placeholder, includeAll);
@@ -68,16 +78,23 @@
         return html;
     }
 
+    function _buildParentDeptOptions(departments, selectedId, excludeId) {
+        var html = '<option value="">None (Top-level)</option>';
+        for (var i = 0; i < departments.length; i++) {
+            var d = departments[i];
+            if (excludeId && d.id === excludeId) continue;
+            var sel = d.id === selectedId ? 'selected' : '';
+            html += '<option value="' + _attr(d.id) + '" ' + sel + '>' + _escapeHtml(d.name) + '</option>';
+        }
+        return html;
+    }
+
     // ---- Create --------------------------------------------------------------
 
     function openCreateGovernmentDepartmentModal(locationId, onSuccess) {
         var locationOptions = _buildLocationOptions(locationId, 'Select a location', true);
-
         var depts = Queries.getDepartments({});
-        var deptOptions = '<option value="">None (Top-level)</option>';
-        for (var i = 0; i < depts.length; i++) {
-            deptOptions += '<option value="' + _attr(depts[i].id) + '">' + _escapeHtml(depts[i].name) + '</option>';
-        }
+        var deptOptions = _buildParentDeptOptions(depts, null, null);
 
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
@@ -135,6 +152,7 @@
                     _toast(result.reason || 'Failed to create department', 'error');
                     return false;
                 }
+                _commitAndPersist();
                 _closeTopModal();
                 _toast('Department "' + name + '" created', 'success');
                 if (onSuccess) onSuccess(result.data);
@@ -150,14 +168,8 @@
         if (!dept) { _toast('Department not found', 'error'); return; }
 
         var locationOptions = _buildLocationOptions(dept.locationId, 'Select a location', true);
-
-        var depts = Queries.getDepartments({});
-        var deptOptions = '<option value="">None (Top-level)</option>';
-        for (var i = 0; i < depts.length; i++) {
-            if (depts[i].id === deptId) continue;
-            var sel = depts[i].id === dept.parentDepartmentId ? 'selected' : '';
-            deptOptions += '<option value="' + _attr(depts[i].id) + '" ' + sel + '>' + _escapeHtml(depts[i].name) + '</option>';
-        }
+        var allDepts = Queries.getDepartments({});
+        var deptOptions = _buildParentDeptOptions(allDepts, dept.parentDepartmentId, deptId);
 
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
@@ -205,6 +217,7 @@
                     _toast(result.reason || 'Failed to update department', 'error');
                     return false;
                 }
+                _commitAndPersist();
                 _closeTopModal();
                 _toast('Department updated', 'success');
                 if (onSuccess) onSuccess(result.data);
@@ -222,16 +235,12 @@
         var impact = Queries.getDepartmentDeletionImpact(deptId);
         if (!impact) { _toast('Department not found', 'error'); return; }
 
-        var message = 'Delete department "' + dept.name + '"?';
-        if (impact.hasChildren || impact.hasActiveAssignments) {
-            var details = [];
-            if (impact.hasChildren) {
-                details.push(impact.descendantDepartmentCount + ' descendant department(s)');
-            }
-            if (impact.hasActiveAssignments) {
-                details.push(impact.activeAssignmentCount + ' active assignment(s)');
-            }
-            message = 'This department has ' + details.join(' and ') + '. Delete them as well?';
+        var vm = VM.toDeleteImpactViewModel(impact, dept.name);
+        var message;
+        if (vm.requiresCascade) {
+            message = 'This department has ' + vm.detailLines.join(' and ') + '. Delete them as well?';
+        } else {
+            message = 'Delete department "' + dept.name + '"?';
         }
 
         _confirmDialog(message, 'Delete Department', function() {
@@ -240,6 +249,7 @@
                 _toast(result.reason || 'Failed to delete department', 'error');
                 return;
             }
+            _commitAndPersist();
             _toast('Department deleted', 'info');
             if (onSuccess) onSuccess(result.data);
         });
@@ -251,51 +261,50 @@
         var details = Queries.getDepartmentDetails(departmentId);
         if (!details) { _toast('Department not found', 'error'); return; }
 
+        var vm = VM.toDepartmentDetailsViewModel(details, 10);
+        if (!vm) { _toast('Department details unavailable', 'error'); return; }
+
         var infoIcon = _iconSpan('CIRCLE_DOT');
 
-        var positionsHtml = '';
-        if (details.positions.length === 0) {
+        var positionsHtml;
+        if (vm.positions.length === 0) {
             positionsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No positions</div>';
         } else {
             positionsHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
-            var shownPositions = details.positions.slice(0, 10);
-            for (var i = 0; i < shownPositions.length; i++) {
-                var p = shownPositions[i];
+            for (var i = 0; i < vm.positions.length; i++) {
+                var p = vm.positions[i];
                 positionsHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (p.requiredRoleId ? 'var(--accent)' : 'var(--border)') + ';">' +
+                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (p.isRoleBound ? 'var(--accent)' : 'var(--border)') + ';">' +
                     '<span>' + _escapeHtml(p.name) +
-                    (p.requiredRoleId ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(p.requiredRoleName) + ')</span>' : '') +
+                    (p.isRoleBound ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(p.requiredRoleLabel || '') + ')</span>' : '') +
                     '</span>' +
                     '<span style="color:var(--dim);">' + p.activeAssignmentCount + ' assigned · Priority: ' + p.priority + '</span>' +
                     '</div>';
             }
-            if (details.positions.length > 10) {
-                positionsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + (details.positions.length - 10) + ' more</div>';
+            if (vm.positionsOverflow > 0) {
+                positionsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + vm.positionsOverflow + ' more</div>';
             }
             positionsHtml += '</div>';
         }
 
-        var assignmentsHtml = '';
-        if (details.assignments.length === 0) {
+        var assignmentsHtml;
+        if (vm.assignments.length === 0) {
             assignmentsHtml = '<div style="color:var(--dim);font-size:0.55rem;text-align:center;padding:8px;">No assignments</div>';
         } else {
             assignmentsHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
-            var shownAssignments = details.assignments.slice(0, 10);
-            for (var j = 0; j < shownAssignments.length; j++) {
-                var a = shownAssignments[j];
-                var isActive = a.isActive;
-                var endLabel = a.endYear != null ? ' - ' + a.endYear : ' - Present';
+            for (var j = 0; j < vm.assignments.length; j++) {
+                var a = vm.assignments[j];
                 assignmentsHtml +=
-                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
-                    '<span>' + _escapeHtml(a.characterName || 'Unknown') +
+                    '<div style="display:flex;justify-content:space-between;padding:4px 8px;background:var(--bg2);border-radius:4px;font-size:0.55rem;border-left:3px solid ' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' +
+                    '<span>' + _escapeHtml(a.characterName) +
                     (a.title ? ' (' + _escapeHtml(a.title) + ')' : '') +
-                    (a.roleIdAtAssignment ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(a.roleNameAtAssignment || 'Unknown') + ')</span>' : '') +
+                    (a.roleLabel ? ' <span style="color:var(--accent);">(Role: ' + _escapeHtml(a.roleLabel) + ')</span>' : '') +
                     '</span>' +
-                    '<span style="color:' + (isActive ? 'var(--success)' : 'var(--dim)') + ';">' + a.startYear + endLabel + '</span>' +
+                    '<span style="color:' + (a.isActive ? 'var(--success)' : 'var(--dim)') + ';">' + a.startYear + ' - ' + a.endLabel + '</span>' +
                     '</div>';
             }
-            if (details.assignments.length > 10) {
-                assignmentsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + (details.assignments.length - 10) + ' more</div>';
+            if (vm.assignmentsOverflow > 0) {
+                assignmentsHtml += '<div style="font-size:0.5rem;color:var(--dim);text-align:center;">... and ' + vm.assignmentsOverflow + ' more</div>';
             }
             assignmentsHtml += '</div>';
         }
@@ -304,18 +313,18 @@
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">' +
             '<div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(details.name) + '</div>' +
+            '<div style="font-size:0.9rem;font-weight:bold;">' + _escapeHtml(vm.name) + '</div>' +
             '<div style="font-size:0.6rem;color:var(--dim);">' +
-            'Location: ' + _escapeHtml(details.locationName || 'None') +
-            ' · Parent: ' + _escapeHtml(details.parentDepartmentName || 'None') +
+            'Location: ' + _escapeHtml(vm.locationLabel) +
+            ' · Parent: ' + _escapeHtml(vm.parentLabel) +
             '</div>' +
             '</div>' +
             '<div style="font-size:0.55rem;color:var(--accent);text-align:right;">' +
-            '<div>' + details.positionCount + ' positions (' + details.rolePositionCount + ' with role)</div>' +
-            '<div>' + details.activeAssignmentCount + ' active · ' + details.assignmentCount + ' total</div>' +
+            '<div>' + vm.stats.positionCount + ' positions (' + vm.stats.rolePositionCount + ' with role)</div>' +
+            '<div>' + vm.stats.activeAssignmentCount + ' active · ' + vm.stats.assignmentCount + ' total</div>' +
             '</div>' +
             '</div>' +
-            (details.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(details.description) + '</div>' : '') +
+            (vm.description ? '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(vm.description) + '</div>' : '') +
             '</div>' +
             '<div style="margin-bottom:12px;">' +
             '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:6px;">Positions</div>' +
@@ -336,7 +345,7 @@
             '</div>';
 
         _openModal({
-            title: 'Department Details: ' + details.name,
+            title: 'Department Details: ' + vm.name,
             content: html,
             confirmText: '',
             cancelText: '',
