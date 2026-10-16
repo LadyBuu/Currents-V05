@@ -60,6 +60,11 @@
  *   both commit or neither does. Step 4 is emitted by the commit helper
  *   as the event for the transaction.
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file wrapped
+ *   time behind window.Time, which does not exist.
+ *
  * =============================================================================
  */
 
@@ -82,8 +87,8 @@
         return window.SettlementCommandCommit;
     }
 
-    function _getTime() {
-        return window.Time;
+    function _getFinanceDefinitions() {
+        return window.SettlementFinanceDefinitions;
     }
 
     // =========================================================================
@@ -105,6 +110,15 @@
             copy[overrideKey] = overrides[overrideKey];
         }
         return copy;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-annual-processor.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
@@ -134,7 +148,7 @@
             };
         }
 
-        var currentYear = _getTime().getCurrentYear();
+        var currentYear = _currentYear();
 
         // --- Debt interest calculation (pure) ---
         var debtBefore = _isFiniteNumber(settlement.totalDebt) ? settlement.totalDebt : 0;
@@ -142,8 +156,7 @@
 
         var interest = 0;
         if (debtBefore > 0) {
-            var financeDefinitions = window.SettlementFinanceDefinitions;
-            var rate = financeDefinitions.DEBT_INTEREST_RATE.annualFraction;
+            var rate = _getFinanceDefinitions().DEBT_INTEREST_RATE.annualFraction;
             if (_isFiniteNumber(rate)) {
                 interest = Math.floor(debtBefore * rate);
             }
@@ -220,7 +233,7 @@
      *   }
      */
     function processAllSettlementsAnnual() {
-        var currentYear = _getTime().getCurrentYear();
+        var currentYear = _currentYear();
         var settlements = _getSettlementQueries().getAllSettlements();
 
         var results = [];
