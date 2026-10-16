@@ -82,6 +82,13 @@
  *     unavailable (e.g. no leader)   → that modifier is 0 for this
  *                                       settlement
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file called
+ *   window.Time.getCurrentYear() in the government-leader tenure
+ *   calculation, which would have thrown. It now uses the canonical
+ *   helper directly.
+ *
  * =============================================================================
  */
 
@@ -135,6 +142,15 @@
             if (value >= bands[i].min) return bands[i];
         }
         return bands[bands.length - 1];
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-prosperity-queries.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
@@ -315,7 +331,7 @@
             if (traits.indexOf('charismatic') !== -1 || traits.indexOf('diplomatic') !== -1) leaderDelta += 3;
             if (traits.indexOf('incompetent') !== -1 || traits.indexOf('corrupt') !== -1) leaderDelta -= 3;
             if (_isFiniteNumber(leader.startYear)) {
-                var currentYear = window.Time.getCurrentYear();
+                var currentYear = _currentYear();
                 var tenure = currentYear - leader.startYear;
                 if (tenure > 10) leaderDelta += 2;
                 else if (tenure > 5) leaderDelta += 1;
