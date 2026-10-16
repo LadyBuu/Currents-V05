@@ -47,6 +47,13 @@
  *     record. The history record and the feature removal happen in the
  *     same candidate; they cannot diverge.
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file wrapped
+ *   time behind window.Time, which does not exist. demolishFeature
+ *   stamps the demolition record with the current world year, so this
+ *   command would have thrown at the commit boundary.
+ *
  * =============================================================================
  */
 
@@ -71,11 +78,6 @@
 
     function _getCommit() {
         return window.SettlementCommandCommit;
-    }
-
-    function _getTime() {
-        // Time is a required dependency. There is no fallback year.
-        return window.Time;
     }
 
     // =========================================================================
@@ -107,6 +109,15 @@
             copy[overrideKey] = overrides[overrideKey];
         }
         return copy;
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-feature-commands.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     // =========================================================================
@@ -331,7 +342,7 @@
             }
         }
 
-        var worldYear = _getTime().getCurrentYear();
+        var worldYear = _currentYear();
 
         var historyRecord = {
             featureId: feature.id,
