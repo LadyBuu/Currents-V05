@@ -18,6 +18,13 @@
  *   - Icons come from Icons via Icons[name]. No inline Unicode glyphs.
  *   - NO EMOJIS anywhere in this file.
  *
+ * PERSISTENCE:
+ *   Every write modal calls RoleCommands.persist() exactly once, after
+ *   a successful command. The role domain no longer flushes on every
+ *   mutation; the modal is the batch boundary for a single user action.
+ *   A persist failure is reported via toast but does not roll back the
+ *   in-memory write.
+ *
  * DEPENDENCIES (must be loaded first):
  *   - modals-core.js        (openModal, closeTopModal)
  *   - formatting.js         (_escapeHtml)
@@ -124,6 +131,27 @@
     function _calculateAgeOrNull(birthYear) {
         if (typeof window.calculateAge !== 'function') return null;
         return window.calculateAge(birthYear, false, null);
+    }
+
+    /**
+     * Runs RoleCommands.persist() and toasts a warning if the disk write
+     * failed. The in-memory write is already done; this only reports
+     * whether it reached storage. Never rolls back.
+     */
+    function _persistAndWarn(successMessage) {
+        var persistResult = RCMD.persist();
+        if (!persistResult.success) {
+            window._showToast(
+                'Change saved in memory, but disk save failed: ' +
+                (persistResult.reason || 'unknown'),
+                'warning'
+            );
+            return false;
+        }
+        if (successMessage) {
+            window._showToast(successMessage, 'success');
+        }
+        return true;
     }
 
     // =========================================================================
@@ -309,7 +337,7 @@
                     return false;
                 }
 
-                window._showToast('Role "' + result.role.name + '" created', 'success');
+                _persistAndWarn('Role "' + result.role.name + '" created');
                 window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess(result.role.id);
                 return true;
@@ -328,7 +356,6 @@
             return;
         }
 
-        // Draft state — DOM is a projection, not the source of truth.
         var draftSpecs = Array.isArray(role.specializations) ? role.specializations.slice() : [];
 
         function renderSpecsInto(container) {
@@ -478,7 +505,7 @@
                     return false;
                 }
 
-                window._showToast('Role "' + result.role.name + '" updated', 'success');
+                _persistAndWarn('Role "' + result.role.name + '" updated');
                 window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
                 return true;
@@ -540,7 +567,7 @@
                     return false;
                 }
 
-                window._showToast('Role "' + role.name + '" deleted', 'info');
+                _persistAndWarn('Role "' + role.name + '" deleted');
                 window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
                 return true;
@@ -823,7 +850,8 @@
                         return false;
                     }
                     var character = window.getCharacterById(selectedIds[0]);
-                    window._showToast((_displayName(character) || 'Character') + ' assigned ' + role.name, 'success');
+                    _persistAndWarn((_displayName(character) || 'Character') +
+                        ' assigned ' + role.name);
                 } else {
                     var bulk = RCMD.bulkAssignRole(selectedIds, roleId, {
                         skillLevel: skill,
@@ -833,10 +861,11 @@
                         window._showToast('No assignments succeeded', 'error');
                         return false;
                     }
-                    window._showToast('Assigned ' + role.name + ' to ' + bulk.success + ' character(s)', 'success');
+                    var msg = 'Assigned ' + role.name + ' to ' + bulk.success + ' character(s)';
                     if (bulk.failed > 0) {
-                        window._showToast(bulk.failed + ' assignment(s) failed', 'warning');
+                        msg += '; ' + bulk.failed + ' failed';
                     }
+                    _persistAndWarn(msg);
                 }
 
                 window.closeTopModal();
@@ -989,7 +1018,7 @@
                     return false;
                 }
 
-                window._showToast('Skill updated to ' + value, 'success');
+                _persistAndWarn('Skill updated to ' + value);
                 window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
                 return true;
@@ -1161,7 +1190,7 @@
                                 window._showToast(result.reason || 'Failed to add category', 'error');
                                 return;
                             }
-                            window._showToast('Category added', 'success');
+                            _persistAndWarn('Category added');
                             window.closeTopModal();
                             openManagerModal();
                         });
@@ -1182,7 +1211,7 @@
                                     window._showToast(result.reason || 'Failed to update category', 'error');
                                     return;
                                 }
-                                window._showToast('Category updated', 'success');
+                                _persistAndWarn('Category updated');
                                 window.closeTopModal();
                                 openManagerModal();
                             });
@@ -1211,7 +1240,7 @@
                                         window._showToast(result.reason || 'Failed to delete category', 'error');
                                         return;
                                     }
-                                    window._showToast('Category deleted', 'info');
+                                    _persistAndWarn('Category deleted');
                                     window.closeTopModal();
                                     openManagerModal();
                                 });
