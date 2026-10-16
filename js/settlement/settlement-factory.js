@@ -36,8 +36,8 @@
  *     featureIds              canonical choice list (starts [])
  *     wealth                  canonical balance (starts 0)
  *     totalDebt               canonical balance (starts 0)
- *     taxRate                 canonical policy (starts from fiscal rules min? no:
- *                             starts from the domain default declared below)
+ *     taxRate                 canonical policy (starts from the domain
+ *                             default declared below)
  *     tradeTariff             canonical policy
  *     industryTaxRate         canonical policy
  *     educationBudget         canonical policy (starts 0)
@@ -84,6 +84,13 @@
  *   command (SettlementFiscalCommands, SettlementGovernmentCommands,
  *   etc.), not through creation.
  *
+ * Time dependency:
+ *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
+ *   window.getCurrentYear. The previous version of this file wrapped
+ *   time behind window.Time, which does not exist. getDefaultSettlement
+ *   stamps foundedYear and lastUpgraded with the current world year, so
+ *   this module would have thrown on the first createSettlement call.
+ *
  * =============================================================================
  */
 
@@ -106,10 +113,6 @@
         return window.SettlementCommandCommit;
     }
 
-    function _getTime() {
-        return window.Time;
-    }
-
     function _getPlaceQueries() {
         return window.PlaceQueries;
     }
@@ -128,6 +131,15 @@
 
     function _isFiniteNumber(value) {
         return typeof value === 'number' && isFinite(value);
+    }
+
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'settlement-factory.js requires time.js (getCurrentYearSafe).'
+            );
+        }
+        return window.getCurrentYearSafe();
     }
 
     function _getLowestRank() {
@@ -160,7 +172,7 @@
     function getDefaultSettlement(locationId, overrides) {
         overrides = overrides || {};
 
-        var currentYear = _getTime().getCurrentYear();
+        var currentYear = _currentYear();
         var lowestRank = _getLowestRank();
 
         var rankId = lowestRank.id;
