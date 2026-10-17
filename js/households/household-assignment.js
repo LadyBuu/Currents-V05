@@ -2,14 +2,14 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD ASSIGNMENT (household-assignment.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/household-assignment.js
- * 
+ *
  * PURPOSE
  * -------
  * Cross-operation orchestration for household lifecycle events that span
  * multiple domains or multiple household commands:
- * 
+ *
  *   - Newborn → household assignment
  *   - Marriage → spouse household adoption
  *   - Inheritance / succession on death (with enterprise transfer)
@@ -18,61 +18,54 @@
  *   - Household merge
  *   - Household split
  *   - Auto-succession after death
- * 
+ *
  * THIS MODULE IS AN ORCHESTRATOR, NOT A MUTATOR
  * ---------------------------------------------
  * It reads via HouseholdQueries, writes via HouseholdCommands, and
  * coordinates IndustryCommands for enterprise ownership transfer.
- * 
+ *
  * It does NOT:
- *   - mutate HouseholdState records directly
- *   - call state._setHouseholds()
+ *   - import HouseholdState or mutate its canonical arrays
+ *   - mutate any domain record in place
+ *   - call HouseholdState._internal.replaceHouseholds
  *   - return live canonical objects
  *   - show toasts
  *   - use a global _processing guard
  *   - fabricate domain defaults
- * 
- * CONTRACT
- * --------
- * Every operation returns:
- *   { success: true, data: ... }
- *   { success: false, code: 'SOME_CODE', reason: 'human message' }
- * 
- * COMPOUND OPERATIONS
- * -------------------
- * Inheritance, merge, split, and cadet branch creation touch multiple
- * households and may also transfer enterprise ownership. Each is
- * orchestrated as a sequence of atomic commands:
- * 
- *   validate all preconditions
- *   ↓
- *   execute primitives via HouseholdCommands / IndustryCommands
- *   ↓
- *   if any step fails, report which step failed and stop
- * 
- * We do NOT attempt cross-command rollback: if a merge partially completes,
- * the caller receives a structured failure describing exactly what happened
- * and can choose to retry, undo manually, or accept the partial state.
- * 
+ *
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - Enterprise index mutation is now HouseholdCommands'
+ *     responsibility (setHouseholdEnterprises / addEnterpriseToHousehold /
+ *     removeEnterpriseFromHousehold). This module calls those primitives
+ *     instead of touching State.
+ *   - Every orchestration ends with a single _finish() that fires the
+ *     domain event and calls HouseholdCommands.persist() exactly once.
+ *   - Compound operations (merge, split, cadet) batch their member
+ *     transfers and persist once at the end.
+ *   - Partial failures are reported explicitly. The outer result is
+ *     success:false with partial:true when some steps succeeded.
+ *
+ * RESULT SHAPE
+ * ------------
+ *   { success: true,  data: ... }
+ *   { success: false, code: 'SOME_CODE', reason: 'human message',
+ *     partial: true (when partial mutation occurred),
+ *     ...extra fields (transferred, failed, enterpriseTransfer, etc.) }
+ *
  * REFERENCE YEARS
  * ---------------
- * All operations accept an explicit year for historical context. If omitted,
- * the current simulation year is used. Heir discovery always uses the
- * operation year so historical deaths produce historically correct ages.
- * 
- * DEPENDENCIES (required)
- * -----------------------
- *   - HouseholdQueries
- *   - HouseholdCommands
- *   - getCharacterById
- *   - getCurrentYearSafe
- * 
- * DEPENDENCIES (optional)
- * -----------------------
- *   - IndustryCommands  (for enterprise ownership transfer)
- *   - family accessors  (getChildren, getParents, getSpouses — used by
- *                        HouseholdQueries.getHouseholdHeirs)
- * 
+ * All operations accept an explicit year for historical context. If
+ * omitted, the current simulation year is used. Heir discovery always
+ * uses the operation year so historical deaths produce historically
+ * correct ages.
+ *
+ * CROSS-DOMAIN
+ * ------------
+ *   - Enterprise ownership → IndustryCommands.updateEnterprise
+ *   - Household index      → HouseholdCommands.setHouseholdEnterprises
+ *   - Character reverse    → HouseholdCommands.addMember/transferMember
+ *
  * =============================================================================
  */
 
@@ -80,48 +73,65 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _queries() {
-        if (typeof window.HouseholdQueries === 'undefined') {
-            throw new Error('HouseholdAssignment: HouseholdQueries is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('HouseholdAssignment: ' + name + ' is required');
         }
-        return window.HouseholdQueries;
+        return obj;
     }
 
-    function _commands() {
-        if (typeof window.HouseholdCommands === 'undefined') {
-            throw new Error('HouseholdAssignment: HouseholdCommands is required');
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('HouseholdAssignment: ' + name + ' is required');
         }
-        return window.HouseholdCommands;
+        return fn;
     }
 
-    function _industryCommands() {
-        return typeof window.IndustryCommands !== 'undefined'
-            ? window.IndustryCommands
-            : null;
-    }
+    // Required
+    var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
+    _requireFunction('HouseholdCommands.addMember', _commands.addMember);
+    _requireFunction('HouseholdCommands.transferMember', _commands.transferMember);
+    _requireFunction('HouseholdCommands.setHead', _commands.setHead);
+    _requireFunction('HouseholdCommands.setStatus', _commands.setStatus);
+    _requireFunction('HouseholdCommands.createHousehold', _commands.createHousehold);
+    _requireFunction('HouseholdCommands.updateHousehold', _commands.updateHousehold);
+    _requireFunction('HouseholdCommands.recordEvent', _commands.recordEvent);
+    _requireFunction('HouseholdCommands.persist', _commands.persist);
+    _requireFunction('HouseholdCommands.setHouseholdEnterprises',
+        _commands.setHouseholdEnterprises);
+    _requireFunction('HouseholdCommands.addEnterpriseToHousehold',
+        _commands.addEnterpriseToHousehold);
+    _requireFunction('HouseholdCommands.removeEnterpriseFromHousehold',
+        _commands.removeEnterpriseFromHousehold);
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('HouseholdAssignment: getCharacterById is required');
-        }
-        return window.getCharacterById(id);
-    }
+    var _queries = _requireObject('HouseholdQueries', window.HouseholdQueries);
+    _requireFunction('HouseholdQueries.getHousehold', _queries.getHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdMembers',
+        _queries.getHouseholdMembers);
+    _requireFunction('HouseholdQueries.getHouseholdsByMember',
+        _queries.getHouseholdsByMember);
+    _requireFunction('HouseholdQueries.getHouseholdsHeadedBy',
+        _queries.getHouseholdsHeadedBy);
+    _requireFunction('HouseholdQueries.getHouseholdHeirs',
+        _queries.getHouseholdHeirs);
+    _requireFunction('HouseholdQueries.getCharacterHousehold',
+        _queries.getCharacterHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdsByLocation',
+        _queries.getHouseholdsByLocation);
+    _requireFunction('HouseholdQueries.getHouseholdEnterprises',
+        _queries.getHouseholdEnterprises);
 
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('HouseholdAssignment: getCurrentYearSafe is required');
-        }
-        return window.getCurrentYearSafe();
-    }
+    var _getCharacterById = _requireFunction('getCharacterById',
+        window.getCharacterById);
+    var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
+        window.getCurrentYearSafe);
 
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
+    // Optional — required at call time when enterprises need transferring
+    var _industryCommandsPresent = typeof window.IndustryCommands !== 'undefined' &&
+        window.IndustryCommands !== null;
 
     // =========================================================================
     // 2. RESULT HELPERS
@@ -144,24 +154,63 @@
     }
 
     function _resolveYear(value) {
-        if (value === undefined || value === null) return _currentYear();
+        if (value === undefined || value === null) return _getCurrentYearSafe();
         if (typeof value !== 'number' || !isFinite(value)) return null;
         return value;
     }
 
     // =========================================================================
-    // 3. NEWBORN ASSIGNMENT
+    // 3. ORCHESTRATION FINISHER
+    // =========================================================================
+    //
+    // Every public orchestration ends with _finish. It:
+    //   - fires the domain event on HouseholdState (via command's publish path)
+    //   - dispatches a CustomEvent for cross-domain listeners
+    //   - calls HouseholdCommands.persist() exactly once
+    //
+    // The caller has already mutated canonical records via HouseholdCommands
+    // primitives. _finish is the batch close.
+    // =========================================================================
+
+    function _dispatch(eventName, payload) {
+        if (typeof window.dispatchEvent !== 'function') return;
+        if (typeof window.CustomEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new window.CustomEvent(eventName, {
+                detail: payload || {}
+            }));
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('HouseholdAssignment: failed to dispatch ' + eventName, e);
+            }
+        }
+    }
+
+    function _finish(eventName, payload) {
+        _dispatch(eventName, payload || {});
+        var persistResult = _commands.persist();
+        if (!persistResult || persistResult.success === false) {
+            return _fail(
+                (persistResult && persistResult.code) || 'PERSIST_FAILED',
+                (persistResult && persistResult.reason) || 'Failed to persist'
+            );
+        }
+        return _ok(null);
+    }
+
+    // =========================================================================
+    // 4. NEWBORN ASSIGNMENT
     // =========================================================================
 
     /**
      * Assigns a newborn to a household.
-     * 
+     *
      * Resolution order for household:
      *   1. options.householdId
      *   2. mother's household
      *   3. father's household
      *   4. first household in the child's location
-     * 
+     *
      * options:
      *   householdId, year, role, departmentId, notes, recordHistory
      */
@@ -179,36 +228,58 @@
 
         if (!householdId && motherId) {
             var mother = _getCharacterById(motherId);
-            if (mother && mother.householdId) {
-                householdId = mother.householdId;
+            if (mother) {
+                var motherH = _queries.getCharacterHousehold(motherId);
+                if (motherH) householdId = motherH.id;
             }
         }
 
         if (!householdId && fatherId) {
             var father = _getCharacterById(fatherId);
-            if (father && father.householdId) {
-                householdId = father.householdId;
+            if (father) {
+                var fatherH = _queries.getCharacterHousehold(fatherId);
+                if (fatherH) householdId = fatherH.id;
             }
         }
 
         if (!householdId && child.currentLocationId) {
-            var locationHouseholds = _queries().getHouseholdsByLocation(child.currentLocationId);
+            var locationHouseholds = _queries.getHouseholdsByLocation(
+                child.currentLocationId
+            );
             if (locationHouseholds.length > 0) {
                 householdId = locationHouseholds[0].id;
             }
         }
 
         if (!householdId) {
-            return _fail('NO_HOUSEHOLD', 'No suitable household found for newborn');
+            return _fail('NO_HOUSEHOLD',
+                'No suitable household found for newborn');
         }
 
-        var household = _queries().getHousehold(householdId);
+        var household = _queries.getHousehold(householdId);
         if (!household) {
-            return _fail('HOUSEHOLD_NOT_FOUND', 'Resolved household does not exist');
+            return _fail('HOUSEHOLD_NOT_FOUND',
+                'Resolved household does not exist');
         }
 
-        var result = _commands().addMember(householdId, childId, 'family', {
-            role: options.role || 'Child',
+        // If already a member, succeed without change.
+        var existingMembers = _queries.getHouseholdMembers(householdId);
+        for (var i = 0; i < existingMembers.length; i++) {
+            if (existingMembers[i].characterId === childId) {
+                return _ok({
+                    childId: childId,
+                    householdId: householdId,
+                    householdName: household.name,
+                    year: year,
+                    alreadyMember: true,
+                    changed: false
+                });
+            }
+        }
+
+        var role = options.role || 'Child';
+        var addResult = _commands.addMember(householdId, childId, 'family', {
+            role: role,
             joinedYear: year,
             isHead: false,
             departmentId: options.departmentId || null,
@@ -216,30 +287,44 @@
             recordHistory: options.recordHistory !== false
         });
 
-        if (!result.success) {
-            return _fail(result.code || 'ADD_MEMBER_FAILED', result.reason);
+        if (!addResult.success) {
+            return _fail(addResult.code || 'ADD_MEMBER_FAILED', addResult.reason);
         }
 
-        _logEvent('household', 'Newborn Assigned',
-            (child.name || 'Unknown') + ' assigned to ' + household.name,
-            [child]);
+        // Single persist for the orchestration
+        var finish = _finish('householdNewbornAssigned', {
+            childId: childId,
+            householdId: householdId,
+            year: year,
+            role: role
+        });
+
+        if (!finish.success) return finish;
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Newborn Assigned',
+                (child.name || 'Unknown') + ' assigned to ' + household.name,
+                [child]);
+        }
 
         return _ok({
             childId: childId,
             householdId: householdId,
             householdName: household.name,
             year: year,
-            role: options.role || 'Child'
+            role: role,
+            alreadyMember: false,
+            changed: true
         });
     }
 
     // =========================================================================
-    // 4. SPOUSE ASSIGNMENT
+    // 5. SPOUSE ASSIGNMENT
     // =========================================================================
 
     /**
      * Assigns a character to their spouse's household after marriage.
-     * 
+     *
      * options:
      *   patrilocal (default true) — join spouse's household
      *   year / marriageYear
@@ -257,7 +342,7 @@
         var year = _resolveYear(options.marriageYear || options.year);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid marriage year');
 
-        var spouseHousehold = _queries().getCharacterHousehold(spouseId);
+        var spouseHousehold = _queries.getCharacterHousehold(spouseId);
         if (!spouseHousehold) {
             return _fail('SPOUSE_NO_HOUSEHOLD', 'Spouse has no household');
         }
@@ -271,28 +356,57 @@
             targetHouseholdId = spouseHousehold.id;
             targetHouseholdName = spouseHousehold.name;
         } else {
-            var charHousehold = _queries().getCharacterHousehold(characterId);
+            var charHousehold = _queries.getCharacterHousehold(characterId);
             targetHouseholdId = charHousehold ? charHousehold.id : spouseHousehold.id;
             targetHouseholdName = charHousehold ? charHousehold.name : spouseHousehold.name;
         }
 
-        var result = _commands().transferMember(characterId, targetHouseholdId, {
+        // If already in target, succeed without change.
+        var current = _queries.getCharacterHousehold(characterId);
+        if (current && current.id === targetHouseholdId) {
+            return _ok({
+                characterId: characterId,
+                spouseId: spouseId,
+                householdId: targetHouseholdId,
+                householdName: targetHouseholdName,
+                year: year,
+                patrilocal: patrilocal,
+                alreadyMember: true,
+                changed: false
+            });
+        }
+
+        var role = options.role || 'Spouse';
+        var transferResult = _commands.transferMember(characterId, targetHouseholdId, {
             year: year,
             reason: options.reason || ('Marriage to ' + (spouse.name || 'spouse')),
-            role: options.role || 'Spouse',
+            role: role,
             type: 'family',
             departmentId: options.departmentId || null,
             isHead: false,
             recordHistory: options.recordHistory !== false
         });
 
-        if (!result.success) {
-            return _fail(result.code || 'TRANSFER_FAILED', result.reason);
+        if (!transferResult.success) {
+            return _fail(transferResult.code || 'TRANSFER_FAILED',
+                transferResult.reason);
         }
 
-        _logEvent('household', 'Spouse Joined',
-            character.name + ' joined ' + targetHouseholdName + ' as spouse',
-            [character, spouse]);
+        var finish = _finish('householdSpouseJoined', {
+            characterId: characterId,
+            spouseId: spouseId,
+            householdId: targetHouseholdId,
+            year: year,
+            patrilocal: patrilocal
+        });
+
+        if (!finish.success) return finish;
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Spouse Joined',
+                character.name + ' joined ' + targetHouseholdName + ' as spouse',
+                [character, spouse]);
+        }
 
         return _ok({
             characterId: characterId,
@@ -300,44 +414,65 @@
             householdId: targetHouseholdId,
             householdName: targetHouseholdName,
             year: year,
-            patrilocal: patrilocal
+            patrilocal: patrilocal,
+            alreadyMember: false,
+            changed: true
         });
     }
 
     // =========================================================================
-    // 5. ENTERPRISE TRANSFER HELPER
+    // 6. ENTERPRISE TRANSFER (PURE ORCHESTRATION)
     // =========================================================================
     //
-    // Canonical enterprise ownership lives in Industry. This helper moves
-    // each enterprise to the new owner via IndustryCommands, then updates
-    // the household index. Both sides of the change go through their
-    // canonical owner.
+    // Canonical enterprise ownership lives in Industry. The household's
+    // enterprises[] array is a reverse index, mutated via HouseholdCommands.
+    //
+    // This function:
+    //   1. Reads the current enterprise list from the from-household via
+    //      HouseholdQueries (defensive snapshot).
+    //   2. Calls IndustryCommands.updateEnterprise for each enterprise.
+    //   3. Calls HouseholdCommands.setHouseholdEnterprises on both sides
+    //      to update the reverse index.
+    //
+    // It does NOT touch HouseholdState. It does NOT persist. The caller
+    // (via _finish) persists once.
     // =========================================================================
 
     function _transferEnterprises(fromHouseholdId, toHouseholdId, year, options) {
         options = options || {};
-        var industryCommands = _industryCommands();
-        if (!industryCommands) {
-            return { transferred: 0, skipped: 0, reason: 'IndustryCommands not available' };
+
+        if (!_industryCommandsPresent) {
+            return {
+                transferred: 0,
+                skipped: 0,
+                reason: 'IndustryCommands not available',
+                failures: []
+            };
         }
 
-        var enterprises = _queries().getHouseholdEnterprises(fromHouseholdId);
+        var industryCommands = window.IndustryCommands;
+        if (typeof industryCommands.updateEnterprise !== 'function') {
+            return {
+                transferred: 0,
+                skipped: 0,
+                reason: 'IndustryCommands.updateEnterprise not available',
+                failures: []
+            };
+        }
+
+        var enterprises = _queries.getHouseholdEnterprises(fromHouseholdId);
         if (!Array.isArray(enterprises) || enterprises.length === 0) {
-            return { transferred: 0, skipped: 0 };
+            return { transferred: 0, skipped: 0, failures: [] };
         }
 
-        // Determine target owner type/id
-        var toRecord = null;
-        var state = window.HouseholdState;
-        if (state) {
-            toRecord = state._internal.getHouseholdRecord(toHouseholdId);
-        }
+        var toRecord = _queries.getHousehold(toHouseholdId);
         var toOwnerId = options.ownerId || toHouseholdId;
         var toOwnerType = options.ownerType || 'household';
 
         var transferred = 0;
         var skipped = 0;
         var failures = [];
+        var movedIds = [];
 
         for (var i = 0; i < enterprises.length; i++) {
             var e = enterprises[i];
@@ -347,20 +482,9 @@
                 ownerName: toRecord ? toRecord.name : null
             });
 
-            if (updateResult && updateResult.success) {
-                // Update household index on both sides
-                var removeResult = _commands().updateHousehold(fromHouseholdId, {
-                    // We don't directly remove; the enterprise index is
-                    // maintained below via the State internal call. But
-                    // since HouseholdCommands.updateHousehold does not
-                    // expose enterprise index mutation, we do it via the
-                    // household record directly.
-                });
-                // NOTE: enterprise index mutation is done below via
-                // direct state record edit + replaceHouseholds, because
-                // HouseholdCommands does not yet own enterprise index
-                // mutation as a primitive.
+            if (updateResult && updateResult.success === true) {
                 transferred++;
+                movedIds.push(e.id);
             } else {
                 skipped++;
                 failures.push({
@@ -370,77 +494,171 @@
             }
         }
 
-        // Update household enterprise indexes
-        var st = window.HouseholdState;
-        if (st) {
-            var fromRecord = st._internal.getHouseholdRecord(fromHouseholdId);
-            var toRecord2 = st._internal.getHouseholdRecord(toHouseholdId);
-
-            if (fromRecord && Array.isArray(fromRecord.enterprises)) {
-                var remaining = [];
-                var movedIds = {};
-                for (var j = 0; j < enterprises.length; j++) {
-                    movedIds[enterprises[j].id] = true;
-                }
-                for (var k = 0; k < fromRecord.enterprises.length; k++) {
-                    if (!movedIds[fromRecord.enterprises[k]]) {
-                        remaining.push(fromRecord.enterprises[k]);
-                    }
-                }
-                fromRecord.enterprises = remaining;
-                if (!Array.isArray(fromRecord.enterpriseHistory)) {
-                    fromRecord.enterpriseHistory = [];
-                }
-                fromRecord.enterpriseHistory.push({
-                    year: year,
-                    action: 'transferred_all_to_' + toHouseholdId,
-                    count: transferred
-                });
-            }
-
-            if (toRecord2) {
-                if (!Array.isArray(toRecord2.enterprises)) toRecord2.enterprises = [];
-                if (!Array.isArray(toRecord2.enterpriseHistory)) {
-                    toRecord2.enterpriseHistory = [];
-                }
-                for (var m = 0; m < enterprises.length; m++) {
-                    var eid = enterprises[m].id;
-                    if (toRecord2.enterprises.indexOf(eid) === -1) {
-                        toRecord2.enterprises.push(eid);
-                        toRecord2.enterpriseHistory.push({
-                            year: year,
-                            action: 'transferred_from_' + fromHouseholdId,
-                            enterpriseId: eid
-                        });
-                    }
+        if (movedIds.length > 0) {
+            // Update source household index: remove moved enterprises
+            var sourceEnterprises = _queries.getHouseholdEnterprises(fromHouseholdId);
+            var remaining = [];
+            var movedSet = {};
+            for (var m = 0; m < movedIds.length; m++) movedSet[movedIds[m]] = true;
+            for (var s = 0; s < sourceEnterprises.length; s++) {
+                if (!movedSet[sourceEnterprises[s].id]) {
+                    remaining.push(sourceEnterprises[s].id);
                 }
             }
+            _commands.setHouseholdEnterprises(fromHouseholdId, remaining, {
+                year: year,
+                reason: 'transferred_to_' + toHouseholdId
+            });
 
-            st._internal.replaceHouseholds(
-                st._internal.getAllHouseholdRecords({ includeDeprecated: true })
-            );
+            // Update target household index: add moved enterprises
+            var targetEnterprises = _queries.getHouseholdEnterprises(toHouseholdId);
+            var merged = [];
+            var seen = {};
+            for (var t = 0; t < targetEnterprises.length; t++) {
+                if (!seen[targetEnterprises[t].id]) {
+                    seen[targetEnterprises[t].id] = true;
+                    merged.push(targetEnterprises[t].id);
+                }
+            }
+            for (var v = 0; v < movedIds.length; v++) {
+                if (!seen[movedIds[v]]) {
+                    seen[movedIds[v]] = true;
+                    merged.push(movedIds[v]);
+                }
+            }
+            _commands.setHouseholdEnterprises(toHouseholdId, merged, {
+                year: year,
+                reason: 'received_from_' + fromHouseholdId
+            });
         }
 
-        return { transferred: transferred, skipped: skipped, failures: failures };
+        return {
+            transferred: transferred,
+            skipped: skipped,
+            failures: failures
+        };
+    }
+
+    function _transferSelectedEnterprises(fromHouseholdId, toHouseholdId,
+                                          enterpriseIds, year) {
+        if (!Array.isArray(enterpriseIds) || enterpriseIds.length === 0) {
+            return { transferred: 0, skipped: 0, failures: [] };
+        }
+
+        if (!_industryCommandsPresent) {
+            return {
+                transferred: 0,
+                skipped: 0,
+                reason: 'IndustryCommands not available',
+                failures: []
+            };
+        }
+
+        var industryCommands = window.IndustryCommands;
+        if (typeof industryCommands.updateEnterprise !== 'function') {
+            return {
+                transferred: 0,
+                skipped: 0,
+                reason: 'IndustryCommands.updateEnterprise not available',
+                failures: []
+            };
+        }
+
+        var toRecord = _queries.getHousehold(toHouseholdId);
+
+        var transferred = 0;
+        var skipped = 0;
+        var failures = [];
+        var movedIds = [];
+
+        for (var i = 0; i < enterpriseIds.length; i++) {
+            var eId = enterpriseIds[i];
+            var result = industryCommands.updateEnterprise(eId, {
+                ownerId: toHouseholdId,
+                ownerType: 'household',
+                ownerName: toRecord ? toRecord.name : null
+            });
+            if (result && result.success === true) {
+                transferred++;
+                movedIds.push(eId);
+            } else {
+                skipped++;
+                failures.push({
+                    enterpriseId: eId,
+                    reason: result ? result.reason : 'Unknown'
+                });
+            }
+        }
+
+        if (movedIds.length > 0) {
+            // Source: remove moved
+            var sourceEnterprises = _queries.getHouseholdEnterprises(fromHouseholdId);
+            var movedSet = {};
+            for (var m = 0; m < movedIds.length; m++) movedSet[movedIds[m]] = true;
+            var remaining = [];
+            for (var s = 0; s < sourceEnterprises.length; s++) {
+                if (!movedSet[sourceEnterprises[s].id]) {
+                    remaining.push(sourceEnterprises[s].id);
+                }
+            }
+            _commands.setHouseholdEnterprises(fromHouseholdId, remaining, {
+                year: year,
+                reason: 'transferred_selected_to_' + toHouseholdId
+            });
+
+            // Target: add moved
+            var targetEnterprises = _queries.getHouseholdEnterprises(toHouseholdId);
+            var seen = {};
+            var merged = [];
+            for (var t = 0; t < targetEnterprises.length; t++) {
+                if (!seen[targetEnterprises[t].id]) {
+                    seen[targetEnterprises[t].id] = true;
+                    merged.push(targetEnterprises[t].id);
+                }
+            }
+            for (var v = 0; v < movedIds.length; v++) {
+                if (!seen[movedIds[v]]) {
+                    seen[movedIds[v]] = true;
+                    merged.push(movedIds[v]);
+                }
+            }
+            _commands.setHouseholdEnterprises(toHouseholdId, merged, {
+                year: year,
+                reason: 'received_selected_from_' + fromHouseholdId
+            });
+        }
+
+        return {
+            transferred: transferred,
+            skipped: skipped,
+            failures: failures
+        };
     }
 
     // =========================================================================
-    // 6. INHERITANCE
+    // 7. INHERITANCE
     // =========================================================================
 
     /**
      * Processes all households headed by a deceased character.
-     * 
+     *
      * For each household where the character is head:
      *   - discover heirs via HouseholdQueries.getHouseholdHeirs()
      *   - if heirs exist: transfer headship to the first heir
      *   - if no heirs: mark household vacant
-     * 
+     *
      * Enterprise transfer happens inside transferHouseholdToHeir.
-     * 
+     *
+     * Each household in the loop is its own orchestration and persists
+     * once. This is deliberate: inheritance across multiple households is
+     * rare, and each household's succession is a discrete domain
+     * operation. If a caller wants to batch the whole loop into one save,
+     * they can call HouseholdCommands.persist() after this function
+     * returns (it will be a redundant no-op if nothing else is dirty).
+     *
      * options:
      *   deathYear, includeExternal, minAge, maxAge, heirRole,
-     *   autoTransfer, recordHistory
+     *   autoTransfer, recordHistory, transferEnterprises
      */
     function processHouseholdInheritanceOnDeath(characterId, options) {
         options = options || {};
@@ -451,16 +669,22 @@
         var year = _resolveYear(options.deathYear);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid death year');
 
-        // Find all households headed by this character
-        var households = _queries().getHouseholdsHeadedBy(characterId);
+        var households = _queries.getHouseholdsHeadedBy(characterId);
         if (households.length === 0) {
-            return _ok({ processed: [], reason: 'Character was not a head of any household' });
+            return _ok({
+                processed: [],
+                deathYear: year,
+                reason: 'Character was not a head of any household'
+            });
         }
 
-        var results = [];
+        var processed = [];
+        var anyPartial = false;
+
         for (var i = 0; i < households.length; i++) {
             var h = households[i];
-            var heirs = _queries().getHouseholdHeirs(h.id, characterId, {
+
+            var heirs = _queries.getHouseholdHeirs(h.id, characterId, {
                 referenceYear: year,
                 includeExternal: options.includeExternal !== false,
                 minAge: options.minAge !== undefined ? options.minAge : 16,
@@ -475,46 +699,69 @@
                     transferEnterprises: options.transferEnterprises !== false
                 });
 
-                results.push({
+                if (!heirResult.success) {
+                    anyPartial = true;
+                }
+
+                processed.push({
                     householdId: h.id,
                     householdName: h.name,
                     action: 'transferred',
                     heirId: heirs[0].id,
                     heirName: heirs[0].displayName,
+                    success: heirResult.success === true,
                     transferResult: heirResult
                 });
             } else if (options.autoTransfer !== false) {
-                var vacateResult = _commands().setStatus(h.id, 'vacant', {
+                var vacateResult = _commands.setStatus(h.id, 'vacant', {
                     year: year,
-                    reason: 'No eligible heirs after death of ' + (character.name || 'head'),
+                    reason: 'No eligible heirs after death of ' +
+                        (character.name || 'head'),
                     recordEvent: true
                 });
-                results.push({
+
+                var finish = _finish('householdInheritanceVacated', {
+                    householdId: h.id,
+                    year: year,
+                    reason: 'No eligible heirs'
+                });
+
+                if (!finish.success) anyPartial = true;
+
+                processed.push({
                     householdId: h.id,
                     householdName: h.name,
                     action: 'vacant',
                     reason: 'No eligible heirs found',
-                    vacateResult: vacateResult
+                    success: vacateResult.success === true && finish.success === true,
+                    vacateResult: vacateResult,
+                    persistResult: finish.success ? null : finish
                 });
             }
         }
 
-        return _ok({ processed: results, deathYear: year });
+        if (anyPartial) {
+            return _fail('PARTIAL_INHERITANCE',
+                'One or more households failed to inherit',
+                { processed: processed, deathYear: year, partial: true });
+        }
+
+        return _ok({ processed: processed, deathYear: year });
     }
 
     /**
      * Transfers a household to an heir.
-     * 
+     *
      * Sets the heir as head. Transfers enterprises owned by the household
      * to the heir's household if the heir is not already a member.
-     * 
+     *
      * options:
      *   year, role, recordHistory, transferEnterprises, notes
      */
     function transferHouseholdToHeir(householdId, heirId, options) {
         options = options || {};
 
-        var household = _queries().getHousehold(householdId);
+        var household = _queries.getHousehold(householdId);
         if (!household) return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
 
         var heir = _getCharacterById(heirId);
@@ -524,7 +771,7 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid transfer year');
 
         // Determine if heir is already a member
-        var members = _queries().getHouseholdMembers(householdId);
+        var members = _queries.getHouseholdMembers(householdId);
         var isMember = false;
         for (var i = 0; i < members.length; i++) {
             if (members[i].characterId === heirId) {
@@ -535,8 +782,7 @@
 
         var headResult;
         if (!isMember) {
-            // Add heir as head in one atomic command
-            headResult = _commands().addMember(householdId, heirId, 'family', {
+            headResult = _commands.addMember(householdId, heirId, 'family', {
                 role: options.role || 'Head',
                 joinedYear: year,
                 isHead: true,
@@ -544,41 +790,57 @@
                 recordHistory: options.recordHistory !== false
             });
         } else {
-            headResult = _commands().setHead(householdId, heirId, {
+            headResult = _commands.setHead(householdId, heirId, {
                 year: year,
                 reason: 'Inheritance'
             });
         }
 
         if (!headResult.success) {
-            return _fail(headResult.code || 'HEAD_ASSIGN_FAILED', headResult.reason);
+            return _fail(headResult.code || 'HEAD_ASSIGN_FAILED',
+                headResult.reason);
         }
 
         // Enterprise transfer
         var enterpriseTransfer = null;
         if (options.transferEnterprises !== false) {
-            var heirHousehold = _queries().getCharacterHousehold(heirId);
+            var heirHousehold = _queries.getCharacterHousehold(heirId);
             if (heirHousehold && heirHousehold.id !== householdId) {
                 enterpriseTransfer = _transferEnterprises(
                     householdId, heirHousehold.id, year
                 );
             } else if (heirHousehold && heirHousehold.id === householdId) {
-                // Heir inherited the same household — enterprises stay put
-                enterpriseTransfer = { transferred: 0, skipped: 0, reason: 'Heir is member of same household' };
+                enterpriseTransfer = {
+                    transferred: 0,
+                    skipped: 0,
+                    reason: 'Heir is member of same household',
+                    failures: []
+                };
             }
         }
 
         // Ensure household is active
         if (household.status !== 'active') {
-            _commands().setStatus(householdId, 'active', {
+            _commands.setStatus(householdId, 'active', {
                 year: year,
                 reason: 'Inheritance'
             });
         }
 
-        _logEvent('household', 'Household Inherited',
-            household.name + ' inherited by ' + (heir.name || 'heir'),
-            [heir]);
+        var finish = _finish('householdInherited', {
+            householdId: householdId,
+            heirId: heirId,
+            year: year,
+            enterpriseTransfer: enterpriseTransfer
+        });
+
+        if (!finish.success) return finish;
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Household Inherited',
+                household.name + ' inherited by ' + (heir.name || 'heir'),
+                [heir]);
+        }
 
         return _ok({
             householdId: householdId,
@@ -596,7 +858,7 @@
      */
     function getHouseholdHeirs(householdId, deceasedId, options) {
         options = options || {};
-        return _queries().getHouseholdHeirs(householdId, deceasedId, {
+        return _queries.getHouseholdHeirs(householdId, deceasedId, {
             referenceYear: options.referenceYear !== undefined
                 ? options.referenceYear : options.year,
             includeExternal: options.includeExternal,
@@ -606,7 +868,7 @@
     }
 
     // =========================================================================
-    // 7. TRANSFER
+    // 8. TRANSFER
     // =========================================================================
 
     function transferCharacterToHousehold(characterId, targetHouseholdId, options) {
@@ -617,7 +879,7 @@
         var character = _getCharacterById(characterId);
         if (!character) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
 
-        var result = _commands().transferMember(characterId, targetHouseholdId, {
+        var result = _commands.transferMember(characterId, targetHouseholdId, {
             year: year,
             reason: options.reason || 'Transferred',
             role: options.role || null,
@@ -632,17 +894,29 @@
             return _fail(result.code || 'TRANSFER_FAILED', result.reason);
         }
 
+        var finish = _finish('householdMemberTransferred', {
+            characterId: characterId,
+            toHouseholdId: targetHouseholdId,
+            year: year
+        });
+
+        if (!finish.success) return finish;
+
         return _ok(result.data);
     }
 
     // =========================================================================
-    // 8. HOUSEHOLD MANAGEMENT
+    // 9. HOUSEHOLD MANAGEMENT
     // =========================================================================
 
     /**
      * Creates a cadet branch. New household is created via
      * HouseholdCommands.createHousehold, then members are transferred.
-     * 
+     *
+     * Batch model: all mutations happen, then a single persist at the end.
+     * Partial failure returns { transferred, failed } and success:false
+     * with partial:true.
+     *
      * options:
      *   year, locationId, locationName, headId, headRole, memberRole,
      *   reputation, wealth, notes, recordHistory, transferEnterprises,
@@ -651,7 +925,7 @@
     function createCadetBranch(parentHouseholdId, newHouseholdName, memberIds, options) {
         options = options || {};
 
-        var parent = _queries().getHousehold(parentHouseholdId);
+        var parent = _queries.getHousehold(parentHouseholdId);
         if (!parent) return _fail('PARENT_NOT_FOUND', 'Parent household not found');
 
         if (!Array.isArray(memberIds) || memberIds.length === 0) {
@@ -661,15 +935,11 @@
         var year = _resolveYear(options.year);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        // Determine head
         var headId = options.headId || memberIds[0];
-
-        // Determine location for the branch
         var locationId = options.locationId || parent.locationId;
         var locationName = options.locationName || parent.locationName;
 
-        // Create new household
-        var createResult = _commands().createHousehold({
+        var createResult = _commands.createHousehold({
             name: newHouseholdName || (parent.name + ' Cadet'),
             locationId: locationId,
             locationName: locationName,
@@ -689,17 +959,14 @@
         var transferred = [];
         var failed = [];
 
-        // Transfer each member (except the head, who was installed by
-        // createHousehold)
         for (var i = 0; i < memberIds.length; i++) {
             var memberId = memberIds[i];
             if (memberId === headId) {
-                // Already added as head by createHousehold
                 transferred.push(memberId);
                 continue;
             }
 
-            var tResult = _commands().transferMember(memberId, newHouseholdId, {
+            var tResult = _commands.transferMember(memberId, newHouseholdId, {
                 year: year,
                 reason: 'Cadet branch creation',
                 type: 'family',
@@ -715,15 +982,55 @@
 
         // Optional enterprise transfer
         var enterpriseTransfer = null;
-        if (options.transferEnterprises === true && Array.isArray(options.enterpriseIds)) {
+        if (options.transferEnterprises === true &&
+            Array.isArray(options.enterpriseIds) &&
+            options.enterpriseIds.length > 0) {
             enterpriseTransfer = _transferSelectedEnterprises(
                 parentHouseholdId, newHouseholdId, options.enterpriseIds, year
             );
         }
 
-        _logEvent('household', 'Cadet Branch Created',
-            'Created cadet branch: ' + (newHouseholdName || (parent.name + ' Cadet')),
-            []);
+        var finish = _finish('householdCadetBranchCreated', {
+            newHouseholdId: newHouseholdId,
+            parentHouseholdId: parentHouseholdId,
+            headId: headId,
+            year: year,
+            transferredCount: transferred.length,
+            failedCount: failed.length
+        });
+
+        if (!finish.success) {
+            return _fail('PERSIST_FAILED',
+                finish.reason,
+                {
+                    newHouseholdId: newHouseholdId,
+                    parentHouseholdId: parentHouseholdId,
+                    transferred: transferred,
+                    failed: failed,
+                    partial: true
+                });
+        }
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Cadet Branch Created',
+                'Created cadet branch: ' +
+                (newHouseholdName || (parent.name + ' Cadet')), []);
+        }
+
+        if (failed.length > 0) {
+            return _fail('PARTIAL_CADET_BRANCH',
+                'Cadet branch created but some members failed to transfer',
+                {
+                    newHouseholdId: newHouseholdId,
+                    parentHouseholdId: parentHouseholdId,
+                    transferred: transferred,
+                    failed: failed,
+                    headId: headId,
+                    year: year,
+                    enterpriseTransfer: enterpriseTransfer,
+                    partial: true
+                });
+        }
 
         return _ok({
             newHouseholdId: newHouseholdId,
@@ -738,22 +1045,24 @@
 
     /**
      * Merges two households into a surviving one.
-     * 
+     *
      * Members from the absorbed household are transferred to the survivor.
-     * Enterprises are transferred via IndustryCommands.
-     * Absorbed household is marked deprecated.
-     * 
-     * Returns detailed result including any member transfers that failed.
+     * Enterprises are transferred via IndustryCommands + HouseholdCommands
+     * index primitives. Absorbed household is marked deprecated.
+     *
+     * Batch model: all mutations happen, then a single persist at the end.
      */
     function mergeHouseholds(householdId1, householdId2, survivingHouseholdId, options) {
         options = options || {};
 
-        if (survivingHouseholdId !== householdId1 && survivingHouseholdId !== householdId2) {
-            return _fail('INVALID_SURVIVOR', 'Surviving household must be one of the two');
+        if (survivingHouseholdId !== householdId1 &&
+            survivingHouseholdId !== householdId2) {
+            return _fail('INVALID_SURVIVOR',
+                'Surviving household must be one of the two');
         }
 
-        var h1 = _queries().getHousehold(householdId1);
-        var h2 = _queries().getHousehold(householdId2);
+        var h1 = _queries.getHousehold(householdId1);
+        var h2 = _queries.getHousehold(householdId2);
         if (!h1) return _fail('NOT_FOUND', 'Household 1 not found');
         if (!h2) return _fail('NOT_FOUND', 'Household 2 not found');
 
@@ -761,20 +1070,19 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var survivorId = survivingHouseholdId;
-        var absorbedId = survivingHouseholdId === householdId1 ? householdId2 : householdId1;
+        var absorbedId = survivingHouseholdId === householdId1
+            ? householdId2 : householdId1;
         var survivor = survivingHouseholdId === householdId1 ? h1 : h2;
         var absorbed = survivingHouseholdId === householdId1 ? h2 : h1;
 
         // Move members from absorbed to survivor
-        var absorbedMembers = _queries().getHouseholdMembers(absorbedId);
+        var absorbedMembers = _queries.getHouseholdMembers(absorbedId);
         var transferred = [];
         var failed = [];
 
         for (var i = 0; i < absorbedMembers.length; i++) {
             var m = absorbedMembers[i];
-            // Skip the absorbed household's head if they'd be demoted —
-            // they still transfer, but as a regular member.
-            var result = _commands().transferMember(m.characterId, survivorId, {
+            var result = _commands.transferMember(m.characterId, survivorId, {
                 year: year,
                 reason: options.reason || 'Household merge',
                 role: m.role || null,
@@ -787,7 +1095,10 @@
             if (result.success) {
                 transferred.push(m.characterId);
             } else {
-                failed.push({ characterId: m.characterId, reason: result.reason });
+                failed.push({
+                    characterId: m.characterId,
+                    reason: result.reason
+                });
             }
         }
 
@@ -799,26 +1110,59 @@
 
         // Optional new head
         if (options.newHeadId) {
-            var headResult = _commands().setHead(survivorId, options.newHeadId, {
+            var headResult = _commands.setHead(survivorId, options.newHeadId, {
                 year: year,
                 reason: 'Household merge'
             });
             if (!headResult.success) {
-                // Not fatal — merge succeeded but head change failed
                 failed.push({ step: 'setHead', reason: headResult.reason });
             }
         }
 
         // Mark absorbed household deprecated
-        _commands().setStatus(absorbedId, 'deprecated', {
+        _commands.setStatus(absorbedId, 'deprecated', {
             year: year,
             reason: 'Merged into ' + survivor.name,
             recordEvent: true
         });
 
-        _logEvent('household', 'Households Merged',
-            absorbed.name + ' merged into ' + survivor.name,
-            []);
+        var finish = _finish('householdsMerged', {
+            survivorId: survivorId,
+            absorbedId: absorbedId,
+            year: year,
+            transferredCount: transferred.length,
+            failedCount: failed.length
+        });
+
+        if (!finish.success) {
+            return _fail('PERSIST_FAILED', finish.reason, {
+                survivorId: survivorId,
+                absorbedId: absorbedId,
+                transferred: transferred,
+                failed: failed,
+                year: year,
+                partial: true
+            });
+        }
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Households Merged',
+                absorbed.name + ' merged into ' + survivor.name, []);
+        }
+
+        if (failed.length > 0) {
+            return _fail('PARTIAL_MERGE',
+                'Households merged but some steps failed',
+                {
+                    survivorId: survivorId,
+                    absorbedId: absorbedId,
+                    transferred: transferred,
+                    failed: failed,
+                    year: year,
+                    enterpriseTransfer: enterpriseTransfer,
+                    partial: true
+                });
+        }
 
         return _ok({
             survivorId: survivorId,
@@ -837,7 +1181,7 @@
     function splitHousehold(householdId, newHouseholdName, memberIds, options) {
         options = options || {};
 
-        var parent = _queries().getHousehold(householdId);
+        var parent = _queries.getHousehold(householdId);
         if (!parent) return _fail('PARENT_NOT_FOUND', 'Parent household not found');
 
         if (!Array.isArray(memberIds) || memberIds.length === 0) {
@@ -848,16 +1192,16 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var headId = options.newHeadId || memberIds[0];
-
         var locationId = options.locationId || parent.locationId;
         var locationName = options.locationName || parent.locationName;
 
-        var createResult = _commands().createHousehold({
+        var createResult = _commands.createHousehold({
             name: newHouseholdName || (parent.name + ' Split'),
             locationId: locationId,
             locationName: locationName,
             foundedYear: year,
-            reputation: options.newReputation !== undefined ? options.newReputation : 10,
+            reputation: options.newReputation !== undefined
+                ? options.newReputation : 10,
             wealth: options.newWealth !== undefined ? options.newWealth : 0,
             notes: options.notes || ('Split from ' + parent.name),
             headId: headId
@@ -879,7 +1223,7 @@
                 continue;
             }
 
-            var tResult = _commands().transferMember(memberId, newHouseholdId, {
+            var tResult = _commands.transferMember(memberId, newHouseholdId, {
                 year: year,
                 reason: 'Household split',
                 type: 'family',
@@ -894,15 +1238,53 @@
         }
 
         var enterpriseTransfer = null;
-        if (options.transferEnterprises === true && Array.isArray(options.enterpriseIds)) {
+        if (options.transferEnterprises === true &&
+            Array.isArray(options.enterpriseIds) &&
+            options.enterpriseIds.length > 0) {
             enterpriseTransfer = _transferSelectedEnterprises(
                 householdId, newHouseholdId, options.enterpriseIds, year
             );
         }
 
-        _logEvent('household', 'Household Split',
-            parent.name + ' split into ' + (newHouseholdName || (parent.name + ' Split')),
-            []);
+        var finish = _finish('householdSplit', {
+            newHouseholdId: newHouseholdId,
+            parentHouseholdId: householdId,
+            headId: headId,
+            year: year,
+            transferredCount: transferred.length,
+            failedCount: failed.length
+        });
+
+        if (!finish.success) {
+            return _fail('PERSIST_FAILED', finish.reason, {
+                newHouseholdId: newHouseholdId,
+                parentHouseholdId: householdId,
+                transferred: transferred,
+                failed: failed,
+                partial: true
+            });
+        }
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Household Split',
+                parent.name + ' split into ' +
+                (newHouseholdName || (parent.name + ' Split')), []);
+        }
+
+        if (failed.length > 0) {
+            return _fail('PARTIAL_SPLIT',
+                'Household split but some members failed to transfer',
+                {
+                    newHouseholdId: newHouseholdId,
+                    parentHouseholdId: householdId,
+                    transferred: transferred,
+                    failed: failed,
+                    headId: headId,
+                    year: year,
+                    enterpriseTransfer: enterpriseTransfer,
+                    partial: true
+                });
+        }
 
         return _ok({
             newHouseholdId: newHouseholdId,
@@ -917,19 +1299,19 @@
 
     /**
      * Auto-assigns a successor after a head dies.
-     * 
+     *
      * If no heirs: marks household vacant (unless skipIfOnlyMember).
      */
     function autoAssignHouseholdHead(householdId, deceasedId, options) {
         options = options || {};
 
-        var household = _queries().getHousehold(householdId);
+        var household = _queries.getHousehold(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var year = _resolveYear(options.successionYear || options.year);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        var heirs = _queries().getHouseholdHeirs(householdId, deceasedId, {
+        var heirs = _queries.getHouseholdHeirs(householdId, deceasedId, {
             referenceYear: year,
             includeExternal: true,
             minAge: options.minAge !== undefined ? options.minAge : 16,
@@ -937,12 +1319,20 @@
         });
 
         if (heirs.length === 0) {
-            // Mark vacant
-            var vacateResult = _commands().setStatus(householdId, 'vacant', {
+            var vacateResult = _commands.setStatus(householdId, 'vacant', {
                 year: year,
-                reason: 'No eligible heirs after death of ' + (deceasedId || 'previous head'),
+                reason: 'No eligible heirs after death of ' +
+                    (deceasedId || 'previous head'),
                 recordEvent: true
             });
+
+            var finishVacant = _finish('householdHeadAutoAssignVacated', {
+                householdId: householdId,
+                year: year
+            });
+
+            if (!finishVacant.success) return finishVacant;
+
             return _ok({
                 householdId: householdId,
                 newHeadId: null,
@@ -954,18 +1344,29 @@
         }
 
         var heir = heirs[0];
-        var headResult = _commands().setHead(householdId, heir.id, {
+        var headResult = _commands.setHead(householdId, heir.id, {
             year: year,
-            reason: 'Auto-succession after death of ' + (deceasedId || 'previous head')
+            reason: 'Auto-succession after death of ' +
+                (deceasedId || 'previous head')
         });
 
         if (!headResult.success) {
-            return _fail(headResult.code || 'HEAD_ASSIGN_FAILED', headResult.reason);
+            return _fail(headResult.code || 'HEAD_ASSIGN_FAILED',
+                headResult.reason);
         }
 
-        _logEvent('household', 'Head Assigned',
-            heir.displayName + ' became head of ' + household.name,
-            []);
+        var finish = _finish('householdHeadAutoAssigned', {
+            householdId: householdId,
+            newHeadId: heir.id,
+            year: year
+        });
+
+        if (!finish.success) return finish;
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Head Assigned',
+                heir.displayName + ' became head of ' + household.name, []);
+        }
 
         return _ok({
             householdId: householdId,
@@ -974,90 +1375,6 @@
             year: year,
             vacant: false
         });
-    }
-
-    // =========================================================================
-    // 9. ENTERPRISE TRANSFER HELPERS (SELECTED)
-    // =========================================================================
-
-    function _transferSelectedEnterprises(fromHouseholdId, toHouseholdId, enterpriseIds, year) {
-        var industryCommands = _industryCommands();
-        if (!industryCommands) {
-            return { transferred: 0, skipped: 0, reason: 'IndustryCommands not available' };
-        }
-
-        var state = window.HouseholdState;
-        var toRecord = state ? state._internal.getHouseholdRecord(toHouseholdId) : null;
-
-        var transferred = 0;
-        var skipped = 0;
-        var failures = [];
-
-        for (var i = 0; i < enterpriseIds.length; i++) {
-            var eId = enterpriseIds[i];
-            var result = industryCommands.updateEnterprise(eId, {
-                ownerId: toHouseholdId,
-                ownerType: 'household',
-                ownerName: toRecord ? toRecord.name : null
-            });
-            if (result && result.success) {
-                transferred++;
-            } else {
-                skipped++;
-                failures.push({
-                    enterpriseId: eId,
-                    reason: result ? result.reason : 'Unknown'
-                });
-            }
-        }
-
-        // Update household indexes
-        if (state) {
-            var fromRecord = state._internal.getHouseholdRecord(fromHouseholdId);
-            var toRecord2 = state._internal.getHouseholdRecord(toHouseholdId);
-
-            if (fromRecord && Array.isArray(fromRecord.enterprises)) {
-                var movedIds = {};
-                for (var j = 0; j < enterpriseIds.length; j++) {
-                    movedIds[enterpriseIds[j]] = true;
-                }
-                fromRecord.enterprises = fromRecord.enterprises.filter(function(id) {
-                    return !movedIds[id];
-                });
-                if (!Array.isArray(fromRecord.enterpriseHistory)) {
-                    fromRecord.enterpriseHistory = [];
-                }
-                fromRecord.enterpriseHistory.push({
-                    year: year,
-                    action: 'transferred_selected_to_' + toHouseholdId,
-                    enterpriseIds: enterpriseIds.slice()
-                });
-            }
-
-            if (toRecord2) {
-                if (!Array.isArray(toRecord2.enterprises)) toRecord2.enterprises = [];
-                if (!Array.isArray(toRecord2.enterpriseHistory)) {
-                    toRecord2.enterpriseHistory = [];
-                }
-                for (var k = 0; k < enterpriseIds.length; k++) {
-                    var eid = enterpriseIds[k];
-                    if (toRecord2.enterprises.indexOf(eid) === -1) {
-                        toRecord2.enterprises.push(eid);
-                        toRecord2.enterpriseHistory.push({
-                            year: year,
-                            action: 'transferred_from_' + fromHouseholdId,
-                            enterpriseId: eid
-                        });
-                    }
-                }
-            }
-
-            state._internal.replaceHouseholds(
-                state._internal.getAllHouseholdRecords({ includeDeprecated: true })
-            );
-        }
-
-        return { transferred: transferred, skipped: skipped, failures: failures };
     }
 
     // =========================================================================
