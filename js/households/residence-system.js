@@ -26,15 +26,51 @@
  *
  * ResidenceSystem is the SINGLE AUTHORITY that mutates unit occupancy.
  *
- * CONTRACT
- * --------
- *   - No _processingResidence guard.
- *   - No 1250 fallback.
- *   - No UI toasts or confirm dialogs.
- *   - One commit per logical operation.
- *   - Mutations return { success, data } / { success: false, code, reason }.
- *   - Reads return defensive snapshots.
- *   - Required dependencies fail loudly.
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - _commit(eventName, payload) closes every mutation. It:
+ *       hydrateFromMasterData (cheap; no cache to rebuild yet)
+ *       markDirty
+ *       dispatch CustomEvent
+ *     It does NOT save.
+ *   - persist() is the ONLY save call site. Callers call it once per
+ *     batch, after a sequence of commands.
+ *   - Cross-domain calls into HouseholdCommands mark household state
+ *     dirty. The subsequent ResidenceSystem.persist() flushes both
+ *     residences and households in one masterData save.
+ *   - Missing HouseholdCommands is not fatal for residence-only
+ *     operations; commands that require household integration return a
+ *     structured failure.
+ *   - Duplicate-id detection on hydrate. A corrupted residences array
+ *     throws by default; _diagnostics.getIntegrityReport inspects
+ *     without throwing.
+ *
+ * RESULT SHAPE
+ * ------------
+ *   { success: true,  data: ... }
+ *   { success: false, code: 'SOME_CODE', reason: 'human message',
+ *     partial: true (when partial mutation occurred) }
+ *
+ * PERSIST CONTRACT
+ * ----------------
+ * A residence operation that touches HouseholdCommands (unit assignment,
+ * vacancy, demolition, household deletion) leaves household state dirty
+ * in memory. Call ResidenceSystem.persist() once after the batch. Do NOT
+ * also call HouseholdCommands.persist() — one save flushes everything.
+ * Same rule reversed for household-originated batches.
+ *
+ * DEPENDENCIES (required, verified at load)
+ * -----------------------------------------
+ *   - getCurrentYearSafe
+ *   - getCharacterById
+ *   - getPlaceById
+ *   - generateId
+ *   - saveMasterData
+ *
+ * DEPENDENCIES (optional, checked at call time)
+ * ---------------------------------------------
+ *   - HouseholdCommands   (unit assignment, vacancy, demolition)
+ *   - HouseholdQueries    (household existence checks)
  *
  * =============================================================================
  */
@@ -43,7 +79,34 @@
     'use strict';
 
     // =========================================================================
-    // 1. CONSTANTS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // =========================================================================
+
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('ResidenceSystem: ' + name + ' is required');
+        }
+        return fn;
+    }
+
+    var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
+        window.getCurrentYearSafe);
+    var _getCharacterById = _requireFunction('getCharacterById',
+        window.getCharacterById);
+    var _getPlaceById = _requireFunction('getPlaceById',
+        window.getPlaceById);
+    var _generateId = _requireFunction('generateId', window.generateId);
+    var _saveMasterData = _requireFunction('saveMasterData',
+        window.saveMasterData);
+
+    // Optional deps — recorded at load
+    var _householdCommandsPresent = typeof window.HouseholdCommands !== 'undefined' &&
+        window.HouseholdCommands !== null;
+    var _householdQueriesPresent = typeof window.HouseholdQueries !== 'undefined' &&
+        window.HouseholdQueries !== null;
+
+    // =========================================================================
+    // 2. CONSTANTS
     // =========================================================================
 
     var RESIDENCE_TYPES = {
@@ -85,67 +148,14 @@
 
     var CONDITION_MULTIPLIER = {};
     for (var _ci = 0; _ci < RESIDENCE_CONDITIONS.length; _ci++) {
-        CONDITION_MULTIPLIER[RESIDENCE_CONDITIONS[_ci].id] = RESIDENCE_CONDITIONS[_ci].modifier;
+        CONDITION_MULTIPLIER[RESIDENCE_CONDITIONS[_ci].id] =
+            RESIDENCE_CONDITIONS[_ci].modifier;
     }
 
     var MAX_TIMELINE_ENTRIES = 200;
     var MAX_HISTORY_ENTRIES = 100;
-
-    // =========================================================================
-    // 2. DEPENDENCY ACCESS
-    // =========================================================================
-
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('ResidenceSystem: getCurrentYearSafe is required');
-        }
-        return window.getCurrentYearSafe();
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('ResidenceSystem: getCharacterById is required');
-        }
-        return window.getCharacterById(id);
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById !== 'function') {
-            throw new Error('ResidenceSystem: getPlaceById is required');
-        }
-        return window.getPlaceById(id);
-    }
-
-    function _generateId(prefix) {
-        if (typeof window.generateId !== 'function') {
-            throw new Error('ResidenceSystem: generateId is required');
-        }
-        return window.generateId(prefix);
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('ResidenceSystem: saveMasterData is required');
-        }
-        window.saveMasterData();
-    }
-
-    function _householdCommands() {
-        return typeof window.HouseholdCommands !== 'undefined'
-            ? window.HouseholdCommands
-            : null;
-    }
-    function _householdQueries() {
-        return typeof window.HouseholdQueries !== 'undefined'
-            ? window.HouseholdQueries
-            : null;
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
+    var MAX_RENTAL_HISTORY = 100;
+    var MAX_RENT_PAYMENTS = 200;
 
     // =========================================================================
     // 3. RESULT HELPERS
@@ -154,11 +164,19 @@
     function _ok(data) {
         return { success: true, data: data === undefined ? null : data };
     }
-    function _fail(code, reason) {
-        return { success: false, code: code, reason: reason || code };
+    function _fail(code, reason, extra) {
+        var result = { success: false, code: code, reason: reason || code };
+        if (extra) {
+            for (var k in extra) {
+                if (Object.prototype.hasOwnProperty.call(extra, k)) {
+                    result[k] = extra[k];
+                }
+            }
+        }
+        return result;
     }
     function _resolveYear(value) {
-        if (value === undefined || value === null) return _getCurrentYear();
+        if (value === undefined || value === null) return _getCurrentYearSafe();
         if (typeof value !== 'number' || !isFinite(value)) return null;
         return value;
     }
@@ -199,12 +217,136 @@
         if (!Array.isArray(r.features))            r.features = [];
     }
 
-    function _commit() {
-        _saveMasterData();
+    function _detectDuplicates(records) {
+        var seen = new Set();
+        var dupes = [];
+        for (var i = 0; i < records.length; i++) {
+            var r = records[i];
+            if (!r || typeof r !== 'object') {
+                dupes.push({ index: i, id: null, reason: 'non-object' });
+                continue;
+            }
+            if (!r.id) {
+                dupes.push({ index: i, id: null, reason: 'missing id' });
+                continue;
+            }
+            if (seen.has(r.id)) {
+                dupes.push({ index: i, id: r.id, reason: 'duplicate id' });
+            } else {
+                seen.add(r.id);
+            }
+        }
+        return dupes;
+    }
+
+    /**
+     * Ensures structural shape on every residence record and validates
+     * duplicate IDs. Idempotent.
+     *
+     * Throws on duplicate IDs. Callers that need to inspect without
+     * throwing should use _diagnostics.getIntegrityReport().
+     */
+    function hydrateFromMasterData() {
+        var all = _getResidencesArray();
+        for (var i = 0; i < all.length; i++) {
+            _ensureResidenceShape(all[i]);
+        }
+        var dupes = _detectDuplicates(all);
+        if (dupes.length > 0) {
+            throw new Error(
+                'ResidenceSystem.hydrateFromMasterData: duplicate residence ids: ' +
+                JSON.stringify(dupes.slice(0, 5))
+            );
+        }
     }
 
     // =========================================================================
-    // 5. RESIDENCE LOOKUPS
+    // 5. COMMIT TAIL + PERSIST BOUNDARY
+    // =========================================================================
+    //
+    // _commit is NOT persistence. It:
+    //   - rehydrates shape (cheap; no index cache yet)
+    //   - marks masterData dirty
+    //   - dispatches a CustomEvent
+    //
+    // persist() is the ONLY save call site. Callers call it once per
+    // batch after a sequence of commands. Because saveMasterData saves
+    // the entire masterData.data, one persist flushes both residences
+    // and any household changes made by this batch.
+    // =========================================================================
+
+    function _hydrateState() {
+        // No cache to rebuild (yet). Ensure shape is current.
+        // We do NOT throw during a command's commit path — a prior
+        // hydrate would have thrown. We silently re-ensure shape so a
+        // mid-session corruption does not abort a mutation that's
+        // already partially applied.
+        try {
+            var all = _getResidencesArray();
+            for (var i = 0; i < all.length; i++) {
+                _ensureResidenceShape(all[i]);
+            }
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('ResidenceSystem: hydrate on commit failed', e);
+            }
+        }
+    }
+
+    function _markDirty() {
+        if (typeof window.markDataDirty === 'function') {
+            try {
+                window.markDataDirty();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('ResidenceSystem: markDataDirty threw', e);
+                }
+            }
+        }
+    }
+
+    function _dispatch(eventName, payload) {
+        if (typeof window.dispatchEvent !== 'function') return;
+        if (typeof window.CustomEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new window.CustomEvent(eventName, {
+                detail: payload || {}
+            }));
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('ResidenceSystem: failed to dispatch ' +
+                    eventName, e);
+            }
+        }
+    }
+
+    function _commit(eventName, payload) {
+        _hydrateState();
+        _markDirty();
+        if (eventName) _dispatch(eventName, payload);
+    }
+
+    /**
+     * The single save call site for the residence domain.
+     * Also flushes any household state that was marked dirty by a
+     * cross-domain call in the same batch, because saveMasterData saves
+     * the whole masterData.data object.
+     */
+    function persist() {
+        try {
+            var ok = _saveMasterData();
+            if (ok === false) {
+                return _fail('SAVE_FAILED', 'saveMasterData returned false');
+            }
+            return _ok(null);
+        } catch (e) {
+            return _fail('SAVE_FAILED',
+                e && e.message ? e.message : 'Unknown save error');
+        }
+    }
+
+    // =========================================================================
+    // 6. INTERNAL RECORD ACCESS
     // =========================================================================
 
     function _getResidenceRecord(residenceId) {
@@ -232,7 +374,7 @@
     }
 
     // =========================================================================
-    // 6. PROJECTIONS
+    // 7. PROJECTIONS
     // =========================================================================
 
     function _snapshotResidence(r) {
@@ -297,7 +439,7 @@
     }
 
     // =========================================================================
-    // 7. DERIVED HELPERS
+    // 8. DERIVED HELPERS (pure)
     // =========================================================================
 
     function _countOccupiedUnits(r) {
@@ -342,7 +484,83 @@
     }
 
     // =========================================================================
-    // 8. RESIDENCE CRUD
+    // 9. TIMELINE / HISTORY HELPERS
+    // =========================================================================
+
+    function _pushTimeline(r, event) {
+        if (!Array.isArray(r.timeline)) r.timeline = [];
+        r.timeline.push({
+            year: event.year !== undefined ? event.year : _getCurrentYearSafe(),
+            type: event.type || 'event',
+            details: event.details || '',
+            householdName: event.householdName || null,
+            unitNumber: event.unitNumber !== undefined ? event.unitNumber : null,
+            timestamp: Date.now()
+        });
+        if (r.timeline.length > MAX_TIMELINE_ENTRIES) {
+            r.timeline = r.timeline.slice(-MAX_TIMELINE_ENTRIES);
+        }
+    }
+
+    function _pushHistory(r, action, details, actorId) {
+        if (!Array.isArray(r.history)) r.history = [];
+        r.history.push({
+            year: _getCurrentYearSafe(),
+            action: action,
+            details: details,
+            actorId: actorId || null,
+            timestamp: Date.now()
+        });
+        if (r.history.length > MAX_HISTORY_ENTRIES) {
+            r.history = r.history.slice(-MAX_HISTORY_ENTRIES);
+        }
+    }
+
+    // =========================================================================
+    // 10. HOUSEHOLD REVERSE INDEX (via HouseholdCommands)
+    // =========================================================================
+    //
+    // These helpers are pure orchestration into HouseholdCommands. They
+    // do NOT persist. The caller's _commit + persist closes the batch.
+    // If HouseholdCommands is missing, they return a failure the caller
+    // may choose to ignore (residence op still succeeds; the household
+    // reverse index is just stale).
+    // =========================================================================
+
+    function _associateHouseholdReverseIndex(householdId, r, unitNumber, year, notes) {
+        if (!_householdCommandsPresent) {
+            return _fail('HOUSEHOLD_COMMANDS_UNAVAILABLE',
+                'HouseholdCommands not available');
+        }
+        var hc = window.HouseholdCommands;
+        if (typeof hc.associateWithResidence !== 'function') {
+            return _fail('HOUSEHOLD_METHOD_UNAVAILABLE',
+                'HouseholdCommands.associateWithResidence not available');
+        }
+        return hc.associateWithResidence(householdId, r.id, {
+            residenceName: r.name,
+            residenceType: r.typeId,
+            year: year,
+            unitNumber: unitNumber,
+            notes: notes || ''
+        });
+    }
+
+    function _disassociateHouseholdReverseIndex(householdId, r, unitNumber, year, reason) {
+        if (!_householdCommandsPresent) {
+            return _fail('HOUSEHOLD_COMMANDS_UNAVAILABLE',
+                'HouseholdCommands not available');
+        }
+        var hc = window.HouseholdCommands;
+        if (typeof hc.disassociateFromResidence !== 'function') {
+            return _fail('HOUSEHOLD_METHOD_UNAVAILABLE',
+                'HouseholdCommands.disassociateFromResidence not available');
+        }
+        return hc.disassociateFromResidence(householdId, r.id, reason, year);
+    }
+
+    // =========================================================================
+    // 11. RESIDENCE CRUD
     // =========================================================================
 
     function createResidence(name, locationId, typeId, options) {
@@ -427,8 +645,8 @@
         };
 
         if (type.isMultiUnit) {
-            var unitCount = _resolveInt(options.unitCount, Math.min(10, Math.max(1,
-                Math.floor(type.capacity / 3))));
+            var unitCount = _resolveInt(options.unitCount,
+                Math.min(10, Math.max(1, Math.floor(type.capacity / 3))));
             if (unitCount === null || unitCount < 1) unitCount = 1;
             for (var i = 1; i <= unitCount; i++) {
                 residence.units.push(_makeUnit(i));
@@ -438,10 +656,19 @@
         }
 
         _getResidencesArray().push(residence);
-        _commit();
 
-        _logEvent('residence', 'Residence Created',
-            'Created residence: ' + residence.name + ' (' + type.name + ')', []);
+        _commit('residenceCreated', {
+            residenceId: id,
+            name: residence.name,
+            typeId: type.id,
+            locationId: locationId,
+            year: year
+        });
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('residence', 'Residence Created',
+                'Created residence: ' + residence.name + ' (' + type.name + ')', []);
+        }
 
         return _ok({ residenceId: id });
     }
@@ -461,66 +688,115 @@
         };
     }
 
+    // Field allowlist — anything not on this list is rejected.
+    var _ALLOWED_RESIDENCE_UPDATE_FIELDS = {
+        locationId: true,
+        condition: true,
+        notes: true,
+        description: true,
+        estimatedValue: true,
+        builtYear: true,
+        foundedYear: true,
+        features: true,
+        maxUnits: true,
+        status: true
+    };
+
+    var _DOMAIN_OWNED_RESIDENCE_FIELDS = {
+        name: 'Use ResidenceSystem.updateResidenceName.',
+        ownerType: 'Use ResidenceSystem.setResidenceOwner.',
+        ownerId: 'Use ResidenceSystem.setResidenceOwner.',
+        ownerName: 'Use ResidenceSystem.setResidenceOwner.',
+        ownerSince: 'Use ResidenceSystem.setResidenceOwner.',
+        renterType: 'Use ResidenceSystem.setResidenceRenter.',
+        renterId: 'Use ResidenceSystem.setResidenceRenter.',
+        renterName: 'Use ResidenceSystem.setResidenceRenter.',
+        rentAmount: 'Use ResidenceSystem.setResidenceRenter or updateResidenceRent.',
+        rentStartYear: 'Use ResidenceSystem.setResidenceRenter.',
+        rentEffectiveYear: 'Use ResidenceSystem.updateResidenceRent.',
+        rentalStatus: 'Derived from setResidenceRenter / endResidenceRental.',
+        units: 'Use ResidenceSystem.addUnit / removeUnit / assignHouseholdToUnit.',
+        history: 'System-managed.',
+        timeline: 'System-managed.',
+        nameHistory: 'Use ResidenceSystem.updateResidenceName.',
+        associationHistory: 'System-managed.',
+        vacancyHistory: 'System-managed.',
+        damageHistory: 'System-managed.',
+        ownershipHistory: 'Use ResidenceSystem.setResidenceOwner.',
+        rentalHistory: 'System-managed.',
+        rentPayments: 'Use ResidenceSystem.recordRentPayment.',
+        staffPositions: 'Use ResidenceSystem.addStaffPosition / updateStaffPosition / removeStaffPosition.',
+        staffAssignments: 'Use ResidenceSystem.assignCharacterToStaffPosition / endStaffAssignment / deleteStaffAssignment.',
+        isDemolished: 'Use ResidenceSystem.demolishResidence.',
+        demolishedYear: 'Use ResidenceSystem.demolishResidence.',
+        demolishedReason: 'Use ResidenceSystem.demolishResidence.'
+    };
+
     function updateResidence(residenceId, updates) {
+        if (!updates || typeof updates !== 'object') {
+            return _fail('INVALID_INPUT', 'Updates object is required');
+        }
+
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
 
-        var year = _getCurrentYear();
-
-        if (updates.name !== undefined && updates.name !== null) {
-            var newName = String(updates.name).trim();
-            if (newName === '') return _fail('INVALID_NAME', 'Name cannot be empty');
-            if (newName !== r.name) {
-                var oldName = r.name;
-                r.name = newName;
-                if (updates.recordNameHistory !== false) {
-                    r.nameHistory.push({
-                        oldName: oldName,
-                        newName: newName,
-                        year: updates.renameYear !== undefined ? updates.renameYear : year,
-                        reason: updates.renameReason || 'Renamed',
-                        changedBy: updates.changedBy || null,
-                        timestamp: Date.now()
-                    });
-                    _pushTimeline(r, {
-                        year: updates.renameYear !== undefined ? updates.renameYear : year,
-                        type: 'renamed',
-                        details: 'Renamed from "' + oldName + '" to "' + newName + '"' +
-                            (updates.renameReason ? ' (' + updates.renameReason + ')' : '')
-                    });
-                }
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (_ALLOWED_RESIDENCE_UPDATE_FIELDS[key]) continue;
+            if (_DOMAIN_OWNED_RESIDENCE_FIELDS[key]) {
+                return _fail('DOMAIN_OWNED_FIELD',
+                    'Field "' + key + '" is owned by another command. ' +
+                    _DOMAIN_OWNED_RESIDENCE_FIELDS[key]);
             }
+            return _fail('UNKNOWN_FIELD',
+                'Field "' + key + '" is not an allowed residence field');
         }
+
+        var year = _getCurrentYearSafe();
+        var changed = [];
 
         if (updates.locationId !== undefined) {
             var place = _getPlaceById(updates.locationId);
             if (!place) return _fail('LOCATION_NOT_FOUND', 'Location not found');
             r.locationId = updates.locationId;
             r.locationName = place.displayName || place.name || 'Unknown';
+            changed.push('locationId');
         }
 
         var scalarFields = ['condition', 'notes', 'description', 'estimatedValue',
             'builtYear', 'foundedYear', 'features', 'maxUnits'];
         for (var i = 0; i < scalarFields.length; i++) {
-            var key = scalarFields[i];
-            if (updates[key] !== undefined) r[key] = updates[key];
-        }
-
-        if (updates.status !== undefined) {
-            var oldStatus = r.status;
-            r.status = updates.status;
-            if (oldStatus !== r.status) {
-                _pushTimeline(r, {
-                    year: year,
-                    type: 'status_changed',
-                    details: 'Status: ' + oldStatus + ' -> ' + r.status
-                });
+            var k = scalarFields[i];
+            if (updates[k] !== undefined) {
+                r[k] = updates[k];
+                changed.push(k);
             }
         }
 
+        if (updates.status !== undefined && updates.status !== r.status) {
+            var oldStatus = r.status;
+            r.status = updates.status;
+            changed.push('status');
+            _pushTimeline(r, {
+                year: year,
+                type: 'status_changed',
+                details: 'Status: ' + oldStatus + ' -> ' + r.status
+            });
+        }
+
+        if (changed.length === 0) {
+            return _ok({ residenceId: residenceId, changed: false });
+        }
+
         r.lastUpdated = year;
-        _commit();
-        return _ok({ residenceId: residenceId });
+
+        _commit('residenceUpdated', {
+            residenceId: residenceId,
+            changed: changed,
+            year: year
+        });
+
+        return _ok({ residenceId: residenceId, changed: changed });
     }
 
     function deleteResidence(residenceId, options) {
@@ -533,62 +809,57 @@
         if (idx === -1) return _fail('NOT_FOUND', 'Residence not found');
 
         var r = all[idx];
-        if (!options.force) {
-            if (_countOccupiedUnits(r) > 0) {
-                return _fail('OCCUPIED_UNITS',
-                    'Cannot delete residence with occupied units');
+        var occupied = _countOccupiedUnits(r);
+        if (occupied > 0 && options.force !== true) {
+            return _fail('OCCUPIED_UNITS',
+                'Cannot delete residence with occupied units');
+        }
+
+        // If forced delete with occupied units, disassociate first
+        var affectedHouseholds = [];
+        if (occupied > 0) {
+            var year = _getCurrentYearSafe();
+            for (var j = 0; j < r.units.length; j++) {
+                var unit = r.units[j];
+                if (!unit.isDemolished && !unit.isVacant && unit.householdId) {
+                    affectedHouseholds.push({
+                        householdId: unit.householdId,
+                        householdName: unit.householdName,
+                        unitNumber: unit.unitNumber
+                    });
+                    _disassociateHouseholdFromUnit(r, unit, year, 'Residence deleted');
+                }
             }
         }
 
         all.splice(idx, 1);
-        _commit();
-        _logEvent('residence', 'Residence Deleted',
-            'Deleted residence: ' + r.name, []);
+
+        _commit('residenceDeleted', {
+            residenceId: residenceId,
+            name: r.name,
+            affectedHouseholds: affectedHouseholds
+        });
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('residence', 'Residence Deleted',
+                'Deleted residence: ' + r.name, []);
+        }
+
         return _ok({ residenceId: residenceId });
     }
 
     // =========================================================================
-    // 9. TIMELINE / HISTORY HELPERS
-    // =========================================================================
-
-    function _pushTimeline(r, event) {
-        if (!Array.isArray(r.timeline)) r.timeline = [];
-        r.timeline.push({
-            year: event.year !== undefined ? event.year : _getCurrentYear(),
-            type: event.type || 'event',
-            details: event.details || '',
-            householdName: event.householdName || null,
-            unitNumber: event.unitNumber !== undefined ? event.unitNumber : null,
-            timestamp: Date.now()
-        });
-        if (r.timeline.length > MAX_TIMELINE_ENTRIES) {
-            r.timeline = r.timeline.slice(-MAX_TIMELINE_ENTRIES);
-        }
-    }
-
-    function _pushHistory(r, action, details, actorId) {
-        if (!Array.isArray(r.history)) r.history = [];
-        r.history.push({
-            year: _getCurrentYear(),
-            action: action,
-            details: details,
-            actorId: actorId || null,
-            timestamp: Date.now()
-        });
-        if (r.history.length > MAX_HISTORY_ENTRIES) {
-            r.history = r.history.slice(-MAX_HISTORY_ENTRIES);
-        }
-    }
-
-    // =========================================================================
-    // 10. UNIT OPERATIONS
+    // 12. UNIT OPERATIONS
     // =========================================================================
 
     function addUnit(residenceId, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!r.isMultiUnit) return _fail('NOT_MULTI_UNIT', 'Cannot add units to a single-unit residence');
+        if (!r.isMultiUnit) {
+            return _fail('NOT_MULTI_UNIT',
+                'Cannot add units to a single-unit residence');
+        }
 
         var maxUnits = r.maxUnits !== undefined ? r.maxUnits : 20;
         if (r.units.length >= maxUnits) {
@@ -597,7 +868,8 @@
 
         var unitNumber = _resolveInt(options.unitNumber, r.units.length + 1);
         if (unitNumber === null || unitNumber < 1) {
-            return _fail('INVALID_UNIT_NUMBER', 'Unit number must be a positive integer');
+            return _fail('INVALID_UNIT_NUMBER',
+                'Unit number must be a positive integer');
         }
         for (var i = 0; i < r.units.length; i++) {
             if (r.units[i].unitNumber === unitNumber) {
@@ -608,18 +880,26 @@
         var unit = _makeUnit(unitNumber);
         unit.notes = options.notes || '';
         r.units.push(unit);
-        r.lastUpdated = _getCurrentYear();
+        r.lastUpdated = _getCurrentYearSafe();
 
         _pushHistory(r, 'unit_added', 'Added Unit ' + unitNumber);
         _pushTimeline(r, {
-            year: _getCurrentYear(),
+            year: _getCurrentYearSafe(),
             type: 'unit_added',
             details: 'Unit ' + unitNumber + ' was added',
             unitNumber: unitNumber
         });
-        _commit();
 
-        return _ok({ residenceId: residenceId, unitNumber: unitNumber, unitId: unit.id });
+        _commit('residenceUnitAdded', {
+            residenceId: residenceId,
+            unitNumber: unitNumber
+        });
+
+        return _ok({
+            residenceId: residenceId,
+            unitNumber: unitNumber,
+            unitId: unit.id
+        });
     }
 
     function removeUnit(residenceId, unitNumber, options) {
@@ -634,69 +914,98 @@
         if (idx === -1) return _fail('UNIT_NOT_FOUND', 'Unit not found');
 
         var unit = r.units[idx];
-        if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit already demolished');
+        if (unit.isDemolished) {
+            return _fail('UNIT_DEMOLISHED', 'Unit already demolished');
+        }
 
         if (!unit.isVacant && options.force !== true) {
             return _fail('UNIT_OCCUPIED', 'Unit is occupied');
         }
 
+        var householdDisassociation = null;
         if (!unit.isVacant && unit.householdId) {
-            _disassociateHouseholdFromUnit(r, unit, _getCurrentYear(),
-                options.reason || 'Unit removed');
+            householdDisassociation = _disassociateHouseholdFromUnit(
+                r, unit, _getCurrentYearSafe(),
+                options.reason || 'Unit removed'
+            );
         }
 
         r.units.splice(idx, 1);
-        r.lastUpdated = _getCurrentYear();
+        r.lastUpdated = _getCurrentYearSafe();
 
         _pushHistory(r, 'unit_removed',
             'Removed Unit ' + unitNumber +
             (options.reason ? ' (' + options.reason + ')' : ''));
         _pushTimeline(r, {
-            year: _getCurrentYear(),
+            year: _getCurrentYearSafe(),
             type: 'unit_removed',
             details: 'Unit ' + unitNumber + ' was removed' +
                 (options.reason ? ' (' + options.reason + ')' : ''),
             unitNumber: unitNumber
         });
-        _commit();
+
+        _commit('residenceUnitRemoved', {
+            residenceId: residenceId,
+            unitNumber: unitNumber,
+            householdDisassociation: householdDisassociation
+        });
 
         return _ok({ residenceId: residenceId, unitNumber: unitNumber });
     }
 
-    function assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options) {
+    function assignHouseholdToUnit(residenceId, unitNumber, householdId,
+                                   householdName, year, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
 
         var unit = null;
         for (var i = 0; i < r.units.length; i++) {
-            if (r.units[i].unitNumber === unitNumber) { unit = r.units[i]; break; }
+            if (r.units[i].unitNumber === unitNumber) {
+                unit = r.units[i];
+                break;
+            }
         }
         if (!unit) return _fail('UNIT_NOT_FOUND', 'Unit not found');
         if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit is demolished');
         if (!unit.isVacant) return _fail('UNIT_OCCUPIED', 'Unit is already occupied');
 
+        // Verify household exists via HouseholdQueries (if available)
         var household = null;
-        var hq = _householdQueries();
-        if (hq) household = hq.getHousehold(householdId);
-        if (!household) return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
+        if (_householdQueriesPresent) {
+            var hq = window.HouseholdQueries;
+            if (typeof hq.getHousehold === 'function') {
+                household = hq.getHousehold(householdId);
+            }
+        }
+        if (!household && _householdQueriesPresent) {
+            return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
+        }
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid assignment year');
 
+        var resolvedHouseholdName = householdName ||
+            (household ? household.name : 'Unknown');
+
         // If the household occupies another unit in this residence, vacate it.
+        var vacatedOthers = [];
         for (var j = 0; j < r.units.length; j++) {
             var other = r.units[j];
             if (other.unitNumber === unitNumber) continue;
             if (other.householdId === householdId && !other.isVacant) {
-                _disassociateHouseholdFromUnit(r, other, y,
+                var dis = _disassociateHouseholdFromUnit(r, other, y,
                     'Moved to Unit ' + unitNumber);
+                vacatedOthers.push({
+                    unitNumber: other.unitNumber,
+                    disassociation: dis
+                });
             }
         }
 
         if (!Array.isArray(unit.associationHistory)) unit.associationHistory = [];
         unit.householdId = householdId;
-        unit.householdName = householdName || household.name;
+        unit.householdName = resolvedHouseholdName;
         unit.isVacant = false;
         unit.assignedYear = y;
         unit.vacantYear = null;
@@ -704,7 +1013,7 @@
 
         unit.associationHistory.push({
             householdId: householdId,
-            householdName: unit.householdName,
+            householdName: resolvedHouseholdName,
             year: y,
             endedYear: null,
             reason: options.reason || 'Assigned',
@@ -714,7 +1023,7 @@
         if (!Array.isArray(r.associationHistory)) r.associationHistory = [];
         r.associationHistory.push({
             householdId: householdId,
-            householdName: unit.householdName,
+            householdName: resolvedHouseholdName,
             unitNumber: unitNumber,
             year: y,
             endedYear: null,
@@ -722,27 +1031,36 @@
             timestamp: Date.now()
         });
 
-        _associateHouseholdReverseIndex(householdId, r, unitNumber, y,
-            options.notes || '');
+        var reverseIndexResult = _associateHouseholdReverseIndex(
+            householdId, r, unitNumber, y, options.notes || ''
+        );
 
         r.lastUpdated = y;
 
         _pushHistory(r, 'unit_assigned',
-            unit.householdName + ' assigned to Unit ' + unitNumber);
+            resolvedHouseholdName + ' assigned to Unit ' + unitNumber);
         _pushTimeline(r, {
             year: y,
             type: 'unit_assigned',
-            details: unit.householdName + ' assigned to Unit ' + unitNumber,
-            householdName: unit.householdName,
+            details: resolvedHouseholdName + ' assigned to Unit ' + unitNumber,
+            householdName: resolvedHouseholdName,
             unitNumber: unitNumber
         });
-        _commit();
+
+        _commit('residenceUnitAssigned', {
+            residenceId: residenceId,
+            unitNumber: unitNumber,
+            householdId: householdId,
+            year: y
+        });
 
         return _ok({
             residenceId: residenceId,
             unitNumber: unitNumber,
             householdId: householdId,
-            year: y
+            year: y,
+            vacatedOthers: vacatedOthers,
+            reverseIndexWarning: reverseIndexResult.success ? null : reverseIndexResult
         });
     }
 
@@ -752,7 +1070,10 @@
 
         var unit = null;
         for (var i = 0; i < r.units.length; i++) {
-            if (r.units[i].unitNumber === unitNumber) { unit = r.units[i]; break; }
+            if (r.units[i].unitNumber === unitNumber) {
+                unit = r.units[i];
+                break;
+            }
         }
         if (!unit) return _fail('UNIT_NOT_FOUND', 'Unit not found');
         if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit is demolished');
@@ -765,7 +1086,7 @@
         var householdName = unit.householdName || 'Unknown';
         var reasonText = reason || 'Vacated';
 
-        _disassociateHouseholdFromUnit(r, unit, y, reasonText);
+        var dis = _disassociateHouseholdFromUnit(r, unit, y, reasonText);
 
         r.lastUpdated = y;
 
@@ -779,13 +1100,20 @@
             householdName: householdName,
             unitNumber: unitNumber
         });
-        _commit();
+
+        _commit('residenceUnitVacated', {
+            residenceId: residenceId,
+            unitNumber: unitNumber,
+            householdId: householdId,
+            year: y
+        });
 
         return _ok({
             residenceId: residenceId,
             unitNumber: unitNumber,
             householdId: householdId,
-            year: y
+            year: y,
+            reverseIndexWarning: dis.success ? null : dis
         });
     }
 
@@ -824,7 +1152,9 @@
         unit.assignedYear = null;
         unit.vacantYear = year;
 
-        _disassociateHouseholdReverseIndex(householdId, r, unit.unitNumber, year, reason);
+        return _disassociateHouseholdReverseIndex(
+            householdId, r, unit.unitNumber, year, reason
+        );
     }
 
     function demolishUnit(residenceId, unitNumber, reason, year) {
@@ -833,11 +1163,18 @@
 
         var unit = null;
         for (var i = 0; i < r.units.length; i++) {
-            if (r.units[i].unitNumber === unitNumber) { unit = r.units[i]; break; }
+            if (r.units[i].unitNumber === unitNumber) {
+                unit = r.units[i];
+                break;
+            }
         }
         if (!unit) return _fail('UNIT_NOT_FOUND', 'Unit not found');
-        if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit already demolished');
-        if (!unit.isVacant) return _fail('UNIT_OCCUPIED', 'Cannot demolish occupied unit');
+        if (unit.isDemolished) {
+            return _fail('UNIT_DEMOLISHED', 'Unit already demolished');
+        }
+        if (!unit.isVacant) {
+            return _fail('UNIT_OCCUPIED', 'Cannot demolish occupied unit');
+        }
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
@@ -858,48 +1195,34 @@
                 (reason ? ' (' + reason + ')' : ''),
             unitNumber: unitNumber
         });
-        _commit();
+
+        _commit('residenceUnitDemolished', {
+            residenceId: residenceId,
+            unitNumber: unitNumber,
+            year: y
+        });
 
         return _ok({ residenceId: residenceId, unitNumber: unitNumber, year: y });
     }
 
     // =========================================================================
-    // 11. HOUSEHOLD REVERSE INDEX
-    // =========================================================================
-
-    function _associateHouseholdReverseIndex(householdId, r, unitNumber, year, notes) {
-        var hc = _householdCommands();
-        if (!hc) return;
-        hc.associateWithResidence(householdId, r.id, {
-            residenceName: r.name,
-            residenceType: r.typeId,
-            year: year,
-            unitNumber: unitNumber,
-            notes: notes || ''
-        });
-    }
-
-    function _disassociateHouseholdReverseIndex(householdId, r, unitNumber, year, reason) {
-        var hc = _householdCommands();
-        if (!hc) return;
-        hc.disassociateFromResidence(householdId, r.id, reason, year);
-    }
-
-    // =========================================================================
-    // 12. RESIDENCE-LEVEL VACANCY
+    // 13. RESIDENCE-LEVEL VACANCY
     // =========================================================================
 
     function markResidenceVacant(residenceId, reason, year) {
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
         if (r.isDemolished) return _fail('DEMOLISHED', 'Residence is demolished');
-        if (_isResidenceVacant(r)) return _fail('ALREADY_VACANT', 'Residence is already vacant');
+        if (_isResidenceVacant(r)) {
+            return _fail('ALREADY_VACANT', 'Residence is already vacant');
+        }
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
         var reasonText = reason || 'Marked vacant';
 
         var affectedHouseholds = [];
+        var reverseIndexWarnings = [];
 
         for (var i = 0; i < r.units.length; i++) {
             var unit = r.units[i];
@@ -909,7 +1232,8 @@
                     householdName: unit.householdName,
                     unitNumber: unit.unitNumber
                 });
-                _disassociateHouseholdFromUnit(r, unit, y, reasonText);
+                var dis = _disassociateHouseholdFromUnit(r, unit, y, reasonText);
+                if (!dis.success) reverseIndexWarnings.push(dis);
             }
         }
 
@@ -933,25 +1257,27 @@
             type: 'vacant',
             details: 'Residence became vacant (' + reasonText + ')'
         });
-        _commit();
 
-        return _ok({
+        _commit('residenceVacated', {
             residenceId: residenceId,
             year: y,
             affectedHouseholds: affectedHouseholds
         });
+
+        return _ok({
+            residenceId: residenceId,
+            year: y,
+            affectedHouseholds: affectedHouseholds,
+            reverseIndexWarnings: reverseIndexWarnings
+        });
     }
 
-    function assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options) {
+    function assignHouseholdToVacantResidence(residenceId, householdId,
+                                              householdName, year, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
         if (r.isDemolished) return _fail('DEMOLISHED', 'Residence is demolished');
-
-        var hq = _householdQueries();
-        if (!hq) return _fail('HOUSEHOLD_SYSTEM_UNAVAILABLE', 'HouseholdQueries not available');
-        var household = hq.getHousehold(householdId);
-        if (!household) return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
@@ -969,18 +1295,19 @@
                 'No vacant unit available in this residence');
         }
 
+        // Delegate to assignHouseholdToUnit, which commits + persists.
         return assignHouseholdToUnit(
             residenceId,
             assignedUnit.unitNumber,
             householdId,
-            householdName || household.name,
+            householdName,
             y,
             options
         );
     }
 
     // =========================================================================
-    // 13. NAME HISTORY
+    // 14. NAME HISTORY
     // =========================================================================
 
     function updateResidenceName(residenceId, newName, options) {
@@ -995,11 +1322,12 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var oldName = r.name;
-        if (oldName === String(newName).trim()) {
+        var trimmed = String(newName).trim();
+        if (oldName === trimmed) {
             return _fail('SAME_NAME', 'New name equals current name');
         }
 
-        r.name = String(newName).trim();
+        r.name = trimmed;
 
         if (options.addToHistory !== false) {
             if (!Array.isArray(r.nameHistory)) r.nameHistory = [];
@@ -1021,7 +1349,13 @@
             details: 'Renamed from "' + oldName + '" to "' + r.name + '"' +
                 (options.reason ? ' (' + options.reason + ')' : '')
         });
-        _commit();
+
+        _commit('residenceRenamed', {
+            residenceId: residenceId,
+            oldName: oldName,
+            newName: r.name,
+            year: year
+        });
 
         return _ok({
             residenceId: residenceId,
@@ -1032,15 +1366,17 @@
     }
 
     // =========================================================================
-    // 14. RENTAL
+    // 15. RENTAL (OWNERSHIP, RENTER, RENT, PAYMENTS)
     // =========================================================================
 
     function _lookupOwnerName(type, id) {
         if (type === 'household') {
-            var hq = _householdQueries();
-            if (hq) {
-                var h = hq.getHousehold(id);
-                if (h) return h.name;
+            if (_householdQueriesPresent) {
+                var hq = window.HouseholdQueries;
+                if (typeof hq.getHousehold === 'function') {
+                    var h = hq.getHousehold(id);
+                    if (h) return h.name;
+                }
             }
             return 'Unknown Household';
         }
@@ -1058,13 +1394,17 @@
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
 
         if (ownerType !== 'household' && ownerType !== 'character') {
-            return _fail('INVALID_OWNER_TYPE', 'Owner type must be household or character');
+            return _fail('INVALID_OWNER_TYPE',
+                'Owner type must be household or character');
         }
 
         if (ownerType === 'household') {
-            var hq = _householdQueries();
-            if (!hq || !hq.getHousehold(ownerId)) {
-                return _fail('OWNER_NOT_FOUND', 'Household not found');
+            if (_householdQueriesPresent) {
+                var hq = window.HouseholdQueries;
+                if (typeof hq.getHousehold === 'function' &&
+                    !hq.getHousehold(ownerId)) {
+                    return _fail('OWNER_NOT_FOUND', 'Household not found');
+                }
             }
         } else {
             if (!_getCharacterById(ownerId)) {
@@ -1102,7 +1442,14 @@
         }
 
         r.lastUpdated = year;
-        _commit();
+
+        _commit('residenceOwnerSet', {
+            residenceId: residenceId,
+            ownerType: ownerType,
+            ownerId: ownerId,
+            ownerName: r.ownerName,
+            year: year
+        });
 
         return _ok({
             residenceId: residenceId,
@@ -1123,19 +1470,27 @@
         };
     }
 
-    function setResidenceRenter(residenceId, renterType, renterId, rentAmount, options) {
+    function setResidenceRenter(residenceId, renterType, renterId,
+                                rentAmount, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!r.ownerId) return _fail('NO_OWNER', 'Residence must have an owner before it can be rented');
+        if (!r.ownerId) {
+            return _fail('NO_OWNER',
+                'Residence must have an owner before it can be rented');
+        }
 
         if (renterType !== 'household' && renterType !== 'character') {
-            return _fail('INVALID_RENTER_TYPE', 'Renter type must be household or character');
+            return _fail('INVALID_RENTER_TYPE',
+                'Renter type must be household or character');
         }
         if (renterType === 'household') {
-            var hq = _householdQueries();
-            if (!hq || !hq.getHousehold(renterId)) {
-                return _fail('RENTER_NOT_FOUND', 'Household not found');
+            if (_householdQueriesPresent) {
+                var hq = window.HouseholdQueries;
+                if (typeof hq.getHousehold === 'function' &&
+                    !hq.getHousehold(renterId)) {
+                    return _fail('RENTER_NOT_FOUND', 'Household not found');
+                }
             }
         } else {
             if (!_getCharacterById(renterId)) {
@@ -1143,7 +1498,8 @@
             }
         }
 
-        if (typeof rentAmount !== 'number' || !isFinite(rentAmount) || rentAmount < 0) {
+        if (typeof rentAmount !== 'number' || !isFinite(rentAmount) ||
+            rentAmount < 0) {
             return _fail('INVALID_RENT', 'Rent must be a non-negative number');
         }
 
@@ -1166,7 +1522,8 @@
 
         r.renterType = renterType;
         r.renterId = renterId;
-        r.renterName = options.renterName || _lookupOwnerName(renterType, renterId);
+        r.renterName = options.renterName ||
+            _lookupOwnerName(renterType, renterId);
         r.rentAmount = rentAmount;
         r.rentStartYear = year;
         r.rentEffectiveYear = year;
@@ -1186,9 +1543,19 @@
             previousRentAmount: oldRent,
             timestamp: Date.now()
         });
+        if (r.rentalHistory.length > MAX_RENTAL_HISTORY) {
+            r.rentalHistory = r.rentalHistory.slice(-MAX_RENTAL_HISTORY);
+        }
 
         r.lastUpdated = year;
-        _commit();
+
+        _commit('residenceRentalStarted', {
+            residenceId: residenceId,
+            renterType: renterType,
+            renterId: renterId,
+            rentAmount: rentAmount,
+            year: year
+        });
 
         return _ok({
             residenceId: residenceId,
@@ -1250,7 +1617,12 @@
             details: 'Rental ended for ' + (oldRenterName || 'Unknown') +
                 (reason ? ': ' + reason : '')
         });
-        _commit();
+
+        _commit('residenceRentalEnded', {
+            residenceId: residenceId,
+            previousRenterId: oldRenterId,
+            year: y
+        });
 
         return _ok({
             residenceId: residenceId,
@@ -1264,7 +1636,8 @@
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
         if (!r.renterId) return _fail('NO_RENTER', 'Residence has no renter');
 
-        if (typeof newRentAmount !== 'number' || !isFinite(newRentAmount) || newRentAmount < 0) {
+        if (typeof newRentAmount !== 'number' || !isFinite(newRentAmount) ||
+            newRentAmount < 0) {
             return _fail('INVALID_RENT', 'Rent must be a non-negative number');
         }
 
@@ -1291,9 +1664,19 @@
             reason: reason || 'Rent adjustment',
             timestamp: Date.now()
         });
+        if (r.rentalHistory.length > MAX_RENTAL_HISTORY) {
+            r.rentalHistory = r.rentalHistory.slice(-MAX_RENTAL_HISTORY);
+        }
 
         r.lastUpdated = y;
-        _commit();
+
+        _commit('residenceRentUpdated', {
+            residenceId: residenceId,
+            oldRent: oldRent,
+            newRent: newRentAmount,
+            year: y
+        });
+
         return _ok({
             residenceId: residenceId,
             oldRent: oldRent,
@@ -1307,7 +1690,8 @@
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
         if (!r.renterId) return _fail('NO_RENTER', 'Residence has no renter');
         if (renterId !== r.renterId) {
-            return _fail('RENTER_MISMATCH', 'Provided renter does not match current renter');
+            return _fail('RENTER_MISMATCH',
+                'Provided renter does not match current renter');
         }
         if (typeof amount !== 'number' || !isFinite(amount) || amount <= 0) {
             return _fail('INVALID_AMOUNT', 'Amount must be a positive number');
@@ -1324,14 +1708,23 @@
             paid: true,
             timestamp: Date.now()
         });
+        if (r.rentPayments.length > MAX_RENT_PAYMENTS) {
+            r.rentPayments = r.rentPayments.slice(-MAX_RENT_PAYMENTS);
+        }
+
         r.lastUpdated = y;
-        _commit();
+
+        _commit('residenceRentPaymentRecorded', {
+            residenceId: residenceId,
+            amount: amount,
+            year: y
+        });
 
         return _ok({ residenceId: residenceId, amount: amount, year: y });
     }
 
     // =========================================================================
-    // 15. STAFF POSITIONS
+    // 16. STAFF POSITIONS
     // =========================================================================
 
     function addStaffPosition(residenceId, data) {
@@ -1348,16 +1741,23 @@
             name: String(data.name).trim(),
             unitNumber: data.unitNumber !== undefined ? data.unitNumber : null,
             requiredRoleId: data.requiredRoleId || null,
-            minSkillLevel: data.minSkillLevel !== undefined ? data.minSkillLevel : 0,
+            minSkillLevel: data.minSkillLevel !== undefined
+                ? data.minSkillLevel : 0,
             notes: data.notes || '',
-            createdAt: _getCurrentYear(),
-            updatedAt: _getCurrentYear()
+            createdAt: _getCurrentYearSafe(),
+            updatedAt: _getCurrentYearSafe()
         };
         r.staffPositions.push(position);
-        r.lastUpdated = _getCurrentYear();
+        r.lastUpdated = _getCurrentYearSafe();
 
-        _pushHistory(r, 'staff_position_added', 'Added staff position: ' + position.name);
-        _commit();
+        _pushHistory(r, 'staff_position_added',
+            'Added staff position: ' + position.name);
+
+        _commit('residenceStaffPositionAdded', {
+            residenceId: residenceId,
+            positionId: position.id,
+            name: position.name
+        });
 
         return _ok({ residenceId: residenceId, positionId: position.id });
     }
@@ -1365,24 +1765,35 @@
     function updateStaffPosition(residenceId, positionId, updates) {
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!Array.isArray(r.staffPositions)) return _fail('NO_POSITIONS', 'No staff positions');
+        if (!Array.isArray(r.staffPositions)) {
+            return _fail('NO_POSITIONS', 'No staff positions');
+        }
 
         var pos = null;
         for (var i = 0; i < r.staffPositions.length; i++) {
-            if (r.staffPositions[i].id === positionId) { pos = r.staffPositions[i]; break; }
+            if (r.staffPositions[i].id === positionId) {
+                pos = r.staffPositions[i];
+                break;
+            }
         }
         if (!pos) return _fail('NOT_FOUND', 'Staff position not found');
 
-        var allowed = ['name', 'unitNumber', 'requiredRoleId', 'minSkillLevel', 'notes'];
+        var allowed = ['name', 'unitNumber', 'requiredRoleId',
+            'minSkillLevel', 'notes'];
         for (var j = 0; j < allowed.length; j++) {
             var key = allowed[j];
             if (updates[key] !== undefined) pos[key] = updates[key];
         }
-        pos.updatedAt = _getCurrentYear();
-        r.lastUpdated = _getCurrentYear();
+        pos.updatedAt = _getCurrentYearSafe();
+        r.lastUpdated = _getCurrentYearSafe();
 
-        _pushHistory(r, 'staff_position_updated', 'Updated staff position: ' + pos.name);
-        _commit();
+        _pushHistory(r, 'staff_position_updated',
+            'Updated staff position: ' + pos.name);
+
+        _commit('residenceStaffPositionUpdated', {
+            residenceId: residenceId,
+            positionId: positionId
+        });
 
         return _ok({ residenceId: residenceId, positionId: positionId });
     }
@@ -1391,7 +1802,9 @@
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!Array.isArray(r.staffPositions)) return _fail('NO_POSITIONS', 'No staff positions');
+        if (!Array.isArray(r.staffPositions)) {
+            return _fail('NO_POSITIONS', 'No staff positions');
+        }
 
         var idx = -1;
         var pos = null;
@@ -1406,39 +1819,61 @@
 
         r.staffPositions.splice(idx, 1);
 
-        if (options.removeAssignments !== false && Array.isArray(r.staffAssignments)) {
+        var removedAssignments = [];
+        if (options.removeAssignments !== false &&
+            Array.isArray(r.staffAssignments)) {
             var filtered = [];
             for (var j = 0; j < r.staffAssignments.length; j++) {
                 if (r.staffAssignments[j].positionId !== positionId) {
                     filtered.push(r.staffAssignments[j]);
+                } else {
+                    removedAssignments.push(r.staffAssignments[j].id);
                 }
             }
             r.staffAssignments = filtered;
         }
 
-        r.lastUpdated = _getCurrentYear();
+        r.lastUpdated = _getCurrentYearSafe();
 
-        _pushHistory(r, 'staff_position_removed', 'Removed staff position: ' + pos.name);
-        _commit();
+        _pushHistory(r, 'staff_position_removed',
+            'Removed staff position: ' + pos.name);
 
-        return _ok({ residenceId: residenceId, positionId: positionId });
+        _commit('residenceStaffPositionRemoved', {
+            residenceId: residenceId,
+            positionId: positionId,
+            removedAssignments: removedAssignments
+        });
+
+        return _ok({
+            residenceId: residenceId,
+            positionId: positionId,
+            removedAssignments: removedAssignments
+        });
     }
 
-    function assignCharacterToStaffPosition(residenceId, positionId, characterId, options) {
+    function assignCharacterToStaffPosition(residenceId, positionId,
+                                           characterId, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!Array.isArray(r.staffPositions)) return _fail('NO_POSITIONS', 'No staff positions');
+        if (!Array.isArray(r.staffPositions)) {
+            return _fail('NO_POSITIONS', 'No staff positions');
+        }
 
         var pos = null;
         for (var i = 0; i < r.staffPositions.length; i++) {
-            if (r.staffPositions[i].id === positionId) { pos = r.staffPositions[i]; break; }
+            if (r.staffPositions[i].id === positionId) {
+                pos = r.staffPositions[i];
+                break;
+            }
         }
         if (!pos) return _fail('POSITION_NOT_FOUND', 'Staff position not found');
 
         var character = _getCharacterById(characterId);
         if (!character) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
-        if (character.isDeceased) return _fail('CHARACTER_DECEASED', 'Character is deceased');
+        if (character.isDeceased) {
+            return _fail('CHARACTER_DECEASED', 'Character is deceased');
+        }
 
         if (!Array.isArray(r.staffAssignments)) r.staffAssignments = [];
         for (var j = 0; j < r.staffAssignments.length; j++) {
@@ -1446,15 +1881,18 @@
             if (a.positionId === positionId &&
                 a.characterId === characterId &&
                 !a.endYear) {
-                return _fail('ALREADY_ASSIGNED', 'Character already assigned to this position');
+                return _fail('ALREADY_ASSIGNED',
+                    'Character already assigned to this position');
             }
         }
 
         var startYear = _resolveYear(options.startYear);
         if (startYear === null) return _fail('INVALID_YEAR', 'Invalid start year');
+
         var endYear = options.endYear !== undefined ? options.endYear : null;
         if (endYear !== null && endYear <= startYear) {
-            return _fail('INVALID_YEAR_RANGE', 'End year must be after start year');
+            return _fail('INVALID_YEAR_RANGE',
+                'End year must be after start year');
         }
 
         var assignment = {
@@ -1479,7 +1917,13 @@
 
         _pushHistory(r, 'staff_assigned',
             assignment.characterName + ' assigned as ' + assignment.title);
-        _commit();
+
+        _commit('residenceStaffAssigned', {
+            residenceId: residenceId,
+            assignmentId: assignment.id,
+            characterId: characterId,
+            positionId: positionId
+        });
 
         return _ok({ residenceId: residenceId, assignmentId: assignment.id });
     }
@@ -1487,7 +1931,9 @@
     function endStaffAssignment(residenceId, assignmentId, endYear, reason) {
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!Array.isArray(r.staffAssignments)) return _fail('NO_ASSIGNMENTS', 'No assignments');
+        if (!Array.isArray(r.staffAssignments)) {
+            return _fail('NO_ASSIGNMENTS', 'No assignments');
+        }
 
         var a = null;
         for (var i = 0; i < r.staffAssignments.length; i++) {
@@ -1504,13 +1950,19 @@
         var y = _resolveYear(endYear);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
         if (y < a.startYear) {
-            return _fail('INVALID_YEAR_RANGE', 'End year must not precede start year');
+            return _fail('INVALID_YEAR_RANGE',
+                'End year must not precede start year');
         }
 
         a.endYear = y;
         a.endReason = reason || 'Term ended';
         r.lastUpdated = y;
-        _commit();
+
+        _commit('residenceStaffAssignmentEnded', {
+            residenceId: residenceId,
+            assignmentId: assignmentId,
+            endYear: y
+        });
 
         return _ok({ residenceId: residenceId, assignmentId: assignmentId });
     }
@@ -1518,22 +1970,32 @@
     function deleteStaffAssignment(residenceId, assignmentId) {
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (!Array.isArray(r.staffAssignments)) return _fail('NO_ASSIGNMENTS', 'No assignments');
+        if (!Array.isArray(r.staffAssignments)) {
+            return _fail('NO_ASSIGNMENTS', 'No assignments');
+        }
 
         var idx = -1;
         for (var i = 0; i < r.staffAssignments.length; i++) {
-            if (r.staffAssignments[i].id === assignmentId) { idx = i; break; }
+            if (r.staffAssignments[i].id === assignmentId) {
+                idx = i;
+                break;
+            }
         }
         if (idx === -1) return _fail('NOT_FOUND', 'Assignment not found');
 
         r.staffAssignments.splice(idx, 1);
-        r.lastUpdated = _getCurrentYear();
-        _commit();
+        r.lastUpdated = _getCurrentYearSafe();
+
+        _commit('residenceStaffAssignmentDeleted', {
+            residenceId: residenceId,
+            assignmentId: assignmentId
+        });
+
         return _ok({ residenceId: residenceId, assignmentId: assignmentId });
     }
 
     // =========================================================================
-    // 16. REHABILITATION & DEMOLITION
+    // 17. REHABILITATION & DEMOLITION
     // =========================================================================
 
     function calculateRepairCost(residenceId, targetCondition) {
@@ -1570,8 +2032,9 @@
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var oldValue = r.estimatedValue !== undefined ? r.estimatedValue : 500;
-        var newValue = Math.round(oldValue * (1 + 0.05 * (CONDITION_MULTIPLIER[targetCondition] -
-            CONDITION_MULTIPLIER[currentCondition])));
+        var newValue = Math.round(oldValue * (1 + 0.05 *
+            (CONDITION_MULTIPLIER[targetCondition] -
+                CONDITION_MULTIPLIER[currentCondition])));
 
         r.condition = targetCondition;
         r.lastRenovated = y;
@@ -1584,10 +2047,17 @@
         _pushTimeline(r, {
             year: y,
             type: 'rehabilitated',
-            details: 'Rehabilitated from ' + currentCondition + ' to ' + targetCondition +
-                ' (Cost: ' + cost + ')'
+            details: 'Rehabilitated from ' + currentCondition + ' to ' +
+                targetCondition + ' (Cost: ' + cost + ')'
         });
-        _commit();
+
+        _commit('residenceRehabilitated', {
+            residenceId: residenceId,
+            oldCondition: currentCondition,
+            newCondition: targetCondition,
+            cost: cost,
+            year: y
+        });
 
         return _ok({
             residenceId: residenceId,
@@ -1602,7 +2072,9 @@
         options = options || {};
         var r = _getResidenceRecord(residenceId);
         if (!r) return _fail('NOT_FOUND', 'Residence not found');
-        if (r.isDemolished) return _fail('ALREADY_DEMOLISHED', 'Residence already demolished');
+        if (r.isDemolished) {
+            return _fail('ALREADY_DEMOLISHED', 'Residence already demolished');
+        }
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
@@ -1610,10 +2082,13 @@
         var occupied = _countOccupiedUnits(r);
         if (occupied > 0 && options.force !== true) {
             return _fail('OCCUPIED_UNITS',
-                'Cannot demolish residence with ' + occupied + ' occupied unit(s)');
+                'Cannot demolish residence with ' + occupied +
+                ' occupied unit(s)');
         }
 
         var affectedHouseholds = [];
+        var reverseIndexWarnings = [];
+
         for (var i = 0; i < r.units.length; i++) {
             var unit = r.units[i];
             if (!unit.isDemolished && !unit.isVacant && unit.householdId) {
@@ -1622,8 +2097,9 @@
                     householdName: unit.householdName,
                     unitNumber: unit.unitNumber
                 });
-                _disassociateHouseholdFromUnit(r, unit, y,
+                var dis = _disassociateHouseholdFromUnit(r, unit, y,
                     'Residence demolished: ' + (reason || 'Demolished'));
+                if (!dis.success) reverseIndexWarnings.push(dis);
             }
         }
 
@@ -1657,21 +2133,30 @@
             type: 'demolished',
             details: 'Residence demolished: ' + r.demolishedReason
         });
-        _commit();
 
-        _logEvent('residence', 'Residence Demolished',
-            r.name + ' demolished: ' + r.demolishedReason, []);
-
-        return _ok({
+        _commit('residenceDemolished', {
             residenceId: residenceId,
             year: y,
             reason: r.demolishedReason,
             affectedHouseholds: affectedHouseholds
         });
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('residence', 'Residence Demolished',
+                r.name + ' demolished: ' + r.demolishedReason, []);
+        }
+
+        return _ok({
+            residenceId: residenceId,
+            year: y,
+            reason: r.demolishedReason,
+            affectedHouseholds: affectedHouseholds,
+            reverseIndexWarnings: reverseIndexWarnings
+        });
     }
 
     // =========================================================================
-    // 17. QUERIES
+    // 18. QUERIES (defensive snapshots)
     // =========================================================================
 
     function getResidence(residenceId) {
@@ -1711,7 +2196,8 @@
         });
         var result = [];
         for (var i = 0; i < records.length; i++) {
-            if (records[i].ownerId === ownerId && records[i].ownerType === ownerType) {
+            if (records[i].ownerId === ownerId &&
+                records[i].ownerType === ownerType) {
                 result.push(_snapshotResidence(records[i]));
             }
         }
@@ -1725,7 +2211,8 @@
         });
         var result = [];
         for (var i = 0; i < records.length; i++) {
-            if (records[i].renterId === renterId && records[i].renterType === renterType) {
+            if (records[i].renterId === renterId &&
+                records[i].renterType === renterType) {
                 result.push(_snapshotResidence(records[i]));
             }
         }
@@ -1739,7 +2226,8 @@
             var r = records[i];
             if (!Array.isArray(r.units)) continue;
             for (var j = 0; j < r.units.length; j++) {
-                if (r.units[j].householdId === householdId && !r.units[j].isDemolished) {
+                if (r.units[j].householdId === householdId &&
+                    !r.units[j].isDemolished) {
                     result.push(_snapshotResidence(r));
                     break;
                 }
@@ -1808,7 +2296,10 @@
 
     function getUnitStats(residenceId) {
         var r = _getResidenceRecord(residenceId);
-        if (!r) return { total: 0, usable: 0, occupied: 0, vacant: 0, demolished: 0, occupancyRate: 0 };
+        if (!r) {
+            return { total: 0, usable: 0, occupied: 0, vacant: 0,
+                demolished: 0, occupancyRate: 0 };
+        }
 
         var total = r.units.length;
         var demolished = _countDemolishedUnits(r);
@@ -1822,7 +2313,8 @@
             occupied: occupied,
             vacant: vacant,
             demolished: demolished,
-            occupancyRate: usable > 0 ? Math.round((occupied / usable) * 100) : 0
+            occupancyRate: usable > 0
+                ? Math.round((occupied / usable) * 100) : 0
         };
     }
 
@@ -1874,7 +2366,8 @@
         var residences = getResidencesByOwner(ownerId, ownerType);
         var total = 0;
         for (var i = 0; i < residences.length; i++) {
-            if (residences[i].renterId && typeof residences[i].rentAmount === 'number') {
+            if (residences[i].renterId &&
+                typeof residences[i].rentAmount === 'number') {
                 total += residences[i].rentAmount;
             }
         }
@@ -1914,10 +2407,14 @@
             list = list.filter(function(a) { return !a.endYear; });
         }
         if (options.positionId) {
-            list = list.filter(function(a) { return a.positionId === options.positionId; });
+            list = list.filter(function(a) {
+                return a.positionId === options.positionId;
+            });
         }
         if (options.unitNumber !== undefined) {
-            list = list.filter(function(a) { return a.unitNumber === options.unitNumber; });
+            list = list.filter(function(a) {
+                return a.unitNumber === options.unitNumber;
+            });
         }
         return JSON.parse(JSON.stringify(list));
     }
@@ -1926,7 +2423,7 @@
         var r = _getResidenceRecord(residenceId);
         if (!r) return [];
         var recs = [];
-        var year = _getCurrentYear();
+        var year = _getCurrentYearSafe();
 
         if (r.isDemolished) {
             return [{ priority: 'low', code: 'DEMOLISHED',
@@ -1938,7 +2435,8 @@
             recs.push({
                 priority: 'high',
                 code: 'VACANT',
-                message: 'Residence has been vacant for ' + vacantDuration + ' years.',
+                message: 'Residence has been vacant for ' +
+                    vacantDuration + ' years.',
                 estimatedCost: 0
             });
         }
@@ -1967,7 +2465,8 @@
                 recs.push({
                     priority: occupancy < 25 ? 'high' : 'medium',
                     code: 'LOW_OCCUPANCY',
-                    message: stats.vacant + ' vacant units (' + occupancy + '% occupied).',
+                    message: stats.vacant + ' vacant units (' +
+                        occupancy + '% occupied).',
                     estimatedCost: 0
                 });
             }
@@ -1982,9 +2481,8 @@
 
     function getResidenceStatistics(locationId) {
         var records = locationId
-            ? _getAllResidenceRecords({ includeDemolished: true }).filter(function(r) {
-                return r.locationId === locationId;
-            })
+            ? _getAllResidenceRecords({ includeDemolished: true }).filter(
+                function(r) { return r.locationId === locationId; })
             : _getAllResidenceRecords({ includeDemolished: true });
 
         var stats = {
@@ -2035,7 +2533,7 @@
     }
 
     // =========================================================================
-    // 18. INTEGRATION
+    // 19. INTEGRATION
     // =========================================================================
 
     function getHouseholdUnits(householdId) {
@@ -2062,7 +2560,31 @@
     }
 
     // =========================================================================
-    // 19. EXPORTS
+    // 20. DIAGNOSTICS
+    // =========================================================================
+
+    var _diagnostics = {
+        getResidenceCount: function() {
+            return _getResidencesArray().length;
+        },
+        getIntegrityReport: function() {
+            try {
+                var all = _getResidencesArray();
+                var dupes = _detectDuplicates(all);
+                return {
+                    ok: dupes.length === 0,
+                    duplicates: dupes,
+                    count: all.length
+                };
+            } catch (e) {
+                return { ok: false, reason: e.message };
+            }
+        },
+        getVersion: function() { return 6; }
+    };
+
+    // =========================================================================
+    // 21. EXPORTS
     // =========================================================================
 
     var api = {
@@ -2072,6 +2594,10 @@
         RENTAL_STATUS: RENTAL_STATUS,
         getResidenceTypes: getResidenceTypes,
         getResidenceConditions: getResidenceConditions,
+
+        // Persistence boundary
+        persist: persist,
+        hydrateFromMasterData: hydrateFromMasterData,
 
         // CRUD
         createResidence: createResidence,
@@ -2141,13 +2667,47 @@
         getResidenceStatistics: getResidenceStatistics,
 
         // Integration
-        getHouseholdUnits: getHouseholdUnits
+        getHouseholdUnits: getHouseholdUnits,
+
+        // Diagnostics
+        _diagnostics: _diagnostics
     };
 
     window.ResidenceSystem = api;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
+    }
+
+    // =========================================================================
+    // 22. AUTO-HYDRATE
+    // =========================================================================
+
+    (function _autoHydrate() {
+        try {
+            hydrateFromMasterData();
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'ResidenceSystem: initial hydrate failed. ' +
+                    'Use ResidenceSystem._diagnostics.getIntegrityReport() ' +
+                    'to inspect.', e);
+            }
+        }
+    })();
+
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('masterDataUpdated', function() {
+            try {
+                hydrateFromMasterData();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'ResidenceSystem: hydrate on masterDataUpdated failed',
+                        e);
+                }
+            }
+        });
     }
 
 })();
