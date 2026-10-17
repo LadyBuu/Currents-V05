@@ -2,50 +2,45 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD MODALS (modals-household.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/modals-household.js
- * 
+ *
  * PURPOSE
  * -------
  * Modal entry points for household CRUD and detail viewing.
- * 
+ *
  *   - openCreateHouseholdModal(onSuccess)
  *   - openEditHouseholdModal(householdId, onSuccess)
  *   - openDeleteHouseholdModal(householdId, onSuccess)
  *   - openHouseholdDetailsModal(householdId, onSuccess)
- * 
+ *
  * OWNERSHIP
  * ---------
- *   Reads:  HouseholdQueries
- *   Writes: HouseholdCommands
+ *   Reads:  HouseholdQueries, HouseholdEconomy (pure calcs)
+ *   Writes: HouseholdCommands + one persist() call per batch
  *   UI:     modals-core, selectors, icons
- * 
- * WHAT THIS FILE DOES NOT DO
- * --------------------------
- *   - No HouseholdState access
- *   - No persistence (_saveMasterData / _invalidateCaches)
- *   - No domain interpretation of status
- *   - No emoji icons
- *   - No silent failure swallowing
- *   - No setTimeout(100) DOM guessing
- * 
- * MODAL LIFECYCLE
- * ---------------
- * modals-core owns modal lifetime. If it doesn't provide an `onOpen(root)`
- * hook, we adapt: the returned modal handle is used to locate the root, and
- * event wiring is done in a small post-open callback. This file does NOT
- * maintain its own `_processing*Modal` guard.
- * 
+ *
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - Every mutation invokes HouseholdCommands.* then a single
+ *     HouseholdCommands.persist() at the end of the batch.
+ *   - A persist failure after a successful command is reported as a
+ *     partial failure (the mutation is in memory but not on disk).
+ *   - No HouseholdState access.
+ *   - No _saveMasterData call here.
+ *   - No _processingModal guard.
+ *   - Command return shapes are read via { success, data } / { success,
+ *     code, reason } — no raw boolean checks.
+ *   - processAnnualEconomy reads .data.* (was .oldWealth etc. before the
+ *     economy refactor).
+ *
  * CONTRACT
  * --------
  * Each modal returns via:
  *   onSuccess(resultData)
- *   onCancel()
- *   onError(code, reason)
- * 
- * Commands are the source of truth for validation failures. The UI shows
- * what the command returns; it does not pre-validate domain rules.
- * 
+ *   onCancel()               (implicit — the modal is dismissed)
+ *   onError(code, reason)    (not used currently; failures surface as toasts)
+ *
  * =============================================================================
  */
 
@@ -53,20 +48,50 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        if (typeof window._openModal === 'function') return window._openModal(options);
-        throw new Error('modals-household: openModal is required');
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('modals-household: ' + name + ' is required');
+        }
+        return fn;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
-        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
-        throw new Error('modals-household: closeTopModal is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('modals-household: ' + name + ' is required');
+        }
+        return obj;
     }
+
+    var _queries = _requireObject('HouseholdQueries', window.HouseholdQueries);
+    _requireFunction('HouseholdQueries.getHousehold', _queries.getHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdDetails',
+        _queries.getHouseholdDetails);
+
+    var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
+    _requireFunction('HouseholdCommands.persist', _commands.persist);
+    _requireFunction('HouseholdCommands.createHousehold',
+        _commands.createHousehold);
+    _requireFunction('HouseholdCommands.updateHousehold',
+        _commands.updateHousehold);
+    _requireFunction('HouseholdCommands.setStatus', _commands.setStatus);
+    _requireFunction('HouseholdCommands.deleteHousehold',
+        _commands.deleteHousehold);
+
+    var _openModal = _requireFunction('openModal',
+        typeof window.openModal === 'function'
+            ? window.openModal
+            : window._openModal);
+    var _closeTopModal = _requireFunction('closeTopModal',
+        typeof window.closeTopModal === 'function'
+            ? window.closeTopModal
+            : window._closeTopModal);
+
+    // =========================================================================
+    // 2. HELPERS
+    // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
         if (typeof window.confirmDialog === 'function') {
@@ -75,8 +100,6 @@
         if (typeof window._confirmDialog === 'function') {
             return window._confirmDialog(message, title, onConfirm, onCancel);
         }
-        // Fallback: browser confirm (kept because modals-core *should*
-        // provide it, but this is the last resort before a hard failure).
         if (window.confirm(message)) {
             if (onConfirm) onConfirm();
         } else if (onCancel) {
@@ -97,33 +120,57 @@
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') return window._showToast(message, type);
-        if (typeof window.showToast === 'function') return window.showToast(message, type);
-        // Non-fatal: if no toast system, fall through silently.
+        if (typeof window._showToast === 'function') {
+            return window._showToast(message, type);
+        }
+        if (typeof window.showToast === 'function') {
+            return window.showToast(message, type);
+        }
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (typeof window._getIcon === 'function') {
+            return window._getIcon(name) || '';
+        }
         if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
     }
 
-    function _queries() {
-        if (typeof window.HouseholdQueries === 'undefined') {
-            throw new Error('modals-household: HouseholdQueries is required');
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
         }
-        return window.HouseholdQueries;
+        return null;
     }
 
-    function _commands() {
-        if (typeof window.HouseholdCommands === 'undefined') {
-            throw new Error('modals-household: HouseholdCommands is required');
+    function _parseIntOrNull(value) {
+        if (value === undefined || value === null) return null;
+        var s = String(value).trim();
+        if (s === '') return null;
+        var n = Number(s);
+        if (!isFinite(n)) return null;
+        return Math.floor(n);
+    }
+
+    /**
+     * After a batch of commands, persist once. Returns {ok, reason}.
+     * Every mutation caller uses this — the modal does not call
+     * saveMasterData directly.
+     */
+    function _persistOrFail(messagePrefix) {
+        var result = _commands.persist();
+        if (!result || result.success === false) {
+            var reason = (result && result.reason) || 'Unknown persist error';
+            _showToast(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + reason,
+                'error');
+            return { ok: false, reason: reason };
         }
-        return window.HouseholdCommands;
+        return { ok: true };
     }
 
     function _buildLocationOptions(selectedId, placeholder) {
-        // Preferred: shared location dropdown builder
         if (typeof window.buildLocationDropdown === 'function') {
             return window.buildLocationDropdown(selectedId, placeholder, false);
         }
@@ -145,25 +192,6 @@
         return html;
     }
 
-    function _parseIntOrNull(value) {
-        if (value === undefined || value === null) return null;
-        var s = String(value).trim();
-        if (s === '') return null;
-        var n = Number(s);
-        if (!isFinite(n)) return null;
-        return Math.floor(n);
-    }
-
-    // =========================================================================
-    // 2. DOM SCOPING HELPER
-    // =========================================================================
-    //
-    // modals-core may or may not provide a modal root. We try to find it in
-    // a bounded manner: if openModal returns an element or handle, we use it;
-    // otherwise we fall back to document with a data attribute scoping
-    // strategy (modals-core writes `data-modal-root` on the modal container).
-    // =========================================================================
-
     function _resolveModalRoot() {
         if (typeof document === 'undefined') return null;
         return document.querySelector('[data-modal-root="top"]') ||
@@ -172,9 +200,6 @@
     }
 
     function _attachOnOpen(handler) {
-        // modals-core may pass a root via options.onOpen — but callers of
-        // this file use openModal({..., onConfirm, onCancel}). We attach
-        // handlers after a microtask so the modal DOM is guaranteed present.
         return function() {
             var root = _resolveModalRoot();
             if (root) handler(root);
@@ -187,12 +212,9 @@
 
     function openCreateHouseholdModal(onSuccess, options) {
         options = options || {};
-        var commands = _commands();
 
         var locationOptions = _buildLocationOptions(null, '-- Select location --');
-        var currentYear;
-        try { currentYear = window.getCurrentYearSafe(); }
-        catch (e) { currentYear = null; }
+        var currentYear = _currentYear();
 
         var content =
             '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
@@ -269,10 +291,23 @@
                 var headId = (root.querySelector('[data-field="headId"]') || {}).value;
                 if (headId) data.headId = headId;
 
-                var result = commands.createHousehold(data);
+                // Command
+                var result = _commands.createHousehold(data);
                 if (!result.success) {
                     _showToast(result.reason || 'Failed to create household', 'error');
                     return false;
+                }
+
+                // Persist once
+                var persisted = _persistOrFail('Household created');
+                if (!persisted.ok) {
+                    // Creation is in memory but not saved. Report success
+                    // anyway because the modal's job is done — the persist
+                    // failure is surfaced as an error toast above.
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(result.data);
+                    }
+                    return true;
                 }
 
                 _showToast('Household created: ' + data.name, 'success');
@@ -301,8 +336,10 @@
                         filters: { gender: 'all', status: 'all', showDeceased: false },
                         onSelect: function(character) {
                             if (!character) return;
-                            if (display) display.value = (character.name || '') +
-                                (character.surname ? ' ' + character.surname : '');
+                            if (display) {
+                                display.value = (character.name || '') +
+                                    (character.surname ? ' ' + character.surname : '');
+                            }
                             if (hidden) hidden.value = character.id;
                         }
                     });
@@ -324,16 +361,14 @@
     // =========================================================================
 
     function openEditHouseholdModal(householdId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
-        var household = queries.getHousehold(householdId);
+        var household = _queries.getHousehold(householdId);
         if (!household) {
             _showToast('Household not found', 'error');
             return null;
         }
 
-        var locationOptions = _buildLocationOptions(household.locationId, '-- Select location --');
+        var locationOptions = _buildLocationOptions(
+            household.locationId, '-- Select location --');
 
         var content =
             '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
@@ -400,40 +435,63 @@
                     locationId: (root.querySelector('[data-field="locationId"]') || {}).value || null
                 };
 
-                var wealth = _parseIntOrNull((root.querySelector('[data-field="wealth"]') || {}).value);
+                var wealth = _parseIntOrNull(
+                    (root.querySelector('[data-field="wealth"]') || {}).value);
                 if (wealth !== null) updates.wealth = wealth;
 
-                var reputation = _parseIntOrNull((root.querySelector('[data-field="reputation"]') || {}).value);
+                var reputation = _parseIntOrNull(
+                    (root.querySelector('[data-field="reputation"]') || {}).value);
                 if (reputation !== null) updates.reputation = reputation;
-
-                var status = (root.querySelector('[data-field="status"]') || {}).value;
-                if (status) updates.status = status;
 
                 var notes = (root.querySelector('[data-field="notes"]') || {}).value;
                 if (notes !== undefined) updates.notes = notes;
 
-                // Apply field updates via the generic command
-                var result = commands.updateHousehold(householdId, updates);
+                var status = (root.querySelector('[data-field="status"]') || {}).value;
+
+                // Command 1: field updates
+                var result = _commands.updateHousehold(householdId, updates);
                 if (!result.success) {
                     _showToast(result.reason || 'Failed to update household', 'error');
                     return false;
                 }
 
-                // Status change is a separate semantic command
+                // Command 2 (optional): status change
+                var statusChanged = false;
+                var statusChangeFailed = null;
                 if (status && status !== household.status) {
-                    var statusResult = commands.setStatus(householdId, status, {
+                    var statusResult = _commands.setStatus(householdId, status, {
                         year: _currentYear(),
                         reason: 'Edited via modal',
                         recordEvent: true
                     });
-                    if (!statusResult.success) {
-                        _showToast('Household updated but status change failed: ' +
-                            statusResult.reason, 'warning');
+                    if (statusResult.success) {
+                        statusChanged = true;
+                    } else {
+                        statusChangeFailed = statusResult.reason;
                     }
                 }
 
-                _showToast('Household updated', 'success');
-                if (typeof onSuccess === 'function') onSuccess(result.data);
+                // Persist once for the batch
+                var persisted = _persistOrFail('Household updated');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(result.data);
+                    }
+                    return true;
+                }
+
+                if (statusChangeFailed) {
+                    _showToast(
+                        'Household updated but status change failed: ' +
+                        statusChangeFailed,
+                        'warning');
+                } else {
+                    _showToast('Household updated', 'success');
+                }
+
+                if (typeof onSuccess === 'function') {
+                    onSuccess(result.data);
+                }
                 return true;
             }
         });
@@ -457,22 +515,12 @@
         return html;
     }
 
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        return null;
-    }
-
     // =========================================================================
     // 5. DELETE HOUSEHOLD MODAL
     // =========================================================================
 
     function openDeleteHouseholdModal(householdId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
-        var household = queries.getHousehold(householdId);
+        var household = _queries.getHousehold(householdId);
         if (!household) {
             _showToast('Household not found', 'error');
             return null;
@@ -480,7 +528,7 @@
 
         var memberCount = household.memberCount || 0;
         var enterprises = [];
-        try { enterprises = queries.getHouseholdEnterprises(householdId); }
+        try { enterprises = _queries.getHouseholdEnterprises(householdId); }
         catch (e) { enterprises = []; }
 
         var message =
@@ -495,15 +543,30 @@
             '\nThis action can be undone by restoring the household.';
 
         _confirmDialog(message, 'Delete Household', function() {
-            var result = commands.deleteHousehold(householdId, {
+            var result = _commands.deleteHousehold(householdId, {
                 removeFromCharacters: true
             });
             if (!result.success) {
                 _showToast(result.reason || 'Failed to delete household', 'error');
                 return;
             }
+
+            // Persist once
+            var persisted = _persistOrFail('Household deleted');
+            if (!persisted.ok) {
+                // Deletion happened in memory. Surface to onSuccess anyway
+                // so the caller can refresh; the error toast above already
+                // told the user.
+                if (typeof onSuccess === 'function') {
+                    onSuccess(result.data);
+                }
+                return;
+            }
+
             _showToast('Household deleted: ' + household.name, 'info');
-            if (typeof onSuccess === 'function') onSuccess(result.data);
+            if (typeof onSuccess === 'function') {
+                onSuccess(result.data);
+            }
         });
 
         return null;
@@ -514,12 +577,9 @@
     // =========================================================================
 
     function openHouseholdDetailsModal(householdId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
         var details;
         try {
-            details = queries.getHouseholdDetails(householdId);
+            details = _queries.getHouseholdDetails(householdId);
         } catch (e) {
             details = null;
         }
@@ -557,37 +617,26 @@
 
         var html = '<div style="max-height:500px;overflow-y:auto;padding:4px;">';
 
-        // Header
         html += _buildHeader(household, status);
-
-        // Stats grid
         html += _buildStatsGrid(household, members, head);
 
-        // Demographics
         if (demographics) {
             html += _buildDemographics(demographics);
         }
 
-        // Residence
         if (residence) {
             html += _buildResidenceRow(residence);
         }
 
-        // Members
         html += _buildMembersList(members);
-
-        // Enterprises
         html += _buildEnterprisesSection(enterprises, enterpriseStats, householdId);
 
-        // Notes
         if (household.notes) {
             html += '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-top:12px;font-size:0.6rem;color:var(--dim);">' +
                 _escapeHtml(household.notes) + '</div>';
         }
 
-        // Actions
         html += _buildActionsRow();
-
         html += '</div>';
         return html;
     }
@@ -599,27 +648,35 @@
 
         return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
             '<div>' +
-                '<h3 style="margin:0;font-size:1rem;">' + _escapeHtml(household.name) + '</h3>' +
+                '<h3 style="margin:0;font-size:1rem;">' +
+                    _escapeHtml(household.name) + '</h3>' +
                 '<div style="font-size:0.6rem;color:var(--dim);">' +
-                    'Founded ' + (household.foundedYear !== null ? household.foundedYear : 'Unknown') +
-                    (household.locationName ? ' · ' + _escapeHtml(household.locationName) : '') +
+                    'Founded ' + (household.foundedYear !== null
+                        ? household.foundedYear : 'Unknown') +
+                    (household.locationName
+                        ? ' · ' + _escapeHtml(household.locationName) : '') +
                 '</div>' +
             '</div>' +
             '<div style="text-align:right;">' +
-                '<div style="font-size:0.65rem;color:' + statusColor + ';display:flex;align-items:center;gap:4px;justify-content:flex-end;">' +
+                '<div style="font-size:0.65rem;color:' + statusColor +
+                    ';display:flex;align-items:center;gap:4px;justify-content:flex-end;">' +
                     statusIcon + ' ' + _escapeHtml(statusLabel) +
                 '</div>' +
                 '<div style="font-size:0.55rem;color:var(--dim);">' +
-                    status.livingCount + ' living · ' + status.deceasedCount + ' deceased' +
-                    (status.missingCount > 0 ? ' · ' + status.missingCount + ' missing' : '') +
+                    status.livingCount + ' living · ' +
+                    status.deceasedCount + ' deceased' +
+                    (status.missingCount > 0
+                        ? ' · ' + status.missingCount + ' missing' : '') +
                 '</div>' +
             '</div>' +
         '</div>';
     }
 
     function _buildStatsGrid(household, members, head) {
-        var wealthDisplay = household.wealth !== null ? household.wealth : '—';
-        var repDisplay = household.reputation !== null ? household.reputation : '—';
+        var wealthDisplay = household.wealth !== null
+            ? household.wealth : '—';
+        var repDisplay = household.reputation !== null
+            ? household.reputation : '—';
         var wealthColor = (household.wealth !== null && household.wealth >= 0)
             ? 'var(--success)' : 'var(--danger)';
 
@@ -633,7 +690,8 @@
 
     function _statCell(label, value, color) {
         return '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">' + _escapeHtml(label) + '</div>' +
+            '<div style="font-size:0.5rem;color:var(--dim);">' +
+                _escapeHtml(label) + '</div>' +
             '<div style="font-size:0.9rem;font-weight:bold;' +
                 (color ? 'color:' + color + ';' : '') + '">' +
                 _escapeHtml(String(value)) +
@@ -661,8 +719,10 @@
         return '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.65rem;">' +
             '<span style="color:var(--dim);">Residence:</span> ' +
             _escapeHtml(residence.residenceName || 'Unknown') +
-            (residence.unitNumber ? ' (Unit ' + residence.unitNumber + ')' : '') +
-            (residence.associatedYear ? ' · since ' + residence.associatedYear : '') +
+            (residence.unitNumber
+                ? ' (Unit ' + residence.unitNumber + ')' : '') +
+            (residence.associatedYear
+                ? ' · since ' + residence.associatedYear : '') +
         '</div>';
     }
 
@@ -681,14 +741,16 @@
                 var headIcon = m.isHead ? _getIcon('CROWN') : '';
                 var personIcon = _getIcon('PERSON');
                 var deceasedIcon = m.isDeceased ? ' (deceased)' : '';
-                var ageStr = (m.age !== null && m.age !== undefined) ? m.age + ' years' : '—';
+                var ageStr = (m.age !== null && m.age !== undefined)
+                    ? m.age + ' years' : '—';
 
                 html += '<div style="display:flex;justify-content:space-between;padding:3px 8px;background:var(--bg2);border-radius:4px;margin-bottom:2px;font-size:0.65rem;">' +
                     '<span>' + headIcon + ' ' + personIcon + ' ' +
                         _escapeHtml(m.characterName) + deceasedIcon +
                     '</span>' +
                     '<span style="color:var(--dim);">' +
-                        _escapeHtml(m.role || m.type || 'Member') + ' · ' + ageStr +
+                        _escapeHtml(m.role || m.type || 'Member') +
+                        ' · ' + ageStr +
                     '</span>' +
                 '</div>';
             }
@@ -717,19 +779,24 @@
         if (stats) {
             if (stats.publicCount > 0 || stats.privateCount > 0) {
                 summary = ' (' +
-                    (stats.publicCount > 0 ? stats.publicCount + ' Public' : '') +
-                    (stats.publicCount > 0 && stats.privateCount > 0 ? ', ' : '') +
-                    (stats.privateCount > 0 ? stats.privateCount + ' Private' : '') +
+                    (stats.publicCount > 0
+                        ? stats.publicCount + ' Public' : '') +
+                    (stats.publicCount > 0 && stats.privateCount > 0
+                        ? ', ' : '') +
+                    (stats.privateCount > 0
+                        ? stats.privateCount + ' Private' : '') +
                     ')';
             }
         }
 
         var html = '<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
-        html += '<div style="font-size:0.7rem;color:var(--accent);">Owned Enterprises (' +
-            enterprises.length + ')' + _escapeHtml(summary) + '</div>';
+        html += '<div style="font-size:0.7rem;color:var(--accent);">' +
+            'Owned Enterprises (' + enterprises.length + ')' +
+            _escapeHtml(summary) + '</div>';
         html += '<div style="font-size:0.6rem;color:var(--dim);">';
-        html += 'Total Profit: <span style="color:' + profitColor + ';font-weight:bold;">' +
+        html += 'Total Profit: <span style="color:' + profitColor +
+            ';font-weight:bold;">' +
             (totalProfit >= 0 ? '+' : '') + totalProfit + '</span>';
         if (stats) {
             html += ' <span style="margin-left:8px;">Workers: ' +
@@ -836,19 +903,31 @@
                     _showToast('Household economy not available', 'error');
                     return;
                 }
+                // processAnnualEconomy returns { success, data } after the
+                // economy refactor. It also persists via HouseholdCommands.
                 var result = window.HouseholdEconomy.processAnnualEconomy(householdId);
-                if (!result || !result.success) {
-                    _showToast(result ? result.reason : 'Failed to process year', 'error');
+                if (!result || result.success === false) {
+                    _showToast(
+                        (result && result.reason) || 'Failed to process year',
+                        'error');
                     return;
                 }
-                _showToast('Processed year for ' + result.householdName + ': ' +
-                    (result.netChange >= 0 ? '+' : '') + result.netChange, 'success');
+                var data = result.data || {};
+                var net = data.netChange;
+                var netStr = (typeof net === 'number')
+                    ? ((net >= 0 ? '+' : '') + net)
+                    : '?';
+                _showToast(
+                    'Processed year for ' +
+                    (data.householdName || details.household.name) + ': ' +
+                    netStr,
+                    'success');
                 _closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
             };
         }
 
-        // Enterprise items (click to view)
+        // Enterprise row clicks
         var eItems = root.querySelectorAll('.enterprise-item');
         for (var i = 0; i < eItems.length; i++) {
             (function(item) {
@@ -870,7 +949,8 @@
                 _closeTopModal();
                 if (typeof window.openEnterpriseListModal === 'function') {
                     window.openEnterpriseListModal(function(enterprise) {
-                        if (enterprise && typeof window.openEnterpriseDetailsModal === 'function') {
+                        if (enterprise &&
+                            typeof window.openEnterpriseDetailsModal === 'function') {
                             window.openEnterpriseDetailsModal(enterprise.id);
                         }
                     });
@@ -886,7 +966,9 @@
                 if (typeof window.openCreateEnterpriseModal === 'function') {
                     window.openCreateEnterpriseModal(function(enterprise) {
                         if (enterprise) {
-                            _showToast('Enterprise created: ' + enterprise.name, 'success');
+                            _showToast(
+                                'Enterprise created: ' + enterprise.name,
+                                'success');
                             if (typeof onSuccess === 'function') onSuccess();
                         }
                     }, {
