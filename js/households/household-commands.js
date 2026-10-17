@@ -3,23 +3,41 @@
  * STILL WATERS - HOUSEHOLD COMMANDS (household-commands.js)
  * =============================================================================
  *
- * Canonical mutation API for household data.
+ * LOCATION: js/systems/household/household-commands.js
  *
- * Result shape:
+ * PURPOSE
+ * -------
+ * Canonical mutation API for household data. This module is the SINGLE
+ * WRITE BOUNDARY for the household domain.
+ *
+ * CONVERGED PATTERN
+ * -----------------
+ *   - Commands mutate canonical records via HouseholdState primitives.
+ *   - Every command ends with _commit(eventName, payload).
+ *   - _commit does NOT save. It:
+ *       hydrateFromMasterData()
+ *       markDirty()
+ *       publish(eventName, payload)
+ *       dispatch CustomEvent(eventName, payload)
+ *   - persist() is the ONLY place that calls saveMasterData().
+ *   - Callers (modals, bootstraps, cross-domain orchestrators) call
+ *     persist() once per batch.
+ *
+ * RESULT SHAPE
+ * ------------
  *   { success: true,  data: ... }
  *   { success: false, code: 'SOME_CODE', reason: 'human message' }
  *
- * Persistence: exactly one _commit() per public command. Individual helpers
- * mutate the record in place; the outer command commits.
+ * CROSS-DOMAIN RULES
+ * ------------------
+ *   - Enterprise ownership   → IndustryCommands (canonical)
+ *   - Residence occupancy    → ResidenceSystem  (canonical)
+ *   - Character reverse index→ CharacterCommands.updateCharacterFields
  *
- * Cross-domain rules:
- *   - Enterprise ownership         → IndustryCommands
- *   - Residence occupancy          → ResidenceSystem (ResidenceCommands)
- *   - Character reverse index      → this module, via HouseholdCommands
- *
- * When a household is deleted while occupying a residence, the residence
- * command must run FIRST (to clear unit occupancy and the household's
- * reverse index) before the household record is removed.
+ * These are verified at LOAD time. Missing required deps throw at load.
+ * Optional deps (IndustryCommands, ResidenceSystem) are recorded as
+ * present/absent at load; if absent, the commands that need them return
+ * a structured failure instead of throwing at call time.
  *
  * =============================================================================
  */
@@ -28,51 +46,58 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _state() {
-        if (typeof window.HouseholdState === 'undefined') {
-            throw new Error('HouseholdCommands: HouseholdState is required');
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('HouseholdCommands: ' + name + ' is required');
         }
-        return window.HouseholdState;
+        return fn;
     }
 
-    function _internal() {
-        return _state()._internal;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('HouseholdCommands: getCharacterById is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('HouseholdCommands: ' + name + ' is required');
         }
-        return window.getCharacterById(id);
+        return obj;
     }
 
-    function _generateId(prefix) {
-        if (typeof window.generateId !== 'function') {
-            throw new Error('HouseholdCommands: generateId is required');
+    // Hard dependencies — throw at load
+    var _state = _requireObject('HouseholdState', window.HouseholdState);
+    var _generateId = _requireFunction('generateId', window.generateId);
+    var _getCharacterById = _requireFunction('getCharacterById', window.getCharacterById);
+    var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe', window.getCurrentYearSafe);
+    var _saveMasterData = _requireFunction('saveMasterData', window.saveMasterData);
+
+    // State internal API — verify the shape we depend on
+    if (!_state._internal || typeof _state._internal !== 'object') {
+        throw new Error('HouseholdCommands: HouseholdState._internal is required');
+    }
+    var _internal = _state._internal;
+    _requireFunction('HouseholdState._internal.getHouseholdRecord', _internal.getHouseholdRecord);
+    _requireFunction('HouseholdState._internal.getAllHouseholdRecords', _internal.getAllHouseholdRecords);
+    _requireFunction('HouseholdState._internal.replaceHouseholds', _internal.replaceHouseholds);
+    _requireFunction('HouseholdState._internal.getPositionRecord', _internal.getPositionRecord);
+    _requireFunction('HouseholdState._internal.getAllPositionRecords', _internal.getAllPositionRecords);
+    _requireFunction('HouseholdState._internal.replaceHouseholdPositions', _internal.replaceHouseholdPositions);
+    _requireFunction('HouseholdState._internal.getAssignmentRecord', _internal.getAssignmentRecord);
+    _requireFunction('HouseholdState._internal.getAllAssignmentRecords', _internal.getAllAssignmentRecords);
+    _requireFunction('HouseholdState._internal.replaceHouseholdAssignments', _internal.replaceHouseholdAssignments);
+
+    // Optional deps — recorded at load, checked at call time
+    var _industryCommandsPresent = typeof window.IndustryCommands !== 'undefined' &&
+        window.IndustryCommands !== null;
+    var _residenceSystemPresent = typeof window.ResidenceSystem !== 'undefined' &&
+        window.ResidenceSystem !== null;
+
+    if (typeof window.markDataDirty !== 'function') {
+        // markDataDirty is not yet universal across the codebase. We do not
+        // throw; instead we degrade to a no-op with a one-time console warn.
+        if (typeof console !== 'undefined' && console.warn) {
+            console.warn('HouseholdCommands: window.markDataDirty is not defined. ' +
+                'Dirty tracking will be a no-op for this domain.');
         }
-        return window.generateId(prefix);
-    }
-
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('HouseholdCommands: getCurrentYearSafe is required');
-        }
-        return window.getCurrentYearSafe();
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _residenceSystem() {
-        return typeof window.ResidenceSystem !== 'undefined'
-            ? window.ResidenceSystem
-            : null;
     }
 
     // =========================================================================
@@ -82,29 +107,27 @@
     function _ok(data) {
         return { success: true, data: data === undefined ? null : data };
     }
-    function _fail(code, reason) {
-        return { success: false, code: code, reason: reason || code };
+    function _fail(code, reason, extra) {
+        var result = { success: false, code: code, reason: reason || code };
+        if (extra) {
+            for (var k in extra) {
+                if (Object.prototype.hasOwnProperty.call(extra, k)) {
+                    result[k] = extra[k];
+                }
+            }
+        }
+        return result;
     }
 
     // =========================================================================
-    // 3. LOW-LEVEL COMMIT
-    // =========================================================================
-
-    function _commit() {
-        var households = _internal().getAllHouseholdRecords({ includeDeprecated: true });
-        _internal().replaceHouseholds(households);
-    }
-
-    // =========================================================================
-    // 4. YEAR / NUMBER VALIDATION HELPERS
+    // 3. YEAR / NUMBER VALIDATION
     // =========================================================================
 
     function _resolveYear(value) {
-        if (value === undefined || value === null) return _currentYear();
+        if (value === undefined || value === null) return _getCurrentYearSafe();
         if (typeof value !== 'number' || !isFinite(value)) return null;
         return value;
     }
-
     function _resolveInt(value, fallback) {
         if (value === undefined || value === null) return fallback;
         if (typeof value !== 'number' || !isFinite(value)) return null;
@@ -112,7 +135,203 @@
     }
 
     // =========================================================================
-    // 5. HOUSEHOLD CREATION AND DELETION
+    // 4. COMMIT TAIL
+    // =========================================================================
+    //
+    // _commit is NOT a persistence boundary. It hydrates the state index,
+    // marks data dirty, publishes an in-process event, and dispatches a
+    // cross-domain CustomEvent. The caller decides when to call persist().
+    //
+    // We call hydrateFromMasterData() rather than relying on the primitives
+    // to do it, because some primitives may already have rebuilt indexes and
+    // re-hydrating is cheap + idempotent. Belt and braces.
+    // =========================================================================
+
+    function _hydrateState() {
+        if (typeof _state.hydrateFromMasterData === 'function') {
+            _state.hydrateFromMasterData();
+        } else if (typeof _state.refresh === 'function') {
+            // Legacy state shape — refresh() reloads from masterData.
+            _state.refresh();
+        } else {
+            // Last resort: rebuild caches only.
+            if (typeof _state.invalidateCache === 'function') {
+                _state.invalidateCache();
+            }
+        }
+    }
+
+    function _markDirty() {
+        if (typeof window.markDataDirty === 'function') {
+            try {
+                window.markDataDirty();
+            } catch (e) {
+                // Non-fatal
+            }
+        }
+        if (typeof _state.markDirty === 'function') {
+            try {
+                _state.markDirty();
+            } catch (e) {
+                // Non-fatal
+            }
+        }
+    }
+
+    function _publish(eventName, payload) {
+        if (typeof _state.publish === 'function') {
+            try {
+                _state.publish(eventName, payload);
+            } catch (e) {
+                // Subscriber errors must not break the command.
+            }
+        } else if (typeof _state.subscribe === 'function' &&
+                   typeof _state._notifySubscribers === 'function') {
+            // Legacy state shape: no publish, use internal notifier.
+            try {
+                _state._notifySubscribers({ type: eventName, detail: payload });
+            } catch (e) {
+                // Non-fatal
+            }
+        }
+    }
+
+    function _dispatch(eventName, payload) {
+        if (typeof window.dispatchEvent !== 'function') return;
+        if (typeof window.CustomEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new window.CustomEvent(eventName, {
+                detail: payload || {}
+            }));
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn('HouseholdCommands: failed to dispatch ' + eventName, e);
+            }
+        }
+    }
+
+    function _commit(eventName, payload) {
+        _hydrateState();
+        _markDirty();
+        _publish(eventName, payload);
+        _dispatch(eventName, payload);
+    }
+
+    // =========================================================================
+    // 5. PERSIST BOUNDARY
+    // =========================================================================
+    //
+    // The ONLY place in this module that writes to disk. UI/batch callers
+    // call this once after a sequence of commands.
+    // =========================================================================
+
+    function persist() {
+        try {
+            var ok = _saveMasterData();
+            if (ok === false) {
+                return _fail('SAVE_FAILED', 'saveMasterData returned false');
+            }
+            return _ok(null);
+        } catch (e) {
+            return _fail('SAVE_FAILED', e && e.message ? e.message : 'Unknown save error');
+        }
+    }
+
+    // =========================================================================
+    // 6. MUTATION PRIMITIVES
+    // =========================================================================
+    //
+    // Primitives are the only place that touch the live canonical arrays.
+    // They do not call _commit. The calling command does.
+    // =========================================================================
+
+    function _addHouseholdRecord(record) {
+        var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
+        all.push(record);
+        _internal.replaceHouseholds(all);
+    }
+
+    function _removeHouseholdRecord(householdId) {
+        var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
+        var next = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].id !== householdId) next.push(all[i]);
+        }
+        _internal.replaceHouseholds(next);
+    }
+
+    function _addPositionRecord(record) {
+        var all = _internal.getAllPositionRecords();
+        all.push(record);
+        _internal.replaceHouseholdPositions(all);
+    }
+
+    function _removePositionRecord(positionId) {
+        var all = _internal.getAllPositionRecords();
+        var next = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].id !== positionId) next.push(all[i]);
+        }
+        _internal.replaceHouseholdPositions(next);
+    }
+
+    function _addAssignmentRecord(record) {
+        var all = _internal.getAllAssignmentRecords();
+        all.push(record);
+        _internal.replaceHouseholdAssignments(all);
+    }
+
+    function _removeAssignmentRecord(assignmentId) {
+        var all = _internal.getAllAssignmentRecords();
+        var next = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].id !== assignmentId) next.push(all[i]);
+        }
+        _internal.replaceHouseholdAssignments(next);
+    }
+
+    // =========================================================================
+    // 7. FIELD ALLOWLISTS
+    // =========================================================================
+
+    var _ALLOWED_HOUSEHOLD_UPDATE_FIELDS = {
+        name: true,
+        locationId: true,
+        locationName: true,
+        reputation: true,
+        wealth: true,
+        debt: true,
+        powerScore: true,
+        foundedYear: true,
+        notes: true,
+        // rename metadata (side-channels, not stored as top-level fields)
+        renameYear: true,
+        renameReason: true,
+        changedBy: true
+    };
+
+    var _DOMAIN_OWNED_HOUSEHOLD_FIELDS = {
+        members: 'Use HouseholdCommands.addMember / removeMember / transferMember.',
+        departments: 'Use HouseholdCommands.addDepartment / removeDepartment.',
+        enterprises: 'Use HouseholdCommands.setHouseholdEnterprises / addEnterpriseToHousehold / removeEnterpriseFromHousehold.',
+        enterpriseHistory: 'Use HouseholdCommands.setHouseholdEnterprises.',
+        residenceId: 'Use HouseholdCommands.associateWithResidence / disassociateFromResidence, or ResidenceSystem.assignHouseholdToUnit.',
+        residenceUnitNumber: 'Use ResidenceSystem.assignHouseholdToUnit.',
+        status: 'Use HouseholdCommands.setStatus.',
+        nameHistory: 'Use HouseholdCommands.editNamePeriod / deleteNamePeriod.'
+    };
+
+    var _ALLOWED_POSITION_UPDATE_FIELDS = {
+        name: true,
+        departmentId: true,
+        requiredRoleId: true,
+        minSkillLevel: true,
+        description: true,
+        priority: true
+    };
+
+    // =========================================================================
+    // 8. HOUSEHOLD LIFECYCLE
     // =========================================================================
 
     function createHousehold(data) {
@@ -127,14 +346,11 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid founded year');
 
         var householdId = _generateId('house');
-        var locationId = data.locationId || null;
-        var locationName = data.locationName || null;
-
         var household = {
             id: householdId,
             name: data.name.trim(),
-            locationId: locationId,
-            locationName: locationName,
+            locationId: data.locationId || null,
+            locationName: data.locationName || null,
             departments: [],
             members: [],
             reputation: data.reputation !== undefined ? data.reputation : 10,
@@ -189,12 +405,17 @@
             }
         }
 
-        var households = _internal().getAllHouseholdRecords({ includeDeprecated: true });
-        households.push(household);
-        _internal().replaceHouseholds(households);
+        _addHouseholdRecord(household);
+        _commit('householdCreated', {
+            householdId: householdId,
+            name: household.name,
+            year: year
+        });
 
-        _logEvent('household', 'Household Created',
-            'Created household: ' + household.name, []);
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Household Created',
+                'Created household: ' + household.name, []);
+        }
 
         return _ok({ householdId: householdId });
     }
@@ -204,115 +425,164 @@
      *
      * Order of operations:
      *   1. If the household is occupying a residence, tell ResidenceSystem
-     *      to mark that unit vacant. This clears canonical occupancy AND
-     *      updates the household reverse index.
-     *   2. Optionally clear the householdId on each member character.
-     *   3. Remove the household from the canonical array.
+     *      to mark that unit vacant. ResidenceSystem owns unit occupancy.
+     *   2. Optionally clear the householdId on each member character via
+     *      CharacterCommands.updateCharacterFields.
+     *   3. Remove the household record.
+     *   4. Commit.
      *
-     * If ResidenceSystem is unavailable and the household is occupying a
-     * residence, we log a warning but proceed. Callers who care about
-     * residence integrity should ensure ResidenceSystem is loaded.
+     * Caller is responsible for calling persist().
      */
     function deleteHousehold(householdId, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
-        // Step 1: disassociate residence occupancy (canonical side)
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        // Step 1: disassociate residence occupancy via ResidenceSystem
         var residenceId = household.residenceId || null;
         var unitNumber = household.residenceUnitNumber;
         if (residenceId) {
-            var rs = _residenceSystem();
-            if (rs) {
-                var year = _currentYear();
-                var vacateResult = null;
-                try {
-                    if (unitNumber !== null && unitNumber !== undefined) {
-                        vacateResult = rs.markUnitVacant(
-                            residenceId, unitNumber,
-                            'Household deleted', year
-                        );
-                    } else {
-                        vacateResult = rs.markResidenceVacant(
-                            residenceId,
-                            'Household deleted', year
-                        );
-                    }
-                } catch (e) {
-                    vacateResult = null;
+            if (!_residenceSystemPresent) {
+                return _fail('RESIDENCE_SYSTEM_UNAVAILABLE',
+                    'Household occupies a residence but ResidenceSystem is not loaded');
+            }
+            var rs = window.ResidenceSystem;
+            var vacateResult = null;
+            try {
+                if (unitNumber !== null && unitNumber !== undefined &&
+                    typeof rs.markUnitVacant === 'function') {
+                    vacateResult = rs.markUnitVacant(
+                        residenceId, unitNumber,
+                        'Household deleted', year
+                    );
+                } else if (typeof rs.markResidenceVacant === 'function') {
+                    vacateResult = rs.markResidenceVacant(
+                        residenceId,
+                        'Household deleted', year
+                    );
                 }
-                if (!vacateResult || vacateResult.success === false) {
-                    _logEvent('household', 'Delete Residence Cleanup Failed',
+            } catch (e) {
+                vacateResult = null;
+            }
+            if (!vacateResult || vacateResult.success === false) {
+                if (typeof window.logEvent === 'function') {
+                    window.logEvent('household', 'Delete Residence Cleanup Failed',
                         'Could not clear residence occupancy for ' +
                         household.name + ' (' + residenceId + ')', []);
                 }
-            } else if (typeof console !== 'undefined' && console.warn) {
-                console.warn('HouseholdCommands.deleteHousehold: ResidenceSystem ' +
-                    'not available; residence occupancy for ' +
-                    household.name + ' will be stale.');
             }
         }
 
-        // Step 2: clear character-side reverse index
+        // Step 2: clear character-side reverse index via CharacterCommands
         if (options.removeFromCharacters === true && Array.isArray(household.members)) {
-            for (var i = 0; i < household.members.length; i++) {
-                var character = null;
-                try {
-                    character = _getCharacterById(household.members[i].characterId);
-                } catch (e) {
-                    character = null;
+            if (typeof window.CharacterCommands !== 'undefined' &&
+                typeof window.CharacterCommands.updateCharacterFields === 'function') {
+                for (var i = 0; i < household.members.length; i++) {
+                    var memberId = household.members[i].characterId;
+                    var character = null;
+                    try {
+                        character = _getCharacterById(memberId);
+                    } catch (e) {
+                        character = null;
+                    }
+                    if (!character) continue;
+                    if (character.household !== householdId &&
+                        character.householdId !== householdId) continue;
+
+                    try {
+                        window.CharacterCommands.updateCharacterFields(memberId, {
+                            household: '',
+                            householdId: ''
+                        });
+                    } catch (e) {
+                        if (typeof console !== 'undefined' && console.warn) {
+                            console.warn('HouseholdCommands.deleteHousehold: ' +
+                                'could not clear reverse index for ' + memberId, e);
+                        }
+                    }
                 }
-                if (character) {
-                    if (character.household === householdId) character.household = '';
-                    if (character.householdId === householdId) character.householdId = '';
+            } else {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('HouseholdCommands.deleteHousehold: ' +
+                        'CharacterCommands.updateCharacterFields not available; ' +
+                        'character.householdId will be stale for ' + household.name);
                 }
-            }
-            // Character writes are outside our commit boundary. Persist once.
-            if (typeof window.saveMasterData === 'function') {
-                window.saveMasterData();
             }
         }
 
         // Step 3: remove the household record
-        var all = _internal().getAllHouseholdRecords({ includeDeprecated: true });
-        var next = [];
-        for (var j = 0; j < all.length; j++) {
-            if (all[j].id !== householdId) next.push(all[j]);
-        }
-        _internal().replaceHouseholds(next);
+        _removeHouseholdRecord(householdId);
 
-        _logEvent('household', 'Household Deleted',
-            'Deleted household: ' + household.name, []);
+        _commit('householdDeleted', {
+            householdId: householdId,
+            name: household.name,
+            year: year
+        });
+
+        if (typeof window.logEvent === 'function') {
+            window.logEvent('household', 'Household Deleted',
+                'Deleted household: ' + household.name, []);
+        }
 
         return _ok({ householdId: householdId });
     }
 
     // =========================================================================
-    // 6. HOUSEHOLD FIELD MUTATIONS
+    // 9. HOUSEHOLD FIELD MUTATIONS
     // =========================================================================
 
-    function _updateHouseholdFields(householdId, updates) {
-        var household = _internal().getHouseholdRecord(householdId);
+    function _validateHouseholdUpdates(updates) {
+        if (!updates || typeof updates !== 'object') {
+            return _fail('INVALID_INPUT', 'Updates object is required');
+        }
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (_ALLOWED_HOUSEHOLD_UPDATE_FIELDS[key]) continue;
+            if (_DOMAIN_OWNED_HOUSEHOLD_FIELDS[key]) {
+                return _fail('DOMAIN_OWNED_FIELD',
+                    'Field "' + key + '" is owned by another domain. ' +
+                    _DOMAIN_OWNED_HOUSEHOLD_FIELDS[key]);
+            }
+            return _fail('UNKNOWN_FIELD',
+                'Field "' + key + '" is not an allowed household field');
+        }
+        return _ok(null);
+    }
+
+    function updateHousehold(householdId, updates, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
-        var year = _currentYear();
+        var allowlist = _validateHouseholdUpdates(updates);
+        if (allowlist.success === false) return allowlist;
+
+        var year = _getCurrentYearSafe();
+        var changed = [];
 
         if (updates.name !== undefined && updates.name !== null) {
             var newName = String(updates.name).trim();
-            if (newName === '') return _fail('INVALID_NAME', 'Household name cannot be empty');
+            if (newName === '') {
+                return _fail('INVALID_NAME', 'Household name cannot be empty');
+            }
             if (newName !== household.name) {
                 if (!Array.isArray(household.nameHistory)) household.nameHistory = [];
+                var renameYear = updates.renameYear !== undefined
+                    ? updates.renameYear : year;
                 household.nameHistory.push({
                     oldName: household.name,
                     newName: newName,
-                    year: updates.renameYear !== undefined ? updates.renameYear : year,
+                    year: renameYear,
                     reason: updates.renameReason || 'Renamed',
                     changedBy: updates.changedBy || null,
                     timestamp: Date.now()
                 });
                 household.name = newName;
-                household.currentNameSince = updates.renameYear !== undefined
-                    ? updates.renameYear : year;
+                household.currentNameSince = renameYear;
+                changed.push('name');
             }
         }
 
@@ -321,27 +591,37 @@
             if (updates.locationName !== undefined) {
                 household.locationName = updates.locationName || null;
             }
+            changed.push('locationId');
         }
 
         var scalarFields = ['reputation', 'wealth', 'debt', 'powerScore',
             'foundedYear', 'notes'];
         for (var i = 0; i < scalarFields.length; i++) {
             var key = scalarFields[i];
-            if (updates[key] !== undefined) household[key] = updates[key];
+            if (updates[key] !== undefined) {
+                household[key] = updates[key];
+                changed.push(key);
+            }
+        }
+
+        if (changed.length === 0) {
+            return _ok({ householdId: householdId, changed: false });
         }
 
         household.updatedAt = Date.now();
-        _commit();
 
-        _logEvent('household', 'Household Updated',
-            'Updated household: ' + household.name, []);
+        _commit('householdUpdated', {
+            householdId: householdId,
+            changed: changed,
+            year: year
+        });
 
-        return _ok({ householdId: householdId });
+        return _ok({ householdId: householdId, changed: changed });
     }
 
     function setStatus(householdId, status, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (typeof status !== 'string' || status === '') {
             return _fail('INVALID_STATUS', 'Status must be a non-empty string');
@@ -357,7 +637,7 @@
         if (options.recordEvent === true) {
             if (!Array.isArray(household.eventLog)) household.eventLog = [];
             household.eventLog.push({
-                year: options.year !== undefined ? options.year : _currentYear(),
+                year: options.year !== undefined ? options.year : _getCurrentYearSafe(),
                 type: 'status_changed',
                 from: oldStatus,
                 to: status,
@@ -366,12 +646,22 @@
             });
         }
 
-        _commit();
-        return _ok({ householdId: householdId, status: status, previousStatus: oldStatus });
+        _commit('householdStatusChanged', {
+            householdId: householdId,
+            from: oldStatus,
+            to: status,
+            reason: options.reason || null
+        });
+
+        return _ok({
+            householdId: householdId,
+            status: status,
+            previousStatus: oldStatus
+        });
     }
 
     function recordEvent(householdId, event) {
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (!event || typeof event !== 'object') {
             return _fail('INVALID_INPUT', 'Event must be an object');
@@ -379,7 +669,7 @@
 
         if (!Array.isArray(household.eventLog)) household.eventLog = [];
         household.eventLog.push({
-            year: event.year !== undefined ? event.year : _currentYear(),
+            year: event.year !== undefined ? event.year : _getCurrentYearSafe(),
             type: event.type || 'event',
             message: event.message || null,
             details: event.details || null,
@@ -391,12 +681,17 @@
         }
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdEventRecorded', {
+            householdId: householdId,
+            eventType: event.type || 'event'
+        });
+
         return _ok({ householdId: householdId });
     }
 
     // =========================================================================
-    // 7. MEMBER MUTATIONS
+    // 10. MEMBER MUTATIONS
     // =========================================================================
 
     function _findMember(household, characterId) {
@@ -407,9 +702,19 @@
         return -1;
     }
 
+    function _clearOtherHeads(household) {
+        if (!Array.isArray(household.members)) return;
+        for (var i = 0; i < household.members.length; i++) {
+            if (household.members[i].isHead) {
+                household.members[i].isHead = false;
+                household.members[i].headSince = null;
+            }
+        }
+    }
+
     function addMember(householdId, characterId, type, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var character = _getCharacterById(characterId);
@@ -428,14 +733,7 @@
         var role = options.role || (type === 'family' ? 'Family Member' : 'Staff');
         var isHead = options.isHead === true;
 
-        if (isHead && Array.isArray(household.members)) {
-            for (var i = 0; i < household.members.length; i++) {
-                if (household.members[i].isHead) {
-                    household.members[i].isHead = false;
-                    household.members[i].headSince = null;
-                }
-            }
-        }
+        if (isHead) _clearOtherHeads(household);
 
         if (!Array.isArray(household.members)) household.members = [];
         household.members.push({
@@ -455,7 +753,9 @@
         character.householdId = householdId;
 
         if (options.recordHistory !== false) {
-            if (!Array.isArray(character.householdHistory)) character.householdHistory = [];
+            if (!Array.isArray(character.householdHistory)) {
+                character.householdHistory = [];
+            }
             character.householdHistory.push({
                 householdId: householdId,
                 householdName: household.name,
@@ -469,7 +769,15 @@
         }
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdMemberAdded', {
+            householdId: householdId,
+            characterId: characterId,
+            type: type,
+            role: role,
+            isHead: isHead,
+            year: year
+        });
 
         return _ok({
             householdId: householdId,
@@ -481,7 +789,7 @@
 
     function removeMember(householdId, characterId, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var character = _getCharacterById(characterId);
@@ -505,7 +813,9 @@
         }
 
         if (options.recordHistory !== false) {
-            if (!Array.isArray(character.householdHistory)) character.householdHistory = [];
+            if (!Array.isArray(character.householdHistory)) {
+                character.householdHistory = [];
+            }
             for (var i = character.householdHistory.length - 1; i >= 0; i--) {
                 var entry = character.householdHistory[i];
                 if (entry.householdId === householdId && !entry.leftYear) {
@@ -518,26 +828,34 @@
 
         household.updatedAt = Date.now();
 
+        var successorId = null;
         if (wasHead) {
-            var nextHeadId = _pickSuccessor(household);
-            if (nextHeadId) {
-                _setHeadInternal(household, nextHeadId, year,
+            successorId = RULES.pickSuccessor(household);
+            if (successorId) {
+                RULES.setHeadInternal(household, successorId, year,
                     'Succession after removal');
             }
         }
 
-        _commit();
+        _commit('householdMemberRemoved', {
+            householdId: householdId,
+            characterId: characterId,
+            wasHead: wasHead,
+            successorId: successorId,
+            year: year
+        });
 
         return _ok({
             householdId: householdId,
             characterId: characterId,
-            wasHead: wasHead
+            wasHead: wasHead,
+            successorId: successorId
         });
     }
 
     function updateMember(householdId, characterId, updates, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var idx = _findMember(household, characterId);
@@ -566,9 +884,9 @@
             changed.push('notes');
         }
         if (updates.isHead === true && !member.isHead) {
-            _setHeadInternal(
+            RULES.setHeadInternal(
                 household, characterId,
-                options.year !== undefined ? options.year : _currentYear(),
+                options.year !== undefined ? options.year : _getCurrentYearSafe(),
                 options.reason || 'Appointed'
             );
             changed.push('isHead');
@@ -579,7 +897,12 @@
         }
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdMemberUpdated', {
+            householdId: householdId,
+            characterId: characterId,
+            changes: changed
+        });
 
         return _ok({
             householdId: householdId,
@@ -592,24 +915,32 @@
         options = options || {};
         var character = _getCharacterById(characterId);
         if (!character) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
-        if (character.isDeceased) return _fail('CHARACTER_DECEASED', 'Cannot transfer deceased character');
+        if (character.isDeceased) {
+            return _fail('CHARACTER_DECEASED', 'Cannot transfer deceased character');
+        }
 
-        var target = _internal().getHouseholdRecord(targetHouseholdId);
+        var target = _internal.getHouseholdRecord(targetHouseholdId);
         if (!target) return _fail('TARGET_NOT_FOUND', 'Target household not found');
 
-        var all = _internal().getAllHouseholdRecords({ includeDeprecated: true });
+        var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
         var current = null;
         var currentIdx = -1;
         for (var i = 0; i < all.length; i++) {
             var idx = _findMember(all[i], characterId);
-            if (idx !== -1) { current = all[i]; currentIdx = idx; break; }
+            if (idx !== -1) {
+                current = all[i];
+                currentIdx = idx;
+                break;
+            }
         }
 
         if (current && current.id === targetHouseholdId) {
-            return _fail('ALREADY_MEMBER', 'Character is already in the target household');
+            return _fail('ALREADY_MEMBER',
+                'Character is already in the target household');
         }
         if (_findMember(target, characterId) !== -1) {
-            return _fail('ALREADY_MEMBER', 'Character is already in the target household');
+            return _fail('ALREADY_MEMBER',
+                'Character is already in the target household');
         }
 
         var year = _resolveYear(options.year);
@@ -627,15 +958,23 @@
             if (!carriedType) carriedType = member.type;
         }
         if (!carriedType) carriedType = 'family';
-        if (!carriedRole) carriedRole = carriedType === 'family' ? 'Family Member' : 'Staff';
+        if (!carriedRole) {
+            carriedRole = carriedType === 'family' ? 'Family Member' : 'Staff';
+        }
+
+        var fromHouseholdId = null;
+        var oldHeadSuccessor = null;
 
         if (current) {
+            fromHouseholdId = current.id;
             var wasHead = current.members[currentIdx].isHead === true;
             current.members.splice(currentIdx, 1);
             current.updatedAt = Date.now();
 
             if (options.recordHistory !== false) {
-                if (!Array.isArray(character.householdHistory)) character.householdHistory = [];
+                if (!Array.isArray(character.householdHistory)) {
+                    character.householdHistory = [];
+                }
                 for (var h = character.householdHistory.length - 1; h >= 0; h--) {
                     var e = character.householdHistory[h];
                     if (e.householdId === current.id && !e.leftYear) {
@@ -647,22 +986,15 @@
             }
 
             if (wasHead) {
-                var nextHeadId = _pickSuccessor(current);
-                if (nextHeadId) {
-                    _setHeadInternal(current, nextHeadId, year,
+                oldHeadSuccessor = RULES.pickSuccessor(current);
+                if (oldHeadSuccessor) {
+                    RULES.setHeadInternal(current, oldHeadSuccessor, year,
                         'Succession after transfer');
                 }
             }
         }
 
-        if (carriedIsHead && Array.isArray(target.members)) {
-            for (var t = 0; t < target.members.length; t++) {
-                if (target.members[t].isHead) {
-                    target.members[t].isHead = false;
-                    target.members[t].headSince = null;
-                }
-            }
-        }
+        if (carriedIsHead) _clearOtherHeads(target);
 
         if (!Array.isArray(target.members)) target.members = [];
         target.members.push({
@@ -683,7 +1015,9 @@
         character.householdId = targetHouseholdId;
 
         if (options.recordHistory !== false) {
-            if (!Array.isArray(character.householdHistory)) character.householdHistory = [];
+            if (!Array.isArray(character.householdHistory)) {
+                character.householdHistory = [];
+            }
             character.householdHistory.push({
                 householdId: targetHouseholdId,
                 householdName: target.name,
@@ -696,11 +1030,18 @@
             });
         }
 
-        _commit();
+        _commit('householdMemberTransferred', {
+            characterId: characterId,
+            fromHouseholdId: fromHouseholdId,
+            toHouseholdId: targetHouseholdId,
+            role: carriedRole,
+            isHead: carriedIsHead,
+            year: year
+        });
 
         return _ok({
             characterId: characterId,
-            fromHouseholdId: current ? current.id : null,
+            fromHouseholdId: fromHouseholdId,
             toHouseholdId: targetHouseholdId,
             role: carriedRole,
             isHead: carriedIsHead,
@@ -709,69 +1050,12 @@
     }
 
     // =========================================================================
-    // 8. HEAD MANAGEMENT
+    // 11. HEAD MANAGEMENT
     // =========================================================================
-
-    function _setHeadInternal(household, characterId, year, reason) {
-        if (!Array.isArray(household.members)) return false;
-
-        for (var i = 0; i < household.members.length; i++) {
-            if (household.members[i].isHead) {
-                household.members[i].isHead = false;
-                household.members[i].headSince = null;
-                household.members[i].role = 'Family Member';
-            }
-        }
-
-        for (var j = 0; j < household.members.length; j++) {
-            if (household.members[j].characterId === characterId) {
-                household.members[j].isHead = true;
-                household.members[j].role = 'Head of Household';
-                household.members[j].headSince = year;
-                if (!Array.isArray(household.eventLog)) household.eventLog = [];
-                household.eventLog.push({
-                    year: year,
-                    type: 'head_appointed',
-                    characterId: characterId,
-                    reason: reason || null,
-                    timestamp: Date.now()
-                });
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function _pickSuccessor(household) {
-        if (!Array.isArray(household.members)) return null;
-
-        var candidates = [];
-        for (var i = 0; i < household.members.length; i++) {
-            var m = household.members[i];
-            if (m.type !== 'family') continue;
-
-            var character = null;
-            try {
-                character = _getCharacterById(m.characterId);
-            } catch (e) {
-                character = null;
-            }
-            if (!character || character.isDeceased) continue;
-
-            candidates.push({
-                id: m.characterId,
-                birthYear: character.birthYear !== undefined
-                    ? character.birthYear : 9999
-            });
-        }
-        if (candidates.length === 0) return null;
-        candidates.sort(function(a, b) { return a.birthYear - b.birthYear; });
-        return candidates[0].id;
-    }
 
     function setHead(householdId, characterId, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var year = _resolveYear(options.year);
@@ -791,27 +1075,38 @@
                 }
             }
             household.updatedAt = Date.now();
-            _commit();
+
+            _commit('householdHeadCleared', {
+                householdId: householdId,
+                previousHeadId: oldHeadId,
+                year: year
+            });
+
             return _ok({ householdId: householdId, previousHeadId: oldHeadId });
         }
 
         if (_findMember(household, characterId) === -1) {
-            var addResult = addMember(householdId, characterId, 'family', {
+            // Delegate to addMember, which itself commits.
+            return addMember(householdId, characterId, 'family', {
                 role: 'Head of Household',
                 joinedYear: year,
                 isHead: true,
                 notes: 'Appointed as head of household',
                 recordHistory: options.recordHistory
             });
-            if (!addResult.success) return addResult;
-            return addResult;
         }
 
-        var ok = _setHeadInternal(household, characterId, year, reason);
+        var ok = RULES.setHeadInternal(household, characterId, year, reason);
         if (!ok) return _fail('MEMBER_NOT_FOUND', 'Character is not a member');
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdHeadSet', {
+            householdId: householdId,
+            characterId: characterId,
+            reason: reason,
+            year: year
+        });
 
         return _ok({
             householdId: householdId,
@@ -822,35 +1117,50 @@
 
     function autoAssignHead(householdId, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
-
-        var successorId = _pickSuccessor(household);
-        if (!successorId) {
-            household.status = 'vacant';
-            household.updatedAt = Date.now();
-            _commit();
-            return _ok({ householdId: householdId, successorId: null, vacant: true });
-        }
 
         var year = _resolveYear(options.year);
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        _setHeadInternal(household, successorId, year,
+        var successorId = RULES.pickSuccessor(household);
+        if (!successorId) {
+            household.status = 'vacant';
+            household.updatedAt = Date.now();
+
+            _commit('householdHeadAutoAssignFailed', {
+                householdId: householdId,
+                reason: 'No eligible successor',
+                year: year
+            });
+
+            return _ok({ householdId: householdId, successorId: null, vacant: true });
+        }
+
+        RULES.setHeadInternal(household, successorId, year,
             options.reason || 'Auto-succession');
         household.updatedAt = Date.now();
-        _commit();
 
-        return _ok({ householdId: householdId, successorId: successorId, vacant: false });
+        _commit('householdHeadAutoAssigned', {
+            householdId: householdId,
+            successorId: successorId,
+            year: year
+        });
+
+        return _ok({
+            householdId: householdId,
+            successorId: successorId,
+            vacant: false
+        });
     }
 
     // =========================================================================
-    // 9. DEPARTMENT MANAGEMENT
+    // 12. DEPARTMENT MANAGEMENT
     // =========================================================================
 
     function addDepartment(householdId, name, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         if (!name || typeof name !== 'string' || name.trim() === '') {
@@ -858,7 +1168,8 @@
         }
 
         var trimmed = name.trim();
-        var departments = Array.isArray(household.departments) ? household.departments : [];
+        var departments = Array.isArray(household.departments)
+            ? household.departments : [];
 
         for (var i = 0; i < departments.length; i++) {
             if ((departments[i].name || '').toLowerCase() === trimmed.toLowerCase()) {
@@ -886,20 +1197,29 @@
         departments.push(dept);
         household.departments = departments;
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdDepartmentAdded', {
+            householdId: householdId,
+            departmentId: dept.id,
+            name: trimmed
+        });
 
         return _ok({ departmentId: dept.id, householdId: householdId });
     }
 
     function removeDepartment(householdId, departmentId, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
-        var departments = Array.isArray(household.departments) ? household.departments : [];
+        var departments = Array.isArray(household.departments)
+            ? household.departments : [];
         var idx = -1;
         for (var i = 0; i < departments.length; i++) {
-            if (departments[i].id === departmentId) { idx = i; break; }
+            if (departments[i].id === departmentId) {
+                idx = i;
+                break;
+            }
         }
         if (idx === -1) return _fail('NOT_FOUND', 'Department not found');
 
@@ -913,25 +1233,35 @@
 
         departments.splice(idx, 1);
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdDepartmentRemoved', {
+            householdId: householdId,
+            departmentId: departmentId
+        });
 
         return _ok({ householdId: householdId, departmentId: departmentId });
     }
 
     function updateDepartment(householdId, departmentId, updates) {
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
-        var departments = Array.isArray(household.departments) ? household.departments : [];
+        var departments = Array.isArray(household.departments)
+            ? household.departments : [];
         var dept = null;
         for (var i = 0; i < departments.length; i++) {
-            if (departments[i].id === departmentId) { dept = departments[i]; break; }
+            if (departments[i].id === departmentId) {
+                dept = departments[i];
+                break;
+            }
         }
         if (!dept) return _fail('NOT_FOUND', 'Department not found');
 
         if (updates.name !== undefined && updates.name !== null) {
             var trimmed = String(updates.name).trim();
-            if (trimmed === '') return _fail('INVALID_NAME', 'Department name cannot be empty');
+            if (trimmed === '') {
+                return _fail('INVALID_NAME', 'Department name cannot be empty');
+            }
             dept.name = trimmed;
         }
 
@@ -952,19 +1282,25 @@
         }
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdDepartmentUpdated', {
+            householdId: householdId,
+            departmentId: departmentId
+        });
+
         return _ok({ householdId: householdId, departmentId: departmentId });
     }
 
     // =========================================================================
-    // 10. NAME-PERIOD MUTATIONS
+    // 13. NAME-PERIOD MUTATIONS
     // =========================================================================
 
     function editNamePeriod(householdId, periodIndex, updates) {
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
-        var history = Array.isArray(household.nameHistory) ? household.nameHistory : [];
+        var history = Array.isArray(household.nameHistory)
+            ? household.nameHistory : [];
         if (periodIndex < 0 || periodIndex >= history.length) {
             return _fail('INDEX_OUT_OF_RANGE', 'Name period index out of range');
         }
@@ -985,17 +1321,24 @@
         }
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdNamePeriodEdited', {
+            householdId: householdId,
+            periodIndex: periodIndex
+        });
+
         return _ok({ householdId: householdId, periodIndex: periodIndex });
     }
 
     function deleteNamePeriod(householdId, periodIndex) {
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
-        var history = Array.isArray(household.nameHistory) ? household.nameHistory : [];
+        var history = Array.isArray(household.nameHistory)
+            ? household.nameHistory : [];
         if (history.length <= 1) {
-            return _fail('CANNOT_DELETE_LAST', 'Cannot delete the only name period');
+            return _fail('CANNOT_DELETE_LAST',
+                'Cannot delete the only name period');
         }
         if (periodIndex < 0 || periodIndex >= history.length) {
             return _fail('INDEX_OUT_OF_RANGE', 'Name period index out of range');
@@ -1011,41 +1354,59 @@
         }
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdNamePeriodDeleted', {
+            householdId: householdId,
+            periodIndex: periodIndex
+        });
+
         return _ok({ householdId: householdId, periodIndex: periodIndex });
     }
 
     // =========================================================================
-    // 11. RESIDENCE ASSOCIATION MUTATIONS
+    // 14. RESIDENCE ASSOCIATION (REVERSE INDEX)
+    // =========================================================================
+    //
+    // Residence occupancy is canonical on units. These commands only update
+    // the household-side reverse index. ResidenceSystem drives these calls
+    // when it mutates unit occupancy.
     // =========================================================================
 
     function associateWithResidence(householdId, residenceId, options) {
         options = options || {};
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         household.residenceId = residenceId;
         household.residenceName = options.residenceName || null;
         household.residenceType = options.residenceType || null;
         household.associatedYear = options.year !== undefined
-            ? options.year : _currentYear();
+            ? options.year : _getCurrentYearSafe();
         household.residenceUnitNumber = options.unitNumber !== undefined
             ? options.unitNumber : null;
         household.residenceNotes = options.notes || '';
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdResidenceAssociated', {
+            householdId: householdId,
+            residenceId: residenceId,
+            unitNumber: household.residenceUnitNumber
+        });
+
         return _ok({ householdId: householdId, residenceId: residenceId });
     }
 
     function disassociateFromResidence(householdId, residenceId, reason, year) {
-        var household = _internal().getHouseholdRecord(householdId);
+        var household = _internal.getHouseholdRecord(householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
 
         var y = _resolveYear(year);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        if (!Array.isArray(household.residenceHistory)) household.residenceHistory = [];
+        if (!Array.isArray(household.residenceHistory)) {
+            household.residenceHistory = [];
+        }
         household.residenceHistory.push({
             residenceId: residenceId || household.residenceId,
             residenceName: household.residenceName,
@@ -1063,19 +1424,183 @@
         household.residenceNotes = null;
 
         household.updatedAt = Date.now();
-        _commit();
+
+        _commit('householdResidenceDisassociated', {
+            householdId: householdId,
+            residenceId: residenceId || null,
+            year: y,
+            reason: reason || 'Disassociated'
+        });
+
         return _ok({ householdId: householdId, residenceId: residenceId || null });
     }
 
     // =========================================================================
-    // 12. POSITION CRUD
+    // 15. ENTERPRISE INDEX PRIMITIVES
+    // =========================================================================
+    //
+    // Canonical enterprise ownership lives in Industry. The household's
+    // enterprises[] array is a REVERSE INDEX. These commands own the index
+    // mutation only; they do not call IndustryCommands. Cross-domain
+    // orchestrators (HouseholdAssignment) should call both:
+    //
+    //     IndustryCommands.updateEnterprise(eId, { ownerId, ownerType, ... })
+    //     HouseholdCommands.setHouseholdEnterprises(householdId, [ids])
+    //
+    // ...inside one batch, then call HouseholdCommands.persist().
+    // =========================================================================
+
+    function setHouseholdEnterprises(householdId, enterpriseIds, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+
+        if (!Array.isArray(enterpriseIds)) {
+            return _fail('INVALID_INPUT', 'enterpriseIds must be an array');
+        }
+
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        var oldEnterprises = Array.isArray(household.enterprises)
+            ? household.enterprises.slice() : [];
+
+        household.enterprises = enterpriseIds.slice();
+
+        if (!Array.isArray(household.enterpriseHistory)) {
+            household.enterpriseHistory = [];
+        }
+        household.enterpriseHistory.push({
+            year: year,
+            action: options.reason || 'set_enterprises',
+            oldEnterprises: oldEnterprises,
+            newEnterprises: enterpriseIds.slice()
+        });
+        if (household.enterpriseHistory.length > 200) {
+            household.enterpriseHistory =
+                household.enterpriseHistory.slice(-200);
+        }
+
+        household.updatedAt = Date.now();
+
+        _commit('householdEnterprisesSet', {
+            householdId: householdId,
+            year: year,
+            enterpriseIds: enterpriseIds.slice()
+        });
+
+        return _ok({
+            householdId: householdId,
+            enterpriseIds: enterpriseIds.slice()
+        });
+    }
+
+    function addEnterpriseToHousehold(householdId, enterpriseId, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+        if (!enterpriseId) return _fail('INVALID_INPUT', 'enterpriseId is required');
+
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        if (!Array.isArray(household.enterprises)) household.enterprises = [];
+        if (household.enterprises.indexOf(enterpriseId) !== -1) {
+            return _ok({
+                householdId: householdId,
+                enterpriseId: enterpriseId,
+                changed: false
+            });
+        }
+
+        household.enterprises.push(enterpriseId);
+
+        if (!Array.isArray(household.enterpriseHistory)) {
+            household.enterpriseHistory = [];
+        }
+        household.enterpriseHistory.push({
+            year: year,
+            action: 'enterprise_added',
+            enterpriseId: enterpriseId
+        });
+
+        household.updatedAt = Date.now();
+
+        _commit('householdEnterpriseAdded', {
+            householdId: householdId,
+            enterpriseId: enterpriseId,
+            year: year
+        });
+
+        return _ok({
+            householdId: householdId,
+            enterpriseId: enterpriseId,
+            changed: true
+        });
+    }
+
+    function removeEnterpriseFromHousehold(householdId, enterpriseId, options) {
+        options = options || {};
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _fail('NOT_FOUND', 'Household not found');
+        if (!enterpriseId) return _fail('INVALID_INPUT', 'enterpriseId is required');
+
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        if (!Array.isArray(household.enterprises)) {
+            return _ok({
+                householdId: householdId,
+                enterpriseId: enterpriseId,
+                changed: false
+            });
+        }
+
+        var idx = household.enterprises.indexOf(enterpriseId);
+        if (idx === -1) {
+            return _ok({
+                householdId: householdId,
+                enterpriseId: enterpriseId,
+                changed: false
+            });
+        }
+
+        household.enterprises.splice(idx, 1);
+
+        if (!Array.isArray(household.enterpriseHistory)) {
+            household.enterpriseHistory = [];
+        }
+        household.enterpriseHistory.push({
+            year: year,
+            action: 'enterprise_removed',
+            enterpriseId: enterpriseId
+        });
+
+        household.updatedAt = Date.now();
+
+        _commit('householdEnterpriseRemoved', {
+            householdId: householdId,
+            enterpriseId: enterpriseId,
+            year: year
+        });
+
+        return _ok({
+            householdId: householdId,
+            enterpriseId: enterpriseId,
+            changed: true
+        });
+    }
+
+    // =========================================================================
+    // 16. POSITION CRUD
     // =========================================================================
 
     function createPosition(data) {
         if (!data || !data.householdId) {
-            return _fail('INVALID_INPUT', 'Position data with householdId is required');
+            return _fail('INVALID_INPUT',
+                'Position data with householdId is required');
         }
-        var household = _internal().getHouseholdRecord(data.householdId);
+        var household = _internal.getHouseholdRecord(data.householdId);
         if (!household) return _fail('NOT_FOUND', 'Household not found');
         if (!data.name || String(data.name).trim() === '') {
             return _fail('INVALID_NAME', 'Position name is required');
@@ -1094,82 +1619,102 @@
             updatedAt: Date.now()
         };
 
-        var positions = _internal().getAllPositionRecords();
-        positions.push(position);
-        _internal().replaceHouseholdPositions(positions);
+        _addPositionRecord(position);
+
+        _commit('householdPositionCreated', {
+            positionId: position.id,
+            householdId: data.householdId,
+            name: position.name
+        });
 
         return _ok({ positionId: position.id });
     }
 
     function updatePosition(positionId, updates) {
-        var positions = _internal().getAllPositionRecords();
-        var found = null;
-        for (var i = 0; i < positions.length; i++) {
-            if (positions[i].id === positionId) { found = positions[i]; break; }
+        var position = _internal.getPositionRecord(positionId);
+        if (!position) return _fail('NOT_FOUND', 'Position not found');
+
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (!_ALLOWED_POSITION_UPDATE_FIELDS[key]) {
+                return _fail('UNKNOWN_FIELD',
+                    'Field "' + key + '" is not an allowed position field');
+            }
         }
-        if (!found) return _fail('NOT_FOUND', 'Position not found');
 
         var allowed = ['name', 'departmentId', 'requiredRoleId',
             'minSkillLevel', 'description', 'priority'];
-        for (var j = 0; j < allowed.length; j++) {
-            var key = allowed[j];
-            if (updates[key] !== undefined) found[key] = updates[key];
+        for (var i = 0; i < allowed.length; i++) {
+            var k = allowed[i];
+            if (updates[k] !== undefined) position[k] = updates[k];
         }
-        found.updatedAt = Date.now();
+        position.updatedAt = Date.now();
 
-        _internal().replaceHouseholdPositions(positions);
+        var all = _internal.getAllPositionRecords();
+        _internal.replaceHouseholdPositions(all);
+
+        _commit('householdPositionUpdated', {
+            positionId: positionId
+        });
+
         return _ok({ positionId: positionId });
     }
 
     function deletePosition(positionId, options) {
         options = options || {};
-        var positions = _internal().getAllPositionRecords();
-        var next = [];
-        var removed = null;
-        for (var i = 0; i < positions.length; i++) {
-            if (positions[i].id === positionId) removed = positions[i];
-            else next.push(positions[i]);
-        }
-        if (!removed) return _fail('NOT_FOUND', 'Position not found');
+        var position = _internal.getPositionRecord(positionId);
+        if (!position) return _fail('NOT_FOUND', 'Position not found');
 
-        _internal().replaceHouseholdPositions(next);
+        _removePositionRecord(positionId);
 
+        var removedAssignments = [];
         if (options.removeAssignments !== false) {
-            var assignments = _internal().getAllAssignmentRecords();
+            var assignments = _internal.getAllAssignmentRecords();
             var filtered = [];
-            for (var j = 0; j < assignments.length; j++) {
-                if (assignments[j].positionId !== positionId) filtered.push(assignments[j]);
+            for (var i = 0; i < assignments.length; i++) {
+                if (assignments[i].positionId === positionId) {
+                    removedAssignments.push(assignments[i].id);
+                } else {
+                    filtered.push(assignments[i]);
+                }
             }
-            _internal().replaceHouseholdAssignments(filtered);
+            _internal.replaceHouseholdAssignments(filtered);
         }
 
-        return _ok({ positionId: positionId });
+        _commit('householdPositionDeleted', {
+            positionId: positionId,
+            removedAssignments: removedAssignments
+        });
+
+        return _ok({
+            positionId: positionId,
+            removedAssignments: removedAssignments
+        });
     }
 
     // =========================================================================
-    // 13. ASSIGNMENT CRUD
+    // 17. ASSIGNMENT CRUD
     // =========================================================================
 
     function assignCharacterToPosition(positionId, characterId, options) {
         options = options || {};
-        var positions = _internal().getAllPositionRecords();
-        var position = null;
-        for (var i = 0; i < positions.length; i++) {
-            if (positions[i].id === positionId) { position = positions[i]; break; }
-        }
+        var position = _internal.getPositionRecord(positionId);
         if (!position) return _fail('POSITION_NOT_FOUND', 'Position not found');
 
         var character = _getCharacterById(characterId);
         if (!character) return _fail('CHARACTER_NOT_FOUND', 'Character not found');
-        if (character.isDeceased) return _fail('CHARACTER_DECEASED', 'Character is deceased');
+        if (character.isDeceased) {
+            return _fail('CHARACTER_DECEASED', 'Character is deceased');
+        }
 
-        var assignments = _internal().getAllAssignmentRecords();
+        var assignments = _internal.getAllAssignmentRecords();
         for (var j = 0; j < assignments.length; j++) {
             var a = assignments[j];
             if (a.positionId === positionId &&
                 a.characterId === characterId &&
                 (a.endYear === null || a.endYear === undefined)) {
-                return _fail('ALREADY_ASSIGNED', 'Character already assigned to this position');
+                return _fail('ALREADY_ASSIGNED',
+                    'Character already assigned to this position');
             }
         }
 
@@ -1178,7 +1723,8 @@
 
         var endYear = options.endYear !== undefined ? options.endYear : null;
         if (endYear !== null && endYear <= year) {
-            return _fail('INVALID_YEAR_RANGE', 'End year must be after start year');
+            return _fail('INVALID_YEAR_RANGE',
+                'End year must be after start year');
         }
 
         var assignment = {
@@ -1197,53 +1743,65 @@
             updatedAt: Date.now()
         };
 
-        assignments.push(assignment);
-        _internal().replaceHouseholdAssignments(assignments);
+        _addAssignmentRecord(assignment);
+
+        _commit('householdAssignmentCreated', {
+            assignmentId: assignment.id,
+            positionId: positionId,
+            characterId: characterId,
+            householdId: position.householdId
+        });
 
         return _ok({ assignmentId: assignment.id });
     }
 
     function endAssignment(assignmentId, endYear, reason) {
-        var assignments = _internal().getAllAssignmentRecords();
-        var found = null;
-        for (var i = 0; i < assignments.length; i++) {
-            if (assignments[i].id === assignmentId) { found = assignments[i]; break; }
-        }
-        if (!found) return _fail('NOT_FOUND', 'Assignment not found');
-        if (found.endYear !== null && found.endYear !== undefined) {
+        var assignment = _internal.getAssignmentRecord(assignmentId);
+        if (!assignment) return _fail('NOT_FOUND', 'Assignment not found');
+        if (assignment.endYear !== null && assignment.endYear !== undefined) {
             return _fail('ALREADY_ENDED', 'Assignment already ended');
         }
 
         var y = _resolveYear(endYear);
         if (y === null) return _fail('INVALID_YEAR', 'Invalid end year');
-        if (found.startYear !== undefined && found.startYear !== null && y < found.startYear) {
-            return _fail('INVALID_YEAR_RANGE', 'End year must not precede start year');
+        if (assignment.startYear !== undefined &&
+            assignment.startYear !== null &&
+            y < assignment.startYear) {
+            return _fail('INVALID_YEAR_RANGE',
+                'End year must not precede start year');
         }
 
-        found.endYear = y;
-        found.endReason = reason || 'Term ended';
-        found.updatedAt = Date.now();
+        assignment.endYear = y;
+        assignment.endReason = reason || 'Term ended';
+        assignment.updatedAt = Date.now();
 
-        _internal().replaceHouseholdAssignments(assignments);
+        var all = _internal.getAllAssignmentRecords();
+        _internal.replaceHouseholdAssignments(all);
+
+        _commit('householdAssignmentEnded', {
+            assignmentId: assignmentId,
+            endYear: y,
+            reason: assignment.endReason
+        });
+
         return _ok({ assignmentId: assignmentId, endYear: y });
     }
 
     function deleteAssignment(assignmentId) {
-        var assignments = _internal().getAllAssignmentRecords();
-        var next = [];
-        var removed = false;
-        for (var i = 0; i < assignments.length; i++) {
-            if (assignments[i].id === assignmentId) removed = true;
-            else next.push(assignments[i]);
-        }
-        if (!removed) return _fail('NOT_FOUND', 'Assignment not found');
+        var assignment = _internal.getAssignmentRecord(assignmentId);
+        if (!assignment) return _fail('NOT_FOUND', 'Assignment not found');
 
-        _internal().replaceHouseholdAssignments(next);
+        _removeAssignmentRecord(assignmentId);
+
+        _commit('householdAssignmentDeleted', {
+            assignmentId: assignmentId
+        });
+
         return _ok({ assignmentId: assignmentId });
     }
 
     // =========================================================================
-    // 14. BULK OPERATIONS
+    // 18. BULK OPERATIONS
     // =========================================================================
 
     function bulkAssign(assignments, options) {
@@ -1251,33 +1809,122 @@
         var succeeded = [];
         var failed = [];
 
+        // Validate every entry FIRST, so a bad batch does not partially
+        // commit. Assignment creation is the only primitive called per item;
+        // we batch the commit at the end.
+        var prepared = [];
         for (var i = 0; i < assignments.length; i++) {
             var a = assignments[i];
-            var result = assignCharacterToPosition(a.positionId, a.characterId, {
-                startYear: a.startYear,
-                endYear: a.endYear,
-                title: a.title,
-                notes: a.notes,
-                roleIdAtAssignment: a.roleIdAtAssignment,
-                skillLevelAtAssignment: a.skillLevelAtAssignment
-            });
-            if (result.success) {
-                succeeded.push({ index: i, assignmentId: result.data.assignmentId });
-            } else {
-                failed.push({ index: i, code: result.code, reason: result.reason });
+            var position = _internal.getPositionRecord(a.positionId);
+            if (!position) {
+                failed.push({ index: i, code: 'POSITION_NOT_FOUND',
+                    reason: 'Position not found' });
+                continue;
             }
+            var character = null;
+            try {
+                character = _getCharacterById(a.characterId);
+            } catch (e) {
+                character = null;
+            }
+            if (!character) {
+                failed.push({ index: i, code: 'CHARACTER_NOT_FOUND',
+                    reason: 'Character not found' });
+                continue;
+            }
+            if (character.isDeceased) {
+                failed.push({ index: i, code: 'CHARACTER_DECEASED',
+                    reason: 'Character is deceased' });
+                continue;
+            }
+
+            var year = _resolveYear(a.startYear);
+            if (year === null) {
+                failed.push({ index: i, code: 'INVALID_YEAR',
+                    reason: 'Invalid start year' });
+                continue;
+            }
+            var endYear = a.endYear !== undefined ? a.endYear : null;
+            if (endYear !== null && endYear <= year) {
+                failed.push({ index: i, code: 'INVALID_YEAR_RANGE',
+                    reason: 'End year must be after start year' });
+                continue;
+            }
+
+            prepared.push({
+                index: i,
+                position: position,
+                character: character,
+                startYear: year,
+                endYear: endYear,
+                title: a.title || position.name,
+                notes: a.notes || '',
+                roleIdAtAssignment: a.roleIdAtAssignment || null,
+                skillLevelAtAssignment: a.skillLevelAtAssignment !== undefined
+                    ? a.skillLevelAtAssignment : 0
+            });
+        }
+
+        // Apply all prepared assignments. Any duplicate-of-existing check
+        // that fails here is reported per item; the batch still commits
+        // what succeeded, because bulkAssign is documented as non-atomic.
+        var allAssignments = _internal.getAllAssignmentRecords();
+        var added = [];
+        for (var p = 0; p < prepared.length; p++) {
+            var prep = prepared[p];
+            var dup = false;
+            for (var q = 0; q < allAssignments.length; q++) {
+                var existing = allAssignments[q];
+                if (existing.positionId === prep.position.id &&
+                    existing.characterId === prep.character.id &&
+                    (existing.endYear === null || existing.endYear === undefined)) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) {
+                failed.push({ index: prep.index, code: 'ALREADY_ASSIGNED',
+                    reason: 'Character already assigned to this position' });
+                continue;
+            }
+
+            var assignment = {
+                id: _generateId('hass'),
+                positionId: prep.position.id,
+                characterId: prep.character.id,
+                householdId: prep.position.householdId,
+                startYear: prep.startYear,
+                endYear: prep.endYear,
+                title: prep.title,
+                notes: prep.notes,
+                roleIdAtAssignment: prep.roleIdAtAssignment,
+                skillLevelAtAssignment: prep.skillLevelAtAssignment,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+            allAssignments.push(assignment);
+            added.push(assignment.id);
+            succeeded.push({ index: prep.index, assignmentId: assignment.id });
+        }
+
+        if (added.length > 0) {
+            _internal.replaceHouseholdAssignments(allAssignments);
+            _commit('householdAssignmentsBulkCreated', {
+                count: added.length,
+                assignmentIds: added
+            });
         }
 
         return _ok({ succeeded: succeeded, failed: failed });
     }
 
     // =========================================================================
-    // 15. REPAIR (diagnostics)
+    // 19. REPAIR (diagnostics)
     // =========================================================================
 
     function repairMemberships(options) {
         options = options || {};
-        var all = _internal().getAllHouseholdRecords({ includeDeprecated: true });
+        var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
         var result = {
             householdsScanned: all.length,
             membersRemoved: 0,
@@ -1285,7 +1932,8 @@
             successorsAssigned: 0
         };
 
-        var year = _currentYear();
+        var year = _getCurrentYearSafe();
+        var changed = false;
 
         for (var i = 0; i < all.length; i++) {
             var household = all[i];
@@ -1300,8 +1948,12 @@
                 } catch (e) {
                     character = null;
                 }
-                if (character) kept.push(m);
-                else result.membersRemoved++;
+                if (character) {
+                    kept.push(m);
+                } else {
+                    result.membersRemoved++;
+                    changed = true;
+                }
             }
             household.members = kept;
 
@@ -1318,38 +1970,126 @@
                     heads[h].headSince = null;
                     heads[h].role = 'Family Member';
                     result.duplicateHeadsResolved++;
+                    changed = true;
                 }
             }
 
             var hasHead = false;
             for (var p = 0; p < household.members.length; p++) {
-                if (household.members[p].isHead) { hasHead = true; break; }
+                if (household.members[p].isHead) {
+                    hasHead = true;
+                    break;
+                }
             }
             if (!hasHead) {
-                var successorId = _pickSuccessor(household);
+                var successorId = RULES.pickSuccessor(household);
                 if (successorId) {
-                    _setHeadInternal(household, successorId, year,
+                    RULES.setHeadInternal(household, successorId, year,
                         'Repair: auto-succession');
                     result.successorsAssigned++;
+                    changed = true;
                 }
             }
         }
 
-        _commit();
+        if (changed) {
+            _commit('householdRepaired', result);
+        }
+
         return _ok(result);
     }
 
     // =========================================================================
-    // 16. EXPORTS
+    // 20. RULES (private, extracted for future household-rules.js)
+    // =========================================================================
+    //
+    // Succession policy lives here so it can be lifted into a pure
+    // household-rules.js module later without touching call sites.
+    // =========================================================================
+
+    var RULES = (function() {
+
+        function pickSuccessor(household) {
+            if (!Array.isArray(household.members)) return null;
+
+            var candidates = [];
+            for (var i = 0; i < household.members.length; i++) {
+                var m = household.members[i];
+                if (m.type !== 'family') continue;
+
+                var character = null;
+                try {
+                    character = _getCharacterById(m.characterId);
+                } catch (e) {
+                    character = null;
+                }
+                if (!character || character.isDeceased) continue;
+
+                candidates.push({
+                    id: m.characterId,
+                    birthYear: character.birthYear !== undefined
+                        ? character.birthYear : 9999
+                });
+            }
+            if (candidates.length === 0) return null;
+            candidates.sort(function(a, b) {
+                return a.birthYear - b.birthYear;
+            });
+            return candidates[0].id;
+        }
+
+        function setHeadInternal(household, characterId, year, reason) {
+            if (!Array.isArray(household.members)) return false;
+
+            for (var i = 0; i < household.members.length; i++) {
+                if (household.members[i].isHead) {
+                    household.members[i].isHead = false;
+                    household.members[i].headSince = null;
+                    household.members[i].role = 'Family Member';
+                }
+            }
+
+            for (var j = 0; j < household.members.length; j++) {
+                if (household.members[j].characterId === characterId) {
+                    household.members[j].isHead = true;
+                    household.members[j].role = 'Head of Household';
+                    household.members[j].headSince = year;
+                    if (!Array.isArray(household.eventLog)) {
+                        household.eventLog = [];
+                    }
+                    household.eventLog.push({
+                        year: year,
+                        type: 'head_appointed',
+                        characterId: characterId,
+                        reason: reason || null,
+                        timestamp: Date.now()
+                    });
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        return {
+            pickSuccessor: pickSuccessor,
+            setHeadInternal: setHeadInternal
+        };
+    })();
+
+    // =========================================================================
+    // 21. EXPORTS
     // =========================================================================
 
     window.HouseholdCommands = {
+        // Persistence boundary — the ONLY save call site
+        persist: persist,
+
         // Household lifecycle
         createHousehold: createHousehold,
         deleteHousehold: deleteHousehold,
 
         // Household fields
-        updateHousehold: _updateHouseholdFields,
+        updateHousehold: updateHousehold,
         setStatus: setStatus,
         recordEvent: recordEvent,
 
@@ -1375,6 +2115,11 @@
         // Residence association (reverse index only)
         associateWithResidence: associateWithResidence,
         disassociateFromResidence: disassociateFromResidence,
+
+        // Enterprise index (reverse index only)
+        setHouseholdEnterprises: setHouseholdEnterprises,
+        addEnterpriseToHousehold: addEnterpriseToHousehold,
+        removeEnterpriseFromHousehold: removeEnterpriseFromHousehold,
 
         // Positions
         createPosition: createPosition,
