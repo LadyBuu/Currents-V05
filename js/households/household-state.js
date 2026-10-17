@@ -2,63 +2,78 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD STATE (household-state.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/household-state.js
- * 
+ *
  * PURPOSE
  * -------
  * Canonical runtime storage for household data. This module owns:
- * 
+ *
  *   - The in-memory household / position / assignment arrays
  *   - Indexes (byId, byLocation, byStatus, byMember, byHead)
  *   - Cache rebuild
- *   - Loading and hydration from masterData (schema-shape only)
+ *   - Hydration from masterData (schema-shape only)
  *   - Ephemeral UI state (selection, filters, view mode)
- *   - Subscription broadcast
- * 
+ *   - Subscription broadcast (in-process)
+ *   - Dirty flag (does NOT save; see HouseholdCommands.persist)
+ *
  * EXPLICITLY NOT OWNED BY THIS MODULE
  * -----------------------------------
  *   - Semantic reads           → HouseholdQueries
  *   - Domain mutations         → HouseholdCommands
- *   - Domain policy/rules      → HouseholdRules
+ *   - Domain policy/rules      → household-rules.js (future)
+ *   - Persistence              → HouseholdCommands.persist()
  *   - Presentation/toasts      → UI layer
  *   - Enterprise ownership     → IndustryCommands (canonical)
  *   - Residence association    → ResidenceCommands + HouseholdCommands
- * 
- * PUBLIC API SURFACE
- * ------------------
- * The public surface of this module is intentionally tiny:
- * 
+ *
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - State does NOT call saveMasterData(). Ever.
+ *   - _replace* primitives call markDirty() and publish() but not save.
+ *   - Commands call _commit() → hydrateFromMasterData → markDirty →
+ *     publish → dispatch. persist() is the only save call site.
+ *   - hydrateFromMasterData() is idempotent and safe to call after every
+ *     mutation. It re-reads masterData, ensures structural shape, rebuilds
+ *     indexes, and validates for duplicate IDs.
+ *   - Duplicate IDs in the canonical array are an integrity failure.
+ *     hydrateFromMasterData() throws by default. Callers that need to
+ *     inspect without throwing can use _diagnostics.getIntegrityReport().
+ *
+ * PUBLIC API SURFACE (intentionally tiny)
+ * ---------------------------------------
  *   HouseholdState.subscribe(cb)
  *   HouseholdState.invalidateCache()
  *   HouseholdState.refresh()
+ *   HouseholdState.hydrateFromMasterData()
+ *   HouseholdState.markDirty()
+ *   HouseholdState.hasDirty()
+ *   HouseholdState.clearDirty()
+ *   HouseholdState.publish(eventType, payload)
  *   HouseholdState.getUIState()
  *   HouseholdState.setUIState(key, value)
  *   HouseholdState.updateUIState(updates)
- * 
- * All canonical record access is exposed under HouseholdState._internal and is
- * only intended for HouseholdCommands and HouseholdQueries. UI and other
- * consumers must go through HouseholdQueries / HouseholdCommands.
- * 
- * HYDRATION POLICY
- * ----------------
- * _loadHouseholds() ensures structural shape (arrays/objects exist).
- * It does NOT invent domain facts. It does NOT default:
- * 
- *   status        (missing status is a bug, not 'active')
- *   reputation    (missing reputation is a bug, not 10)
- *   wealth        (missing wealth is a bug, not 0)
- *   foundedYear   (missing foundedYear is a bug, not currentYear)
- *   nameHistory   (empty is fine, but do not synthesize entries)
- * 
- * If persisted data is missing required domain fields, that is a migration
- * problem, not a runtime problem this module should silently paper over.
- * 
- * RECURSION GUARD
- * ---------------
- * _state._processingState protects internal load/rebuild reentrancy only.
- * It is NOT a domain-operation lock. It is NOT exposed publicly.
- * 
+ *
+ * INTERNAL API (HouseholdState._internal)
+ * ---------------------------------------
+ *   Only HouseholdCommands and HouseholdQueries should call these.
+ *
+ *   getHouseholdRecord(id)        — live canonical record
+ *   getAllHouseholdRecords(opts)  — live array (or filtered slice)
+ *   getPositionRecord(id)
+ *   getAllPositionRecords()
+ *   getAssignmentRecord(id)
+ *   getAllAssignmentRecords()
+ *   replaceHouseholds(arr)        — shape, rebuild, publish, mark dirty
+ *   replaceHouseholdPositions(arr)
+ *   replaceHouseholdAssignments(arr)
+ *
+ * DEPRECATED ALIASES (removed in next cycle)
+ * ------------------------------------------
+ *   HouseholdState._internal.getXCanonical(id)  → getXRecord(id)
+ *   HouseholdState._internal.replaceX(...)      → same
+ *   HouseholdState._loadData()                  → hydrateFromMasterData()
+ *
  * =============================================================================
  */
 
@@ -66,7 +81,25 @@
     'use strict';
 
     // =========================================================================
-    // 1. STATE DEFINITION
+    // 1. DEPENDENCY VERIFICATION (load time)
+    // =========================================================================
+
+    function _getMasterData() {
+        if (typeof window.masterData === 'undefined' || !window.masterData) {
+            throw new Error('HouseholdState: masterData is required');
+        }
+        if (!window.masterData.data) {
+            throw new Error('HouseholdState: masterData.data is required');
+        }
+        return window.masterData;
+    }
+
+    // saveMasterData is no longer required by this module. persist() lives
+    // in HouseholdCommands. We do not verify it here. If a caller wants to
+    // ensure persistence is wired, HouseholdBootstrap verifies it.
+
+    // =========================================================================
+    // 2. STATE DEFINITION
     // =========================================================================
 
     var _state = {
@@ -97,39 +130,34 @@
 
         subscribers: [],
 
-        // Internal reentrancy guard for load/rebuild only.
+        // Internal reentrancy guard for hydrate/rebuild only.
         // Not a domain-operation lock.
         _processingState: false,
 
-        version: 3,
+        // Dirty flag — set by _replace* and by markDirty(). Cleared by
+        // clearDirty() (typically after persist() succeeds). State does
+        // not save; the flag is advisory.
+        _dirty: false,
+
+        // Last hydrate error, if any. Preserved so diagnostics can see
+        // what broke without re-running hydrate.
+        _lastError: null,
+
+        version: 4,
         timestamp: Date.now()
     };
 
     // =========================================================================
-    // 2. DEPENDENCY ACCESS
-    // =========================================================================
-
-    function _getMasterData() {
-        if (typeof window.masterData === 'undefined') {
-            throw new Error('HouseholdState: masterData is required');
-        }
-        return window.masterData;
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('HouseholdState: saveMasterData() is required');
-        }
-        window.saveMasterData();
-    }
-
-    // =========================================================================
-    // 3. DATA LOADING (schema shape only)
+    // 3. HYDRATION (schema shape only, plus integrity)
     // =========================================================================
 
     /**
      * Ensures structural shape only.
      * Does NOT default domain facts.
+     *
+     * Missing domain fields are a migration problem, not a runtime problem
+     * this module should silently paper over. Arrays/objects are created
+     * empty because empty is a legitimate value for those shapes.
      */
     function _ensureHouseholdShape(h) {
         if (!h || typeof h !== 'object') return;
@@ -161,53 +189,131 @@
         // incomplete, which is a migration problem, not a runtime problem.
     }
 
+    function _ensurePositionShape(p) {
+        if (!p || typeof p !== 'object') return;
+        // Positions have no array fields in the current schema. No-op.
+    }
+
+    function _ensureAssignmentShape(a) {
+        if (!a || typeof a !== 'object') return;
+        // Assignments have no array fields in the current schema. No-op.
+    }
+
+    function _detectDuplicates(records, idField, label) {
+        var seen = new Set();
+        var duplicates = [];
+        for (var i = 0; i < records.length; i++) {
+            var r = records[i];
+            if (!r || typeof r !== 'object') {
+                duplicates.push({ index: i, id: null, reason: 'non-object' });
+                continue;
+            }
+            var id = r[idField];
+            if (!id) {
+                duplicates.push({ index: i, id: null, reason: 'missing id' });
+                continue;
+            }
+            if (seen.has(id)) {
+                duplicates.push({ index: i, id: id, reason: 'duplicate id' });
+            } else {
+                seen.add(id);
+            }
+        }
+        return { label: label, duplicates: duplicates, count: records.length };
+    }
+
     function _loadHouseholds() {
         var master = _getMasterData();
-        if (!master.data) {
-            throw new Error('HouseholdState: masterData.data is required');
-        }
         if (!Array.isArray(master.data.households)) {
             master.data.households = [];
         }
-        for (var i = 0; i < master.data.households.length; i++) {
-            _ensureHouseholdShape(master.data.households[i]);
+        var households = master.data.households;
+        for (var i = 0; i < households.length; i++) {
+            _ensureHouseholdShape(households[i]);
         }
-        return master.data.households;
+        return households;
     }
 
     function _loadHouseholdPositions() {
         var master = _getMasterData();
-        if (!master.data) {
-            throw new Error('HouseholdState: masterData.data is required');
-        }
         if (!Array.isArray(master.data.householdPositions)) {
             master.data.householdPositions = [];
         }
-        return master.data.householdPositions;
+        var positions = master.data.householdPositions;
+        for (var i = 0; i < positions.length; i++) {
+            _ensurePositionShape(positions[i]);
+        }
+        return positions;
     }
 
     function _loadHouseholdAssignments() {
         var master = _getMasterData();
-        if (!master.data) {
-            throw new Error('HouseholdState: masterData.data is required');
-        }
         if (!Array.isArray(master.data.householdAssignments)) {
             master.data.householdAssignments = [];
         }
-        return master.data.householdAssignments;
+        var assignments = master.data.householdAssignments;
+        for (var i = 0; i < assignments.length; i++) {
+            _ensureAssignmentShape(assignments[i]);
+        }
+        return assignments;
     }
 
-    function _loadData() {
+    /**
+     * Re-reads masterData, ensures shape, rebuilds indexes, validates.
+     *
+     * Idempotent. Safe to call after every mutation.
+     *
+     * Throws on duplicate IDs in the canonical arrays (integrity failure).
+     * Use _diagnostics.getIntegrityReport() to inspect without throwing.
+     */
+    function hydrateFromMasterData() {
         if (_state._processingState) return;
         _state._processingState = true;
+        _state._lastError = null;
         try {
-            _state.households = _loadHouseholds();
-            _state.householdPositions = _loadHouseholdPositions();
-            _state.householdAssignments = _loadHouseholdAssignments();
+            var households = _loadHouseholds();
+            var positions = _loadHouseholdPositions();
+            var assignments = _loadHouseholdAssignments();
+
+            // Integrity: duplicate IDs are an unrecoverable state.
+            var hCheck = _detectDuplicates(households, 'id', 'households');
+            if (hCheck.duplicates.length > 0) {
+                throw new Error(
+                    'HouseholdState.hydrateFromMasterData: duplicate household ids: ' +
+                    JSON.stringify(hCheck.duplicates.slice(0, 5))
+                );
+            }
+            var pCheck = _detectDuplicates(positions, 'id', 'householdPositions');
+            if (pCheck.duplicates.length > 0) {
+                throw new Error(
+                    'HouseholdState.hydrateFromMasterData: duplicate position ids: ' +
+                    JSON.stringify(pCheck.duplicates.slice(0, 5))
+                );
+            }
+            var aCheck = _detectDuplicates(assignments, 'id', 'householdAssignments');
+            if (aCheck.duplicates.length > 0) {
+                throw new Error(
+                    'HouseholdState.hydrateFromMasterData: duplicate assignment ids: ' +
+                    JSON.stringify(aCheck.duplicates.slice(0, 5))
+                );
+            }
+
+            _state.households = households;
+            _state.householdPositions = positions;
+            _state.householdAssignments = assignments;
             _rebuildCaches();
+            _state.timestamp = Date.now();
+        } catch (e) {
+            _state._lastError = e;
+            throw e;
         } finally {
             _state._processingState = false;
         }
+    }
+
+    // Deprecated alias — kept for one cycle so existing callers do not break.
+    function _loadData() {
+        hydrateFromMasterData();
     }
 
     // =========================================================================
@@ -259,31 +365,59 @@
                 }
 
                 // Invariant: at most one head per household.
-                // If data violates this, keep the last (matching legacy
-                // behavior) but do not crash. Callers of getHead() should
-                // tolerate a household with zero heads.
+                // If data violates this, repairMemberships() will resolve it.
+                // The cache layer does not throw on this — it is a data
+                // integrity signal for HouseholdRules / repair tooling.
                 if (headsSeen > 1) {
-                    // Intentionally silent here — this is a data integrity
-                    // signal for HouseholdRules / repair tooling, not for
-                    // the cache layer to resolve.
+                    // Intentionally silent.
                 }
             }
         }
     }
 
     function invalidateCache() {
-        if (_state._processingState) return;
+        if (_state._processingState) {
+            return { success: false, reason: 'hydrate in progress' };
+        }
         _state._processingState = true;
         try {
             _rebuildCaches();
-            _notifySubscribers({ type: 'cacheInvalidated' });
+            publish('cacheInvalidated', {});
+            return { success: true };
         } finally {
             _state._processingState = false;
         }
     }
 
     // =========================================================================
-    // 5. SUBSCRIPTION MANAGEMENT
+    // 5. DIRTY FLAG
+    // =========================================================================
+
+    function markDirty() {
+        _state._dirty = true;
+        if (typeof window.markDataDirty === 'function') {
+            try {
+                window.markDataDirty();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn('HouseholdState.markDirty: window.markDataDirty threw', e);
+                }
+            }
+        }
+        return true;
+    }
+
+    function hasDirty() {
+        return _state._dirty === true;
+    }
+
+    function clearDirty() {
+        _state._dirty = false;
+        return true;
+    }
+
+    // =========================================================================
+    // 6. PUBLISH / SUBSCRIBE
     // =========================================================================
 
     function subscribe(callback) {
@@ -310,16 +444,31 @@
         }
     }
 
+    /**
+     * In-process event channel. Every mutation primitive and every command
+     * commit calls this. Subscribers receive:
+     *   { type: eventType, detail: payload, timestamp: ms }
+     *
+     * Existing subscribers that switch on `event.type` continue to work.
+     */
+    function publish(eventType, payload) {
+        if (typeof eventType !== 'string' || eventType === '') return false;
+        _notifySubscribers({
+            type: eventType,
+            detail: payload === undefined ? {} : payload,
+            timestamp: Date.now()
+        });
+        return true;
+    }
+
     // =========================================================================
-    // 6. UI STATE (ephemeral, defensive on read)
+    // 7. UI STATE (ephemeral, defensive on read)
     // =========================================================================
 
     function getUIState() {
         var filters = _state.uiState.filters;
         var expanded = _state.uiState.expandedHouseholds;
 
-        // Defensive snapshot so callers cannot mutate internal UI state
-        // without going through setUIState / updateUIState.
         var expandedCopy = {};
         for (var k in expanded) {
             if (Object.prototype.hasOwnProperty.call(expanded, k)) {
@@ -348,7 +497,7 @@
         _state.uiState[key] = value;
 
         if (options.notify !== false) {
-            _notifySubscribers({ type: 'uiStateChange', key: key, value: value });
+            publish('uiStateChange', { key: key, value: value });
         }
         return true;
     }
@@ -374,21 +523,26 @@
         }
 
         if (changed && options.notify !== false) {
-            _notifySubscribers({ type: 'uiStateChange', updates: updates });
+            publish('uiStateChange', { updates: updates });
         }
         return changed;
     }
 
     // =========================================================================
-    // 7. INTERNAL MUTATION BOUNDARY
+    // 8. INTERNAL MUTATION SEAM
     // =========================================================================
     //
-    // Only HouseholdCommands should call these.
-    // Only HouseholdCommands / HouseholdQueries should call the accessors
-    // in section 8.
+    // Only HouseholdCommands should call the replace* primitives.
     //
-    // These are the single seam where canonical data is replaced.
-    // Persistence and notification happen here once per replacement.
+    // These primitives do NOT save. They:
+    //   - assign the new array
+    //   - mirror into masterData.data (so subsequent hydrates see it)
+    //   - rebuild caches (households only)
+    //   - markDirty
+    //   - publish
+    //
+    // The caller is responsible for calling HouseholdCommands.persist()
+    // when the batch is complete.
     // =========================================================================
 
     function _replaceHouseholds(households) {
@@ -398,8 +552,8 @@
             master.data.households = households;
         }
         _rebuildCaches();
-        _saveMasterData();
-        _notifySubscribers({ type: 'householdsReplaced' });
+        markDirty();
+        publish('householdsReplaced', { count: households.length });
     }
 
     function _replaceHouseholdPositions(positions) {
@@ -408,8 +562,8 @@
         if (master.data) {
             master.data.householdPositions = positions;
         }
-        _saveMasterData();
-        _notifySubscribers({ type: 'positionsReplaced' });
+        markDirty();
+        publish('positionsReplaced', { count: positions.length });
     }
 
     function _replaceHouseholdAssignments(assignments) {
@@ -418,12 +572,12 @@
         if (master.data) {
             master.data.householdAssignments = assignments;
         }
-        _saveMasterData();
-        _notifySubscribers({ type: 'assignmentsReplaced' });
+        markDirty();
+        publish('assignmentsReplaced', { count: assignments.length });
     }
 
     // =========================================================================
-    // 8. INTERNAL RECORD ACCESS
+    // 9. INTERNAL RECORD ACCESS
     // =========================================================================
     //
     // WARNING: These return LIVE canonical objects.
@@ -431,10 +585,7 @@
     // Only HouseholdCommands should MUTATE results.
     // Only HouseholdCommands / HouseholdQueries should CALL these.
     // Everything else (UI, other domains) must use HouseholdQueries.
-    //
-    // HouseholdQueries is responsible for returning defensive snapshots
-    // to public consumers.
-    // =========================================================================
+    // =============================================================================
 
     function _getHouseholdRecord(householdId) {
         if (!householdId) return null;
@@ -481,17 +632,106 @@
         return _state.householdAssignments.slice();
     }
 
-    // =========================================================================
-    // 9. LIFECYCLE
-    // =========================================================================
-
-    function refresh() {
-        _loadData();
-        _notifySubscribers({ type: 'refreshed' });
+    // Deprecated aliases — _getXCanonical naming, kept for one cycle.
+    function _getHouseholdCanonical(householdId) {
+        return _getHouseholdRecord(householdId);
+    }
+    function _getPositionCanonical(positionId) {
+        return _getPositionRecord(positionId);
+    }
+    function _getAssignmentCanonical(assignmentId) {
+        return _getAssignmentRecord(assignmentId);
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. LIFECYCLE
+    // =========================================================================
+
+    function refresh() {
+        try {
+            hydrateFromMasterData();
+            publish('refreshed', {});
+            return { success: true };
+        } catch (e) {
+            _state._lastError = e;
+            publish('refreshFailed', {
+                message: e && e.message ? e.message : 'Unknown error'
+            });
+            return { success: false, reason: e && e.message ? e.message : 'refresh failed' };
+        }
+    }
+
+    // =========================================================================
+    // 11. DIAGNOSTICS
+    // =========================================================================
+
+    var _diagnostics = {
+        getHouseholdCount: function() { return _state.households.length; },
+        getPositionCount: function() { return _state.householdPositions.length; },
+        getAssignmentCount: function() { return _state.householdAssignments.length; },
+        getSubscriberCount: function() { return _state.subscribers.length; },
+        getVersion: function() { return _state.version; },
+        isDirty: function() { return _state._dirty === true; },
+        getLastError: function() { return _state._lastError; },
+
+        /**
+         * Non-throwing integrity report. Safe to call at any time, including
+         * during startup when the canonical array may still be corrupted.
+         */
+        getIntegrityReport: function() {
+            var households = [];
+            var positions = [];
+            var assignments = [];
+            try {
+                var master = _getMasterData();
+                households = Array.isArray(master.data.households)
+                    ? master.data.households : [];
+                positions = Array.isArray(master.data.householdPositions)
+                    ? master.data.householdPositions : [];
+                assignments = Array.isArray(master.data.householdAssignments)
+                    ? master.data.householdAssignments : [];
+            } catch (e) {
+                return { ok: false, reason: e.message };
+            }
+
+            var hCheck = _detectDuplicates(households, 'id', 'households');
+            var pCheck = _detectDuplicates(positions, 'id', 'householdPositions');
+            var aCheck = _detectDuplicates(assignments, 'id', 'householdAssignments');
+
+            var duplicateHouseholdHeads = [];
+            for (var i = 0; i < households.length; i++) {
+                var h = households[i];
+                if (!Array.isArray(h.members)) continue;
+                var headCount = 0;
+                for (var j = 0; j < h.members.length; j++) {
+                    if (h.members[j].isHead) headCount++;
+                }
+                if (headCount > 1) {
+                    duplicateHouseholdHeads.push({ id: h.id, headCount: headCount });
+                }
+            }
+
+            return {
+                ok: hCheck.duplicates.length === 0 &&
+                    pCheck.duplicates.length === 0 &&
+                    aCheck.duplicates.length === 0,
+                duplicates: {
+                    households: hCheck.duplicates,
+                    positions: pCheck.duplicates,
+                    assignments: aCheck.duplicates
+                },
+                duplicateHouseholdHeads: duplicateHouseholdHeads,
+                counts: {
+                    households: hCheck.count,
+                    positions: pCheck.count,
+                    assignments: aCheck.count
+                }
+            };
+        }
+    };
+
+    // =========================================================================
+    // 12. EXPORTS
     // =========================================================================
 
     var HouseholdState = {
@@ -499,6 +739,15 @@
         subscribe: subscribe,
         invalidateCache: invalidateCache,
         refresh: refresh,
+        hydrateFromMasterData: hydrateFromMasterData,
+
+        // ---- Public: dirty flag ----
+        markDirty: markDirty,
+        hasDirty: hasDirty,
+        clearDirty: clearDirty,
+
+        // ---- Public: in-process event channel ----
+        publish: publish,
 
         // ---- Public: UI ephemeral state ----
         getUIState: getUIState,
@@ -516,17 +765,19 @@
             getPositionRecord: _getPositionRecord,
             getAllPositionRecords: _getAllPositionRecords,
             getAssignmentRecord: _getAssignmentRecord,
-            getAllAssignmentRecords: _getAllAssignmentRecords
+            getAllAssignmentRecords: _getAllAssignmentRecords,
+
+            // Deprecated aliases — _getXCanonical naming
+            getHouseholdCanonical: _getHouseholdCanonical,
+            getPositionCanonical: _getPositionCanonical,
+            getAssignmentCanonical: _getAssignmentCanonical,
+
+            // Deprecated alias — _loadData naming
+            loadData: _loadData
         },
 
         // ---- Internal: introspection for repair/diagnostics ----
-        _diagnostics: {
-            getHouseholdCount: function() { return _state.households.length; },
-            getPositionCount: function() { return _state.householdPositions.length; },
-            getAssignmentCount: function() { return _state.householdAssignments.length; },
-            getSubscriberCount: function() { return _state.subscribers.length; },
-            getVersion: function() { return _state.version; }
-        }
+        _diagnostics: _diagnostics
     };
 
     window.HouseholdState = HouseholdState;
@@ -536,14 +787,33 @@
     }
 
     // =========================================================================
-    // 11. AUTO-LOAD
+    // 13. AUTO-HYDRATE
     // =========================================================================
 
-    _loadData();
+    (function _autoHydrate() {
+        try {
+            hydrateFromMasterData();
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'HouseholdState: initial hydrate failed. ' +
+                    'Canonical data may be corrupted. ' +
+                    'Use HouseholdState._diagnostics.getIntegrityReport() ' +
+                    'to inspect without throwing.', e
+                );
+            }
+        }
+    })();
 
     if (typeof window !== 'undefined' && window.addEventListener) {
         window.addEventListener('masterDataUpdated', function() {
-            _loadData();
+            try {
+                hydrateFromMasterData();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('HouseholdState: hydrate on masterDataUpdated failed', e);
+                }
+            }
         });
     }
 
