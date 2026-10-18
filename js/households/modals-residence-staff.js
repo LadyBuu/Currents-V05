@@ -2,13 +2,13 @@
  * =============================================================================
  * STILL WATERS - RESIDENCE STAFF MODALS (modals-residence-staff.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/modals-residence-staff.js
- * 
+ *
  * PURPOSE
  * -------
  * Modal entry points for residence staff position management:
- * 
+ *
  *   - openCreateResidenceStaffPositionModal(residenceId, onSuccess)
  *   - openEditResidenceStaffPositionModal(residenceId, positionId, onSuccess)
  *   - openDeleteResidenceStaffPositionModal(residenceId, positionId, onSuccess)
@@ -16,31 +16,31 @@
  *   - openViewResidenceStaffPositionsModal(residenceId, onSelect)
  *   - openViewResidenceStaffAssignmentsModal(residenceId)
  *   - openResidenceStaffManagementModal(residenceId, onSuccess)
- * 
+ *
  * OWNERSHIP
  * ---------
  *   Reads:  ResidenceSystem (getResidence, getUnits, getStaffPositions,
  *                            getStaffAssignments)
- *           CharacterQueries (getCharacterById)
+ *           CharacterQueries (getCharacterById, getCharacters)
  *           RoleQueries (getRoleById, getAllRoles)
  *   Writes: ResidenceSystem (addStaffPosition, updateStaffPosition,
  *                            removeStaffPosition,
  *                            assignCharacterToStaffPosition,
  *                            endStaffAssignment, deleteStaffAssignment)
+ *           + one persist() per mutation batch
  *   UI:     modals-core, selectors, icons
- * 
- * WHAT THIS FILE DOES NOT DO
- * --------------------------
- *   - No direct residence record mutation
- *   - No `residence.staffPositions[i] = {...}` from the UI
- *   - No `residence.staffAssignments.splice(...)` from the UI
- *   - No `_saveMasterData()` from the UI
- *   - No emoji icons
- *   - No setTimeout(100)
- *   - No fabricated 1250
- *   - No `_processingStaffModal` guard
- *   - No silent failure swallowing
- * 
+ *
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - Every staff mutation ends with ResidenceSystem.persist().
+ *   - No direct residence record mutation.
+ *   - No direct _saveMasterData() from UI.
+ *   - No _processingStaffModal guard.
+ *   - addRoleIfMissing checkbox REMOVED: the current residence command
+ *     does not support it. Role indicators are preserved so users can
+ *     see the outcome. If the command later accepts the option, re-add
+ *     the checkbox and pass addRoleIfMissing through.
+ *
  * =============================================================================
  */
 
@@ -48,20 +48,61 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        if (typeof window._openModal === 'function') return window._openModal(options);
-        throw new Error('modals-residence-staff: openModal is required');
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('modals-residence-staff: ' + name + ' is required');
+        }
+        return fn;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
-        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
-        throw new Error('modals-residence-staff: closeTopModal is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('modals-residence-staff: ' + name + ' is required');
+        }
+        return obj;
     }
+
+    var _residence = _requireObject('ResidenceSystem', window.ResidenceSystem);
+    _requireFunction('ResidenceSystem.persist', _residence.persist);
+    _requireFunction('ResidenceSystem.addStaffPosition',
+        _residence.addStaffPosition);
+    _requireFunction('ResidenceSystem.updateStaffPosition',
+        _residence.updateStaffPosition);
+    _requireFunction('ResidenceSystem.removeStaffPosition',
+        _residence.removeStaffPosition);
+    _requireFunction('ResidenceSystem.assignCharacterToStaffPosition',
+        _residence.assignCharacterToStaffPosition);
+    _requireFunction('ResidenceSystem.endStaffAssignment',
+        _residence.endStaffAssignment);
+    _requireFunction('ResidenceSystem.deleteStaffAssignment',
+        _residence.deleteStaffAssignment);
+    _requireFunction('ResidenceSystem.getStaffPositions',
+        _residence.getStaffPositions);
+    _requireFunction('ResidenceSystem.getStaffAssignments',
+        _residence.getStaffAssignments);
+    _requireFunction('ResidenceSystem.getResidence',
+        _residence.getResidence);
+    _requireFunction('ResidenceSystem.getUnits',
+        _residence.getUnits);
+
+    var _getCharacterById = _requireFunction('getCharacterById',
+        window.getCharacterById);
+
+    var _openModal = _requireFunction('openModal',
+        typeof window.openModal === 'function'
+            ? window.openModal
+            : window._openModal);
+    var _closeTopModal = _requireFunction('closeTopModal',
+        typeof window.closeTopModal === 'function'
+            ? window.closeTopModal
+            : window._closeTopModal);
+
+    // =========================================================================
+    // 2. HELPERS
+    // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
         if (typeof window.confirmDialog === 'function') {
@@ -90,28 +131,20 @@
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') return window._showToast(message, type);
-        if (typeof window.showToast === 'function') return window.showToast(message, type);
+        if (typeof window._showToast === 'function') {
+            return window._showToast(message, type);
+        }
+        if (typeof window.showToast === 'function') {
+            return window.showToast(message, type);
+        }
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (typeof window._getIcon === 'function') {
+            return window._getIcon(name) || '';
+        }
         if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
-    }
-
-    function _residence() {
-        if (typeof window.ResidenceSystem === 'undefined') {
-            throw new Error('modals-residence-staff: ResidenceSystem is required');
-        }
-        return window.ResidenceSystem;
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('modals-residence-staff: getCharacterById is required');
-        }
-        return window.getCharacterById(id);
     }
 
     function _getRoleById(id) {
@@ -132,6 +165,13 @@
         if (typeof window.RoleQueries !== 'undefined' &&
             typeof window.RoleQueries.getAllRoles === 'function') {
             return window.RoleQueries.getAllRoles();
+        }
+        return [];
+    }
+
+    function _getAllCharacters() {
+        if (typeof window.getCharacters === 'function') {
+            return window.getCharacters() || [];
         }
         return [];
     }
@@ -174,17 +214,32 @@
         return Math.floor(n);
     }
 
-    // =========================================================================
-    // 2. CONSTANTS
-    // =========================================================================
+    function _persistOrFail(messagePrefix) {
+        var result = _residence.persist();
+        if (!result || result.success === false) {
+            var reason = (result && result.reason) || 'Unknown persist error';
+            _showToast(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + reason,
+                'error');
+            return { ok: false, reason: reason };
+        }
+        return { ok: true };
+    }
 
-    // Default skill level assigned when a required role is auto-added on
-    // assignment. Temporary UI-presented default; the domain will own this
-    // when a second consumer appears.
+    function _reportFailure(result, fallbackPrefix) {
+        var reason = (result && result.reason) || 'Unknown error';
+        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
+            'error');
+    }
+
+    // Deferred: presentation default. Move to view-models in a later pass.
+    // Only used for the assignCharacterToStaffPosition skillLevelAtAssignment
+    // default when a role is already present.
     var DEFAULT_SKILL_LEVEL = 10;
 
     // =========================================================================
-    // 3. ROLE OPTIONS BUILDER
+    // 3. ROLE / UNIT OPTIONS BUILDERS
     // =========================================================================
 
     function _buildRoleOptions(selectedId, emptyLabel) {
@@ -206,19 +261,15 @@
         return html;
     }
 
-    // =========================================================================
-    // 4. UNIT OPTIONS BUILDER
-    // =========================================================================
-
     function _buildUnitOptions(residenceId, selectedUnitNumber) {
-        var res = _residence();
-        var units = res.getUnits(residenceId);
+        var units = _residence.getUnits(residenceId);
 
         var html = '<option value="">Whole Residence</option>';
         for (var i = 0; i < units.length; i++) {
             var u = units[i];
             if (u.isDemolished) continue;
-            var selected = (u.unitNumber === selectedUnitNumber) ? ' selected' : '';
+            var selected = (u.unitNumber === selectedUnitNumber)
+                ? ' selected' : '';
             html += '<option value="' + u.unitNumber + '"' + selected + '>Unit ' +
                 u.unitNumber + '</option>';
         }
@@ -226,13 +277,11 @@
     }
 
     // =========================================================================
-    // 5. CREATE RESIDENCE STAFF POSITION MODAL
+    // 4. CREATE STAFF POSITION MODAL
     // =========================================================================
 
     function openCreateResidenceStaffPositionModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
@@ -309,20 +358,25 @@
                 }
 
                 var unitNumberRaw = (root.querySelector('[data-field="unitNumber"]') || {}).value;
-                var unitNumber = unitNumberRaw === '' ? null : _parseIntOrNull(unitNumberRaw);
+                var unitNumber = unitNumberRaw === ''
+                    ? null
+                    : _parseIntOrNull(unitNumberRaw);
                 if (unitNumberRaw !== '' && unitNumber === null) {
                     _showToast('Invalid unit number', 'error');
                     return false;
                 }
 
-                var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                var requiredRoleId =
+                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
 
-                var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _parseIntOrNull(
+                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+                var notes =
+                    ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
-                var result = res.addStaffPosition(residenceId, {
+                var result = _residence.addStaffPosition(residenceId, {
                     name: name,
                     unitNumber: unitNumber,
                     requiredRoleId: requiredRoleId,
@@ -331,8 +385,14 @@
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to create position', 'error');
+                    _reportFailure(result, 'Failed to create position');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Position created');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Position "' + name + '" created', 'success');
@@ -343,16 +403,17 @@
     }
 
     // =========================================================================
-    // 6. EDIT RESIDENCE STAFF POSITION MODAL
+    // 5. EDIT STAFF POSITION MODAL
     // =========================================================================
 
     function openEditResidenceStaffPositionModal(residenceId, positionId, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var positions = res.getStaffPositions(residenceId);
+        var positions = _residence.getStaffPositions(residenceId);
         var position = null;
         for (var i = 0; i < positions.length; i++) {
             if (positions[i].id === positionId) {
@@ -360,10 +421,14 @@
                 break;
             }
         }
-        if (!position) { _showToast('Position not found', 'error'); return null; }
+        if (!position) {
+            _showToast('Position not found', 'error');
+            return null;
+        }
 
         var unitOptions = _buildUnitOptions(residenceId, position.unitNumber);
-        var roleOptions = _buildRoleOptions(position.requiredRoleId, 'No role required');
+        var roleOptions = _buildRoleOptions(
+            position.requiredRoleId, 'No role required');
 
         var content =
             '<div style="margin-bottom:16px;">' +
@@ -396,7 +461,8 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Minimum Skill Level</label>' +
                     '<input type="number" data-field="minSkillLevel" value="' +
-                        (position.minSkillLevel !== null ? position.minSkillLevel : 0) +
+                        (position.minSkillLevel !== null
+                            ? position.minSkillLevel : 0) +
                         '" min="0" max="100" style="width:80px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
 
@@ -424,30 +490,42 @@
                 }
 
                 var unitNumberRaw = (root.querySelector('[data-field="unitNumber"]') || {}).value;
-                var unitNumber = unitNumberRaw === '' ? null : _parseIntOrNull(unitNumberRaw);
+                var unitNumber = unitNumberRaw === ''
+                    ? null
+                    : _parseIntOrNull(unitNumberRaw);
                 if (unitNumberRaw !== '' && unitNumber === null) {
                     _showToast('Invalid unit number', 'error');
                     return false;
                 }
 
-                var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                var requiredRoleId =
+                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
 
-                var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _parseIntOrNull(
+                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+                var notes =
+                    ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
-                var result = res.updateStaffPosition(residenceId, positionId, {
-                    name: name,
-                    unitNumber: unitNumber,
-                    requiredRoleId: requiredRoleId,
-                    minSkillLevel: minSkillLevel,
-                    notes: notes
-                });
+                var result = _residence.updateStaffPosition(
+                    residenceId, positionId, {
+                        name: name,
+                        unitNumber: unitNumber,
+                        requiredRoleId: requiredRoleId,
+                        minSkillLevel: minSkillLevel,
+                        notes: notes
+                    });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to update position', 'error');
+                    _reportFailure(result, 'Failed to update position');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Position updated');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Position updated', 'success');
@@ -458,23 +536,30 @@
     }
 
     // =========================================================================
-    // 7. DELETE RESIDENCE STAFF POSITION MODAL
+    // 6. DELETE STAFF POSITION MODAL
     // =========================================================================
 
     function openDeleteResidenceStaffPositionModal(residenceId, positionId, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var positions = res.getStaffPositions(residenceId);
+        var positions = _residence.getStaffPositions(residenceId);
         var position = null;
         for (var i = 0; i < positions.length; i++) {
-            if (positions[i].id === positionId) { position = positions[i]; break; }
+            if (positions[i].id === positionId) {
+                position = positions[i];
+                break;
+            }
         }
-        if (!position) { _showToast('Position not found', 'error'); return null; }
+        if (!position) {
+            _showToast('Position not found', 'error');
+            return null;
+        }
 
-        var activeAssignments = res.getStaffAssignments(residenceId, {
+        var activeAssignments = _residence.getStaffAssignments(residenceId, {
             positionId: positionId,
             activeOnly: true
         });
@@ -503,7 +588,8 @@
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;">' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
                         '<span>Position:</span>' +
-                        '<span><strong>' + _escapeHtml(position.name) + '</strong></span>' +
+                        '<span><strong>' +
+                            _escapeHtml(position.name) + '</strong></span>' +
                     '</div>' +
                     (position.unitNumber !== null && position.unitNumber !== undefined
                         ? '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
@@ -544,13 +630,20 @@
                     ? (root.querySelector('[data-field="removeAssignments"]') || {}).checked !== false
                     : true;
 
-                var result = res.removeStaffPosition(residenceId, positionId, {
-                    removeAssignments: removeAssignments
-                });
+                var result = _residence.removeStaffPosition(
+                    residenceId, positionId, {
+                        removeAssignments: removeAssignments
+                    });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to delete position', 'error');
+                    _reportFailure(result, 'Failed to delete position');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Position deleted');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Position "' + position.name + '" deleted', 'info');
@@ -561,24 +654,36 @@
     }
 
     // =========================================================================
-    // 8. ASSIGN STAFF MODAL
+    // 7. ASSIGN STAFF MODAL
+    // =========================================================================
+    //
+    // Note: the residence command does not support addRoleIfMissing. The
+    // old checkbox is removed. Role indicators (has role / missing role)
+    // are preserved so users can see the outcome.
     // =========================================================================
 
     function openAssignResidenceStaffModal(residenceId, positionId, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var positions = res.getStaffPositions(residenceId);
+        var positions = _residence.getStaffPositions(residenceId);
         var position = null;
         for (var i = 0; i < positions.length; i++) {
-            if (positions[i].id === positionId) { position = positions[i]; break; }
+            if (positions[i].id === positionId) {
+                position = positions[i];
+                break;
+            }
         }
-        if (!position) { _showToast('Position not found', 'error'); return null; }
+        if (!position) {
+            _showToast('Position not found', 'error');
+            return null;
+        }
 
         var currentYear = _currentYear();
-        var existingAssignments = res.getStaffAssignments(residenceId, {
+        var existingAssignments = _residence.getStaffAssignments(residenceId, {
             positionId: positionId,
             activeOnly: true
         });
@@ -588,14 +693,7 @@
             assignedIds[existingAssignments[j].characterId] = true;
         }
 
-        // Candidate characters come from the character system. This is a
-        // temporary broad lookup; a CharacterQueries.getAssignableCharacters
-        // would be the eventual home.
-        var allChars = [];
-        if (typeof window.getCharacters === 'function') {
-            allChars = window.getCharacters() || [];
-        }
-
+        var allChars = _getAllCharacters();
         var candidates = [];
         for (var k = 0; k < allChars.length; k++) {
             var c = allChars[k];
@@ -614,7 +712,7 @@
                 }
             }
 
-            var age = c.birthYear !== undefined && currentYear !== null
+            var age = (c.birthYear !== undefined && currentYear !== null)
                 ? currentYear - c.birthYear
                 : null;
 
@@ -622,7 +720,8 @@
                 characterId: c.id,
                 name: c.name || '',
                 surname: c.surname || '',
-                displayName: (c.name || '') + (c.surname ? ' ' + c.surname : ''),
+                displayName: (c.name || '') +
+                    (c.surname ? ' ' + c.surname : ''),
                 age: age,
                 hasRole: hasRole,
                 skillLevel: skillLevel
@@ -634,7 +733,7 @@
             : 'None';
 
         var candidatesHtml = _buildCandidateList(candidates, position);
-        var history = res.getStaffAssignments(residenceId, {
+        var history = _residence.getStaffAssignments(residenceId, {
             positionId: positionId,
             activeOnly: false
         });
@@ -646,7 +745,8 @@
                 '<strong>Position:</strong> ' + _escapeHtml(position.name) +
                 (position.unitNumber !== null && position.unitNumber !== undefined
                     ? ' (Unit ' + position.unitNumber + ')' : '') +
-                '<br><strong>Required Role:</strong> ' + _escapeHtml(roleDisplay) +
+                '<br><strong>Required Role:</strong> ' +
+                    _escapeHtml(roleDisplay) +
                 (position.minSkillLevel > 0
                     ? ' · <strong>Min Skill:</strong> ' + position.minSkillLevel
                     : '') +
@@ -659,10 +759,6 @@
 
             '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
                 '<button data-action="select-other" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Select Other Character</button>' +
-                '<label style="display:flex;align-items:center;gap:6px;font-size:0.55rem;cursor:pointer;">' +
-                    '<input type="checkbox" data-field="addRoleIfMissing" checked>' +
-                    '<span>Add role if missing</span>' +
-                '</label>' +
             '</div>' +
 
             '<div style="margin-bottom:12px;">' +
@@ -714,7 +810,8 @@
                     return false;
                 }
 
-                var startYear = _parseIntOrNull((root.querySelector('[data-field="startYear"]') || {}).value);
+                var startYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="startYear"]') || {}).value);
                 if (startYear === null || startYear < 1) {
                     _showToast('Start year is required', 'error');
                     return false;
@@ -736,9 +833,8 @@
                 var title = ((root.querySelector('[data-field="title"]') || {}).value || '').trim() ||
                     position.name;
                 var notes = (root.querySelector('[data-field="notes"]') || {}).value || '';
-                var addRoleIfMissing = (root.querySelector('[data-field="addRoleIfMissing"]') || {}).checked !== false;
 
-                var result = res.assignCharacterToStaffPosition(
+                var result = _residence.assignCharacterToStaffPosition(
                     residenceId,
                     positionId,
                     characterId,
@@ -747,14 +843,19 @@
                         endYear: endYear,
                         title: title,
                         notes: notes,
-                        addRoleIfMissing: addRoleIfMissing,
-                        defaultSkillLevel: DEFAULT_SKILL_LEVEL
+                        skillLevelAtAssignment: DEFAULT_SKILL_LEVEL
                     }
                 );
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to assign staff', 'error');
+                    _reportFailure(result, 'Failed to assign staff');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Staff assigned');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Staff assigned to ' + position.name, 'success');
@@ -790,14 +891,16 @@
                     c.skillLevel + ')</span>'
                 : '';
             var ageText = c.age !== null
-                ? ' <span style="font-size:0.5rem;color:var(--dim);">' + c.age + 'y</span>'
+                ? ' <span style="font-size:0.5rem;color:var(--dim);">' +
+                    c.age + 'y</span>'
                 : '';
 
             html += '<div class="staff-candidate" data-character-id="' +
                 _escapeHtml(c.characterId) +
                 '" style="padding:8px 10px;margin-bottom:4px;background:var(--bg2);' +
                 'border:1px solid var(--border);border-left:3px solid ' +
-                    (position.requiredRoleId && !c.hasRole ? 'var(--warn)' : 'var(--success)') +
+                    (position.requiredRoleId && !c.hasRole
+                        ? 'var(--warn)' : 'var(--success)') +
                 ';border-radius:4px;cursor:pointer;transition:background 0.1s;">' +
                 '<div>' +
                     '<strong>' + _escapeHtml(c.displayName) + '</strong>' +
@@ -833,10 +936,14 @@
             html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
                 'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
                 '<span>' + _escapeHtml(h.characterName || 'Unknown') +
-                    (h.title ? ' <span style="color:var(--dim);">(' +
-                        _escapeHtml(h.title) + ')</span>' : '') +
-                    (roleName ? ' <span style="color:var(--accent);">(' +
-                        _escapeHtml(roleName) + ')</span>' : '') +
+                    (h.title
+                        ? ' <span style="color:var(--dim);">(' +
+                            _escapeHtml(h.title) + ')</span>'
+                        : '') +
+                    (roleName
+                        ? ' <span style="color:var(--accent);">(' +
+                            _escapeHtml(roleName) + ')</span>'
+                        : '') +
                 '</span>' +
                 '<span style="color:' + color + ';">' +
                     h.startYear + ' - ' + endDisplay +
@@ -886,8 +993,7 @@
                         _closeTopModal();
                         setTimeout(function() {
                             openAssignResidenceStaffModal(
-                                residenceId, positionId, onSuccess
-                            );
+                                residenceId, positionId, onSuccess);
                         }, 0);
                     }
                 });
@@ -896,17 +1002,20 @@
     }
 
     // =========================================================================
-    // 9. VIEW RESIDENCE STAFF POSITIONS MODAL
+    // 8. VIEW STAFF POSITIONS MODAL (pure projection)
     // =========================================================================
 
     function openViewResidenceStaffPositionsModal(residenceId, onSelect) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var positions = res.getStaffPositions(residenceId);
-        var assignments = res.getStaffAssignments(residenceId, { activeOnly: true });
+        var positions = _residence.getStaffPositions(residenceId);
+        var assignments = _residence.getStaffAssignments(residenceId, {
+            activeOnly: true
+        });
 
         var assignmentMap = {};
         for (var i = 0; i < assignments.length; i++) {
@@ -998,17 +1107,20 @@
     }
 
     // =========================================================================
-    // 10. VIEW RESIDENCE STAFF ASSIGNMENTS MODAL
+    // 9. VIEW STAFF ASSIGNMENTS MODAL (pure projection + one mutation path)
     // =========================================================================
 
     function openViewResidenceStaffAssignmentsModal(residenceId) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var assignments = res.getStaffAssignments(residenceId, { activeOnly: true });
-        var positions = res.getStaffPositions(residenceId);
+        var assignments = _residence.getStaffAssignments(residenceId, {
+            activeOnly: true
+        });
+        var positions = _residence.getStaffPositions(residenceId);
         var positionMap = {};
         for (var i = 0; i < positions.length; i++) {
             positionMap[positions[i].id] = positions[i];
@@ -1055,7 +1167,8 @@
 
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<strong>Staff Assignments: ' + _escapeHtml(residence.name) + '</strong>' +
+                '<strong>Staff Assignments: ' +
+                    _escapeHtml(residence.name) + '</strong>' +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                     assignments.length + ' active staff members' +
                 '</div>' +
@@ -1086,20 +1199,29 @@
                             'End this staff assignment?',
                             'End Assignment',
                             function() {
-                                var result = res.endStaffAssignment(
+                                var result = _residence.endStaffAssignment(
                                     residenceId,
                                     assignmentId,
                                     currentYear,
                                     'Ended by user'
                                 );
                                 if (!result.success) {
-                                    _showToast(result.reason || 'Failed to end assignment', 'error');
+                                    _reportFailure(result,
+                                        'Failed to end assignment');
                                     return;
                                 }
+
+                                var persisted = _persistOrFail('Assignment ended');
+                                if (!persisted.ok) {
+                                    // Leave modal open so user sees the error toast
+                                    return;
+                                }
+
                                 _showToast('Assignment ended', 'success');
                                 _closeTopModal();
                                 setTimeout(function() {
-                                    openViewResidenceStaffAssignmentsModal(residenceId);
+                                    openViewResidenceStaffAssignmentsModal(
+                                        residenceId);
                                 }, 0);
                             },
                             function() { /* cancelled */ }
@@ -1113,17 +1235,20 @@
     }
 
     // =========================================================================
-    // 11. COMBINED STAFF MANAGEMENT MODAL
+    // 10. COMBINED STAFF MANAGEMENT MODAL
     // =========================================================================
 
     function openResidenceStaffManagementModal(residenceId, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var positions = res.getStaffPositions(residenceId);
-        var assignments = res.getStaffAssignments(residenceId, { activeOnly: true });
+        var positions = _residence.getStaffPositions(residenceId);
+        var assignments = _residence.getStaffAssignments(residenceId, {
+            activeOnly: true
+        });
 
         var assignmentMap = {};
         for (var i = 0; i < assignments.length; i++) {
@@ -1180,9 +1305,11 @@
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
-                    '<div><strong>Staff Management: ' + _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div><strong>Staff Management: ' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.6rem;color:var(--dim);">' +
-                        positions.length + ' positions · ' + assignments.length + ' assigned' +
+                        positions.length + ' positions · ' +
+                        assignments.length + ' assigned' +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -1256,7 +1383,8 @@
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
                     _closeTopModal();
-                    openEditResidenceStaffPositionModal(residenceId, posId, _reopen);
+                    openEditResidenceStaffPositionModal(
+                        residenceId, posId, _reopen);
                 };
             })(editBtns[j]);
         }
@@ -1267,14 +1395,15 @@
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
                     _closeTopModal();
-                    openDeleteResidenceStaffPositionModal(residenceId, posId, _reopen);
+                    openDeleteResidenceStaffPositionModal(
+                        residenceId, posId, _reopen);
                 };
             })(deleteBtns[k]);
         }
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.openCreateResidenceStaffPositionModal = openCreateResidenceStaffPositionModal;
