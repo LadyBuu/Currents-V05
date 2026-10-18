@@ -3,11 +3,30 @@
  * STILL WATERS - HOUSEHOLD STAFF POSITION MODALS (modals-household-staff.js)
  * =============================================================================
  *
+ * LOCATION: js/systems/household/modals-household-staff.js
+ *
+ * PURPOSE
+ * -------
  * Modal entry points for household staff position management.
  *
  * Reads:  HouseholdQueries, RoleQueries
- * Writes: HouseholdCommands
+ * Writes: HouseholdCommands + one persist() per batch
  * UI:     modals-core, selectors, icons
+ *
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - Every mutation batch invokes HouseholdCommands.* then one
+ *     HouseholdCommands.persist() at the end.
+ *   - Position create / update / delete: one command + one persist.
+ *   - Single assignment: one command + one persist.
+ *   - Bulk assignment: one bulkAssign command (which internally commits
+ *     once) + one persist in the modal.
+ *   - Assignment end / delete: one command + one persist.
+ *   - No HouseholdState access.
+ *   - No _processingStaffModal guard.
+ *   - addRoleIfMissing is now honored by the command (see addendum in
+ *     household-commands.js). The modal passes the flag through and
+ *     reports the outcome.
  *
  * =============================================================================
  */
@@ -15,17 +34,69 @@
 (function() {
     'use strict';
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        if (typeof window._openModal === 'function') return window._openModal(options);
-        throw new Error('modals-household-staff: openModal is required');
+    // =========================================================================
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // =========================================================================
+
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('modals-household-staff: ' + name + ' is required');
+        }
+        return fn;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
-        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
-        throw new Error('modals-household-staff: closeTopModal is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('modals-household-staff: ' + name + ' is required');
+        }
+        return obj;
     }
+
+    var _queries = _requireObject('HouseholdQueries', window.HouseholdQueries);
+    _requireFunction('HouseholdQueries.getHousehold', _queries.getHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdPosition',
+        _queries.getHouseholdPosition);
+    _requireFunction('HouseholdQueries.getHouseholdPositions',
+        _queries.getHouseholdPositions);
+    _requireFunction('HouseholdQueries.getHouseholdDetails',
+        _queries.getHouseholdDetails);
+    _requireFunction('HouseholdQueries.getAssignmentsForPosition',
+        _queries.getAssignmentsForPosition);
+    _requireFunction('HouseholdQueries.getAssignmentsForCharacter',
+        _queries.getAssignmentsForCharacter);
+    _requireFunction('HouseholdQueries.getAssignmentsForHousehold',
+        _queries.getAssignmentsForHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdAssignment',
+        _queries.getHouseholdAssignment);
+
+    var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
+    _requireFunction('HouseholdCommands.persist', _commands.persist);
+    _requireFunction('HouseholdCommands.createPosition',
+        _commands.createPosition);
+    _requireFunction('HouseholdCommands.updatePosition',
+        _commands.updatePosition);
+    _requireFunction('HouseholdCommands.deletePosition',
+        _commands.deletePosition);
+    _requireFunction('HouseholdCommands.assignCharacterToPosition',
+        _commands.assignCharacterToPosition);
+    _requireFunction('HouseholdCommands.endAssignment',
+        _commands.endAssignment);
+    _requireFunction('HouseholdCommands.deleteAssignment',
+        _commands.deleteAssignment);
+    _requireFunction('HouseholdCommands.bulkAssign', _commands.bulkAssign);
+
+    var _openModal = _requireFunction('openModal',
+        typeof window.openModal === 'function'
+            ? window.openModal
+            : window._openModal);
+    var _closeTopModal = _requireFunction('closeTopModal',
+        typeof window.closeTopModal === 'function'
+            ? window.closeTopModal
+            : window._closeTopModal);
+
+    // =========================================================================
+    // 2. HELPERS
+    // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
         if (typeof window.confirmDialog === 'function') {
@@ -54,28 +125,20 @@
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') return window._showToast(message, type);
-        if (typeof window.showToast === 'function') return window.showToast(message, type);
+        if (typeof window._showToast === 'function') {
+            return window._showToast(message, type);
+        }
+        if (typeof window.showToast === 'function') {
+            return window.showToast(message, type);
+        }
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (typeof window._getIcon === 'function') {
+            return window._getIcon(name) || '';
+        }
         if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
-    }
-
-    function _queries() {
-        if (typeof window.HouseholdQueries === 'undefined') {
-            throw new Error('modals-household-staff: HouseholdQueries is required');
-        }
-        return window.HouseholdQueries;
-    }
-
-    function _commands() {
-        if (typeof window.HouseholdCommands === 'undefined') {
-            throw new Error('modals-household-staff: HouseholdCommands is required');
-        }
-        return window.HouseholdCommands;
     }
 
     function _getRoleById(id) {
@@ -86,6 +149,18 @@
             return window.RoleQueries.getRoleById(id);
         }
         return null;
+    }
+
+    function _getAllRoles() {
+        if (typeof window.RoleState !== 'undefined' &&
+            typeof window.RoleState.getAllRoles === 'function') {
+            return window.RoleState.getAllRoles();
+        }
+        if (typeof window.RoleQueries !== 'undefined' &&
+            typeof window.RoleQueries.getAllRoles === 'function') {
+            return window.RoleQueries.getAllRoles();
+        }
+        return [];
     }
 
     function _currentYear() {
@@ -118,24 +193,36 @@
         return Math.floor(n);
     }
 
+    function _persistOrFail(messagePrefix) {
+        var result = _commands.persist();
+        if (!result || result.success === false) {
+            var reason = (result && result.reason) || 'Unknown persist error';
+            _showToast(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + reason,
+                'error');
+            return { ok: false, reason: reason };
+        }
+        return { ok: true };
+    }
+
+    function _reportFailure(result, fallbackPrefix) {
+        var reason = (result && result.reason) || 'Unknown error';
+        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
+            'error');
+    }
+
+    // Deferred: presentation default. Move to view-models in a later pass.
     var DEFAULT_SKILL_LEVEL = 10;
 
     // =========================================================================
-    // Role options builder
+    // 3. ROLE / DEPARTMENT OPTIONS BUILDERS
     // =========================================================================
 
     function _buildRoleOptions(selectedId, emptyLabel) {
         emptyLabel = emptyLabel || 'No role required';
         var html = '<option value="">' + _escapeHtml(emptyLabel) + '</option>';
-
-        var roles = null;
-        if (typeof window.RoleState !== 'undefined' &&
-            typeof window.RoleState.getAllRoles === 'function') {
-            roles = window.RoleState.getAllRoles();
-        } else if (typeof window.RoleQueries !== 'undefined' &&
-                   typeof window.RoleQueries.getAllRoles === 'function') {
-            roles = window.RoleQueries.getAllRoles();
-        }
+        var roles = _getAllRoles();
         if (!Array.isArray(roles)) return html;
 
         for (var i = 0; i < roles.length; i++) {
@@ -151,14 +238,9 @@
         return html;
     }
 
-    // =========================================================================
-    // Department options builder
-    // =========================================================================
-
     function _buildDepartmentOptions(householdId, selectedId) {
         var html = '<option value="">None</option>';
-        var queries = _queries();
-        var departments = queries.getHouseholdDepartments(householdId);
+        var departments = _queries.getHouseholdDepartments(householdId);
         if (!Array.isArray(departments)) return html;
 
         for (var i = 0; i < departments.length; i++) {
@@ -171,14 +253,11 @@
     }
 
     // =========================================================================
-    // CREATE POSITION MODAL
+    // 4. CREATE POSITION MODAL
     // =========================================================================
 
     function openCreateHouseholdPositionModal(householdId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
-        var household = queries.getHousehold(householdId);
+        var household = _queries.getHousehold(householdId);
         if (!household) {
             _showToast('Household not found', 'error');
             return null;
@@ -190,7 +269,8 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
-                    'Creating a position for <strong>' + _escapeHtml(household.name) + '</strong>' +
+                    'Creating a position for <strong>' +
+                        _escapeHtml(household.name) + '</strong>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
@@ -249,20 +329,28 @@
                 if (!root) return false;
 
                 var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) { _showToast('Position name is required', 'error'); return false; }
+                if (!name) {
+                    _showToast('Position name is required', 'error');
+                    return false;
+                }
 
-                var departmentId = (root.querySelector('[data-field="departmentId"]') || {}).value || null;
-                var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                var departmentId =
+                    (root.querySelector('[data-field="departmentId"]') || {}).value || null;
+                var requiredRoleId =
+                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
 
-                var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _parseIntOrNull(
+                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var priority = _parseIntOrNull((root.querySelector('[data-field="priority"]') || {}).value);
+                var priority = _parseIntOrNull(
+                    (root.querySelector('[data-field="priority"]') || {}).value);
                 if (priority === null) priority = 10;
 
-                var description = ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
+                var description =
+                    ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
 
-                var result = commands.createPosition({
+                var result = _commands.createPosition({
                     name: name,
                     householdId: householdId,
                     departmentId: departmentId,
@@ -273,8 +361,14 @@
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to create position', 'error');
+                    _reportFailure(result, 'Failed to create position');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Position created');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Position "' + name + '" created', 'success');
@@ -285,31 +379,38 @@
     }
 
     // =========================================================================
-    // EDIT POSITION MODAL
+    // 5. EDIT POSITION MODAL
     // =========================================================================
 
     function openEditHouseholdPositionModal(householdId, positionId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
+        var household = _queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
+        }
 
-        var household = queries.getHousehold(householdId);
-        if (!household) { _showToast('Household not found', 'error'); return null; }
+        var position = _queries.getHouseholdPosition(positionId);
+        if (!position) {
+            _showToast('Position not found', 'error');
+            return null;
+        }
 
-        var position = queries.getHouseholdPosition(positionId);
-        if (!position) { _showToast('Position not found', 'error'); return null; }
-
-        var roleOptionsHtml = _buildRoleOptions(position.requiredRoleId, 'No role required');
-        var departmentOptionsHtml = _buildDepartmentOptions(householdId, position.departmentId);
+        var roleOptionsHtml = _buildRoleOptions(
+            position.requiredRoleId, 'No role required');
+        var departmentOptionsHtml = _buildDepartmentOptions(
+            householdId, position.departmentId);
 
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
-                    'Editing position in <strong>' + _escapeHtml(household.name) + '</strong>' +
+                    'Editing position in <strong>' +
+                        _escapeHtml(household.name) + '</strong>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Position Name *</label>' +
-                    '<input type="text" data-field="name" value="' + _escapeHtml(position.name) +
+                    '<input type="text" data-field="name" value="' +
+                        _escapeHtml(position.name) +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
 
@@ -359,20 +460,28 @@
                 if (!root) return false;
 
                 var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) { _showToast('Position name is required', 'error'); return false; }
+                if (!name) {
+                    _showToast('Position name is required', 'error');
+                    return false;
+                }
 
-                var departmentId = (root.querySelector('[data-field="departmentId"]') || {}).value || null;
-                var requiredRoleId = (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                var departmentId =
+                    (root.querySelector('[data-field="departmentId"]') || {}).value || null;
+                var requiredRoleId =
+                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
 
-                var minSkillLevel = _parseIntOrNull((root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _parseIntOrNull(
+                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var priority = _parseIntOrNull((root.querySelector('[data-field="priority"]') || {}).value);
+                var priority = _parseIntOrNull(
+                    (root.querySelector('[data-field="priority"]') || {}).value);
                 if (priority === null) priority = 10;
 
-                var description = ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
+                var description =
+                    ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
 
-                var result = commands.updatePosition(positionId, {
+                var result = _commands.updatePosition(positionId, {
                     name: name,
                     departmentId: departmentId,
                     requiredRoleId: requiredRoleId,
@@ -382,8 +491,14 @@
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to update position', 'error');
+                    _reportFailure(result, 'Failed to update position');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Position updated');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Position updated', 'success');
@@ -394,21 +509,18 @@
     }
 
     // =========================================================================
-    // DELETE POSITION MODAL
+    // 6. DELETE POSITION MODAL
     // =========================================================================
 
     function openDeleteHouseholdPositionModal(householdId, positionId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
-        var household = queries.getHousehold(householdId);
-        var position = queries.getHouseholdPosition(positionId);
+        var household = _queries.getHousehold(householdId);
+        var position = _queries.getHouseholdPosition(positionId);
         if (!household || !position) {
             _showToast('Household or position not found', 'error');
             return null;
         }
 
-        var activeAssignments = queries.getAssignmentsForPosition(positionId, true);
+        var activeAssignments = _queries.getAssignmentsForPosition(positionId, true);
         var roleName = position.requiredRoleId
             ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
             : null;
@@ -416,11 +528,13 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                    '<strong>Delete Position: ' + _escapeHtml(position.name) + '</strong>' +
+                    '<strong>Delete Position: ' +
+                        _escapeHtml(position.name) + '</strong>' +
                     '<div style="margin-top:8px;font-size:0.65rem;">' +
                         'This will permanently remove the position from the household.' +
                         (activeAssignments.length > 0
-                            ? ' ' + activeAssignments.length + ' staff member(s) are currently assigned.'
+                            ? ' ' + activeAssignments.length +
+                                ' staff member(s) are currently assigned.'
                             : '') +
                     '</div>' +
                     '<div style="margin-top:8px;font-size:0.6rem;color:var(--warn);">' +
@@ -431,7 +545,8 @@
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;">' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
                         '<span>Position:</span>' +
-                        '<span><strong>' + _escapeHtml(position.name) + '</strong></span>' +
+                        '<span><strong>' +
+                            _escapeHtml(position.name) + '</strong></span>' +
                     '</div>' +
                     (roleName
                         ? '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
@@ -466,16 +581,24 @@
                     ? (root.querySelector('[data-field="removeAssignments"]') || {}).checked !== false
                     : true;
 
-                var result = commands.deletePosition(positionId, {
+                var result = _commands.deletePosition(positionId, {
                     removeAssignments: removeAssignments
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to delete position', 'error');
+                    _reportFailure(result, 'Failed to delete position');
                     return false;
                 }
 
-                _showToast('Position "' + position.name + '" deleted', 'info');
+                var persisted = _persistOrFail('Position deleted');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
+                }
+
+                _showToast(
+                    'Position "' + position.name + '" deleted',
+                    'info');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
@@ -483,25 +606,22 @@
     }
 
     // =========================================================================
-    // ASSIGN STAFF MODAL
+    // 7. ASSIGN STAFF MODAL
     // =========================================================================
 
     function openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
-        var household = queries.getHousehold(householdId);
-        var position = queries.getHouseholdPosition(positionId);
+        var household = _queries.getHousehold(householdId);
+        var position = _queries.getHouseholdPosition(positionId);
         if (!household || !position) {
             _showToast('Household or position not found', 'error');
             return null;
         }
 
         var currentYear = _currentYear();
-        var details = queries.getHouseholdDetails(householdId);
+        var details = _queries.getHouseholdDetails(householdId);
         var members = details ? details.members : [];
 
-        var existingAssignments = queries.getAssignmentsForPosition(positionId, true);
+        var existingAssignments = _queries.getAssignmentsForPosition(positionId, true);
         var assignedIds = {};
         for (var i = 0; i < existingAssignments.length; i++) {
             assignedIds[existingAssignments[i].characterId] = true;
@@ -515,7 +635,8 @@
 
             var hasRole = false;
             var skillLevel = 0;
-            if (position.requiredRoleId && mem.character && Array.isArray(mem.character.professions)) {
+            if (position.requiredRoleId && mem.character &&
+                Array.isArray(mem.character.professions)) {
                 for (var p = 0; p < mem.character.professions.length; p++) {
                     var prof = mem.character.professions[p];
                     if (prof.id === position.requiredRoleId) {
@@ -543,7 +664,7 @@
             : 'None';
 
         var candidatesHtml = _buildCandidateList(candidates, position);
-        var history = queries.getAssignmentsForPosition(positionId, false);
+        var history = _queries.getAssignmentsForPosition(positionId, false);
         var historyHtml = _buildRecentHistory(history, 5);
 
         var content =
@@ -571,7 +692,8 @@
 
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Custom Title</label>' +
-                '<input type="text" data-field="title" value="' + _escapeHtml(position.name) +
+                '<input type="text" data-field="title" value="' +
+                    _escapeHtml(position.name) +
                     '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
             '</div>' +
 
@@ -617,7 +739,8 @@
                     return false;
                 }
 
-                var startYear = _parseIntOrNull((root.querySelector('[data-field="startYear"]') || {}).value);
+                var startYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="startYear"]') || {}).value);
                 if (startYear === null) {
                     _showToast('Start year is required', 'error');
                     return false;
@@ -636,22 +759,33 @@
                     return false;
                 }
 
-                var title = ((root.querySelector('[data-field="title"]') || {}).value || '').trim() || position.name;
-                var notes = (root.querySelector('[data-field="notes"]') || {}).value || '';
-                var addRoleIfMissing = (root.querySelector('[data-field="addRoleIfMissing"]') || {}).checked !== false;
+                var title =
+                    ((root.querySelector('[data-field="title"]') || {}).value || '').trim() ||
+                    position.name;
+                var notes =
+                    (root.querySelector('[data-field="notes"]') || {}).value || '';
+                var addRoleIfMissing =
+                    (root.querySelector('[data-field="addRoleIfMissing"]') || {}).checked !== false;
 
-                var result = commands.assignCharacterToPosition(positionId, characterId, {
-                    startYear: startYear,
-                    endYear: endYear,
-                    title: title,
-                    notes: notes,
-                    addRoleIfMissing: addRoleIfMissing,
-                    defaultSkillLevel: DEFAULT_SKILL_LEVEL
-                });
+                var result = _commands.assignCharacterToPosition(
+                    positionId, characterId, {
+                        startYear: startYear,
+                        endYear: endYear,
+                        title: title,
+                        notes: notes,
+                        addRoleIfMissing: addRoleIfMissing,
+                        defaultSkillLevel: DEFAULT_SKILL_LEVEL
+                    });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to assign staff', 'error');
+                    _reportFailure(result, 'Failed to assign staff');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Staff assigned');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Staff assigned to ' + position.name, 'success');
@@ -686,7 +820,8 @@
                 ? '<span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
                     c.skillLevel + ')</span>'
                 : '';
-            var ageText = (c.age !== null && c.age !== undefined) ? c.age + 'y' : '—';
+            var ageText = (c.age !== null && c.age !== undefined)
+                ? c.age + 'y' : '—';
 
             html += '<div class="staff-candidate" data-character-id="' +
                 _escapeHtml(c.characterId) +
@@ -699,7 +834,8 @@
                         '<strong>' + _escapeHtml(c.characterName) + '</strong>' +
                         ' <span style="font-size:0.5rem;color:var(--dim);">' +
                             ageText +
-                            (c.currentRole ? ' · ' + _escapeHtml(c.currentRole) : '') +
+                            (c.currentRole
+                                ? ' · ' + _escapeHtml(c.currentRole) : '') +
                         '</span>' +
                         ' ' + skillText + ' ' + skillLevelText +
                     '</div>' +
@@ -733,8 +869,10 @@
             html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
                 'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
                 '<span>' + _escapeHtml(h.title || 'Unknown') +
-                    (roleName ? ' <span style="color:var(--accent);">(' +
-                        _escapeHtml(roleName) + ')</span>' : '') +
+                    (roleName
+                        ? ' <span style="color:var(--accent);">(' +
+                            _escapeHtml(roleName) + ')</span>'
+                        : '') +
                 '</span>' +
                 '<span style="color:' + color + ';">' +
                     h.startYear + ' - ' + endDisplay +
@@ -781,14 +919,14 @@
                     return;
                 }
                 window.openCharacterSelector({
-                    title: 'Select Character for ' + (position ? position.name : 'position'),
+                    title: 'Select Character for ' +
+                        (position ? position.name : 'position'),
                     onSelect: function(character) {
                         if (!character) return;
                         _closeTopModal();
                         setTimeout(function() {
                             openAssignStaffToHouseholdPositionModal(
-                                householdId, positionId, onSuccess
-                            );
+                                householdId, positionId, onSuccess);
                         }, 0);
                     }
                 });
@@ -797,37 +935,48 @@
     }
 
     // =========================================================================
-    // REMOVE / END ASSIGNMENT MODAL
+    // 8. REMOVE / END ASSIGNMENT MODAL
     // =========================================================================
 
     function openRemoveHouseholdAssignmentModal(householdId, assignmentId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
+        var household = _queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
+        }
 
-        var household = queries.getHousehold(householdId);
-        if (!household) { _showToast('Household not found', 'error'); return null; }
+        var assignment = _queries.getHouseholdAssignment(assignmentId);
+        if (!assignment) {
+            _showToast('Assignment not found', 'error');
+            return null;
+        }
 
-        var assignment = queries.getHouseholdAssignment(assignmentId);
-        if (!assignment) { _showToast('Assignment not found', 'error'); return null; }
-
-        var position = queries.getHouseholdPosition(assignment.positionId);
+        var position = _queries.getHouseholdPosition(assignment.positionId);
         var roleName = assignment.roleIdAtAssignment
             ? (_getRoleById(assignment.roleIdAtAssignment) || {}).name || 'Unknown'
             : 'None';
 
-        var isAlreadyEnded = assignment.endYear !== null && assignment.endYear !== undefined;
+        var isAlreadyEnded = assignment.endYear !== null &&
+            assignment.endYear !== undefined;
 
         var content;
         if (isAlreadyEnded) {
             content =
                 '<div style="margin-bottom:16px;">' +
                     '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;">' +
-                        '<strong>Character:</strong> ' + _escapeHtml(assignment.title || assignment.positionId) + '<br>' +
-                        (position ? '<strong>Position:</strong> ' + _escapeHtml(position.name) + '<br>' : '') +
-                        '<strong>Started:</strong> ' + assignment.startYear + '<br>' +
+                        '<strong>Character:</strong> ' +
+                            _escapeHtml(assignment.title || assignment.positionId) + '<br>' +
+                        (position
+                            ? '<strong>Position:</strong> ' +
+                                _escapeHtml(position.name) + '<br>'
+                            : '') +
+                        '<strong>Started:</strong> ' +
+                            assignment.startYear + '<br>' +
                         '<strong>Ended:</strong> ' + assignment.endYear +
-                        (assignment.endReason ? '<br><strong>End Reason:</strong> ' +
-                            _escapeHtml(assignment.endReason) : '') +
+                        (assignment.endReason
+                            ? '<br><strong>End Reason:</strong> ' +
+                                _escapeHtml(assignment.endReason)
+                            : '') +
                     '</div>' +
                     '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-bottom:12px;">' +
                         'This assignment has already ended. You can delete it permanently.' +
@@ -838,9 +987,11 @@
             content =
                 '<div style="margin-bottom:16px;">' +
                     '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;">' +
-                        '<strong>Position:</strong> ' + _escapeHtml(assignment.title || 'Unknown') +
-                        (position ? ' (' + _escapeHtml(position.name) + ')' : '') + '<br>' +
-                        '<strong>Role at Assignment:</strong> ' + _escapeHtml(roleName) +
+                        '<strong>Position:</strong> ' +
+                            _escapeHtml(assignment.title || 'Unknown') +
+                        (position ? ' (' + _escapeHtml(position.name) + ')' : '') +
+                        '<br><strong>Role at Assignment:</strong> ' +
+                            _escapeHtml(roleName) +
                         (assignment.skillLevelAtAssignment
                             ? ' (Skill: ' + assignment.skillLevelAtAssignment + ')'
                             : '') + '<br>' +
@@ -877,32 +1028,50 @@
                 var root = _resolveModalRoot();
 
                 if (isAlreadyEnded) {
-                    var delResult = commands.deleteAssignment(assignmentId);
+                    var delResult = _commands.deleteAssignment(assignmentId);
                     if (!delResult.success) {
-                        _showToast(delResult.reason || 'Failed to delete assignment', 'error');
+                        _reportFailure(delResult, 'Failed to delete assignment');
                         return false;
                     }
+
+                    var delPersisted = _persistOrFail('Assignment deleted');
+                    if (!delPersisted.ok) {
+                        if (typeof onSuccess === 'function') onSuccess(delResult.data);
+                        return true;
+                    }
+
                     _showToast('Assignment deleted', 'info');
                     if (typeof onSuccess === 'function') onSuccess(delResult.data);
                     return true;
                 }
 
-                var endYear = _parseIntOrNull((root.querySelector('[data-field="endYear"]') || {}).value);
+                var endYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="endYear"]') || {}).value);
                 if (endYear === null || endYear < assignment.startYear) {
                     _showToast('End year must be at or after start year', 'error');
                     return false;
                 }
 
-                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim() ||
+                var reason =
+                    ((root.querySelector('[data-field="reason"]') || {}).value || '').trim() ||
                     'Term ended';
 
-                var endResult = commands.endAssignment(assignmentId, endYear, reason);
+                var endResult = _commands.endAssignment(
+                    assignmentId, endYear, reason);
                 if (!endResult.success) {
-                    _showToast(endResult.reason || 'Failed to end assignment', 'error');
+                    _reportFailure(endResult, 'Failed to end assignment');
                     return false;
                 }
 
-                _showToast('Assignment ended in ' + endYear + ' (' + reason + ')', 'success');
+                var endPersisted = _persistOrFail('Assignment ended');
+                if (!endPersisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(endResult.data);
+                    return true;
+                }
+
+                _showToast(
+                    'Assignment ended in ' + endYear + ' (' + reason + ')',
+                    'success');
                 if (typeof onSuccess === 'function') onSuccess(endResult.data);
                 return true;
             }
@@ -910,18 +1079,22 @@
     }
 
     // =========================================================================
-    // ASSIGNMENT HISTORY MODAL
+    // 9. ASSIGNMENT HISTORY MODAL (pure projection)
     // =========================================================================
 
     function openHouseholdAssignmentHistoryModal(householdId, positionId, characterId) {
-        var queries = _queries();
-
         var history;
         try {
-            if (positionId) history = queries.getAssignmentsForPosition(positionId, false);
-            else if (characterId) history = queries.getAssignmentsForCharacter(characterId, false);
-            else if (householdId) history = queries.getAssignmentsForHousehold(householdId, false);
-            else { _showToast('No filter provided', 'error'); return null; }
+            if (positionId) {
+                history = _queries.getAssignmentsForPosition(positionId, false);
+            } else if (characterId) {
+                history = _queries.getAssignmentsForCharacter(characterId, false);
+            } else if (householdId) {
+                history = _queries.getAssignmentsForHousehold(householdId, false);
+            } else {
+                _showToast('No filter provided', 'error');
+                return null;
+            }
         } catch (e) {
             _showToast('Failed to load assignment history', 'error');
             return null;
@@ -934,11 +1107,11 @@
 
         var title = 'Household Assignment History';
         if (householdId) {
-            var household = queries.getHousehold(householdId);
+            var household = _queries.getHousehold(householdId);
             if (household) title += ': ' + household.name;
         }
         if (positionId) {
-            var pos = queries.getHouseholdPosition(positionId);
+            var pos = _queries.getHouseholdPosition(positionId);
             if (pos) title += ' - ' + pos.name;
         }
 
@@ -995,7 +1168,8 @@
 
             html += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-light);">' +
                 '<div>' +
-                    '<span style="font-size:0.7rem;">' + _escapeHtml(h.title || 'Unknown') + '</span>' +
+                    '<span style="font-size:0.7rem;">' +
+                        _escapeHtml(h.title || 'Unknown') + '</span>' +
                     (roleName
                         ? ' <span style="font-size:0.45rem;color:var(--accent);">(Role: ' +
                             _escapeHtml(roleName) + ')</span>'
@@ -1018,23 +1192,20 @@
     }
 
     // =========================================================================
-    // BULK ASSIGN MODAL
+    // 10. BULK ASSIGN MODAL
     // =========================================================================
 
     function openBulkHouseholdAssignModal(householdId, positionId, onSuccess) {
-        var queries = _queries();
-        var commands = _commands();
-
-        var household = queries.getHousehold(householdId);
-        var position = queries.getHouseholdPosition(positionId);
+        var household = _queries.getHousehold(householdId);
+        var position = _queries.getHouseholdPosition(positionId);
         if (!household || !position) {
             _showToast('Household or position not found', 'error');
             return null;
         }
 
-        var details = queries.getHouseholdDetails(householdId);
+        var details = _queries.getHouseholdDetails(householdId);
         var members = details ? details.members : [];
-        var existing = queries.getAssignmentsForPosition(positionId, true);
+        var existing = _queries.getAssignmentsForPosition(positionId, true);
 
         var assignedIds = {};
         for (var i = 0; i < existing.length; i++) {
@@ -1049,7 +1220,8 @@
 
             var hasRole = false;
             var skillLevel = 0;
-            if (position.requiredRoleId && mem.character && Array.isArray(mem.character.professions)) {
+            if (position.requiredRoleId && mem.character &&
+                Array.isArray(mem.character.professions)) {
                 for (var p = 0; p < mem.character.professions.length; p++) {
                     if (mem.character.professions[p].id === position.requiredRoleId) {
                         hasRole = true;
@@ -1070,7 +1242,9 @@
 
         if (candidates.length === 0) {
             _showToast('No available staff to assign', 'info');
-            if (typeof onSuccess === 'function') onSuccess({ succeeded: [], failed: [] });
+            if (typeof onSuccess === 'function') {
+                onSuccess({ succeeded: [], failed: [] });
+            }
             return null;
         }
 
@@ -1155,7 +1329,8 @@
                     return false;
                 }
 
-                var startYear = _parseIntOrNull((root.querySelector('[data-field="startYear"]') || {}).value);
+                var startYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="startYear"]') || {}).value);
                 if (startYear === null) {
                     _showToast('Start year is required', 'error');
                     return false;
@@ -1171,21 +1346,29 @@
                     });
                 }
 
-                var result = commands.bulkAssign(assignments, {
+                var result = _commands.bulkAssign(assignments, {
                     addRoleIfMissing: true,
                     defaultSkillLevel: DEFAULT_SKILL_LEVEL
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Bulk assignment failed', 'error');
+                    _reportFailure(result, 'Bulk assignment failed');
                     return false;
                 }
+
+                // bulkAssign commits once internally. Persist once here.
+                var persisted = _persistOrFail('Bulk assignment saved');
 
                 var succeeded = result.data.succeeded.length;
                 var failed = result.data.failed.length;
                 var msg = 'Assigned ' + succeeded + ' staff';
                 if (failed > 0) msg += ', ' + failed + ' failed';
-                _showToast(msg, failed > 0 ? 'warning' : 'success');
+                if (!persisted.ok) {
+                    _showToast(msg + ' (not saved: ' + persisted.reason + ')',
+                        'warning');
+                } else {
+                    _showToast(msg, failed > 0 ? 'warning' : 'success');
+                }
 
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
@@ -1262,17 +1445,18 @@
     }
 
     // =========================================================================
-    // VIEW POSITIONS MODAL
+    // 11. VIEW POSITIONS MODAL (pure projection)
     // =========================================================================
 
     function openViewHouseholdPositionsModal(householdId, onSelect) {
-        var queries = _queries();
+        var household = _queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
+        }
 
-        var household = queries.getHousehold(householdId);
-        if (!household) { _showToast('Household not found', 'error'); return null; }
-
-        var positions = queries.getHouseholdPositions({ householdId: householdId });
-        var assignments = queries.getAssignmentsForHousehold(householdId, true);
+        var positions = _queries.getHouseholdPositions({ householdId: householdId });
+        var assignments = _queries.getAssignmentsForHousehold(householdId, true);
 
         var assignmentMap = {};
         for (var i = 0; i < assignments.length; i++) {
@@ -1328,7 +1512,8 @@
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<strong>Household:</strong> ' + _escapeHtml(household.name) +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
-                    positions.length + ' positions · ' + assignments.length + ' active assignments' +
+                    positions.length + ' positions · ' +
+                    assignments.length + ' active assignments' +
                 '</div>' +
             '</div>' +
             rows +
@@ -1369,18 +1554,18 @@
     }
 
     // =========================================================================
-    // VIEW STAFF ASSIGNMENTS MODAL
+    // 12. VIEW STAFF ASSIGNMENTS MODAL
     // =========================================================================
 
     function openViewStaffAssignmentsModal(householdId) {
-        var queries = _queries();
-        var commands = _commands();
+        var household = _queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
+        }
 
-        var household = queries.getHousehold(householdId);
-        if (!household) { _showToast('Household not found', 'error'); return null; }
-
-        var assignments = queries.getAssignmentsForHousehold(householdId, true);
-        var positions = queries.getHouseholdPositions({ householdId: householdId });
+        var assignments = _queries.getAssignmentsForHousehold(householdId, true);
+        var positions = _queries.getHouseholdPositions({ householdId: householdId });
         var positionMap = {};
         for (var i = 0; i < positions.length; i++) {
             positionMap[positions[i].id] = positions[i];
@@ -1424,7 +1609,8 @@
 
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<strong>Staff Assignments: ' + _escapeHtml(household.name) + '</strong>' +
+                '<strong>Staff Assignments: ' +
+                    _escapeHtml(household.name) + '</strong>' +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                     assignments.length + ' active staff members' +
                 '</div>' +
@@ -1455,13 +1641,20 @@
                             'End this staff assignment?',
                             'End Assignment',
                             function() {
-                                var result = commands.endAssignment(
-                                    assignmentId, currentYear, 'Ended by user'
-                                );
+                                var result = _commands.endAssignment(
+                                    assignmentId, currentYear, 'Ended by user');
                                 if (!result.success) {
-                                    _showToast(result.reason || 'Failed to end assignment', 'error');
+                                    _reportFailure(result,
+                                        'Failed to end assignment');
                                     return;
                                 }
+
+                                var persisted = _persistOrFail('Assignment ended');
+                                if (!persisted.ok) {
+                                    // Leave modal open so user sees the error toast
+                                    return;
+                                }
+
                                 _showToast('Assignment ended', 'success');
                                 _closeTopModal();
                                 setTimeout(function() {
@@ -1479,17 +1672,18 @@
     }
 
     // =========================================================================
-    // COMBINED STAFF MANAGEMENT MODAL
+    // 13. COMBINED STAFF MANAGEMENT MODAL
     // =========================================================================
 
     function openStaffManagementModal(householdId, onSuccess) {
-        var queries = _queries();
+        var household = _queries.getHousehold(householdId);
+        if (!household) {
+            _showToast('Household not found', 'error');
+            return null;
+        }
 
-        var household = queries.getHousehold(householdId);
-        if (!household) { _showToast('Household not found', 'error'); return null; }
-
-        var positions = queries.getHouseholdPositions({ householdId: householdId });
-        var assignments = queries.getAssignmentsForHousehold(householdId, true);
+        var positions = _queries.getHouseholdPositions({ householdId: householdId });
+        var assignments = _queries.getAssignmentsForHousehold(householdId, true);
 
         var assignmentMap = {};
         for (var i = 0; i < assignments.length; i++) {
@@ -1547,9 +1741,11 @@
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
-                    '<div><strong>Staff Management: ' + _escapeHtml(household.name) + '</strong></div>' +
+                    '<div><strong>Staff Management: ' +
+                        _escapeHtml(household.name) + '</strong></div>' +
                     '<div style="font-size:0.6rem;color:var(--dim);">' +
-                        positions.length + ' positions · ' + assignments.length + ' active' +
+                        positions.length + ' positions · ' +
+                        assignments.length + ' active' +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -1612,7 +1808,8 @@
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
                     _closeTopModal();
-                    openAssignStaffToHouseholdPositionModal(householdId, posId, _reopen);
+                    openAssignStaffToHouseholdPositionModal(
+                        householdId, posId, _reopen);
                 };
             })(assignBtns[i]);
         }
@@ -1623,7 +1820,8 @@
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
                     _closeTopModal();
-                    openEditHouseholdPositionModal(householdId, posId, _reopen);
+                    openEditHouseholdPositionModal(
+                        householdId, posId, _reopen);
                 };
             })(editBtns[j]);
         }
@@ -1634,14 +1832,15 @@
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
                     _closeTopModal();
-                    openDeleteHouseholdPositionModal(householdId, posId, _reopen);
+                    openDeleteHouseholdPositionModal(
+                        householdId, posId, _reopen);
                 };
             })(deleteBtns[k]);
         }
     }
 
     // =========================================================================
-    // EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.openCreateHouseholdPositionModal = openCreateHouseholdPositionModal;
