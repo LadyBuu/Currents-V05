@@ -2,77 +2,42 @@
  * =============================================================================
  * STILL WATERS - RESIDENCE MODALS (modals-residence.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/modals-residence.js
- * 
+ *
  * PURPOSE
  * -------
  * Modal entry points for residence CRUD, units, vacancy, history,
  * rehabilitation, and demolition.
- * 
+ *
  * This file consolidates the former:
  *   - modals-residence.js
  *   - modals-residence-vacancy.js
  *   - modals-residence-history.js
- * 
+ *
  * Both of those become thin re-export shims.
- * 
- * MODALS PROVIDED
- * ---------------
- *   Create/Edit/Delete:
- *     - openNewResidenceModal(locationId, locationName, onSuccess)
- *     - openEditResidenceModal(residenceId, onSuccess)
- *     - openDeleteResidenceModal(residenceId, onSuccess)
- *     - openRenameResidenceModal(residenceId, onSuccess)
- * 
- *   Details:
- *     - openResidenceDetailsModal(residenceId, onRefresh)
- * 
- *   Assignment:
- *     - openAssignResidenceModal(residenceId, onSuccess)
- *     - openVacateResidenceModal(residenceId, onSuccess)
- *     - openEndResidenceAssociationModal(residenceId, onSuccess)
- * 
- *   Units:
- *     - openAddUnitModal(residenceId, onSuccess)
- *     - openRemoveUnitModal(residenceId, unitNumber, onSuccess)
- *     - openAssignUnitModal(residenceId, unitNumber, onSuccess)
- *     - openMarkUnitVacantModal(residenceId, unitNumber, onSuccess)
- *     - openUnitDetailsModal(residenceId, unitNumber)
- * 
- *   Rehabilitation & demolition:
- *     - openRehabilitateResidenceModal(residenceId, onSuccess)
- *     - openDemolishResidenceModal(residenceId, onSuccess)
- * 
- *   History:
- *     - openResidenceHistoryModal(residenceId)
- *     - openResidenceNameHistoryModal(residenceId)
- *     - openResidenceTimelineModal(residenceId)
- *     - openResidenceAssociationHistoryModal(residenceId)
- * 
- *   Heir finder (placeholder):
- *     - openResidenceHeirFinderModal(residenceId)
- * 
- *   Selector:
- *     - openResidenceSelector(options)
- * 
+ *
  * OWNERSHIP
  * ---------
- *   Reads:  ResidenceSystem (getResidence, getUnits, getUnit, ...)
- *           HouseholdQueries (getHousehold, getHouseholdDetails)
- *   Writes: ResidenceSystem (all mutations)
+ *   Reads:  ResidenceSystem (all snapshot queries)
+ *           HouseholdQueries (household lookup for assignment)
+ *   Writes: ResidenceSystem (all mutations) + one persist() per batch
  *   UI:     modals-core, selectors, icons
- * 
- * WHAT THIS FILE DOES NOT DO
- * --------------------------
- *   - No direct household record mutation
- *   - No residence record mutation
- *   - No emoji icons
- *   - No setTimeout(100)
- *   - No fabricated 1250
- *   - No silent failure swallowing
- *   - No _processingResidenceModal guard
- * 
+ *
+ * CONVERGED PATTERN NOTES
+ * -----------------------
+ *   - Every mutation ends with ResidenceSystem.persist().
+ *   - Cross-domain effect: assignHouseholdToUnit / markUnitVacant /
+ *     markResidenceVacant / demolishResidence all call into
+ *     HouseholdCommands, which marks household state dirty. One
+ *     ResidenceSystem.persist() flushes both residences and households
+ *     in a single saveMasterData() call.
+ *   - No direct household record mutation.
+ *   - No direct residence record mutation.
+ *   - No _processingResidenceModal guard.
+ *   - Household-owned fields (name, owner*, renter*, units, etc.) are
+ *     rejected by updateResidence; the modal calls the correct command.
+ *
  * =============================================================================
  */
 
@@ -80,20 +45,85 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        if (typeof window._openModal === 'function') return window._openModal(options);
-        throw new Error('modals-residence: openModal is required');
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('modals-residence: ' + name + ' is required');
+        }
+        return fn;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') return window.closeTopModal();
-        if (typeof window._closeTopModal === 'function') return window._closeTopModal();
-        throw new Error('modals-residence: closeTopModal is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('modals-residence: ' + name + ' is required');
+        }
+        return obj;
     }
+
+    var _residence = _requireObject('ResidenceSystem', window.ResidenceSystem);
+    _requireFunction('ResidenceSystem.persist', _residence.persist);
+    _requireFunction('ResidenceSystem.createResidence', _residence.createResidence);
+    _requireFunction('ResidenceSystem.updateResidence', _residence.updateResidence);
+    _requireFunction('ResidenceSystem.deleteResidence', _residence.deleteResidence);
+    _requireFunction('ResidenceSystem.updateResidenceName',
+        _residence.updateResidenceName);
+    _requireFunction('ResidenceSystem.addUnit', _residence.addUnit);
+    _requireFunction('ResidenceSystem.removeUnit', _residence.removeUnit);
+    _requireFunction('ResidenceSystem.assignHouseholdToUnit',
+        _residence.assignHouseholdToUnit);
+    _requireFunction('ResidenceSystem.markUnitVacant', _residence.markUnitVacant);
+    _requireFunction('ResidenceSystem.demolishUnit', _residence.demolishUnit);
+    _requireFunction('ResidenceSystem.markResidenceVacant',
+        _residence.markResidenceVacant);
+    _requireFunction('ResidenceSystem.assignHouseholdToVacantResidence',
+        _residence.assignHouseholdToVacantResidence);
+    _requireFunction('ResidenceSystem.rehabilitateResidence',
+        _residence.rehabilitateResidence);
+    _requireFunction('ResidenceSystem.demolishResidence',
+        _residence.demolishResidence);
+    _requireFunction('ResidenceSystem.getResidence', _residence.getResidence);
+    _requireFunction('ResidenceSystem.getUnits', _residence.getUnits);
+    _requireFunction('ResidenceSystem.getUnit', _residence.getUnit);
+    _requireFunction('ResidenceSystem.getUnitStats', _residence.getUnitStats);
+    _requireFunction('ResidenceSystem.getResidenceRecommendations',
+        _residence.getResidenceRecommendations);
+    _requireFunction('ResidenceSystem.getResidenceAssociationHistory',
+        _residence.getResidenceAssociationHistory);
+    _requireFunction('ResidenceSystem.getResidenceNameHistory',
+        _residence.getResidenceNameHistory);
+    _requireFunction('ResidenceSystem.getResidenceTimeline',
+        _residence.getResidenceTimeline);
+    _requireFunction('ResidenceSystem.getResidenceTypes',
+        _residence.getResidenceTypes);
+    _requireFunction('ResidenceSystem.getResidenceConditions',
+        _residence.getResidenceConditions);
+    _requireFunction('ResidenceSystem.calculateRepairCost',
+        _residence.calculateRepairCost);
+    _requireFunction('ResidenceSystem.getResidencesByHousehold',
+        _residence.getResidencesByHousehold);
+
+    // Household queries — used for household selector chain
+    var _householdQueries = _requireObject('HouseholdQueries',
+        window.HouseholdQueries);
+    _requireFunction('HouseholdQueries.getHousehold',
+        _householdQueries.getHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdDetails',
+        _householdQueries.getHouseholdDetails);
+
+    var _openModal = _requireFunction('openModal',
+        typeof window.openModal === 'function'
+            ? window.openModal
+            : window._openModal);
+    var _closeTopModal = _requireFunction('closeTopModal',
+        typeof window.closeTopModal === 'function'
+            ? window.closeTopModal
+            : window._closeTopModal);
+
+    // =========================================================================
+    // 2. HELPERS
+    // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
         if (typeof window.confirmDialog === 'function') {
@@ -122,27 +152,20 @@
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') return window._showToast(message, type);
-        if (typeof window.showToast === 'function') return window.showToast(message, type);
+        if (typeof window._showToast === 'function') {
+            return window._showToast(message, type);
+        }
+        if (typeof window.showToast === 'function') {
+            return window.showToast(message, type);
+        }
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
+        if (typeof window._getIcon === 'function') {
+            return window._getIcon(name) || '';
+        }
         if (window.Icons && window.Icons[name]) return window.Icons[name];
         return '';
-    }
-
-    function _residence() {
-        if (typeof window.ResidenceSystem === 'undefined') {
-            throw new Error('modals-residence: ResidenceSystem is required');
-        }
-        return window.ResidenceSystem;
-    }
-
-    function _householdQueries() {
-        return typeof window.HouseholdQueries !== 'undefined'
-            ? window.HouseholdQueries
-            : null;
     }
 
     function _currentYear() {
@@ -201,13 +224,30 @@
         return Math.floor(n);
     }
 
+    function _persistOrFail(messagePrefix) {
+        var result = _residence.persist();
+        if (!result || result.success === false) {
+            var reason = (result && result.reason) || 'Unknown persist error';
+            _showToast(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + reason,
+                'error');
+            return { ok: false, reason: reason };
+        }
+        return { ok: true };
+    }
+
+    function _reportFailure(result, fallbackPrefix) {
+        var reason = (result && result.reason) || 'Unknown error';
+        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
+            'error');
+    }
+
     // =========================================================================
-    // 2. CREATE RESIDENCE MODAL
+    // 3. CREATE RESIDENCE MODAL
     // =========================================================================
 
     function openNewResidenceModal(locationId, locationName, onSuccess) {
-        var res = _residence();
-
         var resolvedLocationId = null;
         var resolvedLocationName = 'Unknown';
 
@@ -226,7 +266,7 @@
 
         var currentYear = _currentYear();
 
-        var types = res.getResidenceTypes();
+        var types = _residence.getResidenceTypes();
         var typeOptions = '';
         var typeKeys = Object.keys(types);
         for (var i = 0; i < typeKeys.length; i++) {
@@ -236,7 +276,7 @@
                 (t.isMultiUnit ? 'Multi-unit' : 'Single') + ')</option>';
         }
 
-        var conditions = res.getResidenceConditions();
+        var conditions = _residence.getResidenceConditions();
         var conditionOptions = '';
         for (var c = 0; c < conditions.length; c++) {
             conditionOptions += '<option value="' + _escapeHtml(conditions[c].id) + '"' +
@@ -244,7 +284,8 @@
                 _escapeHtml(conditions[c].name) + '</option>';
         }
 
-        var locationOptions = _buildLocationDropdown(resolvedLocationId, '— No location —');
+        var locationOptions = _buildLocationDropdown(
+            resolvedLocationId, '— No location —');
 
         var content =
             '<div style="margin-bottom:16px;">' +
@@ -298,10 +339,16 @@
                 if (!root) return false;
 
                 var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) { _showToast('Please enter a residence name', 'error'); return false; }
+                if (!name) {
+                    _showToast('Please enter a residence name', 'error');
+                    return false;
+                }
 
                 var typeId = (root.querySelector('[data-field="typeId"]') || {}).value;
-                if (!typeId) { _showToast('Please select a residence type', 'error'); return false; }
+                if (!typeId) {
+                    _showToast('Please select a residence type', 'error');
+                    return false;
+                }
 
                 var finalLocationId = (root.querySelector('[data-field="locationId"]') || {}).value ||
                     resolvedLocationId || null;
@@ -312,47 +359,56 @@
                 }
 
                 var condition = (root.querySelector('[data-field="condition"]') || {}).value || 'good';
-                var builtYear = _parseIntOrNull((root.querySelector('[data-field="builtYear"]') || {}).value);
+                var builtYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="builtYear"]') || {}).value);
                 if (builtYear === null || builtYear < 1) {
                     _showToast('Please enter a valid built year', 'error');
                     return false;
                 }
                 var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
-                var result = res.createResidence(name, finalLocationId, typeId, {
+                var result = _residence.createResidence(name, finalLocationId, typeId, {
                     condition: condition,
                     builtYear: builtYear,
                     notes: notes || null
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to create residence', 'error');
+                    _reportFailure(result, 'Failed to create residence');
                     return false;
                 }
 
+                var persisted = _persistOrFail('Residence created');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(result.data.residenceId);
+                    }
+                    return true;
+                }
+
                 _showToast('Residence "' + name + '" created', 'success');
-                if (typeof onSuccess === 'function') onSuccess(result.data.residenceId);
+                if (typeof onSuccess === 'function') {
+                    onSuccess(result.data.residenceId);
+                }
                 return true;
             }
         });
     }
 
     // =========================================================================
-    // 3. EDIT RESIDENCE MODAL
+    // 4. EDIT RESIDENCE MODAL
     // =========================================================================
 
     function openEditResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
         }
 
         var currentYear = _currentYear();
-        var types = res.getResidenceTypes();
-        var conditions = res.getResidenceConditions();
+        var types = _residence.getResidenceTypes();
+        var conditions = _residence.getResidenceConditions();
 
         var typeOptions = '';
         var typeKeys = Object.keys(types);
@@ -370,7 +426,8 @@
                 _escapeHtml(conditions[c].name) + '</option>';
         }
 
-        var locationOptions = _buildLocationDropdown(residence.locationId, '— No location —');
+        var locationOptions = _buildLocationDropdown(
+            residence.locationId, '— No location —');
 
         var content =
             '<div style="margin-bottom:16px;">' +
@@ -446,12 +503,16 @@
                 if (!root) return false;
 
                 var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) { _showToast('Please enter a residence name', 'error'); return false; }
+                if (!name) {
+                    _showToast('Please enter a residence name', 'error');
+                    return false;
+                }
 
                 var newTypeId = (root.querySelector('[data-field="typeId"]') || {}).value;
                 var newLocationId = (root.querySelector('[data-field="locationId"]') || {}).value || null;
                 var newCondition = (root.querySelector('[data-field="condition"]') || {}).value;
-                var newBuiltYear = _parseIntOrNull((root.querySelector('[data-field="builtYear"]') || {}).value);
+                var newBuiltYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="builtYear"]') || {}).value);
                 if (newBuiltYear === null || newBuiltYear < 1) {
                     _showToast('Please enter a valid built year', 'error');
                     return false;
@@ -459,19 +520,21 @@
                 var newNotes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
                 var recordHistory = (root.querySelector('[data-field="recordNameHistory"]') || {}).checked !== false;
-                var renameYear = _parseIntOrNull((root.querySelector('[data-field="renameYear"]') || {}).value);
+                var renameYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="renameYear"]') || {}).value);
                 var renameReason = ((root.querySelector('[data-field="renameReason"]') || {}).value || '').trim();
 
                 // Handle rename first (separate command)
                 if (name !== residence.name) {
-                    var renameResult = res.updateResidenceName(residenceId, name, {
-                        year: renameYear || currentYear,
-                        reason: renameReason || 'Edited',
-                        changedBy: 'User',
-                        addToHistory: recordHistory
-                    });
+                    var renameResult = _residence.updateResidenceName(
+                        residenceId, name, {
+                            year: renameYear || currentYear,
+                            reason: renameReason || 'Edited',
+                            changedBy: 'User',
+                            addToHistory: recordHistory
+                        });
                     if (!renameResult.success) {
-                        _showToast(renameResult.reason || 'Failed to rename residence', 'error');
+                        _reportFailure(renameResult, 'Failed to rename residence');
                         return false;
                     }
                 }
@@ -485,10 +548,21 @@
                     notes: newNotes || null
                 };
 
-                var result = res.updateResidence(residenceId, updates);
-                if (!result.success) {
-                    _showToast(result.reason || 'Failed to update residence', 'error');
+                var updateResult = _residence.updateResidence(residenceId, updates);
+                if (!updateResult.success) {
+                    // Name may already have been updated. Report the failure
+                    // without reverting — the caller can inspect.
+                    _reportFailure(updateResult, 'Failed to update residence');
+
+                    // Still persist what we have
+                    _persistOrFail('Partial residence update');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Residence updated');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess();
+                    return true;
                 }
 
                 _showToast('Residence updated', 'success');
@@ -499,44 +573,49 @@
     }
 
     // =========================================================================
-    // 4. DELETE RESIDENCE MODAL
+    // 5. DELETE RESIDENCE MODAL
     // =========================================================================
 
     function openDeleteResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
         }
 
-        var unitStats = res.getUnitStats(residenceId);
+        var unitStats = _residence.getUnitStats(residenceId);
 
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(244,67,54,0.1);border-radius:8px;padding:16px;border-left:3px solid #f44336;margin-bottom:16px;">' +
                     '<div style="font-size:0.9rem;color:#f44336;">Warning: This action cannot be undone</div>' +
                     '<div style="font-size:0.65rem;color:var(--dim);margin-top:4px;">' +
-                        'Deleting "' + _escapeHtml(residence.name) + '" will remove it from the game world.' +
+                        'Deleting "' + _escapeHtml(residence.name) +
+                        '" will remove it from the game world.' +
                         (unitStats.occupied > 0
-                            ? ' ' + unitStats.occupied + ' unit(s) are currently occupied.' : '') +
+                            ? ' ' + unitStats.occupied +
+                                ' unit(s) are currently occupied.' : '') +
                         (unitStats.total > 0
-                            ? ' ' + unitStats.total + ' total unit(s) will be removed.' : '') +
+                            ? ' ' + unitStats.total +
+                                ' total unit(s) will be removed.' : '') +
                     '</div>' +
                 '</div>' +
                 '<div style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:12px;">' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
                         '<span>Name:</span>' +
-                        '<span style="font-weight:bold;">' + _escapeHtml(residence.name) + '</span>' +
+                        '<span style="font-weight:bold;">' +
+                            _escapeHtml(residence.name) + '</span>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-top:4px;">' +
                         '<span>Type:</span>' +
-                        '<span>' + _escapeHtml(residence.typeName || residence.typeId || 'Unknown') + '</span>' +
+                        '<span>' +
+                            _escapeHtml(residence.typeName || residence.typeId || 'Unknown') +
+                        '</span>' +
                     '</div>' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;margin-top:4px;">' +
                         '<span>Units:</span>' +
-                        '<span>' + unitStats.total + ' (' + unitStats.occupied + ' occupied)</span>' +
+                        '<span>' + unitStats.total + ' (' +
+                            unitStats.occupied + ' occupied)</span>' +
                     '</div>' +
                 '</div>' +
                 '<div style="font-size:0.6rem;color:var(--warn);">' +
@@ -544,7 +623,8 @@
                 '</div>' +
                 '<div style="margin-top:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' +
-                        'Type "<strong>' + _escapeHtml(residence.name) + '</strong>" to confirm' +
+                        'Type "<strong>' + _escapeHtml(residence.name) +
+                        '</strong>" to confirm' +
                     '</label>' +
                     '<input type="text" data-field="confirmName" placeholder="Enter residence name" ' +
                         'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
@@ -561,17 +641,24 @@
                 var root = _resolveModalRoot();
                 if (!root) return false;
 
-                var confirmName = ((root.querySelector('[data-field="confirmName"]') || {}).value || '').trim();
+                var confirmName =
+                    ((root.querySelector('[data-field="confirmName"]') || {}).value || '').trim();
                 if (confirmName !== residence.name) {
                     _showToast('Residence name does not match', 'error');
                     return false;
                 }
 
                 var force = unitStats.occupied === 0;
-                var result = res.deleteResidence(residenceId, { force: force });
+                var result = _residence.deleteResidence(residenceId, { force: force });
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to delete residence', 'error');
+                    _reportFailure(result, 'Failed to delete residence');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Residence deleted');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess();
+                    return true;
                 }
 
                 _showToast('Residence "' + residence.name + '" deleted', 'info');
@@ -582,20 +669,18 @@
     }
 
     // =========================================================================
-    // 5. RENAME RESIDENCE MODAL
+    // 6. RENAME RESIDENCE MODAL
     // =========================================================================
 
     function openRenameResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
         }
 
         var currentYear = _currentYear();
-        var nameHistory = res.getResidenceNameHistory(residenceId);
+        var nameHistory = _residence.getResidenceNameHistory(residenceId);
 
         var historyHtml = '';
         if (nameHistory.length > 0) {
@@ -628,7 +713,8 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
-                    'Current name: <strong>' + _escapeHtml(residence.name) + '</strong>' +
+                    'Current name: <strong>' +
+                    _escapeHtml(residence.name) + '</strong>' +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">New Name *</label>' +
@@ -670,7 +756,10 @@
                 if (!root) return false;
 
                 var newName = ((root.querySelector('[data-field="newName"]') || {}).value || '').trim();
-                if (!newName) { _showToast('Please enter a residence name', 'error'); return false; }
+                if (!newName) {
+                    _showToast('Please enter a residence name', 'error');
+                    return false;
+                }
 
                 if (newName === residence.name) {
                     _showToast('Name is the same', 'info');
@@ -678,16 +767,18 @@
                     return true;
                 }
 
-                var year = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                var year = _parseIntOrNull(
+                    (root.querySelector('[data-field="year"]') || {}).value);
                 if (year === null || year < 1) {
                     _showToast('Please enter a valid year', 'error');
                     return false;
                 }
 
                 var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
-                var addToHistory = (root.querySelector('[data-field="recordHistory"]') || {}).checked !== false;
+                var addToHistory =
+                    (root.querySelector('[data-field="recordHistory"]') || {}).checked !== false;
 
-                var result = res.updateResidenceName(residenceId, newName, {
+                var result = _residence.updateResidenceName(residenceId, newName, {
                     year: year,
                     reason: reason || 'Renamed',
                     changedBy: 'User',
@@ -695,8 +786,14 @@
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to rename residence', 'error');
+                    _reportFailure(result, 'Failed to rename residence');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Residence renamed');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Residence renamed to "' + newName + '"', 'success');
@@ -707,22 +804,20 @@
     }
 
     // =========================================================================
-    // 6. RESIDENCE DETAILS MODAL
+    // 7. RESIDENCE DETAILS MODAL
     // =========================================================================
 
     function openResidenceDetailsModal(residenceId, onRefresh) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
         }
 
-        var unitStats = res.getUnitStats(residenceId);
-        var units = res.getUnits(residenceId);
-        var recommendations = res.getResidenceRecommendations(residenceId);
-        var associationHistory = res.getResidenceAssociationHistory(residenceId);
+        var unitStats = _residence.getUnitStats(residenceId);
+        var units = _residence.getUnits(residenceId);
+        var recommendations = _residence.getResidenceRecommendations(residenceId);
+        var associationHistory = _residence.getResidenceAssociationHistory(residenceId);
 
         var content = _buildDetailsContent(residence, unitStats, units,
             recommendations, associationHistory, residenceId);
@@ -754,7 +849,6 @@
 
         var html = '<div style="margin-bottom:16px;">';
 
-        // Header
         html += '<div style="background:var(--bg2);border-radius:8px;padding:12px;margin-bottom:12px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
         html += '<div>';
@@ -777,14 +871,12 @@
         }
         html += '</div>';
 
-        // Stats grid
         html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;font-size:0.6rem;">';
         html += _detailCell('Value', (residence.estimatedValue || 0) + ' gold');
         html += _detailCell('Built', residence.builtYear || 'Unknown');
         html += _detailCell('Condition', residence.condition || 'unknown');
         html += '</div>';
 
-        // Units
         if (residence.isMultiUnit && units.length > 0) {
             html += _buildUnitsSection(residenceId, units, unitStats);
         } else if (residence.isMultiUnit) {
@@ -797,17 +889,14 @@
             '</div>';
         }
 
-        // Association history
         if (associationHistory.length > 0) {
             html += _buildAssociationSection(associationHistory);
         }
 
-        // Recommendations
         if (recommendations && recommendations.length > 0 && !isDemolished) {
             html += _buildRecommendationsSection(recommendations);
         }
 
-        // Actions
         html += _buildActionButtons(residence, isVacant, isDemolished);
 
         html += '</div>';
@@ -816,17 +905,20 @@
 
     function _detailCell(label, value) {
         return '<div style="background:var(--bg3);padding:8px;border-radius:6px;text-align:center;">' +
-            '<div style="color:var(--dim);font-size:0.55rem;">' + _escapeHtml(label) + '</div>' +
-            '<div style="font-size:0.75rem;">' + _escapeHtml(String(value)) + '</div>' +
+            '<div style="color:var(--dim);font-size:0.55rem;">' +
+                _escapeHtml(label) + '</div>' +
+            '<div style="font-size:0.75rem;">' +
+                _escapeHtml(String(value)) + '</div>' +
         '</div>';
     }
 
     function _buildUnitsSection(residenceId, units, unitStats) {
         var html = '<div style="background:var(--bg3);padding:10px;border-radius:8px;margin-bottom:12px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
-        html += '<div style="font-size:0.6rem;color:var(--accent);">Units (' + units.length + ')</div>';
-        html += '<span style="font-size:0.5rem;color:var(--dim);">' + unitStats.occupied +
-            ' occupied · ' + unitStats.vacant + ' vacant' +
+        html += '<div style="font-size:0.6rem;color:var(--accent);">Units (' +
+            units.length + ')</div>';
+        html += '<span style="font-size:0.5rem;color:var(--dim);">' +
+            unitStats.occupied + ' occupied · ' + unitStats.vacant + ' vacant' +
             (unitStats.demolished > 0 ? ' · ' + unitStats.demolished + ' demolished' : '') +
         '</span></div>';
         html += '<div style="max-height:200px;overflow-y:auto;">';
@@ -853,8 +945,10 @@
                 'border-bottom:1px solid var(--border-light);cursor:pointer;border-left:3px solid ' +
                 unitColor + ';margin-bottom:2px;background:var(--bg2);border-radius:4px;">';
             html += '<div>';
-            html += '<span style="font-weight:bold;font-size:0.6rem;">Unit ' + u.unitNumber + '</span>';
-            html += '<span style="font-size:0.5rem;color:' + unitColor + ';margin-left:6px;">' + unitStatus + '</span>';
+            html += '<span style="font-weight:bold;font-size:0.6rem;">Unit ' +
+                u.unitNumber + '</span>';
+            html += '<span style="font-size:0.5rem;color:' + unitColor +
+                ';margin-left:6px;">' + unitStatus + '</span>';
             html += '<span style="font-size:0.5rem;color:var(--dim);margin-left:6px;">' +
                 _escapeHtml(householdName) + '</span>';
             html += '</div>';
@@ -1042,7 +1136,7 @@
             })(actionKeys[a]);
         }
 
-        // Unit rows (delegated buttons)
+        // Unit row action buttons (delegated)
         var unitActions = {
             'view-unit': function(unitNumber) {
                 _closeThen(function() {
@@ -1083,7 +1177,6 @@
             })(unitActionKeys[ua]);
         }
 
-        // Unit row click → open unit details
         var unitItems = root.querySelectorAll('.unit-item');
         for (var ui = 0; ui < unitItems.length; ui++) {
             (function(el) {
@@ -1100,13 +1193,11 @@
     }
 
     // =========================================================================
-    // 7. ASSIGN RESIDENCE TO HOUSEHOLD
+    // 8. ASSIGN RESIDENCE TO HOUSEHOLD
     // =========================================================================
 
     function openAssignResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
@@ -1116,12 +1207,10 @@
             _showToast('Residence is not vacant', 'error');
             return null;
         }
-
         if (residence.isDemolished) {
             _showToast('Residence has been demolished', 'error');
             return null;
         }
-
         if (typeof window.openHouseholdSelector !== 'function') {
             _showToast('Household selector not available', 'error');
             return null;
@@ -1138,20 +1227,19 @@
             onSelect: function(household) {
                 if (!household) return;
 
-                // Warn if household already has a residence
-                var existing = res.getResidencesByHousehold(household.id);
+                var existing = _residence.getResidencesByHousehold(household.id);
                 if (existing.length > 0) {
                     _confirmDialog(
                         household.name + ' already occupies ' + existing.length +
                         ' residence(s). Assign them to "' + residence.name + '" anyway?',
                         'Existing Residence',
                         function() {
-                            _doResidenceAssignment(res, residence, household, onSuccess);
+                            _doResidenceAssignment(residence, household, onSuccess);
                         },
-                        function() { /* cancelled */ }
+                        function() {}
                     );
                 } else {
-                    _doResidenceAssignment(res, residence, household, onSuccess);
+                    _doResidenceAssignment(residence, household, onSuccess);
                 }
             }
         });
@@ -1159,9 +1247,9 @@
         return null;
     }
 
-    function _doResidenceAssignment(res, residence, household, onSuccess) {
+    function _doResidenceAssignment(residence, household, onSuccess) {
         var year = _currentYear();
-        var result = res.assignHouseholdToVacantResidence(
+        var result = _residence.assignHouseholdToVacantResidence(
             residence.id,
             household.id,
             household.name,
@@ -1169,12 +1257,19 @@
         );
 
         if (!result.success) {
-            _showToast(result.reason || 'Failed to assign household', 'error');
+            _reportFailure(result, 'Failed to assign household');
+            return;
+        }
+
+        var persisted = _persistOrFail('Assignment saved');
+        if (!persisted.ok) {
+            if (typeof onSuccess === 'function') onSuccess(result.data);
             return;
         }
 
         var msg = household.name + ' assigned to "' + residence.name + '"';
-        if (result.data.unitNumber !== undefined && result.data.unitNumber !== null) {
+        if (result.data.unitNumber !== undefined &&
+            result.data.unitNumber !== null) {
             msg += ' (Unit ' + result.data.unitNumber + ')';
         }
         _showToast(msg, 'success');
@@ -1182,13 +1277,11 @@
     }
 
     // =========================================================================
-    // 8. VACATE RESIDENCE MODAL
+    // 9. VACATE RESIDENCE MODAL
     // =========================================================================
 
     function openVacateResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
@@ -1199,7 +1292,6 @@
             if (typeof onSuccess === 'function') onSuccess();
             return null;
         }
-
         if (residence.isDemolished) {
             _showToast('Residence has been demolished', 'error');
             return null;
@@ -1210,7 +1302,8 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.7rem;"><strong>' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         'This will vacate all occupied units and disassociate every household currently living here.' +
                     '</div>' +
@@ -1242,17 +1335,24 @@
                 var root = _resolveModalRoot();
                 if (!root) return false;
 
-                var vYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                var vYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="year"]') || {}).value);
                 if (vYear === null || vYear < 1) {
                     _showToast('Please enter a valid year', 'error');
                     return false;
                 }
                 var reason = (root.querySelector('[data-field="reason"]') || {}).value || 'manual';
 
-                var result = res.markResidenceVacant(residenceId, reason, vYear);
+                var result = _residence.markResidenceVacant(residenceId, reason, vYear);
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to mark vacant', 'error');
+                    _reportFailure(result, 'Failed to mark vacant');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Vacancy saved');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 var affected = result.data.affectedHouseholds || [];
@@ -1265,20 +1365,17 @@
     }
 
     // =========================================================================
-    // 9. END ASSOCIATION MODAL
+    // 10. END ASSOCIATION MODAL
     // =========================================================================
 
     function openEndResidenceAssociationModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
+        var residence = _residence.getResidence(residenceId);
         if (!residence) {
             _showToast('Residence not found', 'error');
             return null;
         }
 
-        // Find the current association for this residence
-        var associationHistory = res.getResidenceAssociationHistory(residenceId);
+        var associationHistory = _residence.getResidenceAssociationHistory(residenceId);
         var current = null;
         for (var i = associationHistory.length - 1; i >= 0; i--) {
             if (!associationHistory[i].endedYear) {
@@ -1333,7 +1430,8 @@
                 var root = _resolveModalRoot();
                 if (!root) return false;
 
-                var endYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                var endYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="year"]') || {}).value);
                 if (endYear === null || endYear < current.year) {
                     _showToast('End year must be at or after association start', 'error');
                     return false;
@@ -1341,20 +1439,23 @@
                 var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim() ||
                     'Ended';
 
-                // Use the unit-level vacancy if a unit number is known,
-                // otherwise the residence-level vacancy.
                 var result;
                 if (current.unitNumber !== undefined && current.unitNumber !== null) {
-                    result = res.markUnitVacant(
-                        residenceId, current.unitNumber, reason, endYear
-                    );
+                    result = _residence.markUnitVacant(
+                        residenceId, current.unitNumber, reason, endYear);
                 } else {
-                    result = res.markResidenceVacant(residenceId, reason, endYear);
+                    result = _residence.markResidenceVacant(residenceId, reason, endYear);
                 }
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to end association', 'error');
+                    _reportFailure(result, 'Failed to end association');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Association ended');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Association ended', 'success');
@@ -1365,14 +1466,15 @@
     }
 
     // =========================================================================
-    // 10. UNIT MODALS
+    // 11. UNIT MODALS
     // =========================================================================
 
     function openAddUnitModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
         if (!residence.isMultiUnit) {
             _showToast('Cannot add units to a non-multi-unit residence', 'error');
             return null;
@@ -1387,9 +1489,10 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
-                    'Adding a unit to <strong>' + _escapeHtml(residence.name) + '</strong>' +
-                    '<div style="margin-top:4px;">' + residence.unitCount + ' of ' +
-                    maxUnits + ' units currently exist</div>' +
+                    'Adding a unit to <strong>' +
+                        _escapeHtml(residence.name) + '</strong>' +
+                    '<div style="margin-top:4px;">' + residence.unitCount +
+                    ' of ' + maxUnits + ' units currently exist</div>' +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Unit Number (auto if blank)</label>' +
@@ -1413,8 +1516,10 @@
                 var root = _resolveModalRoot();
                 if (!root) return false;
 
-                var unitNumberRaw = (root.querySelector('[data-field="unitNumber"]') || {}).value;
-                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+                var unitNumberRaw =
+                    (root.querySelector('[data-field="unitNumber"]') || {}).value;
+                var notes =
+                    ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
                 var options = { notes: notes || null };
 
@@ -1427,10 +1532,16 @@
                     options.unitNumber = num;
                 }
 
-                var result = res.addUnit(residenceId, options);
+                var result = _residence.addUnit(residenceId, options);
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to add unit', 'error');
+                    _reportFailure(result, 'Failed to add unit');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Unit added');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Unit ' + result.data.unitNumber + ' added', 'success');
@@ -1441,13 +1552,17 @@
     }
 
     function openRemoveUnitModal(residenceId, unitNumber, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var unit = res.getUnit(residenceId, unitNumber);
-        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+        var unit = _residence.getUnit(residenceId, unitNumber);
+        if (!unit) {
+            _showToast('Unit not found', 'error');
+            return null;
+        }
 
         var isOccupied = !unit.isVacant && !unit.isDemolished;
 
@@ -1475,16 +1590,23 @@
             confirmStyle: 'danger',
             onConfirm: function() {
                 var root = _resolveModalRoot();
-                var reason = ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
+                var reason =
+                    ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
 
-                var result = res.removeUnit(residenceId, unitNumber, {
+                var result = _residence.removeUnit(residenceId, unitNumber, {
                     force: true,
                     reason: reason || 'Removed'
                 });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to remove unit', 'error');
+                    _reportFailure(result, 'Failed to remove unit');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Unit removed');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Unit ' + unitNumber + ' removed', 'success');
@@ -1495,16 +1617,25 @@
     }
 
     function openAssignUnitModal(residenceId, unitNumber, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var unit = res.getUnit(residenceId, unitNumber);
-        if (!unit) { _showToast('Unit not found', 'error'); return null; }
-        if (!unit.isVacant) { _showToast('Unit is occupied', 'error'); return null; }
-        if (unit.isDemolished) { _showToast('Unit is demolished', 'error'); return null; }
-
+        var unit = _residence.getUnit(residenceId, unitNumber);
+        if (!unit) {
+            _showToast('Unit not found', 'error');
+            return null;
+        }
+        if (!unit.isVacant) {
+            _showToast('Unit is occupied', 'error');
+            return null;
+        }
+        if (unit.isDemolished) {
+            _showToast('Unit is demolished', 'error');
+            return null;
+        }
         if (typeof window.openHouseholdSelector !== 'function') {
             _showToast('Household selector not available', 'error');
             return null;
@@ -1521,15 +1652,23 @@
             onSelect: function(household) {
                 if (!household) return;
                 var year = _currentYear();
-                var result = res.assignHouseholdToUnit(
+                var result = _residence.assignHouseholdToUnit(
                     residenceId, unitNumber,
-                    household.id, household.name, year
-                );
+                    household.id, household.name, year);
+
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to assign household', 'error');
+                    _reportFailure(result, 'Failed to assign household');
                     return;
                 }
-                _showToast(household.name + ' assigned to Unit ' + unitNumber, 'success');
+
+                var persisted = _persistOrFail('Assignment saved');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return;
+                }
+
+                _showToast(household.name + ' assigned to Unit ' + unitNumber,
+                    'success');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
             }
         });
@@ -1538,13 +1677,17 @@
     }
 
     function openMarkUnitVacantModal(residenceId, unitNumber, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var unit = res.getUnit(residenceId, unitNumber);
-        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+        var unit = _residence.getUnit(residenceId, unitNumber);
+        if (!unit) {
+            _showToast('Unit not found', 'error');
+            return null;
+        }
         if (unit.isVacant) {
             _showToast('Unit is already vacant', 'info');
             if (typeof onSuccess === 'function') onSuccess();
@@ -1556,8 +1699,8 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(200,112,64,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                    '<div style="font-size:0.7rem;"><strong>Unit ' + unitNumber + ' of ' +
-                        _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.7rem;"><strong>Unit ' + unitNumber +
+                        ' of ' + _escapeHtml(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">' +
                         'Current Household: ' +
                         _escapeHtml(unit.householdName || 'Unknown') +
@@ -1586,18 +1729,27 @@
             cancelText: 'Cancel',
             onConfirm: function() {
                 var root = _resolveModalRoot();
-                var vYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                var vYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="year"]') || {}).value);
                 if (vYear === null || vYear < 1) {
                     _showToast('Please enter a valid year', 'error');
                     return false;
                 }
                 var reason = (root.querySelector('[data-field="reason"]') || {}).value || 'manual';
 
-                var result = res.markUnitVacant(residenceId, unitNumber, reason, vYear);
+                var result = _residence.markUnitVacant(
+                    residenceId, unitNumber, reason, vYear);
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to mark vacant', 'error');
+                    _reportFailure(result, 'Failed to mark vacant');
                     return false;
                 }
+
+                var persisted = _persistOrFail('Vacancy saved');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
+                }
+
                 _showToast('Unit ' + unitNumber + ' marked vacant', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
@@ -1606,13 +1758,17 @@
     }
 
     function openUnitDetailsModal(residenceId, unitNumber) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
-        var unit = res.getUnit(residenceId, unitNumber);
-        if (!unit) { _showToast('Unit not found', 'error'); return null; }
+        var unit = _residence.getUnit(residenceId, unitNumber);
+        if (!unit) {
+            _showToast('Unit not found', 'error');
+            return null;
+        }
 
         var currentYear = _currentYear();
 
@@ -1621,10 +1777,9 @@
         var statusColor = isDemolished ? '#8a2020' : (isVacant ? '#c87040' : '#4a9e6a');
         var statusText = isDemolished ? 'Demolished' : (isVacant ? 'Vacant' : 'Occupied');
 
-        var vacantDuration = (unit.vacantYear !== null && unit.vacantYear !== undefined &&
-            currentYear !== null)
-            ? currentYear - unit.vacantYear
-            : 0;
+        var vacantDuration = (unit.vacantYear !== null &&
+            unit.vacantYear !== undefined && currentYear !== null)
+            ? currentYear - unit.vacantYear : 0;
 
         var associationHtml = '';
         if (unit.associationHistory && unit.associationHistory.length > 0) {
@@ -1655,7 +1810,8 @@
                 '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;border-left:3px solid ' + statusColor + ';">' +
                     '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;">' +
                         '<div>' +
-                            '<div style="font-size:1rem;font-weight:bold;">Unit ' + unitNumber + '</div>' +
+                            '<div style="font-size:1rem;font-weight:bold;">Unit ' +
+                                unitNumber + '</div>' +
                             '<div style="font-size:0.65rem;color:var(--dim);">' +
                                 _escapeHtml(residence.name) + '</div>' +
                         '</div>' +
@@ -1667,7 +1823,8 @@
                         '<div><span style="color:var(--dim);">Household:</span> ' +
                             _escapeHtml(unit.householdName || 'Vacant') + '</div>' +
                         '<div><span style="color:var(--dim);">Assigned:</span> ' +
-                            (unit.assignedYear !== null ? unit.assignedYear : 'N/A') + '</div>' +
+                            (unit.assignedYear !== null ? unit.assignedYear : 'N/A') +
+                        '</div>' +
                         (isVacant && unit.vacantYear
                             ? '<div><span style="color:var(--dim);">Vacant since:</span> ' +
                                 unit.vacantYear + ' (' + vacantDuration + 'y)</div>'
@@ -1739,19 +1896,23 @@
     }
 
     // =========================================================================
-    // 11. REHABILITATE MODAL
+    // 12. REHABILITATE MODAL
     // =========================================================================
 
     function openRehabilitateResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
+        if (residence.isDemolished) {
+            _showToast('Residence is demolished', 'error');
+            return null;
+        }
 
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-        if (residence.isDemolished) { _showToast('Residence is demolished', 'error'); return null; }
-
-        var conditions = res.getResidenceConditions();
+        var conditions = _residence.getResidenceConditions();
         var year = _currentYear();
-        var currentCost = res.calculateRepairCost(residenceId, 'good');
+        var currentCost = _residence.calculateRepairCost(residenceId, 'good');
 
         var conditionOptions = '';
         for (var i = 0; i < conditions.length; i++) {
@@ -1764,7 +1925,8 @@
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
-                    '<div style="font-size:0.7rem;"><strong>' + _escapeHtml(residence.name) + '</strong></div>' +
+                    '<div style="font-size:0.7rem;"><strong>' +
+                        _escapeHtml(residence.name) + '</strong></div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:8px;font-size:0.6rem;">' +
                         '<div><span style="color:var(--dim);">Current Condition:</span> ' +
                             _escapeHtml(residence.condition || 'unknown') + '</div>' +
@@ -1800,22 +1962,31 @@
                 var root = _resolveModalRoot();
                 if (!root) return false;
 
-                var targetCondition = (root.querySelector('[data-field="targetCondition"]') || {}).value;
-                var rYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                var targetCondition =
+                    (root.querySelector('[data-field="targetCondition"]') || {}).value;
+                var rYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="year"]') || {}).value);
                 if (rYear === null || rYear < 1) {
                     _showToast('Please enter a valid year', 'error');
                     return false;
                 }
 
-                var result = res.rehabilitateResidence(residenceId, targetCondition, rYear);
+                var result = _residence.rehabilitateResidence(
+                    residenceId, targetCondition, rYear);
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to rehabilitate', 'error');
+                    _reportFailure(result, 'Failed to rehabilitate');
                     return false;
                 }
 
+                var persisted = _persistOrFail('Rehabilitation saved');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
+                }
+
                 _showToast('Rehabilitated from "' + result.data.oldCondition +
-                    '" to "' + result.data.newCondition + '" (' + result.data.cost + 'g)',
-                    'success');
+                    '" to "' + result.data.newCondition + '" (' +
+                    result.data.cost + 'g)', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
@@ -1826,7 +1997,8 @@
             var costDisplay = root.querySelector('[data-role="cost-display"]');
             if (select && costDisplay) {
                 select.onchange = function() {
-                    var cost = res.calculateRepairCost(residenceId, select.value);
+                    var cost = _residence.calculateRepairCost(
+                        residenceId, select.value);
                     costDisplay.textContent = cost;
                 };
             }
@@ -1836,27 +2008,29 @@
     }
 
     // =========================================================================
-    // 12. DEMOLISH MODAL
+    // 13. DEMOLISH MODAL
     // =========================================================================
 
     function openDemolishResidenceModal(residenceId, onSuccess) {
-        var res = _residence();
-
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
         if (residence.isDemolished) {
             _showToast('Residence is already demolished', 'warning');
             if (typeof onSuccess === 'function') onSuccess();
             return null;
         }
 
-        var unitStats = res.getUnitStats(residenceId);
+        var unitStats = _residence.getUnitStats(residenceId);
         var year = _currentYear();
 
         var content =
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
-                    '<strong>Demolish Residence: ' + _escapeHtml(residence.name) + '</strong>' +
+                    '<strong>Demolish Residence: ' +
+                        _escapeHtml(residence.name) + '</strong>' +
                     '<div style="margin-top:8px;font-size:0.65rem;">' +
                         'Demolishing this residence will destroy the building but keep its history. ' +
                         'All occupied units will be vacated and disassociated.' +
@@ -1868,7 +2042,8 @@
                 '<div style="background:var(--bg3);border-radius:6px;padding:12px;margin-bottom:12px;">' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
                         '<span>Occupied units:</span>' +
-                        '<span>' + unitStats.occupied + ' of ' + unitStats.usable + '</span>' +
+                        '<span>' + unitStats.occupied + ' of ' +
+                            unitStats.usable + '</span>' +
                     '</div>' +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
@@ -1905,23 +2080,33 @@
                 var root = _resolveModalRoot();
                 if (!root) return false;
 
-                var dYear = _parseIntOrNull((root.querySelector('[data-field="year"]') || {}).value);
+                var dYear = _parseIntOrNull(
+                    (root.querySelector('[data-field="year"]') || {}).value);
                 if (dYear === null || dYear < 1) {
                     _showToast('Please enter a valid year', 'error');
                     return false;
                 }
-                var reason = (root.querySelector('[data-field="reason"]') || {}).value || 'Demolished';
-                var notes = ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+                var reason = (root.querySelector('[data-field="reason"]') || {}).value ||
+                    'Demolished';
+                var notes =
+                    ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
 
-                var result = res.demolishResidence(residenceId, reason, dYear, {
-                    force: true,
-                    destroyedBy: 'manual',
-                    disasterId: null
-                });
+                var result = _residence.demolishResidence(
+                    residenceId, reason, dYear, {
+                        force: true,
+                        destroyedBy: 'manual',
+                        disasterId: null
+                    });
 
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to demolish', 'error');
+                    _reportFailure(result, 'Failed to demolish');
                     return false;
+                }
+
+                var persisted = _persistOrFail('Demolition saved');
+                if (!persisted.ok) {
+                    if (typeof onSuccess === 'function') onSuccess(result.data);
+                    return true;
                 }
 
                 _showToast('Residence demolished (' +
@@ -1934,17 +2119,19 @@
     }
 
     // =========================================================================
-    // 13. HISTORY MODALS
+    // 14. HISTORY MODALS
     // =========================================================================
 
     function openResidenceHistoryModal(residenceId) {
-        var res = _residence();
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var nameHistory = res.getResidenceNameHistory(residenceId);
-        var timeline = res.getResidenceTimeline(residenceId, 100);
-        var associations = res.getResidenceAssociationHistory(residenceId);
+        var nameHistory = _residence.getResidenceNameHistory(residenceId);
+        var timeline = _residence.getResidenceTimeline(residenceId, 100);
+        var associations = _residence.getResidenceAssociationHistory(residenceId);
 
         var content = _buildHistoryContent(residence, nameHistory, timeline, associations);
 
@@ -1969,7 +2156,6 @@
 
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">';
 
-        // Name history column
         html += '<div>';
         html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">Name History</div>';
         if (nameHistory.length === 0) {
@@ -1989,7 +2175,6 @@
         }
         html += '</div>';
 
-        // Timeline column
         html += '<div>';
         html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">Timeline</div>';
         if (timeline.length === 0) {
@@ -2010,7 +2195,6 @@
 
         html += '</div>';
 
-        // Associations
         if (associations.length > 0) {
             html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">';
             html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">' +
@@ -2062,11 +2246,13 @@
     }
 
     function openResidenceNameHistoryModal(residenceId) {
-        var res = _residence();
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var nameHistory = res.getResidenceNameHistory(residenceId);
+        var nameHistory = _residence.getResidenceNameHistory(residenceId);
 
         var content = '<div style="margin-bottom:16px;">';
 
@@ -2103,11 +2289,13 @@
     }
 
     function openResidenceTimelineModal(residenceId) {
-        var res = _residence();
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var timeline = res.getResidenceTimeline(residenceId, 200);
+        var timeline = _residence.getResidenceTimeline(residenceId, 200);
 
         var content = '<div style="margin-bottom:16px;">';
         content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
@@ -2126,7 +2314,8 @@
             for (var i = 0; i < sorted.length; i++) {
                 var e = sorted[i];
                 content += _historyEntry(e.year, e.details || e.type, null, false,
-                    e.householdName || (e.unitNumber !== null && e.unitNumber !== undefined
+                    e.householdName || (e.unitNumber !== null &&
+                        e.unitNumber !== undefined
                         ? 'Unit ' + e.unitNumber : null));
             }
             content += '</div>';
@@ -2144,11 +2333,13 @@
     }
 
     function openResidenceAssociationHistoryModal(residenceId) {
-        var res = _residence();
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
 
-        var associations = res.getResidenceAssociationHistory(residenceId);
+        var associations = _residence.getResidenceAssociationHistory(residenceId);
 
         var content = '<div style="margin-bottom:16px;">';
         content += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
@@ -2199,31 +2390,30 @@
     }
 
     // =========================================================================
-    // 14. HEIR FINDER (placeholder)
+    // 15. HEIR FINDER (placeholder — preserved from prior version)
     // =========================================================================
 
     function openResidenceHeirFinderModal(residenceId) {
-        var res = _residence();
-        var residence = res.getResidence(residenceId);
-        if (!residence) { _showToast('Residence not found', 'error'); return null; }
-
+        var residence = _residence.getResidence(residenceId);
+        if (!residence) {
+            _showToast('Residence not found', 'error');
+            return null;
+        }
         if (!residence.isVacant) {
             _showToast('Heirs are only relevant for vacant properties', 'warning');
             return null;
         }
-
         _showToast('Heir finder is not available in this build.', 'info');
         return null;
     }
 
     // =========================================================================
-    // 15. RESIDENCE SELECTOR
+    // 16. RESIDENCE SELECTOR
     // =========================================================================
 
     function openResidenceSelector(options) {
         options = options || {};
 
-        var res = _residence();
         var title = options.title || 'Select Residence';
         var locationId = options.locationId || null;
         var vacantOnly = options.vacantOnly === true;
@@ -2231,8 +2421,8 @@
         var onCancel = options.onCancel || function() {};
 
         var residences = locationId
-            ? res.getResidencesByLocation(locationId)
-            : res.getAllResidences();
+            ? _residence.getResidencesByLocation(locationId)
+            : _residence.getAllResidences();
 
         if (vacantOnly) {
             residences = residences.filter(function(r) {
@@ -2284,7 +2474,7 @@
                     _showToast('Please select a residence', 'error');
                     return false;
                 }
-                var residence = res.getResidence(id);
+                var residence = _residence.getResidence(id);
                 if (!residence) {
                     _showToast('Residence not found', 'error');
                     return false;
@@ -2296,7 +2486,7 @@
     }
 
     // =========================================================================
-    // 16. EXPORTS
+    // 17. EXPORTS
     // =========================================================================
 
     // CRUD
@@ -2310,9 +2500,9 @@
     window.openAssignResidenceModal = openAssignResidenceModal;
     window.openVacateResidenceModal = openVacateResidenceModal;
     window.openEndResidenceAssociationModal = openEndResidenceAssociationModal;
-    window.openMarkResidenceVacantModal = openVacateResidenceModal;         // legacy alias
-    window.openResidenceVacancyDetailsModal = openResidenceDetailsModal;     // legacy alias
-    window.openAssignResidenceToHouseholdModal = openAssignResidenceModal;   // legacy alias
+    window.openMarkResidenceVacantModal = openVacateResidenceModal;
+    window.openResidenceVacancyDetailsModal = openResidenceDetailsModal;
+    window.openAssignResidenceToHouseholdModal = openAssignResidenceModal;
 
     // Units
     window.openAddUnitModal = openAddUnitModal;
@@ -2331,7 +2521,7 @@
     window.openResidenceTimelineModal = openResidenceTimelineModal;
     window.openResidenceAssociationHistoryModal = openResidenceAssociationHistoryModal;
 
-    // Heir finder (placeholder)
+    // Heir finder
     window.openResidenceHeirFinderModal = openResidenceHeirFinderModal;
 
     // Selector
