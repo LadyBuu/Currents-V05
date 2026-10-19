@@ -2,49 +2,39 @@
  * =============================================================================
  * STILL WATERS - HOUSEHOLD UI LIST (household-ui-list.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/systems/household/household-ui-list.js
- * 
+ *
  * PURPOSE
  * -------
  * Renders the household list panel with filters, search, and selection.
- * 
+ *
  * THIS MODULE IS PURELY UI
  * ------------------------
  *   - Reads:     HouseholdQueries (semantic projections)
  *   - Writes:    none (this list does not mutate)
  *   - Owns:      DOM rendering, event delegation, local UI state,
  *                localStorage preferences
- * 
- * WHAT DOES NOT LIVE HERE
+ *
+ * CONVERGED PATTERN NOTES
  * -----------------------
- *   - HouseholdState reach-around       → HouseholdQueries
- *   - Domain status interpretation      → HouseholdQueries.getHouseholdStatus
- *   - Age calculations                  → HouseholdQueries member projections
- *   - Presentation domain defaults      → removed; use Queries or nothing
- *   - Icon fabrication                  → Icons module via _getIcon()
- *   - Silent error swallowing           → logged
- * 
+ *   - No HouseholdState reach-around. Reads go through HouseholdQueries.
+ *   - Domain status interpretation via HouseholdQueries.getHouseholdStatus.
+ *   - Icons via _getIcon only (no ASCII glyphs).
+ *   - No fabricated domain defaults.
+ *   - Load-time verification of required dependencies.
+ *   - Errors thrown during render are logged, not swallowed.
+ *   - averageWealth / averageReputation from getStatistics() may be null
+ *     (means "no household has that field"). UI guards against it.
+ *
  * LIFECYCLE
  * ---------
  * mountHouseholdList(containerId, onSelect, options)
  * unmountHouseholdList()
- * 
+ *
  * The component holds one State subscription while mounted. Unmounting
  * removes the subscription, clears timers, and drops all references.
- * 
- * If the container is never unmounted, we treat it as permanent — the
- * subscription stays for the session.
- * 
- * CONTRACT
- * --------
- *   - No dependency fallbacks that fabricate domain data.
- *   - Required deps fail loudly (HouseholdQueries, getPlaceById).
- *   - Selection can never point at a household that no longer exists.
- *   - Persisted filter values are validated against known values.
- *   - All DOM queries are scoped to the container.
- *   - Errors thrown during render are logged, not swallowed.
- * 
+ *
  * =============================================================================
  */
 
@@ -52,36 +42,45 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _queries() {
-        if (typeof window.HouseholdQueries === 'undefined') {
-            throw new Error('household-ui-list: HouseholdQueries is required');
+    function _requireFunction(name, fn) {
+        if (typeof fn !== 'function') {
+            throw new Error('household-ui-list: ' + name + ' is required');
         }
-        return window.HouseholdQueries;
+        return fn;
     }
 
-    function _state() {
-        if (typeof window.HouseholdState === 'undefined') {
-            throw new Error('household-ui-list: HouseholdState is required');
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('household-ui-list: ' + name + ' is required');
         }
-        return window.HouseholdState;
+        return obj;
     }
 
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById !== 'function') {
-            throw new Error('household-ui-list: getPlaceById is required');
-        }
-        return window.getPlaceById(id);
-    }
+    var _queries = _requireObject('HouseholdQueries', window.HouseholdQueries);
+    _requireFunction('HouseholdQueries.getAllHouseholds',
+        _queries.getAllHouseholds);
+    _requireFunction('HouseholdQueries.getHousehold', _queries.getHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdStatus',
+        _queries.getHouseholdStatus);
+    _requireFunction('HouseholdQueries.getHouseholdPositions',
+        _queries.getHouseholdPositions);
+    _requireFunction('HouseholdQueries.getAssignmentsForHousehold',
+        _queries.getAssignmentsForHousehold);
+    _requireFunction('HouseholdQueries.getHouseholdStaff',
+        _queries.getHouseholdStaff);
 
-    function _getPlaces() {
-        if (typeof window.getPlaces !== 'function') {
-            throw new Error('household-ui-list: getPlaces is required');
-        }
-        return window.getPlaces();
-    }
+    var _state = _requireObject('HouseholdState', window.HouseholdState);
+    _requireFunction('HouseholdState.subscribe', _state.subscribe);
+
+    var _getPlaceById = _requireFunction('getPlaceById', window.getPlaceById);
+    var _getPlaces = _requireFunction('getPlaces', window.getPlaces);
+
+    // =========================================================================
+    // 2. RENDER HELPERS
+    // =========================================================================
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
@@ -102,10 +101,10 @@
     }
 
     // =========================================================================
-    // 2. COMPONENT STATE
+    // 3. COMPONENT STATE
     // =========================================================================
 
-    var STORAGE_KEY = 'household_list_state_v5';
+    var STORAGE_KEY = 'household_list_state_v6';
 
     var VALID_STATUS_FILTERS = [
         'all', 'active', 'vacant', 'empty', 'declining',
@@ -132,7 +131,7 @@
     };
 
     // =========================================================================
-    // 3. PERSISTENCE (validated)
+    // 4. PERSISTENCE (validated)
     // =========================================================================
 
     function _loadPreferences() {
@@ -144,19 +143,15 @@
             if (typeof data.searchTerm === 'string') {
                 _ui.searchTerm = data.searchTerm;
             }
-
             if (VALID_STATUS_FILTERS.indexOf(data.statusFilter) !== -1) {
                 _ui.statusFilter = data.statusFilter;
             }
-
             if (typeof data.locationFilter === 'string') {
                 _ui.locationFilter = data.locationFilter;
             }
-
             if (typeof data.filtersCollapsed === 'boolean') {
                 _ui.filtersCollapsed = data.filtersCollapsed;
             }
-
             if (typeof data.showPositions === 'boolean') {
                 _ui.showPositions = data.showPositions;
             }
@@ -182,7 +177,7 @@
     }
 
     // =========================================================================
-    // 4. LOCATION HELPERS (delegate to queries)
+    // 5. LOCATION HELPERS
     // =========================================================================
 
     function _getLocationDisplayName(locationId) {
@@ -219,7 +214,7 @@
     }
 
     // =========================================================================
-    // 5. FILTER (local UI concern only)
+    // 6. FILTER
     // =========================================================================
 
     function _applyFilters(households) {
@@ -250,10 +245,14 @@
         if (_ui.statusFilter !== 'all') {
             // Status filter is semantic. Delegate to Queries so we don't
             // reimplement the active/vacant/empty logic here.
+            //
+            // Note: O(n) getHouseholdStatus calls per render. A future
+            // getHouseholdStatuses() batch query would fix this. Noted
+            // as tech debt.
             var statusFilter = _ui.statusFilter;
             filtered = filtered.filter(function(h) {
                 try {
-                    var s = _queries().getHouseholdStatus(h.id);
+                    var s = _queries.getHouseholdStatus(h.id);
                     return s.status === statusFilter;
                 } catch (e) {
                     return false;
@@ -269,13 +268,11 @@
     }
 
     // =========================================================================
-    // 6. SELECTION SANITY
+    // 7. SELECTION SANITY
     // =========================================================================
 
     function _reconcileSelection(filteredHouseholds) {
         if (!_ui.selectedId) return;
-        // If the currently selected household is no longer in the filtered
-        // list, clear the selection.
         for (var i = 0; i < filteredHouseholds.length; i++) {
             if (filteredHouseholds[i].id === _ui.selectedId) return;
         }
@@ -283,7 +280,7 @@
     }
 
     // =========================================================================
-    // 7. RENDER SCHEDULER
+    // 8. RENDER SCHEDULER
     // =========================================================================
 
     function _scheduleRender() {
@@ -297,7 +294,7 @@
     }
 
     // =========================================================================
-    // 8. RENDER
+    // 9. RENDER
     // =========================================================================
 
     function _render() {
@@ -307,7 +304,7 @@
 
         var households;
         try {
-            households = _queries().getAllHouseholds();
+            households = _queries.getAllHouseholds();
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error('household-ui-list: failed to load households', e);
@@ -329,10 +326,8 @@
     function _buildHtml(filtered, allHouseholds) {
         var html = '';
 
-        // ---- Filters header ----
         html += _buildFiltersHeader(filtered.length, allHouseholds.length);
 
-        // ---- List ----
         if (filtered.length === 0) {
             var msg = _ui.searchTerm
                 ? 'No households match your search'
@@ -359,8 +354,11 @@
         html += '<input type="text" data-role="search-input" placeholder="Search households" value="' +
             _escapeHtml(_ui.searchTerm) +
             '" style="flex:2;min-width:60px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:3px;font-size:0.6rem;color:var(--text);">';
+
+        var toggleIcon = _getIcon(_ui.filtersCollapsed
+            ? 'CHEVRON_RIGHT' : 'CHEVRON_DOWN') || (_ui.filtersCollapsed ? '▶' : '▼');
         html += '<span data-role="filter-toggle" style="cursor:pointer;font-size:0.6rem;padding:2px 4px;color:var(--accent);">' +
-            (_ui.filtersCollapsed ? '▶' : '▼') + '</span>';
+            toggleIcon + '</span>';
         html += '<span style="font-size:0.5rem;color:var(--dim);margin-left:auto;">' +
             filteredCount + '/' + totalCount + '</span>';
         html += '</div>';
@@ -447,15 +445,13 @@
         var counts = {};
         var households;
         try {
-            households = _queries().getAllHouseholds({
-                includeDeprecated: true
-            });
+            households = _queries.getAllHouseholds({ includeDeprecated: true });
         } catch (e) {
             return counts;
         }
         for (var i = 0; i < households.length; i++) {
             try {
-                var s = _queries().getHouseholdStatus(households[i].id);
+                var s = _queries.getHouseholdStatus(households[i].id);
                 counts[s.status] = (counts[s.status] || 0) + 1;
             } catch (e) {
                 // Skip corrupt rows
@@ -469,10 +465,15 @@
 
         var status;
         try {
-            status = _queries().getHouseholdStatus(household.id);
+            status = _queries.getHouseholdStatus(household.id);
         } catch (e) {
-            status = { status: 'unknown', livingCount: 0, deceasedCount: 0,
-                totalMembers: 0, missingCount: 0 };
+            status = {
+                status: 'unknown',
+                livingCount: 0,
+                deceasedCount: 0,
+                totalMembers: 0,
+                missingCount: 0
+            };
         }
 
         var locationName = _getLocationDisplayName(household.locationId);
@@ -482,10 +483,10 @@
             var positions = [];
             var assignments = [];
             try {
-                positions = _queries().getHouseholdPositions({
+                positions = _queries.getHouseholdPositions({
                     householdId: household.id
                 });
-                assignments = _queries().getAssignmentsForHousehold(
+                assignments = _queries.getAssignmentsForHousehold(
                     household.id, true
                 );
             } catch (e) {
@@ -500,7 +501,7 @@
                 '</span>';
         }
 
-        var statusLabel = _statusLabel(status);
+        var statusLabel = _statusLabel(status.status);
         var statusColor = _statusColor(status.status);
 
         var html = '';
@@ -596,7 +597,7 @@
     }
 
     // =========================================================================
-    // 9. EVENT HANDLING (scoped to container)
+    // 10. EVENT HANDLING (scoped to container)
     // =========================================================================
 
     function _attachHandlers(container) {
@@ -607,7 +608,9 @@
             toggle.onclick = function() {
                 var hidden = content.style.display === 'none';
                 content.style.display = hidden ? 'block' : 'none';
-                toggle.textContent = hidden ? '▼' : '▶';
+                toggle.innerHTML = _getIcon(hidden
+                    ? 'CHEVRON_DOWN' : 'CHEVRON_RIGHT') ||
+                    (hidden ? '▼' : '▶');
                 _ui.filtersCollapsed = !hidden;
                 _savePreferences();
             };
@@ -626,7 +629,6 @@
                     _ui.searchTerm = value;
                     _savePreferences();
                     _scheduleRender();
-                    // Refocus after re-render
                     setTimeout(function() {
                         var el = container.querySelector('[data-role="search-input"]');
                         if (el && el !== document.activeElement) {
@@ -737,7 +739,7 @@
     }
 
     // =========================================================================
-    // 10. SUBSCRIPTION
+    // 11. SUBSCRIPTION
     // =========================================================================
 
     function _subscribeToState() {
@@ -745,8 +747,9 @@
             try { _component.unsubscribe(); } catch (e) {}
             _component.unsubscribe = null;
         }
-        _component.unsubscribe = _state().subscribe(function(event) {
+        _component.unsubscribe = _state.subscribe(function(event) {
             if (!_component.mounted) return;
+            if (!event || typeof event.type !== 'string') return;
             if (event.type === 'householdsReplaced' ||
                 event.type === 'refreshed' ||
                 event.type === 'cacheInvalidated') {
@@ -756,25 +759,21 @@
     }
 
     // =========================================================================
-    // 11. LIFECYCLE
+    // 12. LIFECYCLE
     // =========================================================================
 
     function mountHouseholdList(containerId, onSelect, options) {
         options = options || {};
 
-        // If already mounted elsewhere, unmount first
         if (_component.mounted) {
             unmountHouseholdList();
         }
 
         var container = document.getElementById(containerId);
         if (!container) {
-            throw new Error('household-ui-list: container "' + containerId + '" not found');
+            throw new Error('household-ui-list: container "' +
+                containerId + '" not found');
         }
-
-        // Validate dependencies eagerly (throws if missing)
-        _queries();
-        _state();
 
         _loadPreferences();
 
@@ -782,7 +781,8 @@
         _component.onSelectCallback = typeof onSelect === 'function' ? onSelect : null;
         _component.mounted = true;
 
-        if (typeof options.preserveSelection === 'boolean' && !options.preserveSelection) {
+        if (typeof options.preserveSelection === 'boolean' &&
+            !options.preserveSelection) {
             _ui.selectedId = null;
         }
         if (options.selectedId) {
@@ -792,7 +792,6 @@
         _subscribeToState();
         _render();
 
-        // If the caller already selected something programmatically, apply
         if (_ui.selectedId) {
             _applySelectionStyles(container);
         }
@@ -815,7 +814,7 @@
         _component.containerId = null;
         _component.onSelectCallback = null;
         _component.mounted = false;
-        // Preserve _ui state — the user's filters survive unmount/remount.
+        // _ui is preserved — the user's filters survive unmount/remount.
     }
 
     function refreshHouseholdList() {
@@ -833,9 +832,8 @@
             return;
         }
 
-        // Validate the household exists
         var h = null;
-        try { h = _queries().getHousehold(id); } catch (e) { h = null; }
+        try { h = _queries.getHousehold(id); } catch (e) { h = null; }
         if (!h) return false;
 
         _ui.selectedId = id;
@@ -849,7 +847,7 @@
     }
 
     // =========================================================================
-    // 12. POSITION/STAFF LIST RENDERERS
+    // 13. POSITION/STAFF LIST RENDERERS (used by other UI surfaces)
     // =========================================================================
 
     function renderHouseholdPositionList(containerId, householdId, options) {
@@ -859,7 +857,7 @@
 
         var positions = [];
         try {
-            positions = _queries().getHouseholdPositions({ householdId: householdId });
+            positions = _queries.getHouseholdPositions({ householdId: householdId });
         } catch (e) {
             container.innerHTML =
                 '<div style="padding:12px;color:var(--warn);font-size:0.6rem;">' +
@@ -892,7 +890,7 @@
 
         var staff = [];
         try {
-            staff = _queries().getHouseholdStaff(householdId, { activeOnly: true });
+            staff = _queries.getHouseholdStaff(householdId, { activeOnly: true });
         } catch (e) {
             container.innerHTML =
                 '<div style="padding:12px;color:var(--warn);font-size:0.6rem;">' +
@@ -911,7 +909,8 @@
         for (var i = 0; i < staff.length; i++) {
             var s = staff[i];
             html += '<div style="padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;border-left:2px solid var(--border);">' +
-                '<span style="font-size:0.6rem;">' + _escapeHtml(s.characterName) + '</span>';
+                '<span style="font-size:0.6rem;">' +
+                    _escapeHtml(s.characterName) + '</span>';
             if (s.role) {
                 html += ' <span style="font-size:0.5rem;color:var(--dim);">(' +
                     _escapeHtml(s.role) + ')</span>';
@@ -923,7 +922,7 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.mountHouseholdList = mountHouseholdList;
