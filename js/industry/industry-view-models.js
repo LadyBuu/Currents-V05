@@ -9,7 +9,7 @@
  *
  * ARCHITECTURAL RULES:
  *   - No state access. No mutations. No persistence.
- *   - Consumes IndustryQueries only.
+ *   - Consumes IndustryQueries + IndustryTypes only.
  *   - Returns plain objects suitable for rendering.
  *   - Presentation defaults (absent owner, empty list) live here.
  *   - Domain defaults (missing status) do NOT live here.
@@ -19,20 +19,31 @@
  *   Every ViewModel function returns plain data. Never HTML. Never DOM.
  *   The shape is stable; UI renderers depend on it.
  *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-queries.js (IndustryQueries)
+ *   - industry-types.js   (IndustryTypes)
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _requireQueries() {
-        var q = window.IndustryQueries;
-        if (!q) throw new Error('IndustryViewModels: IndustryQueries dependency missing');
-        return q;
+    if (typeof window.IndustryQueries === 'undefined') {
+        throw new Error(
+            'industry-view-models.js requires industry-queries.js to load first.'
+        );
+    }
+    if (typeof window.IndustryTypes === 'undefined') {
+        throw new Error(
+            'industry-view-models.js requires industry-types.js to load first.'
+        );
     }
 
     // =========================================================================
@@ -43,7 +54,7 @@
      * The single character displayed when a value is absent.
      * Used everywhere. If you want a different absent glyph, change it here.
      */
-    var ABSENT = '—';
+    var ABSENT = '\u2014';
 
     var STATUS_LABELS = {
         active: 'Active',
@@ -119,7 +130,7 @@
      * Builds a single list row.
      *
      * @param {Object} summary — from IndustryQueries.getEnterpriseSummary
-     * @returns {Object}
+     * @returns {Object|null}
      */
     function buildListRow(summary) {
         if (!summary) return null;
@@ -142,7 +153,9 @@
             wealthLabel: _formatInt(summary.wealth),
             debtLabel: _formatInt(summary.debt),
             workersLabel: summary.workerCount + ' / ' + summary.maxWorkers,
-            ownershipLabel: _labelFromMap(summary.ownershipType, OWNERSHIP_TYPE_LABELS),
+            ownershipLabel: _labelFromMap(
+                summary.ownershipType, OWNERSHIP_TYPE_LABELS
+            ),
             isPublic: summary.ownershipType === 'public'
         };
     }
@@ -183,7 +196,9 @@
             profitLabel: _formatSignedInt(summary.annualProfit),
             profitClass: _profitClass(summary.annualProfit),
 
-            ownershipLabel: _labelFromMap(summary.ownershipType, OWNERSHIP_TYPE_LABELS),
+            ownershipLabel: _labelFromMap(
+                summary.ownershipType, OWNERSHIP_TYPE_LABELS
+            ),
             isPublic: summary.ownershipType === 'public',
 
             foundedYearLabel: _formatInt(summary.foundedYear),
@@ -200,7 +215,7 @@
      *
      * @param {Object} summary
      * @param {Array}  columns — array of column names
-     * @returns {Object} { id, cells: { name: {...}, ... } }
+     * @returns {Object|null} { id, cells: { name: { text, className? }, ... } }
      */
     function buildTableRow(summary, columns) {
         if (!summary) return null;
@@ -223,15 +238,26 @@
             case 'workers':
                 return { text: summary.workerCount + ' / ' + summary.maxWorkers };
             case 'wealth':
-                return { text: _formatInt(summary.wealth), className: _wealthClass(summary.wealth) };
+                return {
+                    text: _formatInt(summary.wealth),
+                    className: _wealthClass(summary.wealth)
+                };
             case 'debt':
                 return { text: _formatInt(summary.debt) };
             case 'profit':
-                return { text: _formatSignedInt(summary.annualProfit), className: _profitClass(summary.annualProfit) };
+                return {
+                    text: _formatSignedInt(summary.annualProfit),
+                    className: _profitClass(summary.annualProfit)
+                };
             case 'status':
-                return { text: _labelFromMap(summary.status, STATUS_LABELS), className: _statusClass(summary.status) };
+                return {
+                    text: _labelFromMap(summary.status, STATUS_LABELS),
+                    className: _statusClass(summary.status)
+                };
             default:
-                throw new Error('IndustryViewModels: unknown column "' + column + '"');
+                throw new Error(
+                    'IndustryViewModels: unknown column "' + column + '"'
+                );
         }
     }
 
@@ -243,20 +269,25 @@
      * Builds the details modal view model.
      *
      * @param {Object} summary        — from IndustryQueries.getEnterpriseSummary
-     * @param {Object} enterprise     — from IndustryQueries.getEnterprise (for worker data)
-     * @param {Array}  workers        — array of { id, name, wage } resolved by caller
-     * @returns {Object}
+     * @param {Object} enterprise     — from IndustryQueries.getEnterprise
+     *                                  (for worker data — workerWages, wages)
+     * @param {Array}  workers        — array of { id, name, wage } resolved
+     *                                  by caller (IndustryQueries.getEnterpriseWorkers)
+     * @returns {Object|null}
      */
     function buildDetails(summary, enterprise, workers) {
         if (!summary || !enterprise) return null;
 
-        var workerRows = (workers || []).map(function(w) {
-            return {
+        var workerRows = [];
+        var sourceWorkers = workers || [];
+        for (var i = 0; i < sourceWorkers.length; i++) {
+            var w = sourceWorkers[i];
+            workerRows.push({
                 id: w.id,
                 name: w.name,
                 wageLabel: _formatInt(w.wage)
-            };
-        });
+            });
+        }
 
         return {
             id: summary.id,
@@ -277,7 +308,9 @@
             profitLabel: _formatSignedInt(summary.annualProfit),
             profitClass: _profitClass(summary.annualProfit),
 
-            ownershipLabel: _labelFromMap(summary.ownershipType, OWNERSHIP_TYPE_LABELS),
+            ownershipLabel: _labelFromMap(
+                summary.ownershipType, OWNERSHIP_TYPE_LABELS
+            ),
             isPublic: summary.ownershipType === 'public',
 
             foundedYearLabel: _formatInt(summary.foundedYear),
@@ -299,19 +332,22 @@
      * @param {Object} summary
      * @param {Object} enterprise
      * @param {Array}  workers — [{ id, name, wage }]
-     * @returns {Object}
+     * @returns {Object|null}
      */
     function buildWorkerManagement(summary, enterprise, workers) {
         if (!summary || !enterprise) return null;
 
-        var workerRows = (workers || []).map(function(w) {
-            return {
+        var workerRows = [];
+        var sourceWorkers = workers || [];
+        for (var i = 0; i < sourceWorkers.length; i++) {
+            var w = sourceWorkers[i];
+            workerRows.push({
                 id: w.id,
                 name: w.name,
-                wageValue: w.wage,     // raw number for input value
+                wageValue: w.wage,
                 wageLabel: _formatInt(w.wage)
-            };
-        });
+            });
+        }
 
         var baseWage = enterprise.wages !== undefined ? enterprise.wages : null;
 
@@ -332,20 +368,23 @@
     // =========================================================================
 
     /**
-     * Builds the owner selector state for the create modal.
+     * Builds the owner selector state for the create/edit modal.
      */
     function buildOwnerField(ownerType, ownerId, ownerName) {
-        var resolvedType = (ownerType === undefined || ownerType === null) ? 'none' : ownerType;
+        var resolvedType = (ownerType === undefined || ownerType === null)
+            ? 'none'
+            : ownerType;
         return {
             type: resolvedType,
             id: ownerId || null,
             displayName: _stringOrAbsent(ownerName),
-            requiresSelection: resolvedType === 'character' || resolvedType === 'household'
+            requiresSelection:
+                resolvedType === 'character' || resolvedType === 'household'
         };
     }
 
     /**
-     * Builds a type option entry for a select element.
+     * Builds a single type option entry for a select element.
      */
     function buildTypeOption(type) {
         return {
@@ -354,6 +393,26 @@
             category: type.category,
             isDefault: false
         };
+    }
+
+    /**
+     * Builds an array of type option entries for a select element.
+     *
+     * This is the entry point modals-industry.js expects — the modal calls
+     * viewModels.buildTypeOptions(allTypes) to populate the type select.
+     * The singular buildTypeOption remains for callers that build the
+     * option list themselves one at a time.
+     *
+     * @param {Array} types — array of enterprise type records
+     * @returns {Array}
+     */
+    function buildTypeOptions(types) {
+        var options = [];
+        if (!Array.isArray(types)) return options;
+        for (var i = 0; i < types.length; i++) {
+            options.push(buildTypeOption(types[i]));
+        }
+        return options;
     }
 
     /**
@@ -376,7 +435,7 @@
     // 10. EXPORTS
     // =========================================================================
 
-    window.IndustryViewModels = {
+    window.IndustryViewModels = Object.freeze({
         // Presentation constants (exported so UI can rely on the same glyph)
         ABSENT: ABSENT,
 
@@ -393,11 +452,11 @@
         // Form helpers
         buildOwnerField: buildOwnerField,
         buildTypeOption: buildTypeOption,
+        buildTypeOptions: buildTypeOptions,
         buildCategoryOptions: buildCategoryOptions
-    };
+    });
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryViewModels;
     }
-
 })();
