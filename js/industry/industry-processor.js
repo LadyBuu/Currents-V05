@@ -7,64 +7,101 @@
  *
  * Annual processing orchestration.
  *
- * ARCHITECTURAL RULES (Phase 1):
- *   - No recursion guards. Composition is expected.
- *   - No fabricated dependency fallbacks.
- *   - No defaults for missing economic values.
- *   - No direct mutation. All mutations go through IndustryCommands.
- *   - No State dependency.
- *   - No UI notifications.
+ * This file:
+ *   - decides which enterprises are eligible for processing
+ *   - delegates economic calculation to IndustryEconomics
+ *   - delegates commit to IndustryCommands.applyAnnualProcessing
+ *   - persists once per batch, per the batch caller's instruction
  *
- * RESPONSIBILITIES:
- *   - Decide which enterprises are eligible for processing.
- *   - Delegate economic calculation to IndustryEconomics.
- *   - Delegate commit to IndustryCommands.applyAnnualProcessing().
+ * This file does NOT:
+ *   - compute economic transitions (IndustryEconomics does)
+ *   - mutate enterprise records (IndustryCommands does)
+ *   - write to storage except through IndustryCommands.persist
+ *   - toast, render, or touch the DOM
+ *   - fabricate defaults for missing economic values
+ *
+ * PERSISTENCE MODEL:
+ *   The processor does not save. It delegates to IndustryCommands which
+ *   also does not save. The caller decides when to persist.
+ *
+ *   Two entry points, two semantics:
+ *
+ *     processAnnualEnterprise(id)
+ *       Single-enterprise entry. Persists once at the end. This is the
+ *       shape a details-modal "Process Year" button wants.
+ *
+ *     processAnnualEnterprise(id, { persist: false })
+ *       Same computation, no persist. Used by processAllEnterprises to
+ *       coalesce one save across the batch.
+ *
+ *     processAllEnterprises()
+ *       Batch entry. Calls processAnnualEnterprise(id, { persist: false })
+ *       for each eligible enterprise, then persists once at the end. One
+ *       save, one flush, one write.
+ *
+ *   If you want to suppress persistence entirely, call
+ *   processAnnualEnterprise(id, { persist: false }) directly and persist
+ *   yourself when you're ready. The processor honours the flag.
+ *
+ * CONTRACT:
+ *   Every entry point returns a structured result. It never throws for a
+ *   domain error. Programming errors (missing dependency, invalid argument
+ *   type where the caller is expected to have validated) throw at load or
+ *   at call, matching the rest of the domain.
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-queries.js   (IndustryQueries)
+ *   - industry-commands.js  (IndustryCommands)
+ *   - industry-economics.js (IndustryEconomics)
+ *   - time.js               (getCurrentYear)
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _requireQueries() {
-        var q = window.IndustryQueries;
-        if (!q) {
-            throw new Error('IndustryProcessor: IndustryQueries dependency missing');
-        }
-        return q;
+    if (typeof window.IndustryQueries === 'undefined') {
+        throw new Error(
+            'industry-processor.js requires industry-queries.js to load first.'
+        );
+    }
+    if (typeof window.IndustryCommands === 'undefined') {
+        throw new Error(
+            'industry-processor.js requires industry-commands.js to load first.'
+        );
+    }
+    if (typeof window.IndustryEconomics === 'undefined') {
+        throw new Error(
+            'industry-processor.js requires industry-economics.js to load first.'
+        );
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error(
+            'industry-processor.js requires time.js (getCurrentYear).'
+        );
     }
 
-    function _requireCommands() {
-        var c = window.IndustryCommands;
-        if (!c) {
-            throw new Error('IndustryProcessor: IndustryCommands dependency missing');
-        }
-        return c;
-    }
-
-    function _requireEconomics() {
-        var e = window.IndustryEconomics;
-        if (!e) {
-            throw new Error('IndustryProcessor: IndustryEconomics dependency missing');
-        }
-        return e;
-    }
-
-    function _requireCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('IndustryProcessor: getCurrentYearSafe dependency missing');
-        }
-        return window.getCurrentYearSafe();
-    }
+    var IQ = window.IndustryQueries;
+    var IC = window.IndustryCommands;
+    var IE = window.IndustryEconomics;
 
     // =========================================================================
     // 2. ELIGIBILITY
     // =========================================================================
 
+    /**
+     * True if the enterprise is eligible for annual processing.
+     *
+     * Only active enterprises process. Bankrupt, closed, inactive, and
+     * demolished enterprises are skipped.
+     */
     function _isEligibleForProcessing(enterprise) {
         if (!enterprise) return false;
         if (enterprise.status !== 'active') return false;
@@ -79,21 +116,25 @@
      * Processes one enterprise's annual economics.
      *
      * Flow:
-     *   read → calculate → commit
+     *   read → calculate → commit → (optionally) persist
      *
      * @param {string} enterpriseId
-     * @returns {Object} — success or failure with reason
+     * @param {Object} [options]
+     * @param {boolean} [options.persist=true] — call IndustryCommands.persist()
+     *                                            at the end of a successful run
+     * @returns {Object}
+     *   { success: true, skipped?: boolean, ... }
+     *   { success: false, reason }
      */
-    function processAnnualEnterprise(enterpriseId) {
-        if (!enterpriseId) {
+    function processAnnualEnterprise(enterpriseId, options) {
+        options = options || {};
+        var shouldPersist = options.persist !== false;
+
+        if (typeof enterpriseId !== 'string' || enterpriseId.length === 0) {
             return { success: false, reason: 'Enterprise id is required' };
         }
 
-        var queries = _requireQueries();
-        var commands = _requireCommands();
-        var economics = _requireEconomics();
-
-        var enterprise = queries.getEnterprise(enterpriseId);
+        var enterprise = IQ.getEnterprise(enterpriseId);
         if (!enterprise) {
             return { success: false, reason: 'Enterprise not found' };
         }
@@ -101,18 +142,19 @@
         if (!_isEligibleForProcessing(enterprise)) {
             return {
                 success: false,
-                reason: 'Enterprise is not eligible for processing (status: ' + enterprise.status + ')'
+                reason: 'Enterprise is not eligible for processing (status: ' +
+                    enterprise.status + ')'
             };
         }
 
-        var currentYear = _requireCurrentYear();
+        var currentYear = window.getCurrentYear();
 
-        var transition = economics.calculateAnnualTransition(enterprise, currentYear);
+        var transition = IE.calculateAnnualTransition(enterprise, currentYear);
         if (!transition.ok) {
             return { success: false, reason: transition.reason };
         }
 
-        // If nothing to process, short-circuit. No command, no commit.
+        // Nothing to process. Short-circuit. No command, no persist.
         if (transition.yearsProcessed === 0) {
             return {
                 success: true,
@@ -125,8 +167,8 @@
             };
         }
 
-        // Determine household transfer, if applicable.
-        // Transfer amount is the enterprise's totalProfit when the owner is a household.
+        // Household transfer routing. When the enterprise is household-owned,
+        // the profit/loss flows to the household via the command layer.
         var householdTransfer = null;
         var householdId = null;
         var householdReason = null;
@@ -137,7 +179,7 @@
             householdReason = 'Enterprise profit/loss: ' + enterprise.name;
         }
 
-        var applyResult = commands.applyAnnualProcessing(enterpriseId, {
+        var applyResult = IC.applyAnnualProcessing(enterpriseId, {
             currentYear: currentYear,
             yearsProcessed: transition.yearsProcessed,
             newWealth: transition.newWealth,
@@ -149,11 +191,31 @@
             householdReason: householdReason
         });
 
-        if (!applyResult || !applyResult.success) {
+        if (!applyResult || applyResult.success !== true) {
             return {
                 success: false,
-                reason: applyResult ? applyResult.reason : 'Annual processing command failed'
+                reason: applyResult && applyResult.reason
+                    ? applyResult.reason
+                    : 'Annual processing command failed'
             };
+        }
+
+        // Persist once per single-enterprise call, unless suppressed.
+        var persistResult = null;
+        if (shouldPersist) {
+            persistResult = IC.persist();
+            if (!persistResult || persistResult.success !== true) {
+                return {
+                    success: false,
+                    reason: persistResult && persistResult.reason
+                        ? 'Processing succeeded but persist failed: ' +
+                            persistResult.reason
+                        : 'Processing succeeded but persist failed',
+                    applied: true,
+                    enterpriseId: enterprise.id,
+                    currentYear: currentYear
+                };
+            }
         }
 
         return {
@@ -181,36 +243,58 @@
     /**
      * Processes all eligible enterprises.
      *
-     * NOTE: This is a thin orchestrator. Each enterprise is processed
-     * individually through processAnnualEnterprise(), which commits its own
-     * transaction. Persistence is coalesced by the save queue.
+     * Each enterprise is processed individually through
+     * processAnnualEnterprise with { persist: false }. After every eligible
+     * enterprise has been attempted, one IC.persist() is called.
      *
-     * A future world-tick transaction could batch this further, but for
-     * Phase 1, per-enterprise transactions match the existing save model.
+     * Failure is per-enterprise and non-fatal: one failed enterprise does
+     * not prevent the rest of the batch from running. A failure in the
+     * final persist, however, is reported at the batch level.
      *
+     * @param {Object} [options]
+     * @param {boolean} [options.persist=true]
      * @returns {Object}
+     *   {
+     *     success: boolean,
+     *     processed: number,
+     *     skipped: number,
+     *     failed: number,
+     *     results: Object[],
+     *     failures: Object[],
+     *     persist: { success: boolean, reason?: string } | null
+     *   }
      */
-    function processAllEnterprises() {
-        var queries = _requireQueries();
-        var all = queries.getAllEnterprises();
+    function processAllEnterprises(options) {
+        options = options || {};
+        var shouldPersist = options.persist !== false;
+
+        var all = IQ.getAllEnterprises();
 
         var results = [];
         var failures = [];
         var skipped = 0;
+        var attempted = 0;
 
         for (var i = 0; i < all.length; i++) {
             if (!_isEligibleForProcessing(all[i])) {
                 continue;
             }
 
-            var result = processAnnualEnterprise(all[i].id);
-            if (result.success) {
-                if (result.skipped) {
+            attempted++;
+
+            var result = processAnnualEnterprise(all[i].id, { persist: false });
+
+            if (result.success === true) {
+                if (result.skipped === true) {
                     skipped++;
                 } else {
                     results.push(result);
                 }
             } else {
+                // A persist failure inside a single-enterprise call with
+                // persist:false cannot occur (we suppress it), so any
+                // failure here is a domain failure — missing enterprise,
+                // calculation error, command rejection.
                 failures.push({
                     enterpriseId: all[i].id,
                     enterpriseName: all[i].name,
@@ -219,13 +303,40 @@
             }
         }
 
+        // Persist once at the end. Only if something was actually mutated —
+        // a batch that produced no state changes has nothing to save. In
+        // practice results.length > 0 is the signal.
+        var persistResult = null;
+        if (shouldPersist && results.length > 0) {
+            persistResult = IC.persist();
+            if (!persistResult || persistResult.success !== true) {
+                return {
+                    success: false,
+                    attempted: attempted,
+                    processed: results.length,
+                    skipped: skipped,
+                    failed: failures.length,
+                    results: results,
+                    failures: failures,
+                    persist: {
+                        success: false,
+                        reason: persistResult && persistResult.reason
+                            ? persistResult.reason
+                            : 'persist failed'
+                    }
+                };
+            }
+        }
+
         return {
             success: failures.length === 0,
+            attempted: attempted,
             processed: results.length,
             skipped: skipped,
             failed: failures.length,
             results: results,
-            failures: failures
+            failures: failures,
+            persist: persistResult
         };
     }
 
@@ -233,13 +344,12 @@
     // 5. EXPORTS
     // =========================================================================
 
-    window.IndustryProcessor = {
+    window.IndustryProcessor = Object.freeze({
         processAnnualEnterprise: processAnnualEnterprise,
         processAllEnterprises: processAllEnterprises
-    };
+    });
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryProcessor;
     }
-
 })();
