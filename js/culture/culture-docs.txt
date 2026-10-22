@@ -1,1114 +1,918 @@
-# COMPLETE CULTURE SYSTEM DOCUMENTATION
+# 9/9 — `culture-doc.md`
 
-## Version 1.0 | Generated: 2026-07-14
+New file. Replaces `culture-docs.txt` (which should be deleted). Written from the code as it now stands after 1/9 through 8/9, not from the old docs.
 
----
+The structure follows the plan's `x-doc.md` template:
 
-# TABLE OF CONTENTS
-
-1. [SYSTEM OVERVIEW](#1-system-overview)
-2. [FILE STRUCTURE](#2-file-structure)
-3. [CULTURE-CONSTANTS.JS](#3-culture-constantsjs)
-4. [CULTURE-STATE.JS](#4-culture-statejs)
-5. [CULTURE-COMMANDS.JS](#5-culture-commandsjs)
-6. [CULTURE-QUERIES.JS](#6-culture-queriesjs)
-7. [CULTURE-GENERATION.JS](#7-culture-generationjs)
-8. [CULTURE-UI-LIST.JS](#8-culture-ui-listjs)
-9. [MODALS-CULTURE.JS](#9-modals-culturejs)
-10. [DATA SCHEMAS](#10-data-schemas)
-11. [CROSS-SYSTEM INTEGRATION](#11-cross-system-integration)
-12. [DEPENDENCY MAP](#12-dependency-map)
-13. [RECURSION GUARDS](#13-recursion-guards)
-14. [ICON POLICY](#14-icon-policy)
-15. [COMPLETE FUNCTION LIST](#15-complete-function-list)
-16. [USAGE EXAMPLES](#16-usage-examples)
+1. Ownership contract
+2. Load order
+3. File-by-file API reference
+4. Data schemas
+5. Known deferrals
+6. Anti-patterns
+7. Version history
 
 ---
 
-# 1. SYSTEM OVERVIEW
+```markdown
+# Culture System Documentation
 
-## Purpose
-
-The Culture System is a **flavor and appearance system** that provides:
-
-- **Weighted appearance templates** for characters (skin, eyes, hair, height, build)
-- **Mythology flavor text** for worldbuilding (creation stories, deities, symbols)
-- **Location association** - cultures are tied to locations
-- **Character integration** - when a character is created, appearance is rolled from their location's culture
-
-## What It Replaces
-
-The hardcoded appearance defaults in `character-commands.js` `createRandomCharacter()`:
-
-```javascript
-// OLD - hardcoded
-appearance: {
-    hairColor: _pickRandom(['Blonde', 'Brown', 'Black', 'Red', 'Gray']),
-    eyeColor: _pickRandom(['Blue', 'Green', 'Brown', 'Gray', 'Hazel']),
-    height: _pickRandom(['Short', 'Average', 'Tall'])
-}
-
-// NEW - from culture template
-appearance: generateAppearance(cultureId, gender)
-// Result: { skinTone: 'Fair', eyeColor: 'Blue', hairColor: 'Blonde', 
-//           hairType: 'Wavy', build: 'Average', height: 178 }
-```
-
-## Key Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Pure Flavor** | Cultures provide appearance and mythology - no gameplay impact |
-| **Weighted Randomization** | Appearance traits are rolled from weighted probabilities |
-| **Location Inheritance** | Characters inherit culture from their birthplace location |
-| **Separation from Religion** | Culture is independent from religion (though they can be associated) |
-| **No Emojis** | All icons from `icons.js` via `_getIcon()` |
-| **Command-Query Separation** | Commands (writes) vs Queries (reads) separated |
-| **Recursion Guards** | All public functions protected from infinite loops |
-
-## Culture vs Religion
-
-| Feature | Religion System | Culture System |
-|---------|-----------------|----------------|
-| Beliefs | Yes (traits, laws) | No (mythology is flavor) |
-| Leadership | Yes (leader, clergy) | No |
-| Laws | Yes (enforceable) | No (traditions are flavor) |
-| Inheritance | Yes (configurable) | No |
-| Appearance | No | Yes (weighted probabilities) |
-| Mythology | No | Yes (flavor text) |
-| Locations | Associated | Associated |
-| Schools | Yes (religious schools) | No |
-| Places of Worship | Yes | No |
-| Gameplay Impact | High | None (pure flavor) |
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         CULTURE SYSTEM                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────┐    ┌─────────────────────────┐                │
-│  │  CULTURE-CONSTANTS.JS   │    │  CULTURE-STATE.JS      │                │
-│  │  (Templates & Defaults) │────│  (Data Layer + Cache)   │                │
-│  └─────────────────────────┘    └─────────────────────────┘                │
-│           │                              │                                  │
-│           ▼                              ▼                                  │
-│  ┌─────────────────────────┐    ┌─────────────────────────┐                │
-│  │  CULTURE-COMMANDS.JS    │    │  CULTURE-QUERIES.JS    │                │
-│  │  (Write Layer)          │────│  (Read Layer)           │                │
-│  └─────────────────────────┘    └─────────────────────────┘                │
-│           │                              │                                  │
-│           ├──────────────┬───────────────┼──────────────┬───────────────────┤
-│           ▼              ▼               ▼              ▼                   │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ CULTURE-    │  │ CULTURE-    │  │ CULTURE-    │  │ MODALS-     │        │
-│  │ GENERATION  │  │ UI-LIST.JS  │  │ QUERIES.JS  │  │ CULTURE.JS  │        │
-│  │ .JS         │  │ (UI Lists)  │  │ (Reads)     │  │ (Modals)    │        │
-│  │ (Appearance │  └─────────────┘  └─────────────┘  └─────────────┘        │
-│  │  Generation)│                                                           │
-│  └─────────────┘                                                           │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    masterData.data.cultures                                 │
-│                    masterData.data.characters (cultureId, appearance)       │
-│                    masterData.data.places (cultureId)                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**Module:** `js/culture/`
+**Version:** 2.0 (post-refactor)
+**Last updated:** 2026-07-14
 
 ---
 
-# 2. FILE STRUCTURE
+## Table of Contents
 
-```
-js/core/culture/
-├── culture-constants.js       # Default templates, constants
-├── culture-state.js           # Single source of truth + cache
-├── culture-commands.js        # CRUD operations
-├── culture-queries.js         # Read operations
-├── culture-generation.js      # Weighted appearance generation
-├── culture-ui-list.js         # UI list rendering
-└── modals-culture.js          # UI modals (create, edit, details)
-
-Integration Files Modified:
-├── js/core/character/
-│   ├── character-state.js     # Added cultureId, appearance, byCulture cache
-│   ├── character-commands.js  # Removed hardcoded appearance, use culture
-│   └── character-ui-list.js   # Display culture badge
-│
-└── js/core/location/
-    ├── location-state.js      # Added cultureId to place schema
-    ├── location-commands.js   # Added updatePlaceCulture()
-    └── location-ui-list.js    # Display culture in location views
-```
+1. [Ownership Contract](#1-ownership-contract)
+2. [Load Order](#2-load-order)
+3. [File-by-File API Reference](#3-file-by-file-api-reference)
+4. [Data Schemas](#4-data-schemas)
+5. [Known Deferrals](#5-known-deferrals)
+6. [Anti-Patterns](#6-anti-patterns)
+7. [Version History](#7-version-history)
 
 ---
 
-# 3. CULTURE-CONSTANTS.JS
+## 1. Ownership Contract
 
-## Purpose
+The culture subsystem is split into eight modules, each with a single
+layer of responsibility. The rule is simple: **every module owns exactly
+one thing, and everything else is out of scope.**
 
-Default templates, constants, and default cultures for the culture system.
+| Module | Owns | Does NOT own |
+|---|---|---|
+| `CultureConstants` | Frozen vocabulary (appearance categories, default templates, `CULTURE_DEFAULT_APPEARANCE`) | Policy, defaults-for-missing-data, runtime state |
+| `CultureValidation` | Structural and value validation rules (`validateCreate`, `validateUpdate`, `validateDelete`) | Orchestration, mutation, persistence, defaults |
+| `CultureState` | Indexes, subscriptions, mutation primitives (`_addCulture`, `_updateCulture`, `_removeCulture`) | Canonical data, persistence, mutation policy, queries |
+| `CultureQueries` | Semantic reads, analytics, projections, cross-domain composition | Mutation, rendering, persistence, presentation defaults |
+| `CultureCommands` | Write boundary, validation orchestration, commit tail (`hydrate → markDirty → publish → dispatch`), `persist()` | Canonical data ownership, cross-domain side effects, presentation |
+| `CultureGeneration` | Weighted appearance generation from a culture (pure core + query-integrated wrappers) | Mutation, rendering, persistence, policy |
+| `CultureViewModels` | Presentation-ready projections (labels, icons, summaries) | DOM, event handlers, canonical reads |
+| `CultureUI` | DOM rendering for lists, cards, dropdowns | Domain logic, field resolution, icon policy for chrome icons (delegates to `_getIcon`) |
+| `CultureModals` | Modal form orchestration, persist batching | Validation, defaults, field resolution, mutation |
+| `CultureBootstrap` | Load-time verification, index hydration, `window.Culture` namespace | Mutation, persistence, UI wiring |
 
-## Dependencies
+### The cross-cutting rules
 
-| Module | Functions Used |
-|--------|----------------|
-| None | Pure constants |
+**Commands own mutation.** Nothing outside `CultureCommands` may call
+`CultureState._addCulture`, `_updateCulture`, or `_removeCulture`. If
+another subsystem needs to write culture data, it must go through a
+command.
 
-## Appearance Categories
+**Commands own persistence.** `CultureCommands.persist()` is the only
+call site for `window.saveMasterData` in the culture subsystem. Nothing
+else saves. The UI calls `persist()` once per successful command batch.
 
-| Category | ID | Description |
-|----------|-----|-------------|
-| Skin Tone | `skinTones` | Skin color options with weights |
-| Eye Color | `eyeColors` | Eye color options with weights |
-| Hair Color | `hairColors` | Hair color options with weights |
-| Hair Type | `hairTypes` | Hair texture options with weights |
-| Build | `buildTypes` | Body build options with weights |
-| Height | `height` | Gender-specific height ranges |
-| Common Features | `commonFeatures` | Distinctive facial features |
+**Queries own reads.** Every read goes through `CultureQueries`. No
+module reads `masterData.data.cultures` directly except `CultureState`
+(for indexing) and `CultureQueries` (for enumeration).
 
-## Default Appearance
+**Live records are for commands only.** `CultureState._getCultureCanonical(id)`
+returns the live object. Only `CultureCommands` may call it. Everything
+else calls `CultureQueries.getCultureById(id)`, which returns a clone.
 
-```javascript
-CULTURE_DEFAULT_APPEARANCE = {
-    skinTones: [
-        { value: 'Pale', weight: 20 },
-        { value: 'Fair', weight: 25 },
-        { value: 'Olive', weight: 25 },
-        { value: 'Tan', weight: 15 },
-        { value: 'Dark', weight: 10 },
-        { value: 'Deep Brown', weight: 5 }
-    ],
-    eyeColors: [
-        { value: 'Blue', weight: 20 },
-        { value: 'Green', weight: 15 },
-        { value: 'Hazel', weight: 20 },
-        { value: 'Brown', weight: 35 },
-        { value: 'Gray', weight: 10 }
-    ],
-    hairColors: [
-        { value: 'Blonde', weight: 20 },
-        { value: 'Brown', weight: 30 },
-        { value: 'Black', weight: 25 },
-        { value: 'Red', weight: 10 },
-        { value: 'Auburn', weight: 10 },
-        { value: 'White', weight: 5 }
-    ],
-    hairTypes: [
-        { value: 'Straight', weight: 40 },
-        { value: 'Wavy', weight: 30 },
-        { value: 'Curly', weight: 20 },
-        { value: 'Kinky', weight: 10 }
-    ],
-    buildTypes: [
-        { value: 'Slim', weight: 20 },
-        { value: 'Average', weight: 40 },
-        { value: 'Athletic', weight: 20 },
-        { value: 'Stocky', weight: 15 },
-        { value: 'Heavy', weight: 5 }
-    ],
-    height: {
-        male: { min: 155, max: 200 },
-        female: { min: 145, max: 185 }
-    },
-    commonFeatures: [
-        { value: 'High cheekbones', weight: 20 },
-        { value: 'Strong jawline', weight: 20 },
-        { value: 'Prominent nose', weight: 15 },
-        { value: 'Full lips', weight: 15 },
-        { value: 'Wide eyes', weight: 10 },
-        { value: 'Freckles', weight: 10 },
-        { value: 'Dimples', weight: 10 }
-    ]
+**Generation is a distinct layer.** It is not rules, not queries, not
+view-models. It is a read-side consumer of queries that produces domain
+objects (a character's appearance). It sits alongside queries, not above
+it. Do not fold it into any other layer.
+
+**Validation is pure.** `CultureValidation` has no dependencies, no
+side effects, no randomness. Given the same candidate and context it
+returns the same `{valid, errors}` result.
+
+---
+
+## 2. Load Order
+
+Every HTML file that loads culture modules must include them in this
+order. Load order is verified by `CultureBootstrap.init()` at page load;
+a broken order throws before anything tries to use the culture subsystem.
+
+```
+1.  js/core/storage.js
+2.  js/core/ids.js
+3.  js/core/accessors.js
+4.  js/ui/modals-core.js
+5.  js/core/location/location-queries.js
+6.  js/core/religion/religion-queries.js
+7.  js/core/character/character-queries.js
+
+8.  js/culture/culture-constants.js
+9.  js/culture/culture-validation.js
+10. js/culture/culture-state.js
+11. js/culture/culture-commands.js
+12. js/culture/culture-queries.js
+13. js/culture/culture-generation.js
+14. js/culture/culture-view-models.js
+15. js/culture/culture-ui-list.js
+16. js/culture/culture-modals.js
+17. js/culture/culture-bootstrap.js   ← loads last, verifies everything
+```
+
+**Files that need the bootstrap script tag:**
+
+- `DataManager.html`
+- `GENERIC.html`
+- `GENERIC_sidebar.html`
+- `GovernmentManager.html`
+- `HouseholdManager.html`
+- `ReligionManager.html`
+- `RoleManager.html`
+- `SettlementManager.html`
+
+If a page loads any culture module, it must load `culture-bootstrap.js`
+after the last culture script and before any script that reads
+`window.Culture`.
+
+### Initialization
+
+`CultureBootstrap.init()` is idempotent. The first call verifies
+dependencies, hydrates indexes, runs integrity checks, and creates
+`window.Culture`. Subsequent calls re-hydrate indexes only.
+
+The bootstrap auto-initializes if `masterData.data` is already available
+at script load. If a page requires explicit initialization (e.g. after
+an asynchronous data fetch), the loader calls `window.CultureBootstrap.init()`
+directly.
+
+**A failed auto-init logs to console but does not throw.** A top-level
+throw aborts subsequent `<script>` loading, which would mask the real
+problem (a missing dependency) behind secondary failures. If a caller
+needs to gate other initialization on culture availability, it calls
+`init()` explicitly and catches the throw.
+
+---
+
+## 3. File-by-File API Reference
+
+### 3.1 `culture-constants.js`
+
+Frozen exports. No inline numbers elsewhere in the subsystem.
+
+| Export | Type | Description |
+|---|---|---|
+| `CULTURE_APPEARANCE_CATEGORIES` | Object | Canonical category names |
+| `CULTURE_DEFAULT_APPEARANCE` | Object | Fallback appearance options |
+| `CULTURE_TEMPLATES` | Object | Pre-defined culture templates |
+| `getCultureTemplate(name)` | Function | Lookup by template key |
+| `getCultureTemplateNames()` | Function | List template keys |
+| `getAllCultureTemplates()` | Function | List templates with metadata |
+
+### 3.2 `culture-validation.js`
+
+Pure rules. Returns `{valid: boolean, errors: [{field, message}]}`.
+
+| Export | Description |
+|---|---|
+| `validateCreate(candidate, {cultures})` | Validates a new culture candidate |
+| `validateUpdate(candidate, {cultures, index})` | Validates a fully-patched candidate |
+| `validateDelete(id, {cultures})` | Validates that a culture exists |
+
+**Note:** `validateUpdate` rejects an id mismatch against the original
+record. Commands pass `index` so validation can detect identity changes.
+
+### 3.3 `culture-state.js`
+
+Indexes, subscriptions, and mutation primitives.
+
+| Export | Description |
+|---|---|
+| `hydrateFromMasterData()` | Rebuild indexes from canonical data. Throws on duplicate ids. |
+| `refreshFromMasterData()` | Deprecated alias for `hydrateFromMasterData()`. |
+| `getById(id)` | Clone. Null if not found. |
+| `getByName(name)` | Clones. Case-insensitive. |
+| `getByDisplayName(name)` | Clones. Case-insensitive. |
+| `getByAssociatedLocation(locationId)` | Clones. Descriptive association only. |
+| `getByReligion(religionId)` | Clones. |
+| `_getCultureCanonical(id)` | Live record. **Commands only.** |
+| `_addCulture(culture)` | Mutation primitive. **Commands only.** |
+| `_updateCulture(id, culture)` | Mutation primitive. **Commands only.** |
+| `_removeCulture(id)` | Mutation primitive. **Commands only.** |
+| `subscribe(callback)` | Subscribe to change events. Returns unsubscribe. |
+| `publish(eventName, data)` | Publish to subscribers. |
+| `validateIntegrity()` | Warn-only integrity check. Returns findings array. |
+| `getIndexStats()` | Diagnostic index sizes. |
+
+**Note:** There is no `byPrimaryCultureLocation` index. The primary
+culture relationship lives on `Place.cultureId`, not on the culture
+record. `CultureQueries.getPrimaryCultureForLocation` walks the place
+hierarchy.
+
+### 3.4 `culture-queries.js`
+
+Semantic reads. Cross-domain composition.
+
+| Export | Description |
+|---|---|
+| `getCultureById(id)` | Clone. Primary lookup. |
+| `getAllCultures()` | Array of clones. |
+| `getCulturesByName(name)` | Clones matching name. |
+| `getCulturesByDisplayName(name)` | Clones matching display name. |
+| `getCultureCount()` | Number. |
+| `cultureExists(id)` | Boolean. |
+| `_getCultureCanonical(id)` | Live record. **Commands/hierarchy only.** |
+| `searchCultures(query, {limit, sortBy})` | Full-text search. |
+| `getPrimaryCultureForLocation(locationId)` | Walks hierarchy. Null if none. |
+| `getAssociatedCulturesForLocation(locationId)` | Direct descriptive associations. |
+| `getCulturesForLocation(locationId)` | Combined: primary + direct + ancestor. |
+| `getCultureForCharacter(characterId)` | Resolves character's culture. |
+| `getCharactersForCulture(cultureId)` | Characters with explicit culture. |
+| `getCulturesForReligion(religionId)` | Cultures associated with a religion. |
+| `getCultureSummary(id)` | Data projection (not presentation). |
+| `getCultureStatistics()` | Aggregate stats. |
+| `getCulturesWithMythology()` | Filtered clones. |
+| `getCulturesWithAppearance()` | Filtered clones. |
+
+### 3.5 `culture-commands.js`
+
+Write boundary. Single save site.
+
+| Export | Description |
+|---|---|
+| `createCulture(data)` | Validates, creates. Returns `{success, data, reason?, errors?}`. |
+| `updateCulture(id, updates)` | Validates, updates. Unknown fields rejected. |
+| `deleteCulture(id)` | Validates, deletes. |
+| `addLocationToCulture(cultureId, locationId)` | Association helper. |
+| `removeLocationFromCulture(cultureId, locationId)` | Association helper. |
+| `addReligionToCulture(cultureId, religionId)` | Association helper. |
+| `removeReligionFromCulture(cultureId, religionId)` | Association helper. |
+| `addAppearanceOption(cultureId, category, option)` | Appearance helper. |
+| `removeAppearanceOption(cultureId, category, value)` | Appearance helper. |
+| `updateAppearanceWeight(cultureId, category, value, weight)` | Appearance helper. |
+| `updateMythology(cultureId, mythology)` | Full replacement. |
+| `persist()` | **The only save call site.** Returns `{success, reason?}`. |
+
+**The commit tail:** Every successful command runs `hydrateFromMasterData`
+→ `markDataDirty` → `publish` (in-process) → `dispatchEvent` (cross-domain
+`CustomEvent`). Commands do **not** save.
+
+**Field allowlist on `updateCulture`:** Only these top-level fields are
+updatable: `name`, `displayName`, `description`, `icon`, `appearance`,
+`mythology`, `locations`, `religions`, `notes`. Any other field is
+rejected with a specific message.
+
+### 3.6 `culture-generation.js`
+
+Weighted appearance generation.
+
+**Pure core** (no `window.*` lookups, no queries, deterministic under RNG):
+
+| Export | Description |
+|---|---|
+| `rollWeightedValue(options, rng)` | Single weighted value. |
+| `rollWeightedValues(options, count, rng)` | N distinct weighted values. |
+| `rollHeight(heightConfig, gender, rng, fallback?)` | Range-rolled height. |
+| `generateAppearanceFromCulture(culture, gender, opts, rng)` | Full appearance. Null culture → all-undefined fields. |
+
+**Query-integrated wrappers** (resolve via `CultureQueries`, then delegate):
+
+| Export | Throws when |
+|---|---|
+| `generateAppearance(cultureId, gender, opts, rng)` | Culture not found. |
+| `generateAppearanceForLocation(locationId, gender, opts, rng)` | No primary culture applies. |
+| `generateAppearanceWithRandomCulture(gender, opts, rng)` | No cultures exist. |
+
+**RNG contract:** A provider with `pickWeighted`, `randomInt`, `pickRandom`
+is required. Callers pass `window.randomness` explicitly, or the module
+falls back to `window.randomness` if present. There is no `Math.random`
+fallback.
+
+### 3.7 `culture-view-models.js`
+
+Presentation projections.
+
+| Export | Description |
+|---|---|
+| `labelFor(culture)` | displayName or name, always a string. **Public helper.** |
+| `iconFor(culture, {iconPlaceholder?})` | Culture icon or null. **Public helper.** |
+| `buildListRow(culture, options)` | Single list row. |
+| `buildListRows(cultures, options)` | Array of list rows. Skips nulls. |
+| `buildCard(culture)` | Card projection. |
+| `buildDetails(cultureId)` | Details projection. |
+| `buildDropdownOptions(cultures, {selectedId})` | Sorted dropdown items. |
+
+**Policy:** `labelFor` is authoritative across domains. Location, Character,
+and any future subsystem that needs a culture's label must call
+`CultureViewModels.labelFor(culture)`. Do not re-implement the
+`displayName || name` fallback.
+
+### 3.8 `culture-ui-list.js`
+
+DOM rendering.
+
+| Export | Description |
+|---|---|
+| `renderCultureList(containerId, options)` | Renders a list. One delegated click listener per container. |
+| `renderCultureCard(containerId, cultureOrId)` | Renders a card. |
+| `renderCultureDropdown(containerId, options)` | Renders a `<select>`. |
+
+**Icon policy:** `row.icon` (culture icon) is data and is rendered verbatim.
+Any chrome icon (chevrons, markers, close buttons) must route through
+`window._getIcon(name)`. This file currently uses no chrome icons.
+
+**Event delegation:** One click listener per container, attached once.
+The current `onSelect` is read from `container.__cultureOnSelect` at
+click time, so re-rendering with a new callback takes effect without
+re-binding.
+
+### 3.9 `culture-modals.js`
+
+Modal UI.
+
+| Export | Description |
+|---|---|
+| `openCreateCultureModal(onSuccess)` | Create form. |
+| `openEditCultureModal(cultureId, onSuccess)` | Edit form. |
+| `confirmDeleteCulture(cultureId, onSuccess)` | Delete confirmation. |
+| `openCultureDetailsModal(cultureId)` | Read-only details. |
+
+**Persistence:** Every successful command path calls
+`CultureCommands.persist()` exactly once. A failed persist is a second
+toast, not a thrown error — the canonical data is already updated.
+
+**Modal contract:** `openModal` closes the modal when `onConfirm` returns
+`true`, keeps it open when `onConfirm` returns `false`. `onConfirm`
+callbacks return boolean; they do not call `closeTopModal` themselves.
+
+**Legacy aliases** (retained for one release): `window.openCreateCultureModal`,
+`window.openEditCultureModal`, `window.openDeleteCultureModal`,
+`window.openCultureDetailsModal`.
+
+### 3.10 `culture-bootstrap.js`
+
+Load-time verification and initialization.
+
+| Export | Description |
+|---|---|
+| `init()` | Idempotent. Verifies dependencies, hydrates indexes, runs integrity, creates `window.Culture`. |
+
+**What `init()` verifies:**
+
+- Modules: all eight (`CultureState`, `CultureQueries`, `CultureCommands`,
+  `CultureValidation`, `CultureViewModels`, `CultureGeneration`, `CultureUI`,
+  `CultureModals`).
+- Globals: `generateId`, `markDataDirty`, `saveMasterData`, `escapeHtml`,
+  `showToast`, `openModal`, `closeTopModal`.
+- Cross-domain namespaces and methods: `PlaceQueries.getPlaceById`,
+  `PlaceQueries.getAllPlaces`, `ReligionQueries.getReligionById`,
+  `ReligionQueries.getAllReligions`, `CharacterQueries.getCharacterById`,
+  `CharacterQueries.getAllCharacters`.
+- Canonical shape: `masterData.data.cultures` is array or absent
+  (absent → `[]`).
+
+**What `init()` does not verify** (deliberate, lazy-checked at call sites):
+`confirmDialog`, `getIconOptions`, `PlaceQueries`/`ReligionQueries` inside
+the modal edit path.
+
+**What `window.Culture` exposes:**
+
+```js
+window.Culture = {
+    state:     window.CultureState,
+    queries:   window.CultureQueries,
+    commands:  window.CultureCommands,
+    validation: window.CultureValidation,
+    generation: window.CultureGeneration,
+    viewModels: window.CultureViewModels,
+    ui:        window.CultureUI,
+    modals:    window.CultureModals
 };
 ```
 
-## Default Templates
-
-### NORDIC Template
-
-| Attribute | Values |
-|-----------|--------|
-| Skin Tones | Pale (70%), Fair (25%), Olive (5%) |
-| Eye Colors | Blue (50%), Green (30%), Gray (15%), Hazel (5%) |
-| Hair Colors | Blonde (75%), Brown (15%), Red (8%), Black (2%) |
-| Hair Types | Straight (50%), Wavy (40%), Curly (10%) |
-| Build | Athletic (30%), Average (40%), Stocky (25%), Slim (5%) |
-| Height (Male) | 170-200cm |
-| Height (Female) | 160-185cm |
-| Features | High cheekbones, Strong jawline, Blond hair, Light eyes |
-
-### MEDITERRANEAN Template
-
-| Attribute | Values |
-|-----------|--------|
-| Skin Tones | Fair (15%), Olive (50%), Tan (30%), Dark (5%) |
-| Eye Colors | Brown (60%), Hazel (25%), Green (10%), Blue (5%) |
-| Hair Colors | Brown (50%), Black (35%), Auburn (10%), Blonde (5%) |
-| Hair Types | Wavy (40%), Curly (30%), Straight (30%) |
-| Build | Slim (25%), Average (40%), Athletic (25%), Stocky (10%) |
-| Height (Male) | 160-190cm |
-| Height (Female) | 150-175cm |
-| Features | Olive complexion, Dark hair, Strong nose, Expressive eyes |
-
-### DESERT Template
-
-| Attribute | Values |
-|-----------|--------|
-| Skin Tones | Olive (25%), Tan (40%), Dark (30%), Deep Brown (5%) |
-| Eye Colors | Brown (70%), Hazel (20%), Green (8%), Blue (2%) |
-| Hair Colors | Black (60%), Brown (35%), Auburn (5%) |
-| Hair Types | Straight (40%), Wavy (40%), Curly (20%) |
-| Build | Slim (30%), Average (40%), Athletic (20%), Stocky (10%) |
-| Height (Male) | 160-190cm |
-| Height (Female) | 150-175cm |
-| Features | Dark eyes, Olive complexion, High nose bridge, Full lips |
-
-## Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `CULTURE_APPEARANCE_CATEGORIES` | Complete list of appearance categories |
-| `CULTURE_DEFAULT_APPEARANCE` | Fallback appearance options |
-| `CULTURE_TEMPLATES` | Pre-defined culture templates (NORDIC, MEDITERRANEAN, DESERT) |
+External callers should prefer `window.Culture.queries.getCultureById(id)`
+over `window.CultureQueries.getCultureById(id)`, but both work.
 
 ---
 
-# 4. CULTURE-STATE.JS
+## 4. Data Schemas
 
-## Purpose
-
-Single source of truth for all culture data. Manages caching, subscriptions, and data persistence.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `storage.js` | `masterData`, `saveMasterData` |
-| `ids.js` | `generateId` |
-
-## State Structure
-
-```javascript
-_state = {
-    cultures: [],
-    cache: {
-        byId: new Map(),        // cultureId → culture
-        byName: new Map(),      // name → [cultures]
-        byLocation: new Map(),  // locationId → [cultures]
-        byReligion: new Map()   // religionId → [cultures]
-    },
-    subscribers: [],
-    _processingState: false
-};
-```
-
-## Key Functions
-
-### Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCulture(id)` | string | Object\|null | Gets a culture by ID |
-| `getAllCultures()` | None | Array | Gets all cultures |
-| `getCulturesByLocation(locationId)` | string | Array | Gets cultures at a location |
-| `getCulturesByReligion(religionId)` | string | Array | Gets cultures associated with a religion |
-| `searchByName(query)` | string | Array | Searches cultures by name |
-| `getCultureCount()` | None | number | Gets total culture count |
-
-### Subscriptions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `subscribe(callback)` | Function | Function | Subscribes to state changes |
-
-### Cache Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `invalidateCache()` | None | void | Invalidates all caches |
-
-### Internal Mutators (For Commands)
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `_setCultures(cultures)` | Array | void | Sets cultures array |
-| `_loadData()` | None | void | Loads data from masterData |
-| `_emitCultureChange(action, culture)` | string, Object | void | Emits change event |
-
----
-
-# 5. CULTURE-COMMANDS.JS
-
-## Purpose
-
-All write operations for culture management.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `culture-state.js` | `CultureState` |
-| `ids.js` | `generateId` |
-| `storage.js` | `saveMasterData` |
-| `culture-constants.js` | `CULTURE_DEFAULT_APPEARANCE` |
-
-## Key Functions
-
-### Culture CRUD
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createCulture(data)` | Object | `{ success, data, reason }` | Creates a culture |
-| `updateCulture(id, updates)` | string, Object | `{ success, data, reason }` | Updates a culture |
-| `deleteCulture(id)` | string | `{ success, reason }` | Deletes a culture |
-
-### Appearance Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `addAppearanceOption(cultureId, category, option)` | string, string, Object | `{ success, data, reason }` | Adds an appearance option |
-| `removeAppearanceOption(cultureId, category, value)` | string, string, string | `{ success, data, reason }` | Removes an appearance option |
-| `updateAppearanceWeight(cultureId, category, value, newWeight)` | string, string, string, number | `{ success, data, reason }` | Updates option weight |
-
-### Location Association
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `addLocationToCulture(cultureId, locationId)` | string, string | `{ success, data, reason }` | Associates a location |
-| `removeLocationFromCulture(cultureId, locationId)` | string, string | `{ success, data, reason }` | Removes a location |
-
-### Religion Association
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `addReligionToCulture(cultureId, religionId)` | string, string | `{ success, data, reason }` | Associates a religion |
-| `removeReligionFromCulture(cultureId, religionId)` | string, string | `{ success, data, reason }` | Removes a religion |
-
-### Mythology Management
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `updateMythology(cultureId, mythology)` | string, Object | `{ success, data, reason }` | Updates mythology fields |
-
----
-
-# 6. CULTURE-QUERIES.JS
-
-## Purpose
-
-High-level culture query operations.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `culture-state.js` | `CultureState` |
-| `accessors.js` | `getPlaceById`, `getPlaces`, `getCharacters` |
-| `religion-state.js` | `ReligionState` |
-
-## Key Functions
-
-### Search Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `searchCultures(query)` | string | Array | Searches cultures by name |
-
-### Summary Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCultureSummary(id)` | string | Object\|null | Gets formatted culture summary |
-
-### Location Culture Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCultureByLocation(locationId)` | string | Object\|null | Gets culture for a location (walks up hierarchy) |
-| `getAllCulturesByLocation(locationId)` | string | Array | Gets all cultures at a location (including inherited) |
-| `getCultureForCharacter(characterId)` | string | Object\|null | Gets culture for a character |
-
-### Religion Culture Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCulturesByReligion(religionId)` | string | Array | Gets cultures associated with a religion |
-| `getPrimaryCultureForReligion(religionId)` | string | Object\|null | Gets primary culture for a religion |
-
-### Statistics Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCultureStatistics()` | None | Object | Gets comprehensive culture statistics |
-
----
-
-# 7. CULTURE-GENERATION.JS
-
-## Purpose
-
-Weighted appearance generation from culture templates.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `culture-state.js` | `CultureState` |
-| `culture-queries.js` | `CultureQueries` |
-| `randomness.js` | `pickWeighted`, `randomInt`, `pickRandom` |
-
-## Key Functions
-
-### Weighted Roll Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `rollWeightedValue(options, defaultValue)` | Array, * | * | Rolls a weighted value from options |
-| `rollWeightedValues(options, count, defaultValue)` | Array, number, * | Array | Rolls multiple weighted values |
-| `rollHeight(heightConfig, gender, defaultMin, defaultMax)` | Object, string, number, number | number | Rolls height within gender-specific ranges |
-
-### Appearance Generation
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `generateAppearanceFromCulture(culture, gender, options)` | Object, string, Object | Object | Generates appearance from culture object |
-| `generateAppearance(cultureId, gender, options)` | string, string, Object | Object | Generates appearance from culture ID |
-| `generateAppearanceForLocation(locationId, gender, options)` | string, string, Object | Object | Generates appearance for a location |
-| `generateAppearanceWithRandomCulture(gender, options)` | string, Object | `{ culture, appearance }` | Generates appearance with random culture |
-
-### Location Culture Helpers
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `findCultureForLocation(locationId)` | string | Object\|null | Finds culture for a location |
-| `findAllCulturesForLocation(locationId)` | string | Array | Gets all cultures for a location |
-
-## Appearance Generation Flow
-
-```
-1. Get culture by ID or location
-   ↓
-2. Extract appearance config from culture
-   ↓
-3. For each category (skin, eyes, hair, etc.):
-   a. If culture has options, roll weighted value
-   b. Otherwise use default options
-   ↓
-4. For height:
-   a. Use gender-specific ranges from culture
-   b. Roll random height within range
-   ↓
-5. For common features:
-   a. Roll 1-2 features from culture's commonFeatures
-   ↓
-6. Return appearance object
-```
-
----
-
-# 8. CULTURE-UI-LIST.JS
-
-## Purpose
-
-UI rendering for culture lists and cards.
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `culture-state.js` | `CultureState` |
-| `culture-queries.js` | `CultureQueries` |
-| `formatting.js` | `escapeHtml` |
-| `icons.js` | `Icons` |
-
-## Key Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `renderCultureList(containerId, options)` | string, Object | boolean | Renders a culture list |
-| `renderCultureCard(culture)` | Object | string | Renders a culture card |
-| `renderCultureDropdown(selectedId, placeholder, options)` | string, string, Object | string | Renders a culture dropdown |
-
-### Options for renderCultureList
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `filteredCultures` | Array | null | Pre-filtered list |
-| `onSelect` | Function | null | Selection callback |
-| `emptyMessage` | string | 'No cultures found' | Empty state message |
-| `showLocations` | boolean | true | Show locations |
-| `showReligions` | boolean | true | Show religions |
-| `showMythology` | boolean | true | Show mythology |
-| `rowClass` | string | 'culture-row' | CSS class for rows |
-
----
-
-# 9. MODALS-CULTURE.JS
-
-## Purpose
-
-UI modals for culture management (CRUD, mythology, appearance).
-
-## Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
-| `culture-state.js` | `CultureState` |
-| `culture-commands.js` | `CultureCommands` |
-| `culture-queries.js` | `CultureQueries` |
-| `culture-generation.js` | `CultureGeneration` |
-| `accessors.js` | `getPlaces` |
-| `religion-state.js` | `ReligionState` |
-
-## Modal Functions
-
-| Function | Description |
-|----------|-------------|
-| `openCreateCultureModal(onSuccess)` | Creates a new culture |
-| `openEditCultureModal(cultureId, onSuccess)` | Edits a culture |
-| `openDeleteCultureModal(cultureId, onSuccess)` | Deletes a culture |
-| `openCultureDetailsModal(cultureId, onSuccess)` | Shows culture details |
-
-### Create Culture Modal Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| Name | string | Yes | Culture name |
-| Display Name | string | No | Display name (defaults to Name) |
-| Icon | string | No | Icon (defaults to '✦') |
-| Description | string | No | Flavor text |
-
-### Edit Culture Modal Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| Name | string | Culture name |
-| Display Name | string | Display name |
-| Icon | string | Icon |
-| Description | string | Flavor text |
-| Associated Locations | multi-select | Location IDs |
-| Associated Religions | multi-select | Religion IDs |
-| Notes | textarea | Additional notes |
-
-### Culture Details Modal Sections
-
-| Section | Content |
-|---------|---------|
-| Header | Icon + Name + Statistics |
-| Locations | List of associated locations |
-| Religions | List of associated religions |
-| Appearance | Weighted options by category |
-| Mythology | Creation, afterlife, deities, events, cosmology, symbols, themes |
-| Notes | Additional notes |
-
----
-
-# 10. DATA SCHEMAS
-
-## Culture Object
+### 4.1 Culture Record
 
 ```javascript
 {
-    id: string,                          // 'culture_1234567890_abc123'
-    name: string,                        // 'Nordic'
-    displayName: string,                 // 'Nordic Peoples'
-    description: string,                 // Flavor text
-    icon: string,                        // '✦'
-    
-    // Appearance (weighted probabilities)
-    appearance: {
-        skinTones: [
-            { value: 'Pale', weight: 60 },
-            { value: 'Fair', weight: 30 },
-            { value: 'Olive', weight: 10 }
-        ],
-        eyeColors: [
-            { value: 'Blue', weight: 50 },
-            { value: 'Green', weight: 30 },
-            { value: 'Gray', weight: 15 },
-            { value: 'Hazel', weight: 5 }
-        ],
-        hairColors: [
-            { value: 'Blonde', weight: 75 },
-            { value: 'Brown', weight: 15 },
-            { value: 'Red', weight: 8 },
-            { value: 'Black', weight: 2 }
-        ],
-        hairTypes: [
-            { value: 'Straight', weight: 50 },
-            { value: 'Wavy', weight: 40 },
-            { value: 'Curly', weight: 10 }
-        ],
-        buildTypes: [
-            { value: 'Athletic', weight: 30 },
-            { value: 'Average', weight: 40 },
-            { value: 'Stocky', weight: 25 },
-            { value: 'Slim', weight: 5 }
-        ],
+    id: string,                    // 'culture_1234567890_abc123'
+    name: string,                  // 'Nordic'
+    displayName: string,           // 'Nordic Peoples' (or null)
+    description: string,           // '' or flavor text
+    icon: string | null,           // null = explicitly no icon
+    appearance: {                  // weighted-option map
+        skinTones:      [{value, weight}],
+        eyeColors:      [{value, weight}],
+        hairColors:     [{value, weight}],
+        hairTypes:      [{value, weight}],
+        buildTypes:     [{value, weight}],
         height: {
-            male: { min: 170, max: 200 },
-            female: { min: 160, max: 185 }
+            male:   {min, max},
+            female: {min, max}
         },
-        commonFeatures: [
-            { value: 'High cheekbones', weight: 40 },
-            { value: 'Strong jawline', weight: 30 },
-            { value: 'Blond hair', weight: 30 },
-            { value: 'Light eyes', weight: 30 }
-        ]
+        commonFeatures: [{value, weight}]
     },
-    
-    // Mythology (flavor text only)
     mythology: {
-        creation: "In the beginning, there was only the great void...",
-        afterlife: "The brave who die in battle are carried by the Valkyries...",
-        keyDeities: ['Odin', 'Thor', 'Freya', 'Loki'],
-        keyEvents: ['Ragnarok', 'The Aesir-Vanir War'],
-        cosmology: 'Yggdrasil, the World Tree, connects the nine realms...',
-        symbols: ['Mjolnir', 'Valknut', 'Runes'],
-        themes: ['Honor', 'Courage', 'Fate', 'Loyalty']
+        creation:   string,
+        afterlife:  string,
+        keyDeities: [string],
+        keyEvents:  [string],
+        cosmology:  string,
+        symbols:    [string],
+        themes:     [string]
     },
-    
-    // Associations
-    locations: [string],                 // Location IDs using this culture
-    religions: [string],                 // Religion IDs commonly associated
-    
-    // Metadata
-    createdAt: number,
-    updatedAt: number,
-    notes: string
+    locations: [string],           // descriptive association list (place ids)
+    religions: [string],           // descriptive association list (religion ids)
+    notes:     string,
+    createdAt: number,             // Date.now() at creation
+    updatedAt: number              // Date.now() at last update
 }
 ```
 
-## Character Appearance Object
+**Note:** The `locations` and `religions` arrays are the culture's own
+association lists, not fields owned by Location or Religion. Cross-domain
+relationships (a place pointing at a culture via `place.cultureId`) live
+on the other domain's record.
+
+### 4.2 Appearance Roll Result
 
 ```javascript
 {
-    skinTone: 'Fair',                    // From skinTones
-    eyeColor: 'Blue',                    // From eyeColors
-    hairColor: 'Blonde',                 // From hairColors
-    hairType: 'Wavy',                    // From hairTypes
-    build: 'Average',                    // From buildTypes
-    height: 178,                         // From height ranges
-    commonFeatures: ['High cheekbones']  // From commonFeatures (1-2 items)
+    skinTone:       string | undefined,
+    eyeColor:       string | undefined,
+    hairColor:      string | undefined,
+    hairType:       string | undefined,
+    build:          string | undefined,
+    height:         number | null,      // null if no range
+    commonFeatures: [string]
+}
+```
+
+**Note:** `undefined` here means "the culture has no options for this
+category" (not "roll failed"). `null` height means no height range was
+available. `generateAppearanceFromCulture(null, ...)` returns a fully
+undefined appearance (except `commonFeatures: []`).
+
+### 4.3 Weighted Option
+
+```javascript
+{
+    value:  string,       // 'Pale'
+    weight: number        // non-negative
+}
+```
+
+### 4.4 Height Range
+
+```javascript
+{
+    min: number,
+    max: number           // must be >= min
 }
 ```
 
 ---
 
-# 11. CROSS-SYSTEM INTEGRATION
+## 5. Known Deferrals
 
-## Culture ↔ Character System
+The following are known gaps or deliberate deferrals in the current
+implementation.
 
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Character → Culture | `character.cultureId` field | ✅ Complete |
-| Character → Appearance | `character.appearance` object | ✅ Complete |
-| Culture → Characters | `CharacterState.getCharactersByCulture()` | ✅ Complete |
-| Character Creation | `createRandomCharacter()` uses culture for appearance | ✅ Complete |
+### 5.1 No `CultureCascade` module
 
-**Files Modified:**
-- `character-state.js` - Added `cultureId`, `appearance`, `byCulture` cache
-- `character-commands.js` - Removed hardcoded appearance, added `_generateAppearance()`, `_getCultureForLocation()`
-- `character-ui-list.js` - Added culture badge display
+When a culture is deleted, records in other domains that reference it
+(e.g. `character.cultureId`, `place.cultureId`) are **not** automatically
+cleared. The `cultureDeleted` `CustomEvent` fires, but no listener cleans
+up references.
 
-## Culture ↔ Location System
+**Impact:** Deleting a culture can leave dangling references. Queries
+return `null` for the missing culture, but the reference stays.
 
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Location → Culture | `place.cultureId` field | ✅ Complete |
-| Location → Culture Assignment | `LocationCommands.updatePlaceCulture()` | ✅ Complete |
-| Location → Culture Display | `LocationUI` shows culture badge | ✅ Complete |
-| Culture → Locations | `CultureState.getCulturesByLocation()` | ✅ Complete |
+**Deferral:** A `CultureCascade` module belongs in the codebase but is
+out of scope for this refactor. It must listen to `cultureDeleted` and
+clear references through the owning domains' commands. Do not add this
+to `CultureCommands` — the plan explicitly excludes cross-domain side
+effects from the command module.
 
-**Files Modified:**
-- `location-state.js` - Added `cultureId` to place schema
-- `location-commands.js` - Added `updatePlaceCulture()`
-- `location-ui-list.js` - Added culture badge display
+### 5.2 `getCultureSummary` / `getCultureStatistics` silently skip missing records
 
-## Culture ↔ Religion System
+When a culture's `locations` array references a place that no longer
+exists, `getCultureSummary` silently skips it (the place is not added to
+the summary's `locations` array). Same for religions.
 
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Culture → Religions | `culture.religions` array | ✅ Complete |
-| Religion → Cultures | `CultureState.getCulturesByReligion()` | ✅ Complete |
-| UI Association | Edit culture modal allows religion selection | ✅ Complete |
+**Rationale:** A partial summary is more useful than no summary. The
+caller cannot distinguish "no locations" from "locations that all got
+deleted."
 
-## Culture ↔ Character Generation Flow
+**Deferral:** If the UI needs to surface dangling references, add a
+`danglingReferences` field to the summary. This is a data projection
+choice, not a fallback, and it's deliberate.
 
-```
-1. Character creation triggered
-   ↓
-2. Birthplace location selected (or random)
-   ↓
-3. Culture lookup: find culture for location
-   ├── Check if location has cultureId directly
-   ├── If not, walk up hierarchy to find parent with culture
-   └── If none found, use default culture
-   ↓
-4. Appearance generation:
-   ├── If culture found, use its appearance template
-   ├── Roll weighted values for each category
-   ├── Roll height within gender-specific range
-   └── Roll 1-2 common features
-   ↓
-5. Character created with cultureId and appearance
-```
+### 5.3 `generateAppearanceForLocation` throws when no culture applies
 
----
+The query-integrated wrapper throws. Character creation (see integration
+notes) must either:
 
-# 12. DEPENDENCY MAP
+- pre-check `CultureQueries.getPrimaryCultureForLocation(locationId)`
+  and handle `null`; or
+- `try/catch` around `generateAppearanceForLocation` and fall back to
+  `generateAppearanceFromCulture(null, gender, opts, rng)`.
 
-## Core Dependencies
+**Deferral:** A `tryGenerateAppearanceForLocation` convenience wrapper
+that returns `null` instead of throwing is a possible future addition.
+Not added now because it would invite callers to ignore missing cultures
+when they should decide explicitly.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  modals-core.js ─────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  ├── _getIcon()                                                          │ │
-│  └── _getCurrentYear()                                                   │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getCharacterById()                                                  │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  └── getCurrentYear()                                                    │ │
-│                                                                             │
-│  storage.js ────────────────────────────────────────────────────────────┐ │
-│  └── saveMasterData()                                                    │ │
-│                                                                             │
-│  ids.js ────────────────────────────────────────────────────────────────┐ │
-│  └── generateId()                                                        │ │
-│                                                                             │
-│  randomness.js ─────────────────────────────────────────────────────────┐ │
-│  ├── pickWeighted()                                                      │ │
-│  ├── randomInt()                                                         │ │
-│  └── pickRandom()                                                        │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+### 5.4 `generateAppearanceFromCulture(null, ...)` produces all-undefined appearance
 
-## Culture System Dependencies
+This is intentional. It is the caller's hook for best-effort generation.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CULTURE SYSTEM DEPENDENCIES                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  culture-constants.js ───────────────────────────────────────────────────┐ │
-│  └── None (pure constants)                                               │ │
-│                                                                             │
-│  culture-state.js ──────────────────────────────────────────────────────┐ │
-│  ├── storage.js                                                          │ │
-│  └── ids.js                                                              │ │
-│                                                                             │
-│  culture-commands.js ───────────────────────────────────────────────────┐ │
-│  ├── culture-state.js                                                    │ │
-│  ├── ids.js                                                              │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  culture-queries.js ────────────────────────────────────────────────────┐ │
-│  ├── culture-state.js                                                    │ │
-│  ├── accessors.js                                                        │ │
-│  └── religion-state.js                                                   │ │
-│                                                                             │
-│  culture-generation.js ─────────────────────────────────────────────────┐ │
-│  ├── culture-state.js                                                    │ │
-│  ├── culture-queries.js                                                  │ │
-│  └── randomness.js                                                       │ │
-│                                                                             │
-│  culture-ui-list.js ────────────────────────────────────────────────────┐ │
-│  ├── culture-state.js                                                    │ │
-│  ├── culture-queries.js                                                  │ │
-│  ├── formatting.js                                                       │ │
-│  └── icons.js                                                            │ │
-│                                                                             │
-│  modals-culture.js ─────────────────────────────────────────────────────┐ │
-│  ├── modals-core.js                                                      │ │
-│  ├── culture-state.js                                                    │ │
-│  ├── culture-commands.js                                                 │ │
-│  ├── culture-queries.js                                                  │ │
-│  ├── culture-generation.js                                               │ │
-│  ├── accessors.js                                                        │ │
-│  └── religion-state.js                                                   │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**Deferral:** No indication of "best effort" is carried in the result.
+Callers who care must check for `skinTone === undefined`.
+
+### 5.5 No keyboard activation for list rows
+
+`culture-ui-list.js` renders rows with `tabindex="0"` so they're
+screen-reader-announced and focusable, but there is no keydown handler.
+Click (or screen-reader "activate") triggers `onSelect`; Enter/Space on
+a focused row does not.
+
+**Deferral:** Deferred until the design confirms it's wanted. If added,
+must not double-fire (Enter on a focusable element synthesizes a click
+in most browsers).
+
+### 5.6 Bootstrap does not verify modal lazy dependencies
+
+`confirmDialog`, `getIconOptions`, and the modal edit path's use of
+`PlaceQueries` / `ReligionQueries` are checked at call time, not load
+time. A page that only uses create/edit/details modals does not need
+`confirmDialog` to exist.
+
+**Deferral:** If a page requires the delete flow to work, it should
+verify `confirmDialog` before calling `confirmDeleteCulture`. This is a
+page-level concern, not a subsystem concern.
+
+### 5.7 No culture icon in dropdown options
+
+Native `<option>` elements do not render arbitrary HTML, so dropdown
+options omit icons. `CultureViewModels.buildDropdownOptions` returns
+`{id, label, icon, selected}` per item; renderers that want icons must
+build a custom control on top of that projection.
+
+**Deferral:** A custom dropdown control is a future addition, out of
+scope here.
+
+### 5.8 `refreshFromMasterData` is a deprecated alias
+
+Kept as `CultureState.refreshFromMasterData()` for any un-migrated caller.
+Will be removed in a future release. New code uses `hydrateFromMasterData()`.
 
 ---
 
-# 13. RECURSION GUARDS
+## 6. Anti-Patterns
 
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingState` | culture-state.js | Prevent state mutation re-entry |
-| `_processing` | culture-commands.js | Prevent command re-entry |
-| `_processing` | culture-queries.js | Prevent query re-entry |
-| `_processing` | culture-generation.js | Prevent generation re-entry |
-| `_rendering` | culture-ui-list.js | Prevent render re-entry |
-| `_openingModal` | modals-culture.js | Prevent modal re-entry |
+Things that will cause pain if you do them.
 
----
-
-# 14. ICON POLICY
-
-All icons must come from `icons.js` via the `_getIcon()` function:
-
-| Rule | Description |
-|------|-------------|
-| **Rule 1** | NO emojis in code or UI |
-| **Rule 2** | All icons from icons.js via `_getIcon()` |
-| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
-
-## Available Icons for Culture System
-
-| Usage | Icon |
-|-------|------|
-| Culture | STAR_4, CIRCLE_DOT |
-| Location | LOCATION |
-| Religion | CIRCLE_DOT |
-| Person | PERSON |
-| Edit | EDIT |
-| Delete | TRASH |
-| Add | PLUS |
-| Search | SEARCH |
-| Information | CIRCLE_DOT |
-| Warning | WARNING |
-
----
-
-# 15. COMPLETE FUNCTION LIST
-
-## culture-constants.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `CULTURE_APPEARANCE_CATEGORIES` | Constant | List of appearance categories |
-| `CULTURE_DEFAULT_APPEARANCE` | Constant | Default appearance options |
-| `CULTURE_TEMPLATES` | Constant | Pre-defined culture templates |
-
-## culture-state.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `subscribe(callback)` | Command | Subscribe to changes |
-| `getCulture(id)` | Query | Get culture by ID |
-| `getAllCultures()` | Query | Get all cultures |
-| `getCulturesByLocation(id)` | Query | Get cultures by location |
-| `getCulturesByReligion(id)` | Query | Get cultures by religion |
-| `searchByName(query)` | Query | Search cultures by name |
-| `getCultureCount()` | Query | Get culture count |
-| `invalidateCache()` | Command | Invalidate caches |
-
-## culture-commands.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `createCulture(data)` | Command | Create culture |
-| `updateCulture(id, updates)` | Command | Update culture |
-| `deleteCulture(id)` | Command | Delete culture |
-| `addAppearanceOption(id, category, option)` | Command | Add appearance option |
-| `removeAppearanceOption(id, category, value)` | Command | Remove appearance option |
-| `updateAppearanceWeight(id, category, value, weight)` | Command | Update option weight |
-| `addLocationToCulture(id, locationId)` | Command | Add location |
-| `removeLocationFromCulture(id, locationId)` | Command | Remove location |
-| `addReligionToCulture(id, religionId)` | Command | Add religion |
-| `removeReligionFromCulture(id, religionId)` | Command | Remove religion |
-| `updateMythology(id, mythology)` | Command | Update mythology |
-
-## culture-queries.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `searchCultures(query)` | Query | Search cultures |
-| `getCultureSummary(id)` | Query | Get culture summary |
-| `getCultureByLocation(locationId)` | Query | Get culture by location |
-| `getAllCulturesByLocation(locationId)` | Query | Get all cultures by location |
-| `getCultureForCharacter(characterId)` | Query | Get culture for character |
-| `getCulturesByReligion(religionId)` | Query | Get cultures by religion |
-| `getPrimaryCultureForReligion(religionId)` | Query | Get primary culture for religion |
-| `getCultureStatistics()` | Query | Get culture statistics |
-
-## culture-generation.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `rollWeightedValue(options, defaultValue)` | Query | Roll weighted value |
-| `rollWeightedValues(options, count, defaultValue)` | Query | Roll multiple weighted values |
-| `rollHeight(heightConfig, gender, defaultMin, defaultMax)` | Query | Roll height |
-| `generateAppearanceFromCulture(culture, gender, options)` | Query | Generate appearance from culture |
-| `generateAppearance(cultureId, gender, options)` | Query | Generate appearance from culture ID |
-| `generateAppearanceForLocation(locationId, gender, options)` | Query | Generate appearance for location |
-| `generateAppearanceWithRandomCulture(gender, options)` | Query | Generate appearance with random culture |
-| `findCultureForLocation(locationId)` | Query | Find culture for location |
-| `findAllCulturesForLocation(locationId)` | Query | Find all cultures for location |
-
-## culture-ui-list.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `renderCultureList(containerId, options)` | UI | Render culture list |
-| `renderCultureCard(culture)` | UI | Render culture card |
-| `renderCultureDropdown(selectedId, placeholder, options)` | UI | Render culture dropdown |
-
-## modals-culture.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `openCreateCultureModal(onSuccess)` | UI | Create culture |
-| `openEditCultureModal(cultureId, onSuccess)` | UI | Edit culture |
-| `openDeleteCultureModal(cultureId, onSuccess)` | UI | Delete culture |
-| `openCultureDetailsModal(cultureId, onSuccess)` | UI | Culture details |
-
----
-
-# 16. USAGE EXAMPLES
-
-## Creating a Culture
+### 6.1 Don't save directly
 
 ```javascript
-var result = window.CultureCommands.createCulture({
-    name: 'Nordic',
-    displayName: 'Nordic Peoples',
-    description: 'The hardy peoples of the cold north',
-    icon: '✦'
-});
+// WRONG
+window.saveMasterData();
 
-if (result.success) {
-    console.log('Created culture:', result.data.name);
+// RIGHT
+window.CultureCommands.persist();
+```
+
+`CultureCommands.persist()` is the single save call site. It returns
+`{success, reason}` instead of throwing. Call it once per successful
+command batch, from the UI layer.
+
+### 6.2 Don't mutate canonical data directly
+
+```javascript
+// WRONG
+window.masterData.data.cultures.push(newCulture);
+
+// RIGHT
+window.CultureCommands.createCulture(data);
+```
+
+Commands own the mutation transaction. Direct pushes skip validation,
+index rebuilds, `markDataDirty`, `publish`, and `dispatchEvent` — every
+subscriber and every cross-domain listener will silently miss the change.
+
+### 6.3 Don't call mutation primitives from outside commands
+
+```javascript
+// WRONG (from, say, character-commands.js)
+window.CultureState._updateCulture(id, culture);
+
+// RIGHT
+window.CultureCommands.updateCulture(id, updates);
+```
+
+`_addCulture` / `_updateCulture` / `_removeCulture` are the mechanism,
+not the decision. Commands decide; State executes. Nothing outside
+`CultureCommands` may call these.
+
+### 6.4 Don't use `_getCultureCanonical` from UI
+
+```javascript
+// WRONG (from a renderer)
+var c = window.CultureQueries._getCultureCanonical(id);
+c.notes = 'edited in place';  // mutates canonical, skips everything
+
+// RIGHT
+var c = window.CultureQueries.getCultureById(id);  // clone
+```
+
+`_getCultureCanonical` returns the live object. Any mutation to it
+skips the commit tail. Use it only when you're inside a transaction
+that will re-hydrate afterward.
+
+### 6.5 Don't re-implement the display-name fallback
+
+```javascript
+// WRONG
+var label = culture.displayName || culture.name || 'Unknown';
+
+// RIGHT
+var label = window.CultureViewModels.labelFor(culture);
+```
+
+`labelFor` returns a string, always. It handles displayName, name, and
+the malformed-culture case. Every domain that needs a culture's label
+should call this helper.
+
+### 6.6 Don't route culture icons through `_getIcon`
+
+```javascript
+// WRONG
+var icon = window._getIcon(culture.icon);
+
+// RIGHT
+var icon = culture.icon;  // rendered verbatim
+```
+
+Culture icons are data. `_getIcon` is for chrome (chevrons, markers,
+badges) — not for user-supplied icon strings from a culture record. If
+you add a chrome icon to `culture-ui-list.js`, route it through `_getIcon`.
+
+### 6.7 Don't throw from a UI entry point
+
+```javascript
+// WRONG (in a click handler)
+if (!window.confirmDialog) throw new Error('...');
+
+// RIGHT
+if (!window.confirmDialog) {
+    window.showToast('Confirmation unavailable', 'error');
+    return;
 }
 ```
 
-## Adding Appearance Options
+A throw in a click handler shows the user nothing and logs nothing
+useful unless a global error reporter is installed. Toast the user,
+return, and let them know why the action didn't happen.
+
+### 6.8 Don't assume `window.Culture` exists before `init()`
 
 ```javascript
-var result = window.CultureCommands.addAppearanceOption(
-    'culture_123',
-    'skinTones',
-    { value: 'Pale', weight: 70 }
-);
+// WRONG (before bootstrap runs)
+window.Culture.queries.getCultureById(id);
 
-if (result.success) {
-    console.log('Appearance option added');
+// RIGHT
+window.CultureQueries.getCultureById(id);  // always available once loaded
+```
+
+`window.Culture` is created by `CultureBootstrap.init()`. The individual
+namespace objects (`CultureQueries`, etc.) are created when their scripts
+load. If you must call culture functions before bootstrap runs, use the
+individual namespaces.
+
+### 6.9 Don't add to `CultureCommands` for cross-domain concerns
+
+```javascript
+// WRONG (adding cascade cleanup to the delete command)
+function deleteCulture(id) {
+    // ... delete ...
+    // clear character.cultureId — NO, this is cross-domain
+    // clear place.cultureId — NO
 }
 ```
 
-## Updating Appearance Weight
+Cross-domain side effects belong in a cascade layer, not in `CultureCommands`.
+The command dispatches `cultureDeleted`; a cascade module listens and
+coordinates. When that module exists, add it — do not grow `CultureCommands`.
 
-```javascript
-var result = window.CultureCommands.updateAppearanceWeight(
-    'culture_123',
-    'skinTones',
-    'Pale',
-    80
-);
+---
 
-if (result.success) {
-    console.log('Weight updated');
-}
+## 7. Version History
+
+### 2.0 (2026-07-14) — Post-refactor
+
+Converged to the rank/role/relationship/education reference pattern.
+
+**Structural changes:**
+
+- `CultureState.rebuildIndexes(cultures)` → `hydrateFromMasterData()`
+- Removed `byPrimaryCultureLocation` index and `getByPrimaryCultureLocation`
+  (the relationship lives on `Place.cultureId`)
+- Public reads now return clones; added `_getCultureCanonical(id)` for
+  commands
+- Added mutation primitives `_addCulture`, `_updateCulture`, `_removeCulture`
+- `CultureState.notify(event)` → `publish(eventName, data)`
+- Duplicate-id detection on hydrate (throws on corrupted canonical)
+- Added `CultureState.validateIntegrity()` (warn-only)
+- `CultureCommands` no longer calls `saveMasterData` in `_commit`; added
+  public `persist()` as the single save site
+- Commands route mutation through State primitives
+- `updateCulture` rejects unknown fields (previously silently ignored)
+- `deleteCulture` now calls `validateDelete`
+- Commands dispatch `CustomEvent` for cross-domain listeners
+- Added `CultureBootstrap` module (new file)
+- Added load-time dependency verification to every module
+
+**Documentation:**
+
+- This document (`culture-doc.md`) replaces `culture-docs.txt`
+- Header contracts added to every module
+- Anti-patterns section added
+
+**Behavioural changes:**
+
+- `CultureModals._handleCommandResult` no longer calls `modals.close()`;
+  relies on `openModal`'s close-on-truthy contract. **Verify against
+  `modals-core.js`.**
+- `CultureModals.confirmDeleteCulture` toasts-and-returns on missing
+  `confirmDialog` (previously threw).
+- `CultureUI` per-container listener now reads the current `onSelect`
+  from a per-container property (previously captured the first one).
+- `CultureUI` click handler guards against text-node targets (previously
+  crashed).
+- `CultureViewModels.labelFor` returns `''` for malformed cultures
+  (previously could return `null` or `undefined`).
+- `CultureGeneration.generateAppearanceForLocation` documented to throw
+  (behaviour unchanged, but now explicitly a contract).
+
+### 1.0 (pre-refactor)
+
+Original implementation. Diverged from the reference pattern in:
+
+- State passed arrays to `rebuildIndexes`
+- Public reads returned live records
+- Commands called `save(true)` in `_commit`
+- No `persist()` boundary
+- No `CustomEvent` dispatch
+- `byPrimaryCultureLocation` index declared but never populated
+- `deleteCulture` skipped validation
+- No bootstrap, no load-time verification
+- `culture-docs.txt` described an even earlier API (`CultureState.getCulture`,
+  `CultureQueries.getCultureByLocation`, etc.) that no longer matched the code
+
+---
+
+## Appendix A: Full Function List
+
+For quick reference. See section 3 for details.
+
+**culture-constants.js:** `CULTURE_APPEARANCE_CATEGORIES`,
+`CULTURE_DEFAULT_APPEARANCE`, `CULTURE_TEMPLATES`, `getCultureTemplate`,
+`getCultureTemplateNames`, `getAllCultureTemplates`.
+
+**culture-validation.js:** `validateCreate`, `validateUpdate`,
+`validateDelete`.
+
+**culture-state.js:** `hydrateFromMasterData`, `refreshFromMasterData`,
+`getById`, `getByName`, `getByDisplayName`, `getByAssociatedLocation`,
+`getByReligion`, `_getCultureCanonical`, `_addCulture`, `_updateCulture`,
+`_removeCulture`, `subscribe`, `publish`, `validateIntegrity`,
+`getIndexStats`.
+
+**culture-queries.js:** `getCultureById`, `getAllCultures`,
+`getCulturesByName`, `getCulturesByDisplayName`, `getCultureCount`,
+`cultureExists`, `_getCultureCanonical`, `searchCultures`,
+`getPrimaryCultureForLocation`, `getAssociatedCulturesForLocation`,
+`getCulturesForLocation`, `getCultureForCharacter`,
+`getCharactersForCulture`, `getCulturesForReligion`, `getCultureSummary`,
+`getCultureStatistics`, `getCulturesWithMythology`,
+`getCulturesWithAppearance`.
+
+**culture-commands.js:** `createCulture`, `updateCulture`, `deleteCulture`,
+`addLocationToCulture`, `removeLocationFromCulture`, `addReligionToCulture`,
+`removeReligionFromCulture`, `addAppearanceOption`, `removeAppearanceOption`,
+`updateAppearanceWeight`, `updateMythology`, `persist`.
+
+**culture-generation.js:** `rollWeightedValue`, `rollWeightedValues`,
+`rollHeight`, `generateAppearanceFromCulture`, `generateAppearance`,
+`generateAppearanceForLocation`, `generateAppearanceWithRandomCulture`.
+
+**culture-view-models.js:** `labelFor`, `iconFor`, `buildListRow`,
+`buildListRows`, `buildCard`, `buildDetails`, `buildDropdownOptions`.
+
+**culture-ui-list.js:** `renderCultureList`, `renderCultureCard`,
+`renderCultureDropdown`.
+
+**culture-modals.js:** `openCreateCultureModal`, `openEditCultureModal`,
+`confirmDeleteCulture`, `openCultureDetailsModal`.
+
+**culture-bootstrap.js:** `init`.
+
+---
+
+## Appendix B: Cross-Domain Integration
+
+### Character → Culture
+
+- `character.cultureId` field
+- `character.appearance` object (rolled from culture)
+- Resolved via `CultureQueries.getCultureForCharacter(characterId)`
+- Generated via `CultureGeneration.generateAppearance(cultureId, gender)`
+
+**Caution:** `generateAppearanceForLocation` throws when no culture applies.
+Character creation must pre-check `getPrimaryCultureForLocation` or
+`try/catch`.
+
+### Location → Culture
+
+- `place.cultureId` field (authoritative primary culture)
+- Set via `LocationCommands.updatePlaceCulture` (or equivalent)
+- Resolved via `CultureQueries.getPrimaryCultureForLocation(locationId)`
+
+**Note:** The primary-culture relationship lives on the place. Culture
+records do not index it.
+
+### Culture → Location (descriptive)
+
+- `culture.locations` array
+- Descriptive association only; does not participate in primary-culture
+  resolution
+- Queried via `CultureQueries.getAssociatedCulturesForLocation(locationId)`
+
+### Culture → Religion
+
+- `culture.religions` array
+- Set via `CultureCommands.addReligionToCulture` / `removeReligionFromCulture`
+- Queried via `CultureQueries.getCulturesForReligion(religionId)`
+
+### Cross-domain events
+
+`CultureCommands` dispatches three `CustomEvent`s on `window`:
+
+| Event | `detail` |
+|---|---|
+| `cultureCreated` | `{culture: <record>}` |
+| `cultureUpdated` | `{culture: <record>}` |
+| `cultureDeleted` | `{culture: <record snapshot>}` |
+
+Other domains may listen. **No domain currently listens.** When the
+`CultureCascade` module is added, it will listen for `cultureDeleted` and
+clear references through the owning domains' commands.
+
+### In-process subscriptions
+
+`CultureState.subscribe(callback)` receives `{type, data}` for every
+command commit. UI modules that need to re-render on culture change
+should subscribe here rather than listen for `CustomEvent`s.
+
+---
+
+## Appendix C: File Load Order Cheat Sheet
+
+```
+storage.js
+ids.js
+accessors.js
+modals-core.js
+location-queries.js
+religion-queries.js
+character-queries.js
+culture-constants.js
+culture-validation.js
+culture-state.js
+culture-commands.js
+culture-queries.js
+culture-generation.js
+culture-view-models.js
+culture-ui-list.js
+culture-modals.js
+culture-bootstrap.js    ← last
 ```
 
-## Generating Appearance
+Missing any of the first seven breaks the bootstrap's dependency check.
+Missing any of 8–16 breaks the module-presence check. Reordering breaks
+the transitive dependency check inside each module's load-time
+verification block.
 
-```javascript
-var appearance = window.CultureGeneration.generateAppearance(
-    'culture_123',
-    'male'
-);
+---
 
-console.log('Skin:', appearance.skinTone);
-console.log('Eyes:', appearance.eyeColor);
-console.log('Hair:', appearance.hairColor);
-console.log('Height:', appearance.height);
-```
-
-## Getting Culture by Location
-
-```javascript
-var culture = window.CultureQueries.getCultureByLocation('loc_456');
-if (culture) {
-    console.log('Culture at location:', culture.name);
-}
-```
-
-## Creating Character with Culture
-
-```javascript
-// CharacterCommands.createRandomCharacter now uses culture automatically
-var result = window.CharacterCommands.createRandomCharacter({
-    birthplaceId: 'loc_456',  // Culture will be looked up from location
-    gender: 'male'
-});
-
-if (result.success) {
-    console.log('Character:', result.data.name);
-    console.log('Culture:', result.data.cultureId);
-    console.log('Appearance:', result.data.appearance);
-}
-```
-
-## Getting Culture Statistics
-
-```javascript
-var stats = window.CultureQueries.getCultureStatistics();
-console.log('Total cultures:', stats.total);
-console.log('With locations:', stats.withLocations);
-console.log('With religions:', stats.withReligions);
-console.log('With mythology:', stats.withMythology);
-```
-
-## Rendering Culture List
-
-```javascript
-window.CultureUI.renderCultureList('myContainer', {
-    onSelect: function(culture) {
-        console.log('Selected:', culture.name);
-    },
-    showLocations: true,
-    showReligions: true,
-    showMythology: true
-});
-```
-
-## Associating Culture with Location
-
-```javascript
-// First add location to culture
-var result = window.CultureCommands.addLocationToCulture(
-    'culture_123',
-    'loc_456'
-);
-
-// Then assign culture to location (via LocationCommands)
-var result2 = window.LocationCommands.updatePlaceCulture(
-    'loc_456',
-    'culture_123'
-);
+*End of document.*
 ```
 
 ---
 
-# END OF DOCUMENTATION
+## What to do next
 
-**Generated:** 2026-07-14
-**Version:** 1.0
-**File Count:** 7 core modules + 6 modified integration files
-**Total Size:** ~100 KB
-**Integration Status:**
-- Character System: ✅ Complete
-- Location System: ✅ Complete
-- Religion System: ✅ Complete (associations)
-- Crime System: ❌ Not applicable (culture has no gameplay impact)
-- UI/Dashboard: ✅ Complete
+1. **Delete `culture-docs.txt`.** It describes a pre-refactor API that no longer exists and will actively mislead anyone who reads it.
+2. **Add `<script src="js/culture/culture-bootstrap.js"></script>` after the last culture script** in each of the eight HTML files.
+3. **Verify the `openModal` close-on-truthy contract** against `modals-core.js` before shipping 7/9. If the contract is different, adjust `_handleCommandResult` accordingly.
+4. **Confirm `culture-view-models.js` and `culture-modals.js` are in the script tags** of the eight HTML files. If they were previously loaded dynamically, the bootstrap's module-presence check will now fail at load.
+
+That's all nine deliverables. The subsystem is structurally converged with rank / role / relationship / education.
