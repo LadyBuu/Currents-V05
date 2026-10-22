@@ -6,7 +6,7 @@
     <title>Household Manager</title>
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/selectors.css" />
-	    <link rel="stylesheet" href="css/household-manager.css" />
+    <link rel="stylesheet" href="css/household-manager.css" />
 </head>
 <body>
 
@@ -119,11 +119,28 @@
                         locationTypes: [],
                         governmentTypes: [],
                         households: [],
+                        householdPositions: [],
+                        householdAssignments: [],
                         residences: [],
                         currentYear: 1250
                     }
                 };
                 console.log('[PRELOAD] Created empty masterData');
+            }
+
+            // Ensure household-related arrays exist even if a legacy save
+            // omitted them. Structural shape only — no domain defaults.
+            if (!Array.isArray(window.masterData.data.households)) {
+                window.masterData.data.households = [];
+            }
+            if (!Array.isArray(window.masterData.data.householdPositions)) {
+                window.masterData.data.householdPositions = [];
+            }
+            if (!Array.isArray(window.masterData.data.householdAssignments)) {
+                window.masterData.data.householdAssignments = [];
+            }
+            if (!Array.isArray(window.masterData.data.residences)) {
+                window.masterData.data.residences = [];
             }
         })();
     </script>
@@ -297,74 +314,83 @@
     <script src="js/education/education-system.js"></script>
 
     <!-- ============================================================ -->
-    <!-- HOUSEHOLD SYSTEM - FULL                                     -->
+    <!-- HOUSEHOLD SYSTEM - CONVERGED (v6.1)                          -->
     <!-- ============================================================ -->
+    <!--
+        Load order is critical:
+          1. Foundation (constants, rules, view-models) — no state deps
+          2. Storage (state) — owns canonical arrays
+          3. Reads (queries) — reads state
+          4. Writes (commands) — only module that persists
+          5. Economy — reads/writes via commands
+          6. Orchestrators (assignment, servant)
+          7. Residence — canonical residence storage
+          8. Bootstrap — verifies + hydrates everything above
 
-    <!-- 1. STATE - Single source of truth -->
+        Every module (2-7) verifies its cross-domain deps at load.
+        Bootstrap is the last line of verification + exposes window.Household.
+    -->
+
+    <!-- 1. FOUNDATION — vocabulary, policy, presentation defaults -->
+    <script src="js/households/household-constants.js"></script>
+    <script src="js/households/household-rules.js"></script>
+    <script src="js/households/household-view-models.js"></script>
+
+    <!-- 2. STATE — canonical storage, indexes, subscriptions -->
     <script src="js/households/household-state.js"></script>
 
-    <!-- 2. QUERIES - Read-only queries -->
+    <!-- 3. QUERIES — semantic reads, defensive snapshots -->
     <script src="js/households/household-queries.js"></script>
 
-    <!-- 3. COMMANDS - Write operations -->
+    <!-- 4. COMMANDS — canonical mutations, persist() boundary -->
     <script src="js/households/household-commands.js"></script>
 
-    <!-- 4. ASSIGNMENT - Inheritance, transfers, cadet branches -->
-    <script src="js/households/household-assignment.js"></script>
-
-    <!-- 5. ECONOMY - Wealth, resources, trade -->
+    <!-- 5. ECONOMY — wealth, resources, trade, annual processing -->
     <script src="js/households/household-economy.js"></script>
 
-    <!-- 6. SERVANT - Master-servant relationships -->
+    <!-- 6. ORCHESTRATORS — cross-operation coordination -->
+    <script src="js/households/household-assignment.js"></script>
     <script src="js/households/household-servant.js"></script>
 
-    <!-- 7. RESIDENCE - Business logic for residences -->
+    <!-- 7. RESIDENCE — canonical residence storage -->
     <script src="js/households/residence-system.js"></script>
 
-    <!-- 8. UI LIST - Household list rendering -->
+    <!-- 8. BOOTSTRAP — verify, hydrate, expose window.Household -->
+    <script src="js/households/household-bootstrap.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- HOUSEHOLD UI                                                 -->
+    <!-- ============================================================ -->
     <script src="js/households/household-ui-list.js"></script>
-
-    <!-- 9. MAIN MODALS - Create, edit, delete, details -->
     <script src="js/households/modals-household.js"></script>
-
-    <!-- 10. ECONOMY MODALS - Wealth, resources, income, expenses -->
     <script src="js/households/modals-household-economy.js"></script>
-
-    <!-- 11. SNAPSHOT MODALS - Name periods, snapshots -->
     <script src="js/households/modals-household-snapshot.js"></script>
-
-    <!-- 12. STAFF MODALS - Position management -->
     <script src="js/households/modals-household-staff.js"></script>
 
-    <!-- 13. ASSIGN STAFF MODALS - Staff assignment modals -->
-    <script src="js/households/modals-assign-staff.js"></script>
-
-    <!-- 14. RESIDENCE MODALS -->
+    <!-- Residence modals -->
     <script src="js/households/modals-residence.js"></script>
-    <script src="js/households/modals-residence-history.js"></script>
     <script src="js/households/modals-residence-rental.js"></script>
-    <script src="js/households/modals-residence-snapshot.js"></script>
-    <script src="js/households/modals-residence-staff.js"></script>
-    <script src="js/households/modals-residence-vacancy.js"></script>
     <script src="js/households/modals-residence-owner.js"></script>
+    <script src="js/households/modals-residence-staff.js"></script>
+
+    <!-- DEPRECATED / SHIM FILES — safe to remove once callers migrate -->
+    <!--
+        modals-assign-staff.js          — verification shim; delete when no caller uses legacy names
+        modals-residence-history.js     — verification shim; delete when no caller uses legacy names
+        modals-residence-vacancy.js     — verification shim; delete when no caller uses legacy names
+        modals-residence-snapshot.js    — DEPRECATED stub; delete immediately (registers nothing)
+
+        Leaving them loaded is safe — the shims verify the canonical modules are
+        present and throw loudly if they're not. The stub warns on every load.
+    -->
 
     <!-- ============================================================ -->
-    <!-- TAB COMPONENTS - Household Tabs                             -->
+    <!-- TAB COMPONENTS - Household Tabs                              -->
     <!-- ============================================================ -->
-
-    <!-- Overview Tab -->
     <script src="js/tabs/household-overview-tab.js"></script>
-
-    <!-- Members Tab -->
     <script src="js/tabs/household-members-tab.js"></script>
-
-    <!-- Economy Tab -->
     <script src="js/tabs/household-economy-tab.js"></script>
-
-    <!-- Departments Tab -->
     <script src="js/tabs/household-departments-tab.js"></script>
-
-    <!-- Holdings Tab -->
     <script src="js/tabs/household-holdings-tab.js"></script>
 
     <!-- ============================================================ -->
@@ -461,12 +487,12 @@
     <script src="js/disaster/modals-disaster.js"></script>
 
     <!-- ============================================================ -->
-    <!-- ORCHESTRATORS                                               -->
+    <!-- ORCHESTRATORS                                                -->
     <!-- ============================================================ -->
     <script src="js/events/annualProcessing.js"></script>
 
     <!-- ============================================================ -->
-    <!-- ORCHESTRATOR                                                 -->
+    <!-- ORCHESTRATOR — Household Manager page logic                  -->
     <!-- ============================================================ -->
 
     <script>
@@ -485,6 +511,49 @@
             var selectedId = null;
             var isInitialized = false;
             var _renderTimeout = null;
+
+            // ============================================================
+            // Sanity: verify the converged household modules loaded.
+            // Bootstrap verifies internally; we surface the result here
+            // so the page fails visibly if something is missing.
+            // ============================================================
+            function _verifyHouseholdModules() {
+                if (typeof window.HouseholdConstants === 'undefined') {
+                    console.error('[HouseholdManager] HouseholdConstants is missing. ' +
+                        'Load household-constants.js before the other household modules.');
+                    return false;
+                }
+                if (typeof window.HouseholdRules === 'undefined') {
+                    console.error('[HouseholdManager] HouseholdRules is missing. ' +
+                        'Load household-rules.js before the other household modules.');
+                    return false;
+                }
+                if (typeof window.HouseholdViewModels === 'undefined') {
+                    console.error('[HouseholdManager] HouseholdViewModels is missing. ' +
+                        'Load household-view-models.js before the other household modules.');
+                    return false;
+                }
+                if (typeof window.HouseholdBootstrap === 'undefined') {
+                    console.error('[HouseholdManager] HouseholdBootstrap is missing. ' +
+                        'Load household-bootstrap.js after the household core.');
+                    return false;
+                }
+                if (typeof window.HouseholdQueries === 'undefined') {
+                    console.error('[HouseholdManager] HouseholdQueries is missing.');
+                    return false;
+                }
+                if (typeof window.HouseholdCommands === 'undefined') {
+                    console.error('[HouseholdManager] HouseholdCommands is missing.');
+                    return false;
+                }
+                if (typeof window.HouseholdCommands.persist !== 'function') {
+                    console.error('[HouseholdManager] HouseholdCommands.persist is missing. ' +
+                        'The commands module is loaded but does not expose persist(). ' +
+                        'Check the load order — the commands file must be the converged version.');
+                    return false;
+                }
+                return true;
+            }
 
             // ============================================================
             // Add Household button
@@ -638,6 +707,13 @@
                     return false;
                 }
 
+                // Ensure structural shape on household arrays — no domain defaults.
+                var d = window.masterData.data;
+                if (!Array.isArray(d.households)) d.households = [];
+                if (!Array.isArray(d.householdPositions)) d.householdPositions = [];
+                if (!Array.isArray(d.householdAssignments)) d.householdAssignments = [];
+                if (!Array.isArray(d.residences)) d.residences = [];
+
                 try {
                     localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
                 } catch(e) {}
@@ -649,9 +725,26 @@
                     window.invalidateAccessorCaches();
                 }
 
-                if (typeof window.HouseholdState !== 'undefined' &&
-                    typeof window.HouseholdState.refresh === 'function') {
-                    window.HouseholdState.refresh();
+                // Re-hydrate all household modules from the new data.
+                try {
+                    if (typeof window.HouseholdState !== 'undefined' &&
+                        typeof window.HouseholdState.hydrateFromMasterData === 'function') {
+                        window.HouseholdState.hydrateFromMasterData();
+                    } else if (typeof window.HouseholdState !== 'undefined' &&
+                        typeof window.HouseholdState.refresh === 'function') {
+                        window.HouseholdState.refresh();
+                    }
+                } catch (e) {
+                    console.warn('[HouseholdManager] HouseholdState hydration failed:', e);
+                }
+
+                try {
+                    if (typeof window.ResidenceSystem !== 'undefined' &&
+                        typeof window.ResidenceSystem.hydrateFromMasterData === 'function') {
+                        window.ResidenceSystem.hydrateFromMasterData();
+                    }
+                } catch (e) {
+                    console.warn('[HouseholdManager] ResidenceSystem hydration failed:', e);
                 }
 
                 return true;
@@ -668,45 +761,62 @@
                     _renderTimeout = null;
                 }
 
-                var HS = window.HouseholdState;
-                var HUI = window.renderHouseholdList;
+                var HQ = window.HouseholdQueries;
+                var HUI = window.mountHouseholdList;
 
-                if (!HS || typeof HUI !== 'function') {
+                if (!HQ || typeof HUI !== 'function') {
                     listContainer.innerHTML = '<div class="loading-placeholder">Loading households...</div>';
                     return;
                 }
 
-                var households = HS.getAllHouseholds ? HS.getAllHouseholds() : [];
+                // Read households via Queries (not State). Queries returns
+                // defensive projections, which is what the UI should render.
+                var households;
+                try {
+                    households = HQ.getAllHouseholds();
+                } catch (e) {
+                    console.warn('[HouseholdManager] getHouseholds failed:', e);
+                    listContainer.innerHTML = '<div class="error-state">Error loading households</div>';
+                    return;
+                }
+
                 if (!households || households.length === 0) {
                     listContainer.innerHTML = '<div class="empty-state">No households found</div>';
+                    // Still reset the selection so stale IDs don't persist.
+                    selectedId = null;
+                    window._currentHouseholdId = null;
                     return;
                 }
 
                 try {
                     HUI('householdListContainer', function(householdId) {
-                        if (householdId) {
-                            selectedId = householdId;
-                            window._currentHouseholdId = householdId;
-                            renderHouseholdList();
-                            renderActiveTab();
-                            if (window.innerWidth <= 768) closeSidebar();
-                        }
-                    }, true);
+                        if (!householdId) return;
+                        selectedId = householdId;
+                        window._currentHouseholdId = householdId;
+                        renderActiveTab();
+                        if (window.innerWidth <= 768) closeSidebar();
+                    }, {
+                        preserveSelection: true,
+                        selectedId: selectedId || undefined
+                    });
 
+                    // Reconcile: if the selected household no longer exists
+                    // in the fresh list, clear the selection.
                     if (selectedId) {
                         var found = false;
-                        var items = listContainer.querySelectorAll('.household-item');
-                        for (var i = 0; i < items.length; i++) {
-                            if (items[i].dataset.id === selectedId) {
+                        for (var i = 0; i < households.length; i++) {
+                            if (households[i].id === selectedId) {
                                 found = true;
                                 break;
                             }
                         }
                         if (!found) {
                             selectedId = null;
+                            window._currentHouseholdId = null;
                         }
                     }
 
+                    // Auto-select the first household if none is selected.
                     if (!selectedId && households.length > 0) {
                         selectedId = households[0].id;
                         window._currentHouseholdId = selectedId;
@@ -716,9 +826,8 @@
                             _renderTimeout = null;
                         }, 50);
                     }
-
-                } catch(e) {
-                    console.warn('Error rendering household list:', e);
+                } catch (e) {
+                    console.warn('[HouseholdManager] mountHouseholdList failed:', e);
                     listContainer.innerHTML = '<div class="error-state">Error loading households</div>';
                 }
             }
@@ -732,7 +841,9 @@
                     alert('No data to export');
                     return;
                 }
-                var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                var blob = new Blob([JSON.stringify(data, null, 2)], {
+                    type: 'application/json'
+                });
                 var url = URL.createObjectURL(blob);
                 var a = document.createElement('a');
                 a.href = url;
@@ -783,7 +894,7 @@
                         } else {
                             alert('Import failed');
                         }
-                    } catch(err) {
+                    } catch (err) {
                         alert('Invalid JSON: ' + err.message);
                     }
                 };
@@ -796,20 +907,37 @@
             // ============================================================
             setYearBtn.addEventListener('click', function() {
                 var val = parseInt(yearInput.value, 10);
-                if (!isNaN(val) && window.masterData) {
-                    window.masterData.data.currentYear = val;
+                if (isNaN(val) || !window.masterData) return;
+
+                window.masterData.data.currentYear = val;
+                try {
+                    localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
+                } catch(e) {}
+                if (typeof window.saveMasterData === 'function') {
+                    window.saveMasterData(true);
+                }
+
+                // Refresh household state so any year-dependent queries
+                // (heir discovery, historical snapshots) use the new year.
+                if (typeof window.HouseholdState !== 'undefined' &&
+                    typeof window.HouseholdState.refresh === 'function') {
                     try {
-                        localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-                    } catch(e) {}
-                    if (typeof window.saveMasterData === 'function') {
-                        window.saveMasterData(true);
+                        window.HouseholdState.refresh();
+                    } catch (e) {
+                        console.warn('[HouseholdManager] HouseholdState.refresh failed:', e);
                     }
                 }
+
+                // Re-render the active tab so year-dependent displays update.
+                renderActiveTab();
             });
 
             // ============================================================
-            // FORCE RENDER ON HOUSEHOLD SELECTION
+            // FORCE RENDER ON HOUSEHOLD SELECTION (backup path)
             // ============================================================
+            // The primary path is the mountHouseholdList onSelect callback.
+            // This backup listener catches the case where the click handler
+            // fires before the list re-renders.
             document.addEventListener('click', function(e) {
                 var item = e.target.closest('.household-item');
                 if (item && item.dataset.id) {
@@ -824,17 +952,29 @@
             });
 
             // ============================================================
-            // DEBUG: Log tab functions
+            // DEBUG: Log module presence on load
             // ============================================================
+            console.log('[HouseholdManager] Household modules:');
+            console.log('  HouseholdConstants:', typeof window.HouseholdConstants);
+            console.log('  HouseholdRules:', typeof window.HouseholdRules);
+            console.log('  HouseholdViewModels:', typeof window.HouseholdViewModels);
+            console.log('  HouseholdState:', typeof window.HouseholdState);
+            console.log('  HouseholdQueries:', typeof window.HouseholdQueries);
+            console.log('  HouseholdCommands:', typeof window.HouseholdCommands);
+            console.log('  HouseholdCommands.persist:', window.HouseholdCommands
+                ? typeof window.HouseholdCommands.persist : 'N/A');
+            console.log('  HouseholdEconomy:', typeof window.HouseholdEconomy);
+            console.log('  HouseholdAssignment:', typeof window.HouseholdAssignment);
+            console.log('  HouseholdServant:', typeof window.HouseholdServant);
+            console.log('  ResidenceSystem:', typeof window.ResidenceSystem);
+            console.log('  HouseholdBootstrap:', typeof window.HouseholdBootstrap);
+            console.log('  Household namespace:', typeof window.Household);
             console.log('[HouseholdManager] Tab functions:');
             console.log('  renderHouseholdOverviewTab:', typeof window.renderHouseholdOverviewTab);
             console.log('  renderHouseholdMembersTab:', typeof window.renderHouseholdMembersTab);
             console.log('  renderHouseholdEconomyTab:', typeof window.renderHouseholdEconomyTab);
             console.log('  renderHouseholdDepartmentsTab:', typeof window.renderHouseholdDepartmentsTab);
             console.log('  renderHouseholdHoldingsTab:', typeof window.renderHouseholdHoldingsTab);
-
-            // Check if HouseholdEconomy is available
-            console.log('[HouseholdManager] HouseholdEconomy:', typeof window.HouseholdEconomy);
 
             // ============================================================
             // INIT
@@ -843,7 +983,38 @@
                 if (isInitialized) return;
                 isInitialized = true;
 
-                // Register tab renderers
+                // Verify the converged household modules are loaded.
+                // If any is missing, the page still renders — but every
+                // household operation will fail with a clear error.
+                if (!_verifyHouseholdModules()) {
+                    console.warn('[HouseholdManager] Household modules are not fully loaded. ' +
+                        'Some operations will not work.');
+                }
+
+                // Ask bootstrap to re-verify + re-hydrate. Bootstrap is
+                // idempotent; if it already auto-initialized at load, this
+                // is a no-op that returns {success: true, alreadyInitialized: true}.
+                if (window.HouseholdBootstrap &&
+                    typeof window.HouseholdBootstrap.init === 'function') {
+                    try {
+                        var bootResult = window.HouseholdBootstrap.init();
+                        if (bootResult && bootResult.success === false) {
+                            console.warn('[HouseholdManager] Bootstrap reported failure:', bootResult);
+                        }
+                    } catch (e) {
+                        console.error('[HouseholdManager] Bootstrap.init threw:', e);
+                    }
+                }
+
+                // Sync the year input with masterData.
+                if (window.masterData && window.masterData.data &&
+                    typeof window.masterData.data.currentYear === 'number') {
+                    yearInput.value = window.masterData.data.currentYear;
+                }
+
+                // Register tab renderers if the tab modules provide a
+                // registration hook. These are best-effort — the tabs also
+                // work via their direct `renderHousehold*Tab` entry points.
                 if (typeof window.registerOverviewTabRenderer === 'function') {
                     window.registerOverviewTabRenderer();
                 }
@@ -860,15 +1031,19 @@
                     window.registerHoldingsTabRenderer();
                 }
 
+                // Initial render.
                 setTimeout(function() {
-                    var HS = window.HouseholdState;
-                    if (HS) {
-                        var households = HS.getAllHouseholds ? HS.getAllHouseholds() : [];
-                        if (households && households.length > 0) {
-                            if (!selectedId) {
-                                selectedId = households[0].id;
-                                window._currentHouseholdId = selectedId;
-                            }
+                    var HQ = window.HouseholdQueries;
+                    if (HQ) {
+                        var households;
+                        try {
+                            households = HQ.getAllHouseholds();
+                        } catch (e) {
+                            households = [];
+                        }
+                        if (households && households.length > 0 && !selectedId) {
+                            selectedId = households[0].id;
+                            window._currentHouseholdId = selectedId;
                         }
                     }
 
@@ -877,7 +1052,6 @@
                     setTimeout(function() {
                         renderActiveTab();
                     }, 100);
-
                 }, 300);
             }
 
