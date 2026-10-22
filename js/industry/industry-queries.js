@@ -19,55 +19,49 @@
  *   - These fields are NO LONGER stored on the canonical record.
  *   - A missing typeId resolves to null metadata, not a fabricated type.
  *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-state.js    (IndustryState)
+ *   - industry-types.js    (IndustryTypes)
+ *   - accessors.js         (getCharacterById, getPlaceById, getHouseholdById)
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _requireState() {
-        var state = window.IndustryState;
-        if (!state) {
-            throw new Error('IndustryQueries: IndustryState dependency missing');
-        }
-        return state;
+    if (typeof window.IndustryState === 'undefined') {
+        throw new Error(
+            'industry-queries.js requires industry-state.js to load first.'
+        );
+    }
+    if (typeof window.IndustryTypes === 'undefined') {
+        throw new Error(
+            'industry-queries.js requires industry-types.js to load first.'
+        );
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error(
+            'industry-queries.js requires accessors.js (getCharacterById).'
+        );
+    }
+    if (typeof window.getPlaceById !== 'function') {
+        throw new Error('industry-queries.js requires accessors.js (getPlaceById).');
+    }
+    if (typeof window.getHouseholdById !== 'function') {
+        throw new Error(
+            'industry-queries.js requires accessors.js (getHouseholdById).'
+        );
     }
 
-    function _requireCharacterAccessor() {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('IndustryQueries: character accessor missing (getCharacterById)');
-        }
-        return window.getCharacterById;
-    }
-
-    function _requireHouseholdAccessor() {
-        if (typeof window.getHouseholdById === 'function') {
-            return window.getHouseholdById;
-        }
-        if (typeof window.getHousehold === 'function') {
-            return window.getHousehold;
-        }
-        throw new Error('IndustryQueries: household accessor missing');
-    }
-
-    function _requirePlaceAccessor() {
-        if (typeof window.getPlaceById !== 'function') {
-            throw new Error('IndustryQueries: place accessor missing (getPlaceById)');
-        }
-        return window.getPlaceById;
-    }
-
-    function _requireTypeLookup() {
-        if (typeof window.IndustryTypes === 'undefined' ||
-            typeof window.IndustryTypes.getEnterpriseTypeById !== 'function') {
-            throw new Error('IndustryQueries: IndustryTypes.getEnterpriseTypeById dependency missing');
-        }
-        return window.IndustryTypes.getEnterpriseTypeById;
-    }
+    var IS = window.IndustryState;
+    var IT = window.IndustryTypes;
 
     // =========================================================================
     // 2. RESOLVERS
@@ -77,43 +71,27 @@
      * Resolves typeName and category from typeId.
      *
      * A broken reference (typeId points to a type that does not exist)
-     * resolves to null metadata. It is NOT repaired. Diagnostics should
-     * surface broken references separately.
+     * resolves to null metadata. It is NOT repaired.
      *
      * @param {Object} enterprise
      * @returns {{ typeName: string|null, category: string|null }}
      */
     function resolveTypeMetadata(enterprise) {
-        if (!enterprise.typeId) {
+        if (!enterprise || typeof enterprise.typeId !== 'string'
+            || enterprise.typeId.length === 0) {
             return { typeName: null, category: null };
         }
-        var getType = _requireTypeLookup();
-        var type = getType(enterprise.typeId);
+        var type = IT.getEnterpriseTypeById(enterprise.typeId);
         if (!type) {
             return { typeName: null, category: null };
         }
-        return {
-            typeName: type.name,
-            category: type.category
-        };
+        return { typeName: type.name, category: type.category };
     }
 
-    /**
-     * Resolves ownership type from ownershipType field.
-     *
-     * @param {Object} enterprise
-     * @returns {boolean}
-     */
     function resolveIsPublic(enterprise) {
         return enterprise.ownershipType === 'public';
     }
 
-    /**
-     * Resolves worker count from workerList.
-     *
-     * @param {Object} enterprise
-     * @returns {number}
-     */
     function resolveWorkerCount(enterprise) {
         return Array.isArray(enterprise.workerList)
             ? enterprise.workerList.length
@@ -126,29 +104,31 @@
 
     function getEnterprise(id) {
         if (!id) return null;
-        return _requireState().getEnterprise(id);
+        return IS.getEnterprise(id);
     }
 
     function getAllEnterprises() {
-        return _requireState().getAllEnterprises();
+        return IS.getAllEnterprises();
     }
 
     function getEnterprisesByOwner(ownerId, ownerType) {
         if (!ownerId) return [];
         if (ownerType === undefined || ownerType === null) {
-            throw new Error('IndustryQueries.getEnterprisesByOwner: ownerType is required');
+            throw new Error(
+                'IndustryQueries.getEnterprisesByOwner: ownerType is required'
+            );
         }
-        return _requireState().getEnterprisesByOwner(ownerId, ownerType);
+        return IS.getEnterprisesByOwner(ownerId, ownerType);
     }
 
     function getEnterprisesByLocation(locationId) {
         if (!locationId) return [];
-        return _requireState().getEnterprisesByLocation(locationId);
+        return IS.getEnterprisesByLocation(locationId);
     }
 
     function getEnterprisesByCategory(category) {
         if (!category) return [];
-        var all = _requireState().getAllEnterprises();
+        var all = IS.getAllEnterprises();
         var result = [];
         for (var i = 0; i < all.length; i++) {
             var meta = resolveTypeMetadata(all[i]);
@@ -161,12 +141,12 @@
 
     function getEnterprisesByStatus(status) {
         if (!status) return [];
-        return _requireState().getEnterprisesByStatus(status);
+        return IS.getEnterprisesByStatus(status);
     }
 
     function getStateEnterprises(locationId) {
         if (!locationId) return [];
-        var all = _requireState().getAllEnterprises();
+        var all = IS.getAllEnterprises();
         var result = [];
         for (var i = 0; i < all.length; i++) {
             if (all[i].ownerType === 'state' && all[i].ownerId === locationId) {
@@ -182,9 +162,11 @@
 
     function getEnterprisesByOwnershipType(ownershipType, locationId) {
         if (!ownershipType) return [];
-        var enterprises = _requireState().getEnterprisesByOwnershipType(ownershipType);
+        var enterprises = IS.getEnterprisesByOwnershipType(ownershipType);
         if (locationId !== undefined && locationId !== null) {
-            return enterprises.filter(function(e) { return e.locationId === locationId; });
+            return enterprises.filter(function (e) {
+                return e.locationId === locationId;
+            });
         }
         return enterprises;
     }
@@ -215,11 +197,10 @@
         var overrides = enterprise.workerWages || {};
         var baseWage = enterprise.wages;
 
-        var getChar = _requireCharacterAccessor();
         var result = [];
         for (var i = 0; i < list.length; i++) {
             var workerId = list[i];
-            var character = getChar(workerId);
+            var character = window.getCharacterById(workerId);
             var name = character
                 ? (character.name + (character.surname ? ' ' + character.surname : ''))
                 : workerId;
@@ -241,6 +222,48 @@
     // =========================================================================
     // 6. ENTERPRISE SUMMARY
     // =========================================================================
+
+    function _calculateTotalWages(enterprise, workerList) {
+        var baseWage = enterprise.wages;
+        var overrides = enterprise.workerWages || {};
+        var total = 0;
+
+        for (var i = 0; i < workerList.length; i++) {
+            var workerId = workerList[i];
+            var override = overrides[workerId];
+            if (override !== undefined && override !== null) {
+                total += override;
+            } else if (baseWage !== undefined && baseWage !== null) {
+                total += baseWage;
+            }
+        }
+        return total;
+    }
+
+    function _resolveOwnerName(enterprise) {
+        if (!enterprise.ownerId || !enterprise.ownerType) return null;
+
+        if (enterprise.ownerType === 'character') {
+            var char = window.getCharacterById(enterprise.ownerId);
+            if (!char) return null;
+            return char.name + (char.surname ? ' ' + char.surname : '');
+        }
+        if (enterprise.ownerType === 'household') {
+            var hh = window.getHouseholdById(enterprise.ownerId);
+            return hh ? hh.name : null;
+        }
+        if (enterprise.ownerType === 'state' || enterprise.ownerType === 'settlement') {
+            var place = window.getPlaceById(enterprise.ownerId);
+            return place ? place.displayName : null;
+        }
+        return null;
+    }
+
+    function _resolveLocationName(enterprise) {
+        if (!enterprise.locationId) return null;
+        var place = window.getPlaceById(enterprise.locationId);
+        return place ? place.displayName : null;
+    }
 
     function getEnterpriseSummary(enterpriseId) {
         var enterprise = getEnterprise(enterpriseId);
@@ -299,52 +322,6 @@
         };
     }
 
-    function _calculateTotalWages(enterprise, workerList) {
-        var baseWage = enterprise.wages;
-        var overrides = enterprise.workerWages || {};
-        var total = 0;
-
-        for (var i = 0; i < workerList.length; i++) {
-            var workerId = workerList[i];
-            var override = overrides[workerId];
-            if (override !== undefined && override !== null) {
-                total += override;
-            } else if (baseWage !== undefined && baseWage !== null) {
-                total += baseWage;
-            }
-        }
-        return total;
-    }
-
-    function _resolveOwnerName(enterprise) {
-        if (!enterprise.ownerId || !enterprise.ownerType) return null;
-
-        if (enterprise.ownerType === 'character') {
-            var getChar = _requireCharacterAccessor();
-            var char = getChar(enterprise.ownerId);
-            if (!char) return null;
-            return char.name + (char.surname ? ' ' + char.surname : '');
-        }
-        if (enterprise.ownerType === 'household') {
-            var getHH = _requireHouseholdAccessor();
-            var hh = getHH(enterprise.ownerId);
-            return hh ? hh.name : null;
-        }
-        if (enterprise.ownerType === 'state' || enterprise.ownerType === 'settlement') {
-            var getPlace = _requirePlaceAccessor();
-            var place = getPlace(enterprise.ownerId);
-            return place ? place.displayName : null;
-        }
-        return null;
-    }
-
-    function _resolveLocationName(enterprise) {
-        if (!enterprise.locationId) return null;
-        var getPlace = _requirePlaceAccessor();
-        var place = getPlace(enterprise.locationId);
-        return place ? place.displayName : null;
-    }
-
     function getOwnerEnterprisesSummary(ownerId, ownerType) {
         var enterprises = getEnterprisesByOwner(ownerId, ownerType);
         var result = [];
@@ -382,7 +359,8 @@
                 continue;
             }
             var meta = resolveTypeMetadata(e);
-            if (meta.typeName && meta.typeName.toLowerCase().indexOf(lowerQuery) !== -1) {
+            if (meta.typeName
+                && meta.typeName.toLowerCase().indexOf(lowerQuery) !== -1) {
                 result.push(e);
             }
         }
@@ -392,6 +370,14 @@
     // =========================================================================
     // 8. STATISTICS
     // =========================================================================
+
+    function _increment(obj, key) {
+        if (key === undefined || key === null) {
+            obj._unknown = (obj._unknown || 0) + 1;
+            return;
+        }
+        obj[key] = (obj[key] || 0) + 1;
+    }
 
     function getEnterpriseStatistics() {
         var all = getAllEnterprises();
@@ -420,7 +406,6 @@
 
             _increment(stats.byStatus, e.status);
 
-            // Category now derives from type metadata
             var meta = resolveTypeMetadata(e);
             if (meta.category) {
                 _increment(stats.byCategory, meta.category);
@@ -454,19 +439,11 @@
         return stats;
     }
 
-    function _increment(obj, key) {
-        if (key === undefined || key === null) {
-            obj._unknown = (obj._unknown || 0) + 1;
-            return;
-        }
-        obj[key] = (obj[key] || 0) + 1;
-    }
-
     // =========================================================================
     // 9. EXPORTS
     // =========================================================================
 
-    window.IndustryQueries = {
+    window.IndustryQueries = Object.freeze({
         getEnterprise: getEnterprise,
         getAllEnterprises: getAllEnterprises,
         getEnterprisesByOwner: getEnterprisesByOwner,
@@ -489,14 +466,12 @@
         searchEnterprises: searchEnterprises,
         getEnterpriseStatistics: getEnterpriseStatistics,
 
-        // Resolvers exposed for diagnostics and direct use
         resolveTypeMetadata: resolveTypeMetadata,
         resolveIsPublic: resolveIsPublic,
         resolveWorkerCount: resolveWorkerCount
-    };
+    });
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryQueries;
     }
-
 })();
