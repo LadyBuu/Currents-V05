@@ -16,22 +16,32 @@
  *   - persist
  *   - render
  *   - decide presentation defaults (icon fallbacks, labels)
+ *   - walk hierarchies it doesn't own (it delegates to PlaceQueries)
  *
  * Relationship to other modules:
  *
  *     CultureQueries
  *         │
- *         ├── CultureState            (indexes)
- *         ├── masterData.data.cultures (canonical reads)
+ *         ├── CultureState            (indexes; public reads are clones)
+ *         ├── masterData.data.cultures (canonical reads for listing)
  *         ├── PlaceQueries            (location hierarchy)
  *         ├── ReligionQueries         (religion lookups)
  *         └── CharacterQueries        (character culture lookups)
  *
+ * Primary-culture resolution:
+ *
+ *   The authoritative "which culture applies to this place" relationship
+ *   lives on `place.cultureId`, not on the culture record. CultureState
+ *   does not index it. This module walks the place hierarchy via
+ *   PlaceQueries and returns the first culture it finds.
+ *
+ *   The culture.locations array is a *descriptive* association (which
+ *   locations a culture is culturally associated with). It is a different
+ *   relationship and does not participate in primary-culture resolution.
+ *
  * NOTE ON NAMING:
  *   The canonical lookup function is `getCultureById(id)`.
  *   This matches `getPlaceById`, `getReligionById`, `getCharacterById`.
- *   Callers migrating from the old `CultureState.getCulture(id)` should
- *   switch to `CultureQueries.getCultureById(id)`.
  *
  * =============================================================================
  */
@@ -55,14 +65,10 @@
 
     function _requireMasterData() {
         if (typeof window.masterData === 'undefined' || !window.masterData) {
-            throw new Error(
-                'CultureQueries requires window.masterData.'
-            );
+            throw new Error('CultureQueries requires window.masterData.');
         }
         if (!window.masterData.data) {
-            throw new Error(
-                'CultureQueries requires masterData.data to exist.'
-            );
+            throw new Error('CultureQueries requires masterData.data to exist.');
         }
         return window.masterData;
     }
@@ -97,6 +103,13 @@
     // =========================================================================
     // 2. CANONICAL READS
     // =========================================================================
+    //
+    // Listing functions read the canonical array directly. Single-record
+    // lookups go through CultureState, which returns clones.
+    //
+    // The canonical array here is used for counting and enumeration only.
+    // It is never passed out to a caller, and it is never mutated.
+    //
 
     function _readCanonicalCultures() {
         var master = _requireMasterData();
@@ -108,7 +121,7 @@
     // =========================================================================
 
     /**
-     * Gets a single culture by ID.
+     * Gets a single culture by ID. Returns a clone.
      *
      * @param {string} id
      * @returns {Object|null}
@@ -119,51 +132,68 @@
     }
 
     /**
-     * Gets all cultures.
+     * Returns the live canonical record. Reserved for CultureCommands
+     * (which owns the transaction) and for transaction-time reads inside
+     * this module's composing helpers when a cloned record would be
+     * insufficient (e.g. when the caller intends to compare against a
+     * record another module is about to mutate).
+     *
+     * No query-layer function in this module uses this. It is exposed so
+     * that callers who genuinely need the live record have a named entry
+     * point rather than reaching into `window.CultureState._getCultureCanonical`
+     * directly.
+     *
+     * @param {string} id
+     * @returns {Object|null}
+     */
+    function _getCultureCanonical(id) {
+        if (!id) return null;
+        return _requireCultureState()._getCultureCanonical(id);
+    }
+
+    /**
+     * Gets all cultures. Returns a fresh array of clones.
      *
      * @returns {Array}
      */
     function getAllCultures() {
-        return _readCanonicalCultures().slice();
+        var state = _requireCultureState();
+        var canonical = _readCanonicalCultures();
+        var out = new Array(canonical.length);
+        for (var i = 0; i < canonical.length; i++) {
+            var c = canonical[i];
+            if (!c || !c.id) {
+                out[i] = null;
+                continue;
+            }
+            // Clone via state to keep the clone policy in one place. Falls
+            // back to the canonical object if State cannot find it (which
+            // would indicate an index inconsistency — State would have
+            // thrown on hydrate).
+            out[i] = state.getById(c.id) || null;
+        }
+        // Filter out any nulls (corrupted records that hydrate skipped).
+        var filtered = [];
+        for (var j = 0; j < out.length; j++) {
+            if (out[j]) filtered.push(out[j]);
+        }
+        return filtered;
     }
 
-    /**
-     * Gets all cultures matching a name (case-insensitive).
-     *
-     * @param {string} name
-     * @returns {Array}
-     */
     function getCulturesByName(name) {
         if (!name) return [];
-        return _requireCultureState().getByName(name).slice();
+        return _requireCultureState().getByName(name);
     }
 
-    /**
-     * Gets all cultures matching a display name (case-insensitive).
-     *
-     * @param {string} displayName
-     * @returns {Array}
-     */
     function getCulturesByDisplayName(displayName) {
         if (!displayName) return [];
-        return _requireCultureState().getByDisplayName(displayName).slice();
+        return _requireCultureState().getByDisplayName(displayName);
     }
 
-    /**
-     * Gets the number of cultures.
-     *
-     * @returns {number}
-     */
     function getCultureCount() {
         return _readCanonicalCultures().length;
     }
 
-    /**
-     * Checks whether a culture with the given ID exists.
-     *
-     * @param {string} id
-     * @returns {boolean}
-     */
     function cultureExists(id) {
         return getCultureById(id) !== null;
     }
@@ -175,10 +205,12 @@
     /**
      * Searches cultures by name and display name.
      *
+     * Reads canonical for matching, then returns clones via State.
+     *
      * @param {string} query
      * @param {Object} [options]
-     * @param {number} [options.limit] - Maximum results. 0 means zero results.
-     * @param {string} [options.sortBy] - Field to sort by.
+     * @param {number} [options.limit]
+     * @param {string} [options.sortBy]
      * @returns {Array}
      */
     function searchCultures(query, options) {
@@ -186,13 +218,17 @@
 
         var trimmed = (query || '').toLowerCase().trim();
         var all = _readCanonicalCultures();
-        var results;
+        var matches = [];
         var seen = {};
 
         if (!trimmed) {
-            results = all.slice();
+            for (var i = 0; i < all.length; i++) {
+                if (all[i] && all[i].id && !seen[all[i].id]) {
+                    seen[all[i].id] = true;
+                    matches.push(all[i]);
+                }
+            }
         } else {
-            results = [];
             for (var i = 0; i < all.length; i++) {
                 var c = all[i];
                 if (!c || !c.id) continue;
@@ -203,7 +239,7 @@
                 if (name.indexOf(trimmed) !== -1 || display.indexOf(trimmed) !== -1) {
                     if (!seen[c.id]) {
                         seen[c.id] = true;
-                        results.push(c);
+                        matches.push(c);
                     }
                 }
             }
@@ -211,7 +247,7 @@
 
         if (options.sortBy) {
             var key = options.sortBy;
-            results.sort(function(a, b) {
+            matches.sort(function(a, b) {
                 var av = a[key];
                 var bv = b[key];
                 if (av === undefined && bv === undefined) return 0;
@@ -222,22 +258,69 @@
         }
 
         if (options.limit !== undefined && options.limit !== null) {
-            results = results.slice(0, options.limit);
+            matches = matches.slice(0, options.limit);
         }
 
-        return results;
+        // Return clones.
+        var state = _requireCultureState();
+        var out = new Array(matches.length);
+        for (var k = 0; k < matches.length; k++) {
+            out[k] = state.getById(matches[k].id);
+        }
+        return out.filter(function(c) { return c !== null; });
     }
 
     // =========================================================================
-    // 5. LOCATION RELATIONSHIPS
+    // 5. LOCATION HIERARCHY
     // =========================================================================
+    //
+    // The authoritative "primary culture for this place" relationship lives
+    // on place.cultureId. Resolution walks up the place tree until a place
+    // with a non-null cultureId is found.
+    //
+    // There is no secondary index for this in CultureState. The relationship
+    // is owned by the place, not by the culture. Indexing it inside Culture
+    // State would require State to read Place data, which breaks its
+    // layering.
+    //
+
+    var _MAX_HIERARCHY_DEPTH = 100;
+
+    /**
+     * Walks up the place hierarchy and returns the first place with a
+     * cultureId. Returns null if none found.
+     *
+     * @param {string} locationId
+     * @returns {string|null} the cultureId, not the culture
+     */
+    function _findPrimaryCultureIdForLocation(locationId) {
+        if (!locationId) return null;
+
+        var placeQueries = _requirePlaceQueries();
+        var currentId = locationId;
+        var guard = 0;
+
+        while (currentId && guard < _MAX_HIERARCHY_DEPTH) {
+            guard++;
+
+            var place = placeQueries.getPlaceById(currentId);
+            if (!place) break;
+
+            if (place.cultureId) return place.cultureId;
+
+            if (!place.parentId) break;
+            currentId = place.parentId;
+        }
+
+        return null;
+    }
 
     /**
      * Gets the primary culture for a location.
      *
-     * Walks up the location hierarchy until a place with a primary culture
-     * is found. If the location itself has no primary culture and no
-     * ancestor does either, returns null.
+     * Resolution: walk up the location hierarchy until a place with a
+     * cultureId is found. Returns that culture (a clone). If no ancestor
+     * has a cultureId, returns null.
      *
      * @param {string} locationId
      * @returns {Object|null}
@@ -245,32 +328,10 @@
     function getPrimaryCultureForLocation(locationId) {
         if (!locationId) return null;
 
-        var placeQueries = _requirePlaceQueries();
-        var state = _requireCultureState();
+        var cultureId = _findPrimaryCultureIdForLocation(locationId);
+        if (!cultureId) return null;
 
-        var currentId = locationId;
-        var guard = 0;
-        var maxDepth = 100;
-
-        while (currentId && guard < maxDepth) {
-            guard++;
-
-            var place = placeQueries.getPlaceById(currentId);
-            if (place && place.cultureId) {
-                var direct = state.getById(place.cultureId);
-                if (direct) return direct;
-            }
-
-            var primaryMatches = state.getByPrimaryCultureLocation(currentId);
-            if (primaryMatches.length > 0) {
-                return primaryMatches[0];
-            }
-
-            if (!place || !place.parentId) break;
-            currentId = place.parentId;
-        }
-
-        return null;
+        return _requireCultureState().getById(cultureId);
     }
 
     /**
@@ -284,13 +345,17 @@
      */
     function getAssociatedCulturesForLocation(locationId) {
         if (!locationId) return [];
-        return _requireCultureState().getByAssociatedLocation(locationId).slice();
+        return _requireCultureState().getByAssociatedLocation(locationId);
     }
 
     /**
      * Gets all cultures that apply to a location, combining:
-     *   - the primary culture (authoritative)
-     *   - directly associated cultures (descriptive)
+     *   - the primary culture (authoritative, walked up the hierarchy)
+     *   - directly associated cultures (descriptive, at this location)
+     *   - ancestor associations (descriptive, walked up the hierarchy)
+     *
+     * Deduplicated by id. Order: primary first, then direct associations,
+     * then ancestor associations from nearest to furthest.
      *
      * @param {string} locationId
      * @returns {Array}
@@ -311,17 +376,21 @@
             }
         }
 
+        // Primary (authoritative)
         add(getPrimaryCultureForLocation(locationId));
 
+        // Direct descriptive associations
         var direct = state.getByAssociatedLocation(locationId);
         for (var i = 0; i < direct.length; i++) add(direct[i]);
 
+        // Ancestor descriptive associations
         var place = placeQueries.getPlaceById(locationId);
         var current = place ? place.parentId : null;
         var guard = 0;
 
-        while (current && guard < 100) {
+        while (current && guard < _MAX_HIERARCHY_DEPTH) {
             guard++;
+
             var ancestors = state.getByAssociatedLocation(current);
             for (var j = 0; j < ancestors.length; j++) add(ancestors[j]);
 
@@ -407,7 +476,7 @@
      */
     function getCulturesForReligion(religionId) {
         if (!religionId) return [];
-        return _requireCultureState().getByReligion(religionId).slice();
+        return _requireCultureState().getByReligion(religionId);
     }
 
     // =========================================================================
@@ -441,8 +510,8 @@
 
         var religions = [];
         if (Array.isArray(culture.religions)) {
-            for (var i = 0; i < culture.religions.length; i++) {
-                var religion = religionQueries.getReligionById(culture.religions[i]);
+            for (var j = 0; j < culture.religions.length; j++) {
+                var religion = religionQueries.getReligionById(culture.religions[j]);
                 if (religion) religions.push(religion);
             }
         }
@@ -491,8 +560,8 @@
         }
 
         var charactersByCulture = {};
-        for (var i = 0; i < characters.length; i++) {
-            var cid = characters[i].cultureId;
+        for (var j = 0; j < characters.length; j++) {
+            var cid = characters[j].cultureId;
             if (!cid) continue;
             charactersByCulture[cid] = (charactersByCulture[cid] || 0) + 1;
         }
@@ -512,8 +581,8 @@
             cultures: []
         };
 
-        for (var i = 0; i < cultures.length; i++) {
-            var c = cultures[i];
+        for (var k = 0; k < cultures.length; k++) {
+            var c = cultures[k];
 
             var associatedLocationCount =
                 Array.isArray(c.locations) ? c.locations.length : 0;
@@ -576,12 +645,14 @@
 
     function getCulturesWithMythology() {
         var all = _readCanonicalCultures();
+        var state = _requireCultureState();
         var result = [];
         for (var i = 0; i < all.length; i++) {
             var m = all[i].mythology;
             if (m && (m.creation || m.afterlife ||
                 (m.keyDeities && m.keyDeities.length > 0))) {
-                result.push(all[i]);
+                var clone = state.getById(all[i].id);
+                if (clone) result.push(clone);
             }
         }
         return result;
@@ -589,21 +660,61 @@
 
     function getCulturesWithAppearance() {
         var all = _readCanonicalCultures();
+        var state = _requireCultureState();
         var result = [];
         for (var i = 0; i < all.length; i++) {
             var a = all[i].appearance;
             if (a && typeof a === 'object' && Object.keys(a).length > 0) {
-                result.push(all[i]);
+                var clone = state.getById(all[i].id);
+                if (clone) result.push(clone);
             }
         }
         return result;
     }
 
     // =========================================================================
-    // 11. PUBLIC API
+    // 11. LOAD-TIME VERIFICATION
+    // =========================================================================
+
+    (function _verifyLoadTimeDependencies() {
+        if (!window.CultureState) {
+            throw new Error(
+                'culture-queries.js loaded but window.CultureState is missing. ' +
+                'Check script tag order.'
+            );
+        }
+        if (typeof window.masterData === 'undefined' || !window.masterData) {
+            throw new Error(
+                'culture-queries.js loaded but window.masterData is missing. ' +
+                'Check script tag order.'
+            );
+        }
+        if (!window.PlaceQueries) {
+            throw new Error(
+                'culture-queries.js loaded but window.PlaceQueries is missing. ' +
+                'Check script tag order (location-queries.js must load first).'
+            );
+        }
+        if (!window.ReligionQueries) {
+            throw new Error(
+                'culture-queries.js loaded but window.ReligionQueries is missing. ' +
+                'Check script tag order (religion-queries.js must load first).'
+            );
+        }
+        if (!window.CharacterQueries) {
+            throw new Error(
+                'culture-queries.js loaded but window.CharacterQueries is missing. ' +
+                'Check script tag order (character-queries.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 12. PUBLIC API
     // =========================================================================
 
     window.CultureQueries = {
+        // Basic lookups
         getCultureById: getCultureById,
         getAllCultures: getAllCultures,
         getCulturesByName: getCulturesByName,
@@ -611,20 +722,29 @@
         getCultureCount: getCultureCount,
         cultureExists: cultureExists,
 
+        // Canonical (commands/hierarchy only; not for general use)
+        _getCultureCanonical: _getCultureCanonical,
+
+        // Search
         searchCultures: searchCultures,
 
+        // Location relationships
         getPrimaryCultureForLocation: getPrimaryCultureForLocation,
         getAssociatedCulturesForLocation: getAssociatedCulturesForLocation,
         getCulturesForLocation: getCulturesForLocation,
 
+        // Character relationships
         getCultureForCharacter: getCultureForCharacter,
         getCharactersForCulture: getCharactersForCulture,
 
+        // Religion relationships
         getCulturesForReligion: getCulturesForReligion,
 
+        // Summary / statistics
         getCultureSummary: getCultureSummary,
         getCultureStatistics: getCultureStatistics,
 
+        // Filters
         getCulturesWithMythology: getCulturesWithMythology,
         getCulturesWithAppearance: getCulturesWithAppearance
     };
