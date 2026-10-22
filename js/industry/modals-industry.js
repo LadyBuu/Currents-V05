@@ -7,118 +7,137 @@
  *
  * Modal dialogs for enterprise management.
  *
- * ARCHITECTURAL RULES (Phase 2):
+ * ARCHITECTURAL RULES:
  *   - Modals gather input, call Commands, render ViewModels.
- *   - Modals do NOT persist. Commands do.
+ *   - Modals do NOT persist. Commands own persist; modals invoke it once
+ *     per successful batch, in the onConfirm handler, after every command
+ *     in that handler has succeeded.
  *   - Modals do NOT decide presentation. ViewModels do.
- *   - Modals do NOT fabricate dependencies. Missing deps fail loudly.
+ *   - Modals do NOT fabricate dependencies. Missing deps fail at load.
  *   - Toasts shown here based on command results.
  *   - No icons in confirm/cancel buttons.
+ *
+ * PERSISTENCE CONTRACT:
+ *   Every onConfirm handler that invokes a mutating command calls
+ *   IndustryCommands.persist() (or IndustryTypeCommands.persist()) once,
+ *   after all mutations in that batch have succeeded. If persist fails,
+ *   the modal shows an error and stays open so the user can retry, but the
+ *   in-memory state is already mutated — the command layer's result reports
+ *   that with applied:true. See industry-processor.js notes for the same
+ *   pattern.
+ *
+ * LOAD-TIME DEPENDENCY VERIFICATION:
+ *   Every module this file calls is verified at load. A missing dependency
+ *   throws immediately rather than failing on first modal open.
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-commands.js       (IndustryCommands)
+ *   - industry-queries.js        (IndustryQueries)
+ *   - industry-types.js          (IndustryTypes)
+ *   - industry-type-commands.js  (IndustryTypeCommands)
+ *   - industry-view-models.js    (IndustryViewModels)
+ *   - industry-processor.js      (IndustryProcessor)
+ *   - modals-core.js             (openModal, closeTopModal, confirmDialog)
+ *   - formatting.js              (escapeHtml)
+ *   - icons.js                   (Icons via modals-core)
+ *   - character selector         (openCharacterSelector)
+ *   - household selector         (openHouseholdSelector)
+ *   - location dropdown          (buildLocationDropdown)
+ *   - time.js                    (getCurrentYear)
+ *
+ * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _requireQueries() {
-        var q = window.IndustryQueries;
-        if (!q) throw new Error('IndustryModals: IndustryQueries dependency missing');
-        return q;
-    }
-
-    function _requireCommands() {
-        var c = window.IndustryCommands;
-        if (!c) throw new Error('IndustryModals: IndustryCommands dependency missing');
-        return c;
-    }
-
-    function _requireTypeQueries() {
-        var t = window.IndustryTypes;
-        if (!t) throw new Error('IndustryModals: IndustryTypes dependency missing');
-        return t;
-    }
-
-    function _requireTypeCommands() {
-        var t = window.IndustryTypeCommands;
-        if (!t) throw new Error('IndustryModals: IndustryTypeCommands dependency missing');
-        return t;
-    }
-
-    function _requireViewModels() {
-        var v = window.IndustryViewModels;
-        if (!v) throw new Error('IndustryModals: IndustryViewModels dependency missing');
-        return v;
-    }
-
-    function _requireModalCore() {
-        if (typeof window.openModal !== 'function') {
-            throw new Error('IndustryModals: openModal dependency missing');
+    function _requireModule(name, value) {
+        if (typeof value === 'undefined' || value === null) {
+            throw new Error(
+                'modals-industry.js requires ' + name + ' to load first.'
+            );
         }
-        if (typeof window.closeTopModal !== 'function') {
-            throw new Error('IndustryModals: closeTopModal dependency missing');
-        }
-        return { open: window.openModal, close: window.closeTopModal };
+        return value;
     }
 
-    function _requireEscapeHtml() {
-        var fn = window.escapeHtml || window._escapeHtml;
+    function _requireFunction(name, fn) {
         if (typeof fn !== 'function') {
-            throw new Error('IndustryModals: escapeHtml dependency missing');
+            throw new Error(
+                'modals-industry.js requires ' + name + ' to be a function.'
+            );
         }
         return fn;
     }
 
-    function _requireToast() {
-        var fn = window._showToast || window.showToast;
-        if (typeof fn !== 'function') {
-            throw new Error('IndustryModals: toast dependency missing');
-        }
-        return fn;
+    var IC = _requireModule('industry-commands.js', window.IndustryCommands);
+    var IQ = _requireModule('industry-queries.js', window.IndustryQueries);
+    var IT = _requireModule('industry-types.js', window.IndustryTypes);
+    var ITC = _requireModule(
+        'industry-type-commands.js', window.IndustryTypeCommands
+    );
+    var IVM = _requireModule(
+        'industry-view-models.js', window.IndustryViewModels
+    );
+    var IP = _requireModule(
+        'industry-processor.js', window.IndustryProcessor
+    );
+
+    var _openModal = _requireFunction('openModal', window.openModal);
+    var _closeTopModal = _requireFunction('closeTopModal', window.closeTopModal);
+
+    var _escapeHtml = window.escapeHtml || window._escapeHtml;
+    if (typeof _escapeHtml !== 'function') {
+        throw new Error(
+            'modals-industry.js requires formatting.js (escapeHtml).'
+        );
     }
 
-    function _requireCharacterSelector() {
-        var fn = window.openCharacterSelector || window.openUnifiedCharacterSelector;
-        if (typeof fn !== 'function') {
-            throw new Error('IndustryModals: character selector dependency missing');
-        }
-        return fn;
+    var _showToast = window._showToast || window.showToast;
+    if (typeof _showToast !== 'function') {
+        throw new Error(
+            'modals-industry.js requires a toast function (_showToast or showToast).'
+        );
     }
 
-    function _requireHouseholdSelector() {
-        var fn = window.openHouseholdSelector;
-        if (typeof fn !== 'function') {
-            throw new Error('IndustryModals: household selector dependency missing');
-        }
-        return fn;
+    var _openCharacterSelector = window.openCharacterSelector
+        || window.openUnifiedCharacterSelector;
+    if (typeof _openCharacterSelector !== 'function') {
+        throw new Error(
+            'modals-industry.js requires a character selector ' +
+            '(openCharacterSelector or openUnifiedCharacterSelector).'
+        );
     }
 
-    function _requireLocationDropdown() {
-        if (typeof window.buildLocationDropdown !== 'function') {
-            throw new Error('IndustryModals: buildLocationDropdown dependency missing');
-        }
-        return window.buildLocationDropdown;
+    var _openHouseholdSelector = window.openHouseholdSelector;
+    if (typeof _openHouseholdSelector !== 'function') {
+        throw new Error(
+            'modals-industry.js requires openHouseholdSelector.'
+        );
     }
 
-    function _requireCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('IndustryModals: getCurrentYearSafe dependency missing');
-        }
-        return window.getCurrentYearSafe();
+    var _buildLocationDropdown = window.buildLocationDropdown;
+    if (typeof _buildLocationDropdown !== 'function') {
+        throw new Error(
+            'modals-industry.js requires buildLocationDropdown.'
+        );
     }
 
-    function _requireConfirmDialog() {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog;
-        }
-        return function(message, title, onConfirm) {
+    var _getCurrentYear = window.getCurrentYear;
+    if (typeof _getCurrentYear !== 'function') {
+        throw new Error('modals-industry.js requires time.js (getCurrentYear).');
+    }
+
+    var _confirmDialog = typeof window.confirmDialog === 'function'
+        ? window.confirmDialog
+        : function (message, title, onConfirm) {
             if (window.confirm(message)) onConfirm();
         };
-    }
 
     // =========================================================================
     // 2. HELPERS
@@ -146,9 +165,8 @@
         return n;
     }
 
-    function _openCharacterSelector(title, onSelect) {
-        var open = _requireCharacterSelector();
-        open({
+    function _openCharSelector(title, onSelect) {
+        _openCharacterSelector({
             title: title,
             targetId: null,
             onSelect: onSelect,
@@ -161,13 +179,34 @@
         });
     }
 
-    function _openHouseholdSelector(title, onSelect) {
-        var open = _requireHouseholdSelector();
-        open({
+    function _openHHSelector(title, onSelect) {
+        _openHouseholdSelector({
             title: title,
             targetId: null,
             onSelect: onSelect
         });
+    }
+
+    function _persistOrToastError() {
+        var r = IC.persist();
+        if (r.success === true) return true;
+        _showToast(
+            'Save failed: ' + (r.reason || 'unknown error') +
+            ' — changes are in memory; retry from a command.',
+            'error'
+        );
+        return false;
+    }
+
+    function _persistTypesOrToastError() {
+        var r = ITC.persist();
+        if (r.success === true) return true;
+        _showToast(
+            'Save failed: ' + (r.reason || 'unknown error') +
+            ' — changes are in memory; retry from a command.',
+            'error'
+        );
+        return false;
     }
 
     // =========================================================================
@@ -175,36 +214,30 @@
     // =========================================================================
 
     function openCreateEnterpriseModal(onSuccess, defaultData) {
-        var commands = _requireCommands();
-        var types = _requireTypeQueries();
-        var viewModels = _requireViewModels();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-        var buildLocations = _requireLocationDropdown();
-
         defaultData = defaultData || {};
 
-        var allTypes = types.getEnterpriseTypes();
-        var categories = types.getEnterpriseCategories();
+        var allTypes = IT.getEnterpriseTypes();
+        var categories = IT.getEnterpriseCategories();
 
+        var catOptions = IVM.buildCategoryOptions(categories);
         var categoryOptions = '';
-        var catOptions = viewModels.buildCategoryOptions(categories);
         for (var ci = 0; ci < catOptions.length; ci++) {
-            categoryOptions += '<option value="' + esc(catOptions[ci].value) + '">' +
-                esc(catOptions[ci].label) + '</option>';
+            categoryOptions += '<option value="' + _escapeHtml(catOptions[ci].value) +
+                '">' + _escapeHtml(catOptions[ci].label) + '</option>';
         }
 
         var typeOptions = '<option value="">Select type...</option>';
-        var typeOpts = viewModels.buildTypeOptions(allTypes);
+        var typeOpts = IVM.buildTypeOptions(allTypes);
         for (var ti = 0; ti < typeOpts.length; ti++) {
-            typeOptions += '<option value="' + esc(typeOpts[ti].value) + '">' +
-                esc(typeOpts[ti].label) + '</option>';
+            typeOptions += '<option value="' + _escapeHtml(typeOpts[ti].value) +
+                '">' + _escapeHtml(typeOpts[ti].label) + '</option>';
         }
 
-        var placeOptions = buildLocations(defaultData.locationId || '', 'No Location', false);
+        var placeOptions = _buildLocationDropdown(
+            defaultData.locationId || '', 'No Location', false
+        );
 
-        var ownerField = viewModels.buildOwnerField(
+        var ownerField = IVM.buildOwnerField(
             defaultData.ownerType,
             defaultData.ownerId,
             defaultData.ownerName
@@ -217,16 +250,18 @@
         ];
         var ownerTypeOptions = '';
         for (var oi = 0; oi < ownerTypes.length; oi++) {
-            var sel = ownerField.type === ownerTypes[oi].value ? 'selected' : '';
-            ownerTypeOptions += '<option value="' + esc(ownerTypes[oi].value) + '" ' + sel + '>' +
-                esc(ownerTypes[oi].label) + '</option>';
+            var sel = ownerField.type === ownerTypes[oi].value
+                ? 'selected' : '';
+            ownerTypeOptions += '<option value="' +
+                _escapeHtml(ownerTypes[oi].value) + '" ' + sel + '>' +
+                _escapeHtml(ownerTypes[oi].label) + '</option>';
         }
 
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="form-group">
                     <label class="form-label">Enterprise Name</label>
-                    <input type="text" id="entName" class="form-input" value="${esc(defaultData.name || '')}" placeholder="Enter enterprise name">
+                    <input type="text" id="entName" class="form-input" value="${_escapeHtml(defaultData.name || '')}" placeholder="Enter enterprise name">
                 </div>
 
                 <div class="form-group">
@@ -249,10 +284,10 @@
                         <div>
                             <label class="form-label-sm">Owner</label>
                             <div class="form-row">
-                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${esc(ownerField.displayName)}" readonly>
-                                <input type="hidden" id="entOwnerId" value="${esc(ownerField.id || '')}">
-                                <button id="selectOwnerBtn" class="btn">Select</button>
-                                <button id="clearOwnerBtn" class="btn">Clear</button>
+                                <input type="text" id="entOwnerDisplay" class="form-input" placeholder="Select owner..." value="${_escapeHtml(ownerField.displayName)}" readonly>
+                                <input type="hidden" id="entOwnerId" value="${_escapeHtml(ownerField.id || '')}">
+                                <button id="selectOwnerBtn" class="btn" type="button">Select</button>
+                                <button id="clearOwnerBtn" class="btn" type="button">Clear</button>
                             </div>
                         </div>
                     </div>
@@ -301,7 +336,7 @@
 
                 <div class="form-group">
                     <label class="form-label">Notes</label>
-                    <textarea id="entNotes" class="form-input" rows="2" placeholder="Additional notes...">${esc(defaultData.notes || '')}</textarea>
+                    <textarea id="entNotes" class="form-input" rows="2" placeholder="Additional notes...">${_escapeHtml(defaultData.notes || '')}</textarea>
                 </div>
 
                 <div class="form-hint">
@@ -310,21 +345,21 @@
             </div>
         `;
 
-        modal.open({
-            title: 'Create Enterprise',
-            content: content,
+        _openModal({
+            titleHtml: 'Create Enterprise',
+            contentHtml: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
-            onConfirm: function() {
+            onConfirm: function () {
                 var name = document.getElementById('entName').value.trim();
                 if (!name) {
-                    toast('Enterprise name is required', 'error');
+                    _showToast('Enterprise name is required', 'error');
                     return false;
                 }
 
                 var typeId = document.getElementById('entType').value;
                 if (!typeId) {
-                    toast('Please select an enterprise type', 'error');
+                    _showToast('Please select an enterprise type', 'error');
                     return false;
                 }
 
@@ -336,7 +371,10 @@
                     ownerId = null;
                     ownerName = null;
                 } else if (!ownerId) {
-                    toast('Please select an owner or set owner type to None', 'error');
+                    _showToast(
+                        'Please select an owner or set owner type to None',
+                        'error'
+                    );
                     return false;
                 }
 
@@ -350,7 +388,7 @@
                     ownerName: ownerName,
                     locationId: locationId,
                     notes: document.getElementById('entNotes').value,
-                    foundedYear: _requireCurrentYear()
+                    foundedYear: _getCurrentYear()
                 };
 
                 var wealth = _readOptionalInt(document.getElementById('entWealth'));
@@ -371,20 +409,26 @@
                 var wages = _readOptionalInt(document.getElementById('entWages'));
                 if (wages !== undefined) data.wages = wages;
 
-                var result = commands.createEnterprise(data);
+                var result = IC.createEnterprise(data);
                 if (!result.success) {
-                    toast('Failed to create enterprise: ' + result.reason, 'error');
+                    _showToast(
+                        'Failed to create enterprise: ' + result.reason, 'error'
+                    );
                     return false;
                 }
 
-                toast('Enterprise created: ' + result.data.name, 'success');
-                modal.close();
-                if (onSuccess) onSuccess(result.data);
+                if (!_persistOrToastError()) return false;
+
+                _showToast(
+                    'Enterprise created: ' + result.enterprise.name, 'success'
+                );
+                _closeTopModal();
+                if (onSuccess) onSuccess(result.enterprise);
                 return true;
             }
         });
 
-        _afterRender(function() {
+        _afterRender(function () {
             _wireCreateCategoryFilter();
             _wireCreateOwnerSelector();
         });
@@ -395,17 +439,17 @@
         var typeSelect = document.getElementById('entType');
         if (!categorySelect || !typeSelect) return;
 
-        var types = _requireTypeQueries();
-        var esc = _requireEscapeHtml();
-
-        categorySelect.addEventListener('change', function() {
+        categorySelect.addEventListener('change', function () {
             var cat = this.value;
-            var typeList = cat ? types.getEnterpriseTypesByCategory(cat) : types.getEnterpriseTypes();
+            var typeList = cat
+                ? IT.getEnterpriseTypesByCategory(cat)
+                : IT.getEnterpriseTypes();
             var html = '<option value="">Select type...</option>';
             for (var i = 0; i < typeList.length; i++) {
                 var t = typeList[i];
-                html += '<option value="' + esc(t.id) + '">' +
-                    esc(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</option>';
+                html += '<option value="' + _escapeHtml(t.id) + '">' +
+                    _escapeHtml(t.name) + ' (Income: ' + t.baseIncome +
+                    ', Workers: ' + t.baseWorkers + ')</option>';
             }
             typeSelect.innerHTML = html;
         });
@@ -417,36 +461,39 @@
         var ownerTypeSelect = document.getElementById('entOwnerType');
         if (!selectBtn || !ownerTypeSelect) return;
 
-        var toast = _requireToast();
-
-        selectBtn.addEventListener('click', function() {
+        selectBtn.addEventListener('click', function () {
             var ownerType = ownerTypeSelect.value;
 
             if (ownerType === 'character') {
-                _openCharacterSelector('Select Owner', function(character) {
+                _openCharSelector('Select Owner', function (character) {
                     if (!character) return;
                     document.getElementById('entOwnerDisplay').value =
-                        character.name + (character.surname ? ' ' + character.surname : '');
+                        character.name +
+                        (character.surname ? ' ' + character.surname : '');
                     document.getElementById('entOwnerId').value = character.id;
-                    toast('Selected: ' + character.name, 'success');
+                    _showToast('Selected: ' + character.name, 'success');
                 });
             } else if (ownerType === 'household') {
-                _openHouseholdSelector('Select Household Owner', function(household) {
+                _openHHSelector('Select Household Owner', function (household) {
                     if (!household) return;
-                    document.getElementById('entOwnerDisplay').value = household.name;
+                    document.getElementById('entOwnerDisplay').value =
+                        household.name;
                     document.getElementById('entOwnerId').value = household.id;
-                    toast('Selected: ' + household.name, 'success');
+                    _showToast('Selected: ' + household.name, 'success');
                 });
             } else {
-                toast('Select an owner type first (Character or Household)', 'warning');
+                _showToast(
+                    'Select an owner type first (Character or Household)',
+                    'warning'
+                );
             }
         });
 
         if (clearBtn) {
-            clearBtn.addEventListener('click', function() {
+            clearBtn.addEventListener('click', function () {
                 document.getElementById('entOwnerDisplay').value = '';
                 document.getElementById('entOwnerId').value = '';
-                toast('Owner cleared', 'info');
+                _showToast('Owner cleared', 'info');
             });
         }
     }
@@ -456,30 +503,22 @@
     // =========================================================================
 
     function openEnterpriseDetailsModal(enterpriseId, onSuccess) {
-        var queries = _requireQueries();
-        var commands = _requireCommands();
-        var viewModels = _requireViewModels();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-        var confirm = _requireConfirmDialog();
-
-        var enterprise = queries.getEnterprise(enterpriseId);
+        var enterprise = IQ.getEnterprise(enterpriseId);
         if (!enterprise) {
-            toast('Enterprise not found', 'error');
+            _showToast('Enterprise not found', 'error');
             return;
         }
 
-        var summary = queries.getEnterpriseSummary(enterpriseId);
+        var summary = IQ.getEnterpriseSummary(enterpriseId);
         if (!summary) {
-            toast('Enterprise summary not available', 'error');
+            _showToast('Enterprise summary not available', 'error');
             return;
         }
 
-        var workers = queries.getEnterpriseWorkers(enterpriseId);
-        var vm = viewModels.buildDetails(summary, enterprise, workers);
+        var workers = IQ.getEnterpriseWorkers(enterpriseId);
+        var vm = IVM.buildDetails(summary, enterprise, workers);
         if (!vm) {
-            toast('Could not build enterprise details', 'error');
+            _showToast('Could not build enterprise details', 'error');
             return;
         }
 
@@ -488,12 +527,14 @@
             for (var i = 0; i < vm.workers.length; i++) {
                 var w = vm.workers[i];
                 workerRowsHtml += '<div class="worker-row">' +
-                    '<span>' + esc(w.name) + '</span>' +
-                    '<span class="worker-wage">Wage: ' + esc(w.wageLabel) + '</span>' +
+                    '<span>' + _escapeHtml(w.name) + '</span>' +
+                    '<span class="worker-wage">Wage: ' +
+                        _escapeHtml(w.wageLabel) + '</span>' +
                 '</div>';
             }
         } else {
-            workerRowsHtml = '<div class="modal-empty">' + esc(vm.noWorkersMessage) + '</div>';
+            workerRowsHtml = '<div class="modal-empty">' +
+                _escapeHtml(vm.noWorkersMessage) + '</div>';
         }
 
         var content = `
@@ -501,119 +542,129 @@
                 <div class="detail-grid-2">
                     <div class="detail-card">
                         <div class="detail-label">Name</div>
-                        <div class="detail-value">${esc(vm.name)}</div>
-                        <div class="detail-sub">${esc(vm.typeLabel)} (${esc(vm.categoryLabel)})</div>
+                        <div class="detail-value">${_escapeHtml(vm.name)}</div>
+                        <div class="detail-sub">${_escapeHtml(vm.typeLabel)} (${_escapeHtml(vm.categoryLabel)})</div>
                     </div>
                     <div class="detail-card">
                         <div class="detail-label">Status</div>
-                        <div class="detail-value ${esc(vm.statusClass)}">${esc(vm.statusLabel)}</div>
-                        <div class="detail-sub">Founded: ${esc(vm.foundedYearLabel)}</div>
+                        <div class="detail-value ${_escapeHtml(vm.statusClass)}">${_escapeHtml(vm.statusLabel)}</div>
+                        <div class="detail-sub">Founded: ${_escapeHtml(vm.foundedYearLabel)}</div>
                     </div>
                 </div>
 
                 <div class="detail-grid-2">
                     <div class="detail-card">
                         <div class="detail-label">Owner</div>
-                        <div class="detail-value">${esc(vm.ownerLabel)}</div>
-                        <div class="detail-sub">${esc(vm.ownerTypeLabel)}</div>
+                        <div class="detail-value">${_escapeHtml(vm.ownerLabel)}</div>
+                        <div class="detail-sub">${_escapeHtml(vm.ownerTypeLabel)}</div>
                     </div>
                     <div class="detail-card">
                         <div class="detail-label">Location</div>
-                        <div class="detail-value">${esc(vm.locationLabel)}</div>
+                        <div class="detail-value">${_escapeHtml(vm.locationLabel)}</div>
                     </div>
                 </div>
 
                 <div class="detail-grid-3">
                     <div class="detail-card detail-card-center">
                         <div class="detail-label">Wealth</div>
-                        <div class="detail-value ${esc(vm.wealthClass)}">${esc(vm.wealthLabel)}</div>
+                        <div class="detail-value ${_escapeHtml(vm.wealthClass)}">${_escapeHtml(vm.wealthLabel)}</div>
                     </div>
                     <div class="detail-card detail-card-center">
                         <div class="detail-label">Debt</div>
-                        <div class="detail-value">${esc(vm.debtLabel)}</div>
+                        <div class="detail-value">${_escapeHtml(vm.debtLabel)}</div>
                     </div>
                     <div class="detail-card detail-card-center">
                         <div class="detail-label">Annual Profit</div>
-                        <div class="detail-value ${esc(vm.profitClass)}">${esc(vm.profitLabel)}</div>
+                        <div class="detail-value ${_escapeHtml(vm.profitClass)}">${_escapeHtml(vm.profitLabel)}</div>
                     </div>
                 </div>
 
                 <div class="detail-card">
                     <div class="detail-card-header">
-                        <div class="detail-label">Workers (${esc(vm.workersLabel)})</div>
-                        <button id="manageWorkersBtn" class="btn">Manage Workers</button>
+                        <div class="detail-label">Workers (${_escapeHtml(vm.workersLabel)})</div>
+                        <button id="manageWorkersBtn" class="btn" type="button">Manage Workers</button>
                     </div>
                     <div class="worker-list">${workerRowsHtml}</div>
                 </div>
 
                 <div class="modal-actions-row">
-                    <button id="editEnterpriseBtn" class="btn primary">Edit</button>
-                    <button id="processYearBtn" class="btn">Process Year</button>
-                    <button id="deleteEnterpriseBtn" class="btn danger">Delete</button>
+                    <button id="editEnterpriseBtn" class="btn primary" type="button">Edit</button>
+                    <button id="processYearBtn" class="btn" type="button">Process Year</button>
+                    <button id="deleteEnterpriseBtn" class="btn danger" type="button">Delete</button>
                 </div>
             </div>
         `;
 
-        modal.open({
-            title: 'Enterprise Details',
-            content: content,
+        _openModal({
+            titleHtml: 'Enterprise Details',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() {}
+            onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function() {
+        _afterRender(function () {
             var editBtn = document.getElementById('editEnterpriseBtn');
             if (editBtn) {
-                editBtn.addEventListener('click', function() {
-                    modal.close();
+                editBtn.addEventListener('click', function () {
+                    _closeTopModal();
                     openEditEnterpriseModal(enterpriseId, onSuccess);
                 });
             }
 
             var processBtn = document.getElementById('processYearBtn');
             if (processBtn) {
-                processBtn.addEventListener('click', function() {
-                    var processor = window.IndustryProcessor;
-                    if (!processor) {
-                        toast('Industry processor not available', 'error');
-                        return;
-                    }
-                    var result = processor.processAnnualEnterprise(enterpriseId);
+                processBtn.addEventListener('click', function () {
+                    var result = IP.processAnnualEnterprise(enterpriseId);
                     if (result.success) {
                         if (result.skipped) {
-                            toast('Already processed for this year', 'info');
+                            _showToast(
+                                'Already processed for this year', 'info'
+                            );
                         } else {
-                            toast('Processed year: net ' + result.netProfit, 'success');
+                            _showToast(
+                                'Processed year: net ' + result.netProfit,
+                                'success'
+                            );
                         }
-                        modal.close();
+                        _closeTopModal();
                         if (onSuccess) onSuccess();
                     } else {
-                        toast('Failed to process year: ' + result.reason, 'error');
+                        _showToast(
+                            'Failed to process year: ' + result.reason, 'error'
+                        );
                     }
                 });
             }
 
             var deleteBtn = document.getElementById('deleteEnterpriseBtn');
             if (deleteBtn) {
-                deleteBtn.addEventListener('click', function() {
-                    confirm('Delete "' + enterprise.name + '"?', 'Delete Enterprise', function() {
-                        var result = commands.deleteEnterprise(enterpriseId);
-                        if (result.success) {
-                            toast('Enterprise deleted', 'info');
-                            modal.close();
-                            if (onSuccess) onSuccess();
-                        } else {
-                            toast('Failed to delete: ' + result.reason, 'error');
+                deleteBtn.addEventListener('click', function () {
+                    _confirmDialog(
+                        'Delete "' + enterprise.name + '"?',
+                        'Delete Enterprise',
+                        function () {
+                            var result = IC.deleteEnterprise(enterpriseId);
+                            if (result.success) {
+                                if (!_persistOrToastError()) return;
+                                _showToast('Enterprise deleted', 'info');
+                                _closeTopModal();
+                                if (onSuccess) onSuccess();
+                            } else {
+                                _showToast(
+                                    'Failed to delete: ' + result.reason,
+                                    'error'
+                                );
+                            }
                         }
-                    });
+                    );
                 });
             }
 
             var manageWorkersBtn = document.getElementById('manageWorkersBtn');
             if (manageWorkersBtn) {
-                manageWorkersBtn.addEventListener('click', function() {
-                    modal.close();
+                manageWorkersBtn.addEventListener('click', function () {
+                    _closeTopModal();
                     openManageWorkersModal(enterpriseId, onSuccess);
                 });
             }
@@ -625,16 +676,9 @@
     // =========================================================================
 
     function openEditEnterpriseModal(enterpriseId, onSuccess) {
-        var queries = _requireQueries();
-        var commands = _requireCommands();
-        var viewModels = _requireViewModels();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-
-        var enterprise = queries.getEnterprise(enterpriseId);
+        var enterprise = IQ.getEnterprise(enterpriseId);
         if (!enterprise) {
-            toast('Enterprise not found', 'error');
+            _showToast('Enterprise not found', 'error');
             return;
         }
 
@@ -643,14 +687,15 @@
         for (var i = 0; i < statuses.length; i++) {
             var sel = enterprise.status === statuses[i] ? 'selected' : '';
             statusOptions += '<option value="' + statuses[i] + '" ' + sel + '>' +
-                statuses[i].charAt(0).toUpperCase() + statuses[i].slice(1) + '</option>';
+                statuses[i].charAt(0).toUpperCase() + statuses[i].slice(1) +
+                '</option>';
         }
 
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="form-group">
                     <label class="form-label">Enterprise Name</label>
-                    <input type="text" id="editName" class="form-input" value="${esc(enterprise.name)}">
+                    <input type="text" id="editName" class="form-input" value="${_escapeHtml(enterprise.name)}">
                 </div>
 
                 <div class="form-group">
@@ -693,22 +738,22 @@
 
                 <div class="form-group">
                     <label class="form-label">Notes</label>
-                    <textarea id="editNotes" class="form-input" rows="2">${esc(enterprise.notes || '')}</textarea>
+                    <textarea id="editNotes" class="form-input" rows="2">${_escapeHtml(enterprise.notes || '')}</textarea>
                 </div>
             </div>
         `;
 
-        modal.open({
-            title: 'Edit Enterprise: ' + enterprise.name,
-            content: content,
+        _openModal({
+            titleHtml: 'Edit Enterprise: ' + _escapeHtml(enterprise.name),
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onConfirm: function() {
+            onConfirm: function () {
                 var updates = {};
 
                 var name = document.getElementById('editName').value.trim();
                 if (!name) {
-                    toast('Enterprise name is required', 'error');
+                    _showToast('Enterprise name is required', 'error');
                     return false;
                 }
                 updates.name = name;
@@ -717,55 +762,57 @@
 
                 var wealth = _readRequiredInt(document.getElementById('editWealth'));
                 if (wealth === undefined) {
-                    toast('Wealth must be a valid number', 'error');
+                    _showToast('Wealth must be a valid number', 'error');
                     return false;
                 }
                 updates.wealth = wealth;
 
                 var debt = _readRequiredInt(document.getElementById('editDebt'));
                 if (debt === undefined || debt < 0) {
-                    toast('Debt must be a non-negative number', 'error');
+                    _showToast('Debt must be a non-negative number', 'error');
                     return false;
                 }
                 updates.debt = debt;
 
                 var income = _readRequiredInt(document.getElementById('editIncome'));
                 if (income === undefined) {
-                    toast('Income must be a valid number', 'error');
+                    _showToast('Income must be a valid number', 'error');
                     return false;
                 }
                 updates.income = income;
 
                 var expenses = _readRequiredInt(document.getElementById('editExpenses'));
                 if (expenses === undefined) {
-                    toast('Expenses must be a valid number', 'error');
+                    _showToast('Expenses must be a valid number', 'error');
                     return false;
                 }
                 updates.expenses = expenses;
 
                 var wages = _readRequiredInt(document.getElementById('editWages'));
                 if (wages === undefined || wages < 0) {
-                    toast('Wages must be a non-negative number', 'error');
+                    _showToast('Wages must be a non-negative number', 'error');
                     return false;
                 }
                 updates.wages = wages;
 
                 var maxWorkers = _readRequiredInt(document.getElementById('editMaxWorkers'));
                 if (maxWorkers === undefined || maxWorkers < 1) {
-                    toast('Max workers must be at least 1', 'error');
+                    _showToast('Max workers must be at least 1', 'error');
                     return false;
                 }
                 updates.maxWorkers = maxWorkers;
 
-                var result = commands.updateEnterprise(enterpriseId, updates);
+                var result = IC.updateEnterprise(enterpriseId, updates);
                 if (!result.success) {
-                    toast('Failed to update: ' + result.reason, 'error');
+                    _showToast('Failed to update: ' + result.reason, 'error');
                     return false;
                 }
 
-                toast('Enterprise updated', 'success');
-                modal.close();
-                if (onSuccess) onSuccess(result.data);
+                if (!_persistOrToastError()) return false;
+
+                _showToast('Enterprise updated', 'success');
+                _closeTopModal();
+                if (onSuccess) onSuccess(result.enterprise);
                 return true;
             }
         });
@@ -776,30 +823,22 @@
     // =========================================================================
 
     function openManageWorkersModal(enterpriseId, onSuccess) {
-        var queries = _requireQueries();
-        var commands = _requireCommands();
-        var viewModels = _requireViewModels();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-        var confirm = _requireConfirmDialog();
-
-        var enterprise = queries.getEnterprise(enterpriseId);
+        var enterprise = IQ.getEnterprise(enterpriseId);
         if (!enterprise) {
-            toast('Enterprise not found', 'error');
+            _showToast('Enterprise not found', 'error');
             return;
         }
 
-        var summary = queries.getEnterpriseSummary(enterpriseId);
+        var summary = IQ.getEnterpriseSummary(enterpriseId);
         if (!summary) {
-            toast('Enterprise summary not available', 'error');
+            _showToast('Enterprise summary not available', 'error');
             return;
         }
 
-        var workers = queries.getEnterpriseWorkers(enterpriseId);
-        var vm = viewModels.buildWorkerManagement(summary, enterprise, workers);
+        var workers = IQ.getEnterpriseWorkers(enterpriseId);
+        var vm = IVM.buildWorkerManagement(summary, enterprise, workers);
         if (!vm) {
-            toast('Could not build worker management view', 'error');
+            _showToast('Could not build worker management view', 'error');
             return;
         }
 
@@ -807,23 +846,26 @@
         if (vm.hasWorkers) {
             for (var i = 0; i < vm.workers.length; i++) {
                 var w = vm.workers[i];
-                workerRowsHtml += '<div class="worker-row" data-worker-id="' + esc(w.id) + '">' +
-                    '<span class="worker-name">' + esc(w.name) + '</span>' +
+                workerRowsHtml += '<div class="worker-row" data-worker-id="' +
+                    _escapeHtml(w.id) + '">' +
+                    '<span class="worker-name">' + _escapeHtml(w.name) + '</span>' +
                     '<span class="worker-controls">' +
-                        '<input type="number" class="form-input-sm worker-wage-input" value="' + esc(String(w.wageValue)) + '">' +
-                        '<button class="btn-sm" data-action="update-wage">Update</button>' +
-                        '<button class="btn-sm danger" data-action="remove-worker">Remove</button>' +
+                        '<input type="number" class="form-input-sm worker-wage-input" value="' +
+                            _escapeHtml(String(w.wageValue)) + '">' +
+                        '<button class="btn-sm" data-action="update-wage" type="button">Update</button>' +
+                        '<button class="btn-sm danger" data-action="remove-worker" type="button">Remove</button>' +
                     '</span>' +
                 '</div>';
             }
         } else {
-            workerRowsHtml = '<div class="modal-empty">' + esc(vm.noWorkersMessage) + '</div>';
+            workerRowsHtml = '<div class="modal-empty">' +
+                _escapeHtml(vm.noWorkersMessage) + '</div>';
         }
 
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="form-section">
-                    <div class="form-section-title">Current Workers (${esc(vm.workersLabel)})</div>
+                    <div class="form-section-title">Current Workers (${_escapeHtml(vm.workersLabel)})</div>
                     <div class="worker-list" id="workerListContainer">${workerRowsHtml}</div>
                 </div>
 
@@ -833,23 +875,23 @@
                         <input type="text" id="addWorkerDisplay" class="form-input" placeholder="Select worker..." readonly>
                         <input type="hidden" id="addWorkerId">
                         <input type="number" id="addWorkerWage" class="form-input-sm" value="${vm.baseWageValue !== null ? vm.baseWageValue : 0}" placeholder="Wage">
-                        <button id="selectWorkerBtn" class="btn">Select</button>
-                        <button id="addWorkerBtn" class="btn primary">Add</button>
-                        <button id="clearWorkerBtn" class="btn">Clear</button>
+                        <button id="selectWorkerBtn" class="btn" type="button">Select</button>
+                        <button id="addWorkerBtn" class="btn primary" type="button">Add</button>
+                        <button id="clearWorkerBtn" class="btn" type="button">Clear</button>
                     </div>
                 </div>
             </div>
         `;
 
-        modal.open({
-            title: 'Manage Workers: ' + enterprise.name,
-            content: content,
+        _openModal({
+            titleHtml: 'Manage Workers: ' + _escapeHtml(enterprise.name),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() {}
+            onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function() {
+        _afterRender(function () {
             var existingWorkerIds = {};
             for (var i = 0; i < vm.workers.length; i++) {
                 existingWorkerIds[vm.workers[i].id] = true;
@@ -857,7 +899,7 @@
 
             var container = document.getElementById('workerListContainer');
             if (container) {
-                container.addEventListener('click', function(event) {
+                container.addEventListener('click', function (event) {
                     var btn = event.target.closest('[data-action]');
                     if (!btn) return;
                     var row = btn.closest('[data-worker-id]');
@@ -869,30 +911,47 @@
                     if (action === 'remove-worker') {
                         var workerEntry = _findWorker(vm.workers, workerId);
                         var displayName = workerEntry ? workerEntry.name : workerId;
-                        confirm('Remove ' + displayName + ' from this enterprise?', 'Remove Worker', function() {
-                            var result = commands.removeWorkerFromEnterprise(enterpriseId, workerId);
-                            if (result.success) {
-                                toast('Worker removed', 'info');
-                                modal.close();
-                                openManageWorkersModal(enterpriseId, onSuccess);
-                            } else {
-                                toast('Failed to remove worker: ' + result.reason, 'error');
+                        _confirmDialog(
+                            'Remove ' + displayName + ' from this enterprise?',
+                            'Remove Worker',
+                            function () {
+                                var result = IC.removeWorkerFromEnterprise(
+                                    enterpriseId, workerId
+                                );
+                                if (result.success) {
+                                    if (!_persistOrToastError()) return;
+                                    _showToast('Worker removed', 'info');
+                                    _closeTopModal();
+                                    openManageWorkersModal(enterpriseId, onSuccess);
+                                } else {
+                                    _showToast(
+                                        'Failed to remove worker: ' +
+                                        result.reason,
+                                        'error'
+                                    );
+                                }
                             }
-                        });
+                        );
                     } else if (action === 'update-wage') {
                         var input = row.querySelector('.worker-wage-input');
                         var wage = _readRequiredInt(input);
                         if (wage === undefined || wage < 0) {
-                            toast('Please enter a valid wage', 'error');
+                            _showToast('Please enter a valid wage', 'error');
                             return;
                         }
-                        var result2 = commands.setWorkerWage(enterpriseId, workerId, wage);
+                        var result2 = IC.setWorkerWage(
+                            enterpriseId, workerId, wage
+                        );
                         if (result2.success) {
-                            toast('Wage updated', 'success');
-                            modal.close();
+                            if (!_persistOrToastError()) return;
+                            _showToast('Wage updated', 'success');
+                            _closeTopModal();
                             openManageWorkersModal(enterpriseId, onSuccess);
                         } else {
-                            toast('Failed to update wage: ' + result2.reason, 'error');
+                            _showToast(
+                                'Failed to update wage: ' + result2.reason,
+                                'error'
+                            );
                         }
                     }
                 });
@@ -900,24 +959,28 @@
 
             var selectBtn = document.getElementById('selectWorkerBtn');
             if (selectBtn) {
-                selectBtn.addEventListener('click', function() {
-                    _openCharacterSelector('Select Worker', function(character) {
+                selectBtn.addEventListener('click', function () {
+                    _openCharSelector('Select Worker', function (character) {
                         if (!character) return;
                         if (existingWorkerIds[character.id]) {
-                            toast('This character is already a worker', 'warning');
+                            _showToast(
+                                'This character is already a worker', 'warning'
+                            );
                             return;
                         }
                         document.getElementById('addWorkerDisplay').value =
-                            character.name + (character.surname ? ' ' + character.surname : '');
-                        document.getElementById('addWorkerId').value = character.id;
-                        toast('Selected: ' + character.name, 'success');
+                            character.name +
+                            (character.surname ? ' ' + character.surname : '');
+                        document.getElementById('addWorkerId').value =
+                            character.id;
+                        _showToast('Selected: ' + character.name, 'success');
                     });
                 });
             }
 
             var clearBtn = document.getElementById('clearWorkerBtn');
             if (clearBtn) {
-                clearBtn.addEventListener('click', function() {
+                clearBtn.addEventListener('click', function () {
                     document.getElementById('addWorkerDisplay').value = '';
                     document.getElementById('addWorkerId').value = '';
                 });
@@ -925,25 +988,32 @@
 
             var addBtn = document.getElementById('addWorkerBtn');
             if (addBtn) {
-                addBtn.addEventListener('click', function() {
+                addBtn.addEventListener('click', function () {
                     var workerId = document.getElementById('addWorkerId').value;
                     if (!workerId) {
-                        toast('Please select a worker first', 'error');
+                        _showToast('Please select a worker first', 'error');
                         return;
                     }
-                    var wage = _readRequiredInt(document.getElementById('addWorkerWage'));
+                    var wage = _readRequiredInt(
+                        document.getElementById('addWorkerWage')
+                    );
                     if (wage === undefined || wage < 0) {
-                        toast('Please enter a valid wage', 'error');
+                        _showToast('Please enter a valid wage', 'error');
                         return;
                     }
 
-                    var result = commands.addWorkerToEnterprise(enterpriseId, workerId, wage);
+                    var result = IC.addWorkerToEnterprise(
+                        enterpriseId, workerId, wage
+                    );
                     if (result.success) {
-                        toast('Worker added', 'success');
-                        modal.close();
+                        if (!_persistOrToastError()) return;
+                        _showToast('Worker added', 'success');
+                        _closeTopModal();
                         openManageWorkersModal(enterpriseId, onSuccess);
                     } else {
-                        toast('Failed to add worker: ' + result.reason, 'error');
+                        _showToast(
+                            'Failed to add worker: ' + result.reason, 'error'
+                        );
                     }
                 });
             }
@@ -962,33 +1032,32 @@
     // =========================================================================
 
     function openManageEnterpriseTypesModal(onSuccess) {
-        var types = _requireTypeQueries();
-        var typeCommands = _requireTypeCommands();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-        var confirm = _requireConfirmDialog();
-
-        var categories = types.getEnterpriseCategories();
+        var categories = IT.getEnterpriseCategories();
         var catKeys = Object.keys(categories).sort();
 
         var categoriesHtml = '';
         if (catKeys.length === 0) {
-            categoriesHtml = '<div class="modal-empty">No enterprise types defined</div>';
+            categoriesHtml = '<div class="modal-empty">' +
+                'No enterprise types defined</div>';
         } else {
             for (var ci = 0; ci < catKeys.length; ci++) {
                 var cat = catKeys[ci];
                 var catTypes = categories[cat];
                 var label = cat.charAt(0).toUpperCase() + cat.slice(1);
                 categoriesHtml += '<div class="type-category">';
-                categoriesHtml += '<div class="type-category-title">' + esc(label) + '</div>';
+                categoriesHtml += '<div class="type-category-title">' +
+                    _escapeHtml(label) + '</div>';
                 for (var ti = 0; ti < catTypes.length; ti++) {
                     var t = catTypes[ti];
                     categoriesHtml += '<div class="type-row">' +
-                        '<span>' + esc(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</span>' +
+                        '<span>' + _escapeHtml(t.name) +
+                            ' (Income: ' + t.baseIncome +
+                            ', Workers: ' + t.baseWorkers + ')</span>' +
                         '<span class="type-actions">' +
-                            '<button class="btn-sm" data-action="edit-type" data-type-id="' + esc(t.id) + '">Edit</button>' +
-                            '<button class="btn-sm danger" data-action="delete-type" data-type-id="' + esc(t.id) + '">Delete</button>' +
+                            '<button class="btn-sm" data-action="edit-type" data-type-id="' +
+                                _escapeHtml(t.id) + '" type="button">Edit</button>' +
+                            '<button class="btn-sm danger" data-action="delete-type" data-type-id="' +
+                                _escapeHtml(t.id) + '" type="button">Delete</button>' +
                         '</span>' +
                     '</div>';
                 }
@@ -999,58 +1068,66 @@
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="modal-actions-row">
-                    <button id="addTypeBtn" class="btn primary">Add Enterprise Type</button>
+                    <button id="addTypeBtn" class="btn primary" type="button">Add Enterprise Type</button>
                 </div>
                 ${categoriesHtml}
             </div>
         `;
 
-        modal.open({
-            title: 'Manage Enterprise Types',
-            content: content,
+        _openModal({
+            titleHtml: 'Manage Enterprise Types',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() {}
+            onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function() {
+        _afterRender(function () {
             var addBtn = document.getElementById('addTypeBtn');
             if (addBtn) {
-                addBtn.addEventListener('click', function() {
-                    modal.close();
-                    openCreateEnterpriseTypeModal(function() {
+                addBtn.addEventListener('click', function () {
+                    _closeTopModal();
+                    openCreateEnterpriseTypeModal(function () {
                         openManageEnterpriseTypesModal(onSuccess);
                     });
                 });
             }
 
-            var modalRoot = document.querySelector('.modal-content') || document.body;
-            modalRoot.addEventListener('click', function(event) {
+            var modalRoot = document.querySelector('.modal-content')
+                || document.body;
+            modalRoot.addEventListener('click', function (event) {
                 var btn = event.target.closest('[data-action]');
                 if (!btn) return;
                 var action = btn.dataset.action;
                 var typeId = btn.dataset.typeId;
 
                 if (action === 'edit-type') {
-                    modal.close();
-                    openEditEnterpriseTypeModal(typeId, function() {
+                    _closeTopModal();
+                    openEditEnterpriseTypeModal(typeId, function () {
                         openManageEnterpriseTypesModal(onSuccess);
                     });
                 } else if (action === 'delete-type') {
-                    var type = types.getEnterpriseTypeById(typeId);
+                    var type = IT.getEnterpriseTypeById(typeId);
                     var typeName = type ? type.name : typeId;
-                    confirm('Delete "' + typeName + '"? This will fail if any enterprise uses this type.',
+                    _confirmDialog(
+                        'Delete "' + typeName + '"? This will fail if any ' +
+                        'enterprise uses this type.',
                         'Delete Type',
-                        function() {
-                            var result = typeCommands.deleteEnterpriseType(typeId);
+                        function () {
+                            var result = ITC.deleteEnterpriseType(typeId);
                             if (result.success) {
-                                toast('Type deleted', 'info');
-                                modal.close();
+                                if (!_persistTypesOrToastError()) return;
+                                _showToast('Type deleted', 'info');
+                                _closeTopModal();
                                 openManageEnterpriseTypesModal(onSuccess);
                             } else {
-                                toast('Failed to delete type: ' + result.reason, 'error');
+                                _showToast(
+                                    'Failed to delete type: ' + result.reason,
+                                    'error'
+                                );
                             }
-                        });
+                        }
+                    );
                 }
             });
         });
@@ -1061,10 +1138,6 @@
     // =========================================================================
 
     function openCreateEnterpriseTypeModal(onSuccess) {
-        var typeCommands = _requireTypeCommands();
-        var modal = _requireModalCore();
-        var toast = _requireToast();
-
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="form-group">
@@ -1128,21 +1201,21 @@
             </div>
         `;
 
-        modal.open({
-            title: 'Add Enterprise Type',
-            content: content,
+        _openModal({
+            titleHtml: 'Add Enterprise Type',
+            contentHtml: content,
             confirmText: 'Create Type',
             cancelText: 'Cancel',
-            onConfirm: function() {
+            onConfirm: function () {
                 var name = document.getElementById('newTypeName').value.trim();
                 if (!name) {
-                    toast('Type name is required', 'error');
+                    _showToast('Type name is required', 'error');
                     return false;
                 }
 
                 var category = document.getElementById('newTypeCategory').value;
                 if (!category) {
-                    toast('Category is required', 'error');
+                    _showToast('Category is required', 'error');
                     return false;
                 }
 
@@ -1158,15 +1231,19 @@
                     description: document.getElementById('newTypeDescription').value.trim()
                 };
 
-                var result = typeCommands.createEnterpriseType(data);
+                var result = ITC.createEnterpriseType(data);
                 if (!result.success) {
-                    toast('Failed to create type: ' + result.reason, 'error');
+                    _showToast('Failed to create type: ' + result.reason, 'error');
                     return false;
                 }
 
-                toast('Enterprise type created: ' + result.data.name, 'success');
-                modal.close();
-                if (onSuccess) onSuccess(result.data);
+                if (!_persistTypesOrToastError()) return false;
+
+                _showToast(
+                    'Enterprise type created: ' + result.type.name, 'success'
+                );
+                _closeTopModal();
+                if (onSuccess) onSuccess(result.type);
                 return true;
             }
         });
@@ -1177,15 +1254,9 @@
     // =========================================================================
 
     function openEditEnterpriseTypeModal(typeId, onSuccess) {
-        var types = _requireTypeQueries();
-        var typeCommands = _requireTypeCommands();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-
-        var type = types.getEnterpriseTypeById(typeId);
+        var type = IT.getEnterpriseTypeById(typeId);
         if (!type) {
-            toast('Enterprise type not found', 'error');
+            _showToast('Enterprise type not found', 'error');
             return;
         }
 
@@ -1196,15 +1267,16 @@
         var categoryOptions = '';
         for (var i = 0; i < categories.length; i++) {
             var sel = type.category === categories[i] ? 'selected' : '';
-            categoryOptions += '<option value="' + categories[i] + '" ' + sel + '>' +
-                categories[i].charAt(0).toUpperCase() + categories[i].slice(1) + '</option>';
+            categoryOptions += '<option value="' + categories[i] + '" ' + sel +
+                '>' + categories[i].charAt(0).toUpperCase() +
+                categories[i].slice(1) + '</option>';
         }
 
         var content = `
             <div style="max-height: 500px; overflow-y: auto; padding: 4px;">
                 <div class="form-group">
                     <label class="form-label">Type Name *</label>
-                    <input type="text" id="editTypeName" class="form-input" value="${esc(type.name)}">
+                    <input type="text" id="editTypeName" class="form-input" value="${_escapeHtml(type.name)}">
                 </div>
 
                 <div class="form-group">
@@ -1244,22 +1316,22 @@
 
                 <div class="form-group">
                     <label class="form-label">Description</label>
-                    <textarea id="editTypeDescription" class="form-input" rows="2">${esc(type.description || '')}</textarea>
+                    <textarea id="editTypeDescription" class="form-input" rows="2">${_escapeHtml(type.description || '')}</textarea>
                 </div>
             </div>
         `;
 
-        modal.open({
-            title: 'Edit Enterprise Type: ' + type.name,
-            content: content,
+        _openModal({
+            titleHtml: 'Edit Enterprise Type: ' + _escapeHtml(type.name),
+            contentHtml: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
-            onConfirm: function() {
+            onConfirm: function () {
                 var updates = {};
 
                 var name = document.getElementById('editTypeName').value.trim();
                 if (!name) {
-                    toast('Type name is required', 'error');
+                    _showToast('Type name is required', 'error');
                     return false;
                 }
                 updates.name = name;
@@ -1267,57 +1339,69 @@
 
                 var baseIncome = _readRequiredInt(document.getElementById('editTypeIncome'));
                 if (baseIncome === undefined || baseIncome < 0) {
-                    toast('Base income must be a non-negative number', 'error');
+                    _showToast(
+                        'Base income must be a non-negative number', 'error'
+                    );
                     return false;
                 }
                 updates.baseIncome = baseIncome;
 
                 var baseExpenses = _readRequiredInt(document.getElementById('editTypeExpenses'));
                 if (baseExpenses === undefined || baseExpenses < 0) {
-                    toast('Base expenses must be a non-negative number', 'error');
+                    _showToast(
+                        'Base expenses must be a non-negative number', 'error'
+                    );
                     return false;
                 }
                 updates.baseExpenses = baseExpenses;
 
                 var baseWages = _readRequiredInt(document.getElementById('editTypeWages'));
                 if (baseWages === undefined || baseWages < 0) {
-                    toast('Base wages must be a non-negative number', 'error');
+                    _showToast(
+                        'Base wages must be a non-negative number', 'error'
+                    );
                     return false;
                 }
                 updates.baseWages = baseWages;
 
                 var baseWorkers = _readRequiredInt(document.getElementById('editTypeWorkers'));
                 if (baseWorkers === undefined || baseWorkers < 0) {
-                    toast('Base workers must be a non-negative number', 'error');
+                    _showToast(
+                        'Base workers must be a non-negative number', 'error'
+                    );
                     return false;
                 }
                 updates.baseWorkers = baseWorkers;
 
                 var maxWorkers = _readRequiredInt(document.getElementById('editTypeMaxWorkers'));
                 if (maxWorkers === undefined || maxWorkers < 1) {
-                    toast('Max workers must be at least 1', 'error');
+                    _showToast('Max workers must be at least 1', 'error');
                     return false;
                 }
                 updates.maxWorkers = maxWorkers;
 
                 var baseCost = _readRequiredInt(document.getElementById('editTypeCost'));
                 if (baseCost === undefined || baseCost < 0) {
-                    toast('Base cost must be a non-negative number', 'error');
+                    _showToast(
+                        'Base cost must be a non-negative number', 'error'
+                    );
                     return false;
                 }
                 updates.baseCost = baseCost;
 
                 updates.description = document.getElementById('editTypeDescription').value.trim();
 
-                var result = typeCommands.updateEnterpriseType(typeId, updates);
+                var result = ITC.updateEnterpriseType(typeId, updates);
                 if (!result.success) {
-                    toast('Failed to update type: ' + result.reason, 'error');
+                    _showToast('Failed to update type: ' + result.reason, 'error');
                     return false;
                 }
 
-                toast('Type updated', 'success');
-                modal.close();
-                if (onSuccess) onSuccess(result.data);
+                if (!_persistTypesOrToastError()) return false;
+
+                _showToast('Type updated', 'success');
+                _closeTopModal();
+                if (onSuccess) onSuccess(result.type);
                 return true;
             }
         });
@@ -1328,56 +1412,54 @@
     // =========================================================================
 
     function openEnterpriseListModal(onSelect) {
-        var queries = _requireQueries();
-        var viewModels = _requireViewModels();
-        var modal = _requireModalCore();
-        var esc = _requireEscapeHtml();
-        var toast = _requireToast();
-
-        var enterprises = queries.getAllEnterprises();
+        var enterprises = IQ.getAllEnterprises();
         if (enterprises.length === 0) {
-            toast('No enterprises found', 'info');
+            _showToast('No enterprises found', 'info');
             return;
         }
 
         var summaries = [];
         for (var i = 0; i < enterprises.length; i++) {
-            var s = queries.getEnterpriseSummary(enterprises[i].id);
+            var s = IQ.getEnterpriseSummary(enterprises[i].id);
             if (s) summaries.push(s);
         }
-        var rows = viewModels.buildListRows(summaries);
+        var rows = IVM.buildListRows(summaries);
 
         var rowsHtml = '';
         for (var j = 0; j < rows.length; j++) {
             var r = rows[j];
-            rowsHtml += '<div class="enterprise-row ' + esc(r.statusClass) + '" data-enterprise-id="' + esc(r.id) + '">' +
-                '<span class="enterprise-row-name">' + esc(r.name) + ' (' + esc(r.type) + ')</span>' +
+            rowsHtml += '<div class="enterprise-row ' + _escapeHtml(r.statusClass) +
+                '" data-enterprise-id="' + _escapeHtml(r.id) + '">' +
+                '<span class="enterprise-row-name">' + _escapeHtml(r.name) +
+                    ' (' + _escapeHtml(r.type) + ')</span>' +
                 '<span class="enterprise-row-meta">' +
-                    '<span class="' + esc(r.profitClass) + '">' + esc(r.profitLabel) + '</span>' +
-                    '<span>' + esc(r.workersLabel) + '</span>' +
+                    '<span class="' + _escapeHtml(r.profitClass) + '">' +
+                        _escapeHtml(r.profitLabel) + '</span>' +
+                    '<span>' + _escapeHtml(r.workersLabel) + '</span>' +
                 '</span>' +
             '</div>';
         }
 
-        var content = '<div style="padding: 8px; max-height: 400px; overflow-y: auto;" id="enterpriseListContainer">' + rowsHtml + '</div>';
+        var content = '<div style="padding: 8px; max-height: 400px; overflow-y: auto;" id="enterpriseListContainer">' +
+            rowsHtml + '</div>';
 
-        modal.open({
-            title: 'Enterprises',
-            content: content,
+        _openModal({
+            titleHtml: 'Enterprises',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onConfirm: function() {}
+            onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function() {
+        _afterRender(function () {
             var container = document.getElementById('enterpriseListContainer');
             if (!container) return;
 
-            container.addEventListener('click', function(event) {
+            container.addEventListener('click', function (event) {
                 var row = event.target.closest('[data-enterprise-id]');
                 if (!row) return;
                 var id = row.dataset.enterpriseId;
-                modal.close();
+                _closeTopModal();
                 if (onSelect) {
                     onSelect(id);
                 } else {
@@ -1391,7 +1473,7 @@
     // 11. EXPORTS
     // =========================================================================
 
-    window.IndustryModals = {
+    window.IndustryModals = Object.freeze({
         openCreateEnterpriseModal: openCreateEnterpriseModal,
         openEditEnterpriseModal: openEditEnterpriseModal,
         openEnterpriseDetailsModal: openEnterpriseDetailsModal,
@@ -1400,7 +1482,7 @@
         openCreateEnterpriseTypeModal: openCreateEnterpriseTypeModal,
         openEditEnterpriseTypeModal: openEditEnterpriseTypeModal,
         openEnterpriseListModal: openEnterpriseListModal
-    };
+    });
 
     // Legacy global aliases (kept during migration)
     window.openCreateEnterpriseModal = openCreateEnterpriseModal;
@@ -1415,5 +1497,4 @@
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryModals;
     }
-
 })();
