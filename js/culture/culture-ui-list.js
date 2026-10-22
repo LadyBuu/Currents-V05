@@ -12,21 +12,42 @@
  * writes HTML. It does not:
  *   - read CultureState
  *   - read masterData
- *   - call CultureQueries
- *   - resolve locations or religions
- *   - inspect appearance or mythology structure
- *   - decide fallback labels or icons
- *   - attach per-row listeners
- *   - do hover styling in JavaScript
+ *   - call CultureQueries for individual field resolution
+ *   - resolve locations or religions (view models do)
+ *   - inspect appearance or mythology structure (view models do)
+ *   - decide fallback labels or icons (view models do)
+ *   - attach per-row listeners (one delegated listener per container)
+ *   - do hover styling in JavaScript (CSS does)
+ *   - use inline styles
  *
- * Dependencies:
- *   - CultureViewModels   (projections)
- *   - CultureQueries      (only for the initial "get all cultures" list)
- *   - escapeHtml          (shared UI utility)
+ * ICON POLICY
+ * -----------
+ * Any chrome icon (chevrons, expand indicators, close markers, etc.) must
+ * route through window._getIcon(name). This file currently renders no
+ * chrome icons — the list uses text tags and relationship labels only. If
+ * that changes, use _getIcon. Do not paste glyphs or emoji into this file.
  *
- * The renderer is allowed to look up the culture list once. It is not
- * allowed to reach into the domain for individual field resolution —
- * that is what view models are for.
+ * Culture-record icons (culture.icon) are data, not chrome. They arrive
+ * already resolved via the view model's `icon` field and are rendered
+ * verbatim. _getIcon is not involved for those.
+ *
+ * EVENT DELEGATION
+ * ----------------
+ * One click listener per container, attached once. The listener reads the
+ * current `onSelect` from a per-container property so re-rendering with a
+ * different callback takes effect without re-binding.
+ *
+ * Row activation is click-only. tabindex="0" is present so keyboard focus
+ * is possible (and screen readers announce the row), but there is no
+ * keydown handler. If keyboard activation (Enter/Space) is wanted, that
+ * is a separate addition and must be coordinated with the design.
+ *
+ * DEPENDENCIES
+ * ------------
+ *   - CultureViewModels   (required — projections)
+ *   - CultureQueries      (required — the initial culture list and
+ *                          the click-handler's getCultureById)
+ *   - escapeHtml          (required — shared UI utility)
  *
  * =============================================================================
  */
@@ -120,21 +141,33 @@
 
         var html = ['<div class="culture-list" role="list">'];
         for (var i = 0; i < rows.length; i++) {
+            // buildListRows already filters nulls; this is defensive against
+            // a future contract drift where a row could be null.
+            if (!rows[i]) continue;
             html.push(_renderRow(rows[i], escapeHtml));
         }
         html.push('</div>');
         container.innerHTML = html.join('');
 
-        // Event delegation: one listener, attached to the container.
-        // Rerendering replaces the innerHTML but the listener survives.
-        if (typeof options.onSelect === 'function' && !container.__cultureListBound) {
+        // Update the callback for the delegated listener. One listener per
+        // container, always pointing at the most recent onSelect.
+        container.__cultureOnSelect =
+            typeof options.onSelect === 'function' ? options.onSelect : null;
+
+        // Attach the delegated listener once.
+        if (!container.__cultureListBound) {
             container.__cultureListBound = true;
             container.addEventListener('click', function(e) {
-                var row = e.target.closest('[data-culture-id]');
+                var target = e.target;
+                if (!target || typeof target.closest !== 'function') return;
+                var row = target.closest('[data-culture-id]');
                 if (!row || !container.contains(row)) return;
                 var id = row.getAttribute('data-culture-id');
+                if (!id) return;
+                var cb = container.__cultureOnSelect;
+                if (typeof cb !== 'function') return;
                 var culture = queries.getCultureById(id);
-                if (culture) options.onSelect(culture);
+                if (culture) cb(culture);
             });
         }
     }
@@ -155,8 +188,8 @@
 
         parts.push('<div class="culture-row__title">');
         if (row.icon) {
-            // The icon is a view-model decision. The renderer does not
-            // interpret it — if a culture has an icon, render it verbatim.
+            // Culture-record icon. View-model decision; rendered verbatim.
+            // Do not route this through _getIcon.
             parts.push('<span class="culture-row__icon">');
             parts.push(escapeHtml(row.icon));
             parts.push('</span>');
@@ -398,7 +431,35 @@
     }
 
     // =========================================================================
-    // 5. PUBLIC API
+    // 5. LOAD-TIME VERIFICATION
+    // =========================================================================
+
+    (function _verifyLoadTimeDependencies() {
+        if (!window.CultureViewModels) {
+            throw new Error(
+                'culture-ui-list.js loaded but window.CultureViewModels is missing. ' +
+                'Check script tag order (culture-view-models.js must load first).'
+            );
+        }
+        if (!window.CultureQueries) {
+            throw new Error(
+                'culture-ui-list.js loaded but window.CultureQueries is missing. ' +
+                'Check script tag order (culture-queries.js must load first).'
+            );
+        }
+        var hasEscape =
+            (typeof window.escapeHtml === 'function') ||
+            (typeof window._escapeHtml === 'function');
+        if (!hasEscape) {
+            throw new Error(
+                'culture-ui-list.js loaded but no escapeHtml/_escapeHtml is available. ' +
+                'Check script tag order (formatting.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 6. PUBLIC API
     // =========================================================================
 
     window.CultureUI = {
