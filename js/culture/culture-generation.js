@@ -6,13 +6,20 @@
  *
  * Deterministic-under-seed appearance generation from culture data.
  *
+ * DISTINCT LAYER
+ * --------------
+ * This module is not `rules`, not `queries`, not `view-models`. It is a
+ * read-side consumer of `queries` that produces *domain objects* (a
+ * character's appearance). It sits alongside `queries` in the dependency
+ * graph, not above it.
+ *
  * Two layers live in this file, and they have deliberately different
  * dependency profiles:
  *
  *   PURE CORE
  *       rollWeightedValue(options, rng)
  *       rollWeightedValues(options, count, rng)
- *       rollHeight(config, gender, rng)
+ *       rollHeight(config, gender, rng, fallback?)
  *       generateAppearanceFromCulture(culture, gender, opts, rng)
  *
  *       No window lookups. No CultureQueries. No CultureState. No
@@ -36,12 +43,42 @@
  *   - emit events
  *   - persist
  *   - decide which culture applies to a location (that is CultureQueries)
+ *   - provide a fallback appearance when no culture applies (see below)
  *
- * RNG contract:
- *   The randomness source is a required argument, not a hidden global.
- *   Callers pass `window.randomness` (or any object exposing the same
- *   API) explicitly. This makes generation testable and removes the
- *   "fallback to a local Math.random implementation" habit.
+ * ERROR SEMANTICS
+ * ---------------
+ * The query-integrated wrappers throw when the culture cannot be resolved.
+ * This is deliberate:
+ *
+ *   generateAppearance(cultureId, ...)      → throws on unknown cultureId
+ *   generateAppearanceForLocation(locId, ...) → throws when no primary
+ *                                                culture applies to the
+ *                                                location or its ancestors
+ *   generateAppearanceWithRandomCulture(...)  → throws when no cultures exist
+ *
+ * Callers who want a "best effort" behaviour should:
+ *
+ *   - call CultureQueries.getPrimaryCultureForLocation(locationId) and
+ *     check for null before generating; or
+ *   - call generateAppearanceFromCulture(culture, gender, opts, rng) with
+ *     the culture object directly (this never throws for a null culture —
+ *     it produces an appearance with all-undefined fields, which the
+ *     caller can detect and handle).
+ *
+ * RNG CONTRACT
+ * ------------
+ * The randomness source is a required argument, not a hidden global.
+ * Callers pass `window.randomness` (or any object exposing the same API)
+ * explicitly. This makes generation testable and removes the
+ * "fallback to a local Math.random implementation" habit.
+ *
+ * The RNG provider must expose:
+ *     pickWeighted(items)
+ *     randomInt(min, max)
+ *     pickRandom(arr)
+ *
+ * If a caller does not supply one, `window.randomness` is used.
+ * If neither exists, this throws. There is no local Math.random fallback.
  *
  * =============================================================================
  */
@@ -65,15 +102,10 @@
     /**
      * Requires an RNG provider.
      *
-     * The provider must expose:
-     *     pickWeighted(items)
-     *     randomInt(min, max)
-     *     pickRandom(arr)
-     *
-     * If a caller does not supply one, `window.randomness` is used.
-     * If neither exists, this throws. There is no local Math.random
-     * fallback, because a silent difference in RNG semantics is exactly
-     * the kind of bug that hides for years.
+     * If a caller does not supply one, `window.randomness` is used. If
+     * neither exists, this throws. There is no local Math.random fallback,
+     * because a silent difference in RNG semantics is exactly the kind of
+     * bug that hides for years.
      */
     function _resolveRng(rng) {
         if (rng) return _assertRngShape(rng);
@@ -213,6 +245,10 @@
     /**
      * Generates a complete appearance object from a culture.
      *
+     * Never throws for a null culture — produces an appearance object with
+     * all categories undefined. This is the caller's hook for "best effort"
+     * generation when no culture applies.
+     *
      * @param {Object} culture      canonical culture record (or null)
      * @param {string} gender       'male' or 'female'
      * @param {Object} [options]    generation options
@@ -254,9 +290,9 @@
     /**
      * Generates appearance for a culture by ID.
      *
-     * If the culture is not found, this throws. Callers who want a
-     * generic appearance should pass a culture object to the pure core
-     * directly, or use generateAppearanceWithRandomCulture.
+     * Throws if the culture is not found. Callers who want a generic
+     * appearance should pass a culture object to the pure core directly,
+     * or use generateAppearanceWithRandomCulture.
      *
      * @param {string} cultureId
      * @param {string} gender
@@ -284,9 +320,10 @@
     /**
      * Generates appearance for a location using its primary culture.
      *
-     * If no primary culture applies to the location (or its ancestors),
-     * this throws. Callers who want a "best effort" behaviour should
-     * call getPrimaryCultureForLocation themselves and decide.
+     * Throws when no primary culture applies to the location (or its
+     * ancestors). Callers who want "best effort" behaviour should call
+     * CultureQueries.getPrimaryCultureForLocation themselves and decide
+     * what to do with a null result.
      *
      * @param {string} locationId
      * @param {string} gender
@@ -313,6 +350,8 @@
     /**
      * Generates appearance from a randomly selected culture.
      *
+     * Throws if no cultures exist.
+     *
      * @param {string} gender
      * @param {Object} [options]
      * @param {Object} [rng]
@@ -336,7 +375,27 @@
     }
 
     // =========================================================================
-    // 6. PUBLIC API
+    // 6. LOAD-TIME VERIFICATION
+    // =========================================================================
+    //
+    // The plan says: "missing modules throw at load, not at call time."
+    // The pure core does not need CultureQueries, but the module as a whole
+    // does — and the module loads as a unit. If CultureQueries isn't there,
+    // the query-integrated wrappers are dead code, and we'd rather know
+    // at load time than on the first character creation.
+    //
+
+    (function _verifyLoadTimeDependencies() {
+        if (!window.CultureQueries) {
+            throw new Error(
+                'culture-generation.js loaded but window.CultureQueries is missing. ' +
+                'Check script tag order (culture-queries.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 7. PUBLIC API
     // =========================================================================
 
     window.CultureGeneration = {
