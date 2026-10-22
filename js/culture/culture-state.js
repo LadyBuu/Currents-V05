@@ -4,19 +4,21 @@
  * js/culture/culture-state.js
  * =============================================================================
  *
- * Derived indexes and subscriptions for culture data.
+ * Derived indexes, subscriptions, and mutation primitives for culture data.
  *
  * This module is deliberately boring.
  *
  * It owns:
  *   - derived lookup indexes (byId, byName, byDisplayName, etc.)
  *   - a subscription mechanism for interested consumers
- *   - a way to rebuild indexes from canonical culture data
+ *   - mutation primitives that mutate the canonical array and rebuild indexes
+ *   - a way to hydrate indexes from canonical culture data
  *
  * It does NOT own:
  *   - culture records                  (masterData.data.cultures)
- *   - persistence                      (application save mechanism)
- *   - mutation                         (CultureCommands)
+ *   - persistence                      (saveMasterData; see CultureCommands.persist)
+ *   - mutation policy                  (CultureCommands; the primitives here are
+ *                                       the mechanism, not the decision)
  *   - queries                          (CultureQueries)
  *   - domain vocabulary                (appearance, mythology, etc.)
  *   - presentation                     (CultureViewModels / CultureUI)
@@ -25,11 +27,26 @@
  *
  *     masterData.data.cultures
  *             │
- *             ├── CultureCommands ──── mutate + rebuild + save + notify
+ *             ├── CultureCommands ──── validate → mutate via primitives
+ *             │                        → hydrate → markDirty → publish
+ *             │                        → persist (single save site)
  *             │
- *             ├── CultureQueries ───── read / interpret
+ *             ├── CultureQueries ───── read / interpret (clones)
  *             │
- *             └── CultureState ─────── index
+ *             └── CultureState ─────── index + primitives
+ *
+ * Read/write contract:
+ *
+ *     getById(id)                 → clone (public, safe)
+ *     getByName(name)             → clones
+ *     getByDisplayName(name)      → clones
+ *     getByAssociatedLocation(id) → clones
+ *     getByReligion(id)           → clones
+ *     _getCultureCanonical(id)    → live record (commands + hierarchy only)
+ *
+ *     _addCulture(culture)        → commands only
+ *     _updateCulture(id, culture) → commands only
+ *     _removeCulture(id)          → commands only
  *
  * =============================================================================
  */
@@ -49,14 +66,18 @@
      *   - a _processing flag (nothing here needs recursion protection)
      *   - a lastRefresh timestamp (nobody should be branching on it)
      *   - an _initialized flag (empty indexes are a valid state)
+     *
+     * Note the absence of `byPrimaryCultureLocation`: that relationship
+     * lives on `Place.cultureId`, not on the culture record. Indexing it
+     * here would require State to read Place data, which is not its job.
+     * CultureQueries walks the hierarchy instead.
      */
     var _indexes = {
-        byId:                    new Map(),
-        byName:                  new Map(),  // name  -> [culture, ...]
-        byDisplayName:           new Map(),  // label -> [culture, ...]
-        byPrimaryCultureLocation: new Map(), // locationId -> [culture, ...]
-        byAssociatedLocation:    new Map(),  // locationId -> [culture, ...]
-        byReligion:              new Map()   // religionId -> [culture, ...]
+        byId:                 new Map(),
+        byName:               new Map(),  // name  -> [culture, ...]
+        byDisplayName:        new Map(),  // label -> [culture, ...]
+        byAssociatedLocation: new Map(),  // locationId -> [culture, ...]
+        byReligion:           new Map()   // religionId -> [culture, ...]
     };
 
     var _subscribers = [];
@@ -87,14 +108,13 @@
      * Reads the canonical culture collection.
      *
      * This is the ONLY place State reads culture records from.
-     * State never caches this array, and never writes to it.
+     * State never caches this array, and never writes to it — mutation
+     * goes through the primitives, which write to it and then re-hydrate.
      */
     function _readCanonicalCultures() {
         var master = _requireMasterData();
 
         if (!master.data) {
-            // The shape of masterData is a required invariant, not something
-            // State should silently paper over.
             throw new Error(
                 'CultureState requires masterData.data to exist. ' +
                 'Canonical storage is not initialized.'
@@ -106,39 +126,57 @@
         return Array.isArray(master.data.cultures) ? master.data.cultures : [];
     }
 
+    function _markDirty() {
+        if (typeof window.markDataDirty === 'function') {
+            try { window.markDataDirty(); return; } catch (e) { /* fall through */ }
+        }
+        // No fatal error: markDataDirty is the persistence hint, not the
+        // persistence itself. Commands still call persist() explicitly.
+    }
+
     // =========================================================================
-    // 3. INDEX REBUILDING
+    // 3. HYDRATION
     // =========================================================================
 
     /**
-     * Rebuilds all derived indexes from a canonical cultures array.
+     * Rebuilds all derived indexes from the canonical cultures array.
      *
      * Called by:
      *   - CultureCommands after a successful mutation
-     *   - CultureState.refreshFromMasterData() after external canonical change
+     *   - CultureState._addCulture / _updateCulture / _removeCulture
+     *   - CultureBootstrap.init() at load time
+     *   - Application-level reload / import
      *
      * NOT called by:
-     *   - queries
+     *   - queries (they read; they don't mutate)
      *   - UI
      *   - "just in case" defensive code
      *
-     * @param {Array} cultures - canonical culture records
+     * Throws on duplicate ids. A duplicate id is corrupted canonical data,
+     * and silently picking the first occurrence would hide the corruption.
      */
-    function rebuildIndexes(cultures) {
-        if (!Array.isArray(cultures)) {
-            throw new Error('CultureState.rebuildIndexes requires an array');
-        }
+    function hydrateFromMasterData() {
+        var cultures = _readCanonicalCultures();
 
         _indexes.byId.clear();
         _indexes.byName.clear();
         _indexes.byDisplayName.clear();
-        _indexes.byPrimaryCultureLocation.clear();
         _indexes.byAssociatedLocation.clear();
         _indexes.byReligion.clear();
+
+        var seenIds = Object.create(null);
 
         for (var i = 0; i < cultures.length; i++) {
             var c = cultures[i];
             if (!c || !c.id) continue;
+
+            if (seenIds[c.id]) {
+                throw new Error(
+                    'CultureState.hydrateFromMasterData: duplicate culture id "' +
+                    c.id + '". Canonical data is corrupted.'
+                );
+            }
+            seenIds[c.id] = true;
 
             _indexes.byId.set(c.id, c);
 
@@ -164,15 +202,13 @@
     }
 
     /**
-     * Rebuilds indexes from the current canonical data.
+     * Deprecated alias for hydrateFromMasterData().
      *
-     * This exists for cases where canonical data changed outside of a
-     * CultureCommands transaction (e.g. application-level reload, import,
-     * or migration). Normal mutations should not call this directly —
-     * they should call rebuildIndexes() with the array they just produced.
+     * Kept so any un-migrated caller during the refactor does not break.
+     * New code should call hydrateFromMasterData().
      */
     function refreshFromMasterData() {
-        rebuildIndexes(_readCanonicalCultures());
+        hydrateFromMasterData();
     }
 
     // =========================================================================
@@ -180,7 +216,7 @@
     // =========================================================================
 
     function _indexIntoStringMap(map, key, culture) {
-        if (!key) return; // empty name/displayName is not an indexable key
+        if (!key) return;
         var bucket = map.get(key);
         if (!bucket) {
             bucket = [];
@@ -204,31 +240,45 @@
     }
 
     // =========================================================================
-    // 5. INDEX ACCESS
+    // 5. CLONE
     // =========================================================================
-    //
-    // State exposes narrow lookup primitives. It does NOT expose semantic
-    // queries like "getCulturesForLocation()" — that interpretation belongs
-    // to CultureQueries.
-    //
-    // Note: State deliberately does NOT expose getAllCultures(). Providing
-    // it here would recreate the second-query-API problem we're refactoring
-    // away from. CultureQueries reads canonical data through its own path.
-    //
+
+    function _clone(value) {
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            var arr = new Array(value.length);
+            for (var i = 0; i < value.length; i++) arr[i] = _clone(value[i]);
+            return arr;
+        }
+        var out = {};
+        for (var k in value) {
+            if (Object.prototype.hasOwnProperty.call(value, k)) {
+                out[k] = _clone(value[k]);
+            }
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 6. PUBLIC READS (clones)
+    // =========================================================================
 
     function getById(id) {
         if (!id) return null;
-        return _indexes.byId.get(id) || null;
+        var rec = _indexes.byId.get(id);
+        return rec ? _clone(rec) : null;
     }
 
     function getByName(name) {
         if (!name) return [];
-        return _indexes.byName.get(name.toLowerCase().trim()) || [];
+        var list = _indexes.byName.get(name.toLowerCase().trim()) || [];
+        return _cloneArray(list);
     }
 
     function getByDisplayName(displayName) {
         if (!displayName) return [];
-        return _indexes.byDisplayName.get(displayName.toLowerCase().trim()) || [];
+        var list = _indexes.byDisplayName.get(displayName.toLowerCase().trim()) || [];
+        return _cloneArray(list);
     }
 
     /**
@@ -240,33 +290,119 @@
      */
     function getByAssociatedLocation(locationId) {
         if (!locationId) return [];
-        return _indexes.byAssociatedLocation.get(locationId) || [];
-    }
-
-    /**
-     * Cultures for which this location is the PRIMARY culture.
-     *
-     * Populated by CultureCommands / the application from Place.cultureId.
-     * State does not derive it; it is told about it.
-     *
-     * NOTE: This accessor is present so the shape of the relationship is
-     * explicit, but it depends on State being fed primary-culture data
-     * during index construction. Until the Culture ↔ Location relationship
-     * is finalized (see ADR discussion), this index may remain empty.
-     * That is preferable to silently conflating it with byAssociatedLocation.
-     */
-    function getByPrimaryCultureLocation(locationId) {
-        if (!locationId) return [];
-        return _indexes.byPrimaryCultureLocation.get(locationId) || [];
+        var list = _indexes.byAssociatedLocation.get(locationId) || [];
+        return _cloneArray(list);
     }
 
     function getByReligion(religionId) {
         if (!religionId) return [];
-        return _indexes.byReligion.get(religionId) || [];
+        var list = _indexes.byReligion.get(religionId) || [];
+        return _cloneArray(list);
+    }
+
+    function _cloneArray(list) {
+        var out = new Array(list.length);
+        for (var i = 0; i < list.length; i++) out[i] = _clone(list[i]);
+        return out;
     }
 
     // =========================================================================
-    // 6. SUBSCRIPTIONS
+    // 7. CANONICAL READS (live records — commands only)
+    // =========================================================================
+
+    /**
+     * Returns the live canonical record for a culture.
+     *
+     * Reserved for CultureCommands and (via CultureQueries) the hierarchy
+     * module during a transaction. Every other consumer must use getById(),
+     * which returns a clone.
+     */
+    function _getCultureCanonical(id) {
+        if (!id) return null;
+        return _indexes.byId.get(id) || null;
+    }
+
+    // =========================================================================
+    // 8. MUTATION PRIMITIVES
+    // =========================================================================
+    //
+    // These are the mechanism, not the decision. CultureCommands decides
+    // what to write and when; State executes and re-hydrates.
+    //
+    // Every primitive:
+    //   - mutates masterData.data.cultures
+    //   - re-hydrates indexes
+    //   - marks data dirty (for the save prompt / autosave hint)
+    //
+    // Every primitive is idempotent from a "safe to call twice" perspective
+    // only in the sense that a no-op write re-hydrates without corrupting.
+    // Callers must not call them with the intent "maybe I'll do something."
+    //
+
+    function _addCulture(culture) {
+        if (!culture || !culture.id) {
+            throw new Error('CultureState._addCulture requires a culture with an id.');
+        }
+        var cultures = _readCanonicalCultures();
+        if (_indexes.byId.has(culture.id)) {
+            throw new Error(
+                'CultureState._addCulture: culture id already exists: ' + culture.id
+            );
+        }
+        cultures.push(culture);
+        hydrateFromMasterData();
+        _markDirty();
+        return culture;
+    }
+
+    function _updateCulture(id, culture) {
+        if (!id) {
+            throw new Error('CultureState._updateCulture requires an id.');
+        }
+        if (!culture || !culture.id) {
+            throw new Error('CultureState._updateCulture requires a culture with an id.');
+        }
+        if (culture.id !== id) {
+            throw new Error(
+                'CultureState._updateCulture: id mismatch (' + id + ' vs ' + culture.id + ').'
+            );
+        }
+        var cultures = _readCanonicalCultures();
+        var index = _findIndex(cultures, id);
+        if (index === -1) {
+            throw new Error('CultureState._updateCulture: culture not found: ' + id);
+        }
+        cultures[index] = culture;
+        hydrateFromMasterData();
+        _markDirty();
+        return culture;
+    }
+
+    function _removeCulture(id) {
+        if (!id) {
+            throw new Error('CultureState._removeCulture requires an id.');
+        }
+        var cultures = _readCanonicalCultures();
+        var index = _findIndex(cultures, id);
+        if (index === -1) {
+            throw new Error('CultureState._removeCulture: culture not found: ' + id);
+        }
+        var removed = cultures[index];
+        cultures.splice(index, 1);
+        hydrateFromMasterData();
+        _markDirty();
+        return removed;
+    }
+
+    function _findIndex(cultures, id) {
+        for (var i = 0; i < cultures.length; i++) {
+            if (cultures[i] && cultures[i].id === id) return i;
+        }
+        return -1;
+    }
+
+    // =========================================================================
+    // 9. SUBSCRIPTIONS
     // =========================================================================
     //
     // State provides the mechanism. It does NOT decide what event to emit,
@@ -288,11 +424,11 @@
     /**
      * Publishes an event to all subscribers.
      *
-     * @param {Object} event - { type: string, ...payload }
+     * @param {string} eventName
+     * @param {*} data - payload. Usually the affected culture record.
      */
-    function notify(event) {
-        // Copy so that a subscriber unsubscribing during dispatch does not
-        // affect the current round.
+    function publish(eventName, data) {
+        var event = { type: eventName, data: data };
         var snapshot = _subscribers.slice();
 
         for (var i = 0; i < snapshot.length; i++) {
@@ -307,8 +443,6 @@
     }
 
     function _reportSubscriberError(err) {
-        // Route through whatever centralized error reporting exists.
-        // Silently swallowing here would hide real bugs in consumers.
         if (typeof window.reportError === 'function') {
             try { window.reportError(err); return; } catch (e) {}
         }
@@ -318,63 +452,119 @@
     }
 
     // =========================================================================
-    // 7. DIAGNOSTICS
+    // 10. INTEGRITY / DIAGNOSTICS
     // =========================================================================
+
+    /**
+     * Warn-only integrity check. Called by CultureBootstrap.init().
+     *
+     * Returns a list of { level, message } findings. Never throws.
+     */
+    function validateIntegrity() {
+        var findings = [];
+
+        var cultures;
+        try {
+            cultures = _readCanonicalCultures();
+        } catch (err) {
+            findings.push({ level: 'error', message: err.message });
+            return findings;
+        }
+
+        if (cultures.length === 0) {
+            findings.push({
+                level: 'info',
+                message: 'No cultures defined. This is a valid initial state.'
+            });
+            return findings;
+        }
+
+        var seenIds = Object.create(null);
+
+        for (var i = 0; i < cultures.length; i++) {
+            var c = cultures[i];
+            if (!c) {
+                findings.push({ level: 'warn', message: 'Null culture at index ' + i });
+                continue;
+            }
+            if (!c.id) {
+                findings.push({ level: 'error', message: 'Culture at index ' + i + ' has no id' });
+                continue;
+            }
+            if (seenIds[c.id]) {
+                findings.push({ level: 'error', message: 'Duplicate culture id: ' + c.id });
+            }
+            seenIds[c.id] = true;
+
+            if (typeof c.name !== 'string' || c.name.length === 0) {
+                findings.push({ level: 'warn', message: 'Culture ' + c.id + ' has no name' });
+            }
+        }
+
+        return findings;
+    }
 
     function getIndexStats() {
         return {
-            byId:                     _indexes.byId.size,
-            byName:                   _indexes.byName.size,
-            byDisplayName:            _indexes.byDisplayName.size,
-            byPrimaryCultureLocation: _indexes.byPrimaryCultureLocation.size,
-            byAssociatedLocation:     _indexes.byAssociatedLocation.size,
-            byReligion:               _indexes.byReligion.size,
-            subscriberCount:          _subscribers.length
+            byId:                 _indexes.byId.size,
+            byName:               _indexes.byName.size,
+            byDisplayName:        _indexes.byDisplayName.size,
+            byAssociatedLocation: _indexes.byAssociatedLocation.size,
+            byReligion:           _indexes.byReligion.size,
+            subscriberCount:      _subscribers.length
         };
     }
 
     // =========================================================================
-    // 8. PUBLIC API
+    // 11. PUBLIC API
     // =========================================================================
 
     window.CultureState = {
-        // ---- Index lifecycle ----
-        rebuildIndexes: rebuildIndexes,
-        refreshFromMasterData: refreshFromMasterData,
+        // ---- Lifecycle ----
+        hydrateFromMasterData: hydrateFromMasterData,
+        refreshFromMasterData: refreshFromMasterData,  // deprecated alias
 
-        // ---- Index access (primitives) ----
+        // ---- Public reads (clones) ----
         getById: getById,
         getByName: getByName,
         getByDisplayName: getByDisplayName,
-        getByPrimaryCultureLocation: getByPrimaryCultureLocation,
         getByAssociatedLocation: getByAssociatedLocation,
         getByReligion: getByReligion,
 
+        // ---- Canonical reads (commands only) ----
+        _getCultureCanonical: _getCultureCanonical,
+
+        // ---- Mutation primitives (commands only) ----
+        _addCulture: _addCulture,
+        _updateCulture: _updateCulture,
+        _removeCulture: _removeCulture,
+
         // ---- Subscriptions ----
         subscribe: subscribe,
-        notify: notify,
+        publish: publish,
 
         // ---- Diagnostics ----
+        validateIntegrity: validateIntegrity,
         getIndexStats: getIndexStats
     };
 
     // =========================================================================
-    // 9. INITIAL BUILD
+    // 12. INITIAL BUILD
     // =========================================================================
     //
     // Attempt an initial build if canonical data already exists. If it does
-    // not, indexes remain empty and refreshFromMasterData() can be called
+    // not, indexes remain empty and hydrateFromMasterData() can be called
     // later. State must be loadable before masterData is ready.
     //
-    // Note: this does not throw when masterData is absent — empty indexes are
-    // a legitimate initial state. It only throws when someone actually asks
-    // State to read canonical data that the application claimed existed.
+    // Bootstrap calls init explicitly when the load order is correct.
+    // This fallback exists only for the case where masterData is available
+    // before bootstrap runs (e.g. a page that inlines data).
     //
 
     try {
         if (typeof window.masterData !== 'undefined' &&
             window.masterData && window.masterData.data) {
-            refreshFromMasterData();
+            hydrateFromMasterData();
         }
     } catch (err) {
         _reportSubscriberError(err);
