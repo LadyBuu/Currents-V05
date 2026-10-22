@@ -6,50 +6,18 @@
  *
  * EMPLOYMENT QUERIES.
  *
- * This file provides read-only queries about employment within a
- * settlement. It answers:
- *   - how many workers does a settlement have?
- *   - how many are employed, and by whom (state, private, public)?
- *   - how many are unemployed?
- *   - what is the employment rate?
- *   - what is the average wage?
+ * Read-only queries about employment within a settlement.
  *
- * It is a query module. It:
- *   - reads canonical settlement data through SettlementQueries
- *   - reads population through the canonical population accessor
- *   - reads enterprises through IndustryQueries
- *   - does not mutate anything
- *   - does not persist
- *   - does not display UI
- *   - does not fabricate missing values
- *   - does not use recursion guards
+ * Location hierarchy:
+ *   Owned by LocationQueries. Corrected from
+ *   LocationState.getAllSubLocationIds to
+ *   LocationQueries.getAllSubLocationIds.
  *
- * Contract reference: Settlement Architecture Contracts §10 (Query
- * Contract), §11 (Query Results and Missing Data), §19 (Enterprise
- * Ownership Contract), §32 (Completion Standard).
- *
- * Scope discipline:
- *
- *   Employment is a derived value. It is calculated from:
- *     - population (working-age population)
- *     - enterprises located in the settlement (worker counts, wages)
- *
- *   The canonical enterprise records belong to the Industry domain.
- *   This module reads them through IndustryQueries. It does not maintain
- *   a second store of worker counts. It does not read a persisted
- *   `settlement.employment` object as authoritative; if that object
- *   exists in old save data, it is a stale cache and is ignored.
- *
- *   The working-age fraction (currently 0.6 of population) is a domain
- *   constant for employment calculation. It is defined once, here, as
- *   WORKING_AGE_FRACTION. If it changes, it changes in one place.
- *
- * Missing data:
- *
- *   - settlement missing             → queries return null
- *   - population unavailable         → returns null (not zero)
- *   - no enterprises                 → employment is legitimate zeros
- *   - IndustryQueries missing        → the call throws (required)
+ * DEPENDENCIES (REQUIRED at load):
+ *   - SettlementQueries
+ *   - IndustryQueries
+ *   - LocationQueries
+ *   - getLocationPopulationCount
  *
  * =============================================================================
  */
@@ -73,17 +41,14 @@
         return window.getLocationPopulationCount;
     }
 
-    function _getLocationState() {
-        return window.LocationState;
+    function _getLocationQueries() {
+        return window.LocationQueries;
     }
 
     // =========================================================================
     // 2. CONSTANTS
     // =========================================================================
 
-    // Fraction of total population considered working-age. This is a
-    // domain constant. It is not read from anywhere else. If the world
-    // model changes (aging, dependency ratios), this value changes here.
     var WORKING_AGE_FRACTION = 0.6;
 
     // =========================================================================
@@ -91,18 +56,11 @@
     // =========================================================================
 
     function _getLocationIdsForSettlement(locationId) {
-        var locationState = _getLocationState();
-        if (typeof locationState.getAllSubLocationIds === 'function') {
-            var ids = locationState.getAllSubLocationIds(locationId);
-            if (ids && ids.length > 0) return ids;
-        }
+        var ids = _getLocationQueries().getAllSubLocationIds(locationId);
+        if (ids && ids.length > 0) return ids;
         return [locationId];
     }
 
-    /**
-     * Returns all enterprises whose locationId is within the settlement's
-     * location set. Reads enterprise summaries from IndustryQueries.
-     */
     function _getSettlementEnterprises(locationId) {
         var locationIds = _getLocationIdsForSettlement(locationId);
         var industryQueries = _getIndustryQueries();
@@ -119,14 +77,6 @@
         return result;
     }
 
-    /**
-     * Classifies an enterprise summary by ownership category.
-     * Returns 'state', 'public', or 'private'.
-     *
-     * Per §19, ownership is owned by Industry. The category is determined
-     * from the enterprise's own ownership fields, not from any settlement
-     * membership array.
-     */
     function _classifyOwnership(enterprise) {
         if (!enterprise) return 'private';
 
@@ -142,30 +92,6 @@
     // 4. EMPLOYMENT CALCULATION
     // =========================================================================
 
-    /**
-     * Returns employment statistics for a settlement.
-     *
-     * Returns null if the settlement does not exist, or if the
-     * population accessor returns a non-numeric value for the
-     * settlement. A missing population is not the same as a population
-     * of zero.
-     *
-     * Result shape:
-     *   {
-     *     workingAgePopulation: number,
-     *     totalEmployed: number,
-     *     stateEmployed: number,
-     *     publicEmployed: number,
-     *     privateEmployed: number,
-     *     unemployed: number,
-     *     employmentRate: number,      // integer 0-100
-     *     averageWage: number,         // integer
-     *     totalWages: number           // integer
-     *   }
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function getEmployment(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -239,48 +165,21 @@
     // 5. FOCUSED QUERIES
     // =========================================================================
 
-    /**
-     * Returns the total number of workers employed in a settlement, or
-     * null if unavailable.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getTotalWorkers(locationId) {
         var employment = getEmployment(locationId);
         return employment ? employment.totalEmployed : null;
     }
 
-    /**
-     * Returns the number of unemployed working-age individuals in a
-     * settlement, or null if unavailable.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getUnemployed(locationId) {
         var employment = getEmployment(locationId);
         return employment ? employment.unemployed : null;
     }
 
-    /**
-     * Returns the employment rate as an integer percentage, or null if
-     * unavailable.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getEmploymentRate(locationId) {
         var employment = getEmployment(locationId);
         return employment ? employment.employmentRate : null;
     }
 
-    /**
-     * Returns the average wage in a settlement, or null if unavailable.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getAverageWage(locationId) {
         var employment = getEmployment(locationId);
         return employment ? employment.averageWage : null;
