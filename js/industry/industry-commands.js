@@ -5,247 +5,434 @@
  *
  * LOCATION: js/core/industry/industry-commands.js
  *
- * The sole owner of enterprise mutations.
+ * The single write boundary for the enterprise domain.
  *
- * ARCHITECTURAL RULES:
- *   - Commands mutate masterData.data.enterprises directly.
- *   - Commands construct candidate clones, validate, then commit.
- *   - Commands own the transaction: rebuild indexes → save → notify.
- *   - Commands do NOT call UI functions.
- *   - Commands do NOT have recursion guards.
- *   - Commands do NOT fabricate defaults for missing input.
- *   - Commands do NOT reach into another domain's State.
- *   - Commands write only canonical fields. Derived fields are resolved
- *     by IndustryQueries at read time.
- *   - Historical identity of relationships is captured in `history`.
+ * This file:
+ *   - creates, updates, and deletes enterprise records
+ *   - manages workers, wages, wealth, debt
+ *   - commits annual processing results
+ *   - demolishes and rebuilds enterprises
+ *   - routes household ownership writes through HouseholdCommands
+ *   - owns persist(), the only call site of saveMasterData in this domain
  *
- * PHASE 3:
- *   - Stops writing typeName, category, isPublic, ownerName, locationName,
- *     workerCount. Those are now projections resolved on read.
- *   - Writes history snapshots when relationships change (type, owner).
+ * This file does NOT:
+ *   - mutate enterprise types (IndustryTypeCommands does)
+ *   - seed the type registry (IndustryTypeInit does)
+ *   - compute economic transitions (IndustryEconomics does)
+ *   - resolve owner/location/worker names (IndustryQueries does)
+ *   - toast, render, or touch the DOM
+ *
+ * PERSISTENCE:
+ *   Commands do not save. Every command mutates in-memory state and returns.
+ *   The caller calls IndustryCommands.persist() once per batch, after every
+ *   command in the batch has succeeded. IndustryState.markDataDirty has
+ *   already been called by the mutation primitives. persist() forces a
+ *   synchronous flush.
+ *
+ * CONTRACT:
+ *   Every public command returns { success: true, ... } or
+ *   { success: false, reason: string }.
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-state.js    (IndustryState)
+ *   - industry-rules.js    (IndustryRules)
+ *   - industry-constants.js (IndustryConstants)
+ *   - ids.js               (generateId)
+ *   - storage.js           (saveMasterData)
+ *   - time.js              (getCurrentYear)
+ *   - accessors.js         (getCharacterById, getPlaceById)
+ *   - household-commands.js (HouseholdCommands) — for household ownership
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
-    function _requireMasterData() {
-        var md = window.masterData;
-        if (!md) {
-            throw new Error('IndustryCommands: masterData dependency missing');
-        }
-        if (!md.data) {
-            md.data = {};
-        }
-        return md;
+    if (typeof window.IndustryState === 'undefined') {
+        throw new Error(
+            'industry-commands.js requires industry-state.js to load first.'
+        );
+    }
+    if (typeof window.IndustryRules === 'undefined') {
+        throw new Error(
+            'industry-commands.js requires industry-rules.js to load first.'
+        );
+    }
+    if (typeof window.IndustryConstants === 'undefined') {
+        throw new Error(
+            'industry-commands.js requires industry-constants.js to load first.'
+        );
+    }
+    if (typeof window.generateId !== 'function') {
+        throw new Error('industry-commands.js requires ids.js (generateId).');
+    }
+    if (typeof window.saveMasterData !== 'function') {
+        throw new Error('industry-commands.js requires storage.js (saveMasterData).');
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('industry-commands.js requires time.js (getCurrentYear).');
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error(
+            'industry-commands.js requires accessors.js (getCharacterById).'
+        );
+    }
+    if (typeof window.getPlaceById !== 'function') {
+        throw new Error('industry-commands.js requires accessors.js (getPlaceById).');
     }
 
-    function _requireEnterprisesArray() {
-        var md = _requireMasterData();
-        if (!md.data.enterprises) {
-            md.data.enterprises = [];
+    var IS = window.IndustryState;
+    var RULES = window.IndustryRules;
+    var C = window.IndustryConstants;
+
+    // HouseholdCommands is required only when a command actually crosses the
+    // household boundary. Verified at call time so that domains that never
+    // touch households do not need it loaded. IndustryCommands' own
+    // createEnterprise, updateEnterprise, and deleteEnterprise DO touch
+    // households when ownerType === 'household', so a bootstrap will verify
+    // it as a hard dependency.
+    function _requireHouseholdCommands() {
+        if (typeof window.HouseholdCommands === 'undefined') {
+            throw new Error(
+                'industry-commands.js: HouseholdCommands is required for ' +
+                'household ownership operations but is not loaded.'
+            );
         }
-        return md.data.enterprises;
-    }
-
-    function _requireState() {
-        var state = window.IndustryState;
-        if (!state) {
-            throw new Error('IndustryCommands: IndustryState dependency missing');
-        }
-        return state;
-    }
-
-    function _requireGenerateId() {
-        if (typeof window.generateId !== 'function') {
-            throw new Error('IndustryCommands: generateId dependency missing');
-        }
-        return window.generateId;
-    }
-
-    function _requireSaveMasterData() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('IndustryCommands: saveMasterData dependency missing');
-        }
-        return window.saveMasterData;
-    }
-
-    function _requireCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('IndustryCommands: getCurrentYearSafe dependency missing');
-        }
-        return window.getCurrentYearSafe();
-    }
-
-    function _requireCharacterAccessor() {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('IndustryCommands: getCharacterById dependency missing');
-        }
-        return window.getCharacterById;
-    }
-
-    function _requirePlaceAccessor() {
-        if (typeof window.getPlaceById !== 'function') {
-            throw new Error('IndustryCommands: getPlaceById dependency missing');
-        }
-        return window.getPlaceById;
-    }
-
-    function _requireTypeLookup() {
-        if (typeof window.IndustryTypes === 'undefined' ||
-            typeof window.IndustryTypes.getEnterpriseTypeById !== 'function') {
-            throw new Error('IndustryCommands: IndustryTypes.getEnterpriseTypeById dependency missing');
-        }
-        return window.IndustryTypes.getEnterpriseTypeById;
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects || []);
-        }
-    }
-
-    // =========================================================================
-    // 2. TRANSACTION PRIMITIVE
-    // =========================================================================
-
-    function _commit(eventType, eventData) {
-        var state = _requireState();
-        state.rebuildIndexes();
-        _requireSaveMasterData()();
-        state.notify(eventType, eventData);
-    }
-
-    // =========================================================================
-    // 3. HELPERS
-    // =========================================================================
-
-    function _findEnterpriseIndex(enterpriseId) {
-        var enterprises = _requireEnterprisesArray();
-        for (var i = 0; i < enterprises.length; i++) {
-            if (enterprises[i].id === enterpriseId) {
-                return i;
+        var hc = window.HouseholdCommands;
+        var required = [
+            'addEnterpriseToHousehold',
+            'removeEnterpriseFromHousehold',
+            'updateHousehold'
+        ];
+        for (var i = 0; i < required.length; i++) {
+            if (typeof hc[required[i]] !== 'function') {
+                throw new Error(
+                    'industry-commands.js: HouseholdCommands.' +
+                    required[i] + ' is required.'
+                );
             }
         }
-        return -1;
+        return hc;
     }
 
-    function _cloneEnterprise(enterprise) {
-        var clone = {};
-        for (var key in enterprise) {
-            if (enterprise.hasOwnProperty(key)) {
-                if (Array.isArray(enterprise[key])) {
-                    clone[key] = enterprise[key].slice();
-                } else if (enterprise[key] && typeof enterprise[key] === 'object') {
-                    var obj = {};
-                    for (var k in enterprise[key]) {
-                        if (enterprise[key].hasOwnProperty(k)) {
-                            obj[k] = enterprise[key][k];
-                        }
-                    }
-                    clone[key] = obj;
-                } else {
-                    clone[key] = enterprise[key];
+    // =========================================================================
+    // 2. RESULT HELPERS
+    // =========================================================================
+
+    function _ok(data) {
+        var result = { success: true };
+        if (data && typeof data === 'object') {
+            for (var key in data) {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    result[key] = data[key];
                 }
             }
         }
-        return clone;
+        return result;
     }
 
-    function _resolveCreationNumber(provided, fallback) {
-        if (provided === undefined || provided === null) return fallback;
-        return provided;
+    function _fail(reason) {
+        return { success: false, reason: reason };
+    }
+
+    function _failWith(errors) {
+        var list = Array.isArray(errors) ? errors : [String(errors)];
+        return { success: false, reason: list.join('; ') };
     }
 
     // =========================================================================
-    // 4. CORE CRUD
+    // 3. VALIDATION HELPERS
     // =========================================================================
 
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
+    }
+
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
+
+    function _isPlainObject(v) {
+        if (v === null || typeof v !== 'object') return false;
+        var proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
+    }
+
+    function _isNonNegativeFinite(v) {
+        return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+    }
+
+    function _resolveYear(value) {
+        if (_isMissing(value)) return window.getCurrentYear();
+        return value;
+    }
+
+    // =========================================================================
+    // 4. COMMIT TAIL
+    // =========================================================================
+    //
+    // _commit is NOT a persistence boundary. It publishes an in-process
+    // event and dispatches a cross-domain CustomEvent. The mutation
+    // primitives on IndustryState have already synced masterData and called
+    // markDataDirty. persist() is the caller's explicit save signal.
+
+    function _publish(eventName, payload) {
+        if (typeof IS.subscribe === 'function') {
+            // IndustryState has no public publish — the state primitives
+            // already notify their own subscribers with their own event
+            // names. _commit's job is only the cross-domain channel.
+            // No-op here to avoid double-notify.
+        }
+        if (typeof window.dispatchEvent !== 'function') return;
+        if (typeof window.CustomEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new window.CustomEvent(eventName, {
+                detail: payload || {}
+            }));
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'industry-commands.js: failed to dispatch ' + eventName, e
+                );
+            }
+        }
+    }
+
+    function _commit(eventName, payload) {
+        _publish(eventName, payload);
+    }
+
+    // =========================================================================
+    // 5. PERSIST BOUNDARY
+    // =========================================================================
+
+    /**
+     * Forces a synchronous flush of masterData to storage.
+     *
+     * The only call site of saveMasterData in this domain. Batch callers
+     * call persist() exactly once at the end.
+     */
+    function persist() {
+        try {
+            var ok = window.saveMasterData();
+            if (ok === true) return _ok();
+            return _fail('saveMasterData returned false');
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'saveMasterData threw');
+        }
+    }
+
+    // =========================================================================
+    // 6. CROSS-DOMAIN: HOUSEHOLD
+    // =========================================================================
+
+    function _registerWithHousehold(householdId, enterpriseId, year) {
+        var hc = _requireHouseholdCommands();
+        var r = hc.addEnterpriseToHousehold(householdId, enterpriseId, {
+            year: year
+        });
+        if (!r || r.success !== true) {
+            throw new Error(
+                'industry-commands.js: HouseholdCommands.addEnterpriseToHousehold ' +
+                'failed for ' + householdId + ' / ' + enterpriseId +
+                ': ' + (r && r.reason ? r.reason : 'unknown')
+            );
+        }
+    }
+
+    function _unregisterFromHousehold(householdId, enterpriseId, year) {
+        var hc = _requireHouseholdCommands();
+        var r = hc.removeEnterpriseFromHousehold(householdId, enterpriseId, {
+            year: year
+        });
+        if (!r || r.success !== true) {
+            throw new Error(
+                'industry-commands.js: HouseholdCommands.removeEnterpriseFromHousehold ' +
+                'failed for ' + householdId + ' / ' + enterpriseId +
+                ': ' + (r && r.reason ? r.reason : 'unknown')
+            );
+        }
+    }
+
+    /**
+     * Applies a wealth transfer to a household.
+     *
+     * HouseholdCommands.updateHousehold is the sanctioned path for household
+     * wealth writes; there is no adjustWealth primitive. This reads the
+     * current wealth via the household record and writes the new total.
+     *
+     * The getHouseholdById accessor is required to read the current wealth.
+     * If it is not loaded, this throws — the caller has already committed to
+     * a cross-domain write and cannot proceed safely without it.
+     */
+    function _applyHouseholdTransfer(householdId, amount, reason) {
+        if (typeof window.getHouseholdById !== 'function') {
+            throw new Error(
+                'industry-commands.js: getHouseholdById is required to apply ' +
+                'a household wealth transfer.'
+            );
+        }
+        var household = window.getHouseholdById(householdId);
+        if (!household) {
+            throw new Error(
+                'industry-commands.js: household "' + householdId +
+                '" not found while applying transfer.'
+            );
+        }
+
+        var currentWealth = typeof household.wealth === 'number'
+            && Number.isFinite(household.wealth)
+            ? household.wealth
+            : 0;
+        var newWealth = currentWealth + amount;
+
+        var hc = _requireHouseholdCommands();
+        var r = hc.updateHousehold(householdId, {
+            wealth: newWealth,
+            notes: reason ? 'Industry transfer: ' + reason : household.notes
+        });
+        if (!r || r.success !== true) {
+            throw new Error(
+                'industry-commands.js: HouseholdCommands.updateHousehold ' +
+                'failed for ' + householdId +
+                ': ' + (r && r.reason ? r.reason : 'unknown')
+            );
+        }
+    }
+
+    // =========================================================================
+    // 7. ENTERPRISE LIFECYCLE — CREATE
+    // =========================================================================
+
+    /**
+     * Creates a new enterprise.
+     *
+     * Input data:
+     *   {
+     *     name,                    required
+     *     typeId,                  required
+     *     ownerType,               optional; defaults to 'none'
+     *     ownerId,                 optional; required when ownerType != 'none'
+     *     ownershipType,           optional; derived from ownerType if omitted
+     *     locationId,              optional; defaults to null
+     *     wealth, debt, income, expenses, wages,
+     *     maxWorkers,              optional; default to type defaults
+     *     status,                  optional; defaults to 'active'
+     *     foundedYear,             optional; defaults to currentYear
+     *     notes                    optional; defaults to ''
+     *   }
+     */
     function createEnterprise(data) {
-        if (!data) {
-            return { success: false, reason: 'Enterprise data is required' };
-        }
-        if (!data.name || typeof data.name !== 'string' || data.name.trim() === '') {
-            return { success: false, reason: 'Enterprise name is required' };
-        }
-        if (!data.typeId) {
-            return { success: false, reason: 'Enterprise type is required' };
+        if (!_isPlainObject(data)) {
+            return _fail('Enterprise data must be a plain object.');
         }
 
-        var getType = _requireTypeLookup();
-        var type = getType(data.typeId);
+        var inputValidation = RULES.validateCreateInput(data);
+        if (!inputValidation.valid) {
+            return _failWith(inputValidation.errors);
+        }
+
+        var type = IS.getEnterpriseType(data.typeId);
         if (!type) {
-            return { success: false, reason: 'Enterprise type not found: ' + data.typeId };
+            return _fail('Enterprise type not found: ' + data.typeId);
         }
 
+        var currentYear = window.getCurrentYear();
         var now = Date.now();
-        var currentYear = _requireCurrentYear();
 
-        var ownerType = data.ownerType;
-        var ownerId = data.ownerId;
-        if (ownerType === undefined || ownerType === null) {
-            ownerType = 'none';
-        }
-        if (ownerId === undefined || ownerId === null) {
-            ownerId = null;
-        }
-        if (ownerType !== 'none' && ownerId === null) {
-            return { success: false, reason: 'Owner type requires an owner id' };
-        }
-        if (ownerType === 'none' && ownerId !== null) {
-            return { success: false, reason: 'Owner id provided without an owner type' };
-        }
+        // Resolve owner defaults.
+        var ownerType = _isMissing(data.ownerType)
+            ? C.OWNER_TYPE.NONE
+            : data.ownerType;
+        var ownerId = _isMissing(data.ownerId) ? null : data.ownerId;
 
-        var ownershipType = data.ownershipType;
-        if (ownershipType === undefined || ownershipType === null) {
-            ownershipType = (ownerType === 'settlement') ? 'public' : 'private';
-        }
-        if (ownershipType !== 'public' && ownershipType !== 'private') {
-            return { success: false, reason: 'Invalid ownershipType: ' + ownershipType };
+        // Resolve ownership type from ownerType if omitted.
+        var ownershipType;
+        if (!_isMissing(data.ownershipType)) {
+            ownershipType = data.ownershipType;
+        } else {
+            ownershipType = C.PLACE_OWNER_TYPES.indexOf(ownerType) !== -1
+                ? C.OWNERSHIP_TYPE.PUBLIC
+                : C.OWNERSHIP_TYPE.PRIVATE;
         }
 
-        var foundedYear = data.foundedYear === undefined ? currentYear : data.foundedYear;
+        // Ownership coherence: public must be owned by settlement or state.
+        var ownershipCheck = RULES.canApplyOwnershipChange(
+            { ownershipType: ownershipType, ownerType: ownerType, ownerId: ownerId },
+            { ownershipType: ownershipType, ownerType: ownerType, ownerId: ownerId }
+        );
+        if (!ownershipCheck.valid) {
+            return _fail(ownershipCheck.reason);
+        }
 
-        var enterprise = {
-            id: _requireGenerateId()('ent'),
-            name: data.name.trim(),
+        // Ownership references must resolve. Character, household, place.
+        if (ownerType === C.OWNER_TYPE.CHARACTER && ownerId) {
+            if (!window.getCharacterById(ownerId)) {
+                return _fail('Owner character not found: ' + ownerId);
+            }
+        }
+        if (ownerType === C.OWNER_TYPE.HOUSEHOLD && ownerId) {
+            if (typeof window.getHouseholdById !== 'function') {
+                return _fail(
+                    'HouseholdCommands is not loaded; cannot assign household owner.'
+                );
+            }
+            if (!window.getHouseholdById(ownerId)) {
+                return _fail('Owner household not found: ' + ownerId);
+            }
+        }
+        if (C.PLACE_OWNER_TYPES.indexOf(ownerType) !== -1 && ownerId) {
+            if (!window.getPlaceById(ownerId)) {
+                return _fail('Owner place not found: ' + ownerId);
+            }
+        }
+
+        if (!_isMissing(data.locationId)) {
+            if (!window.getPlaceById(data.locationId)) {
+                return _fail('Location not found: ' + data.locationId);
+            }
+        }
+
+        var foundedYear = _isMissing(data.foundedYear)
+            ? currentYear
+            : data.foundedYear;
+
+        // Resolve shape with type defaults for missing financials.
+        var shaped = RULES.applyEnterpriseDefaults({
+            name: data.name,
             typeId: data.typeId,
-
             ownershipType: ownershipType,
             ownerType: ownerType,
             ownerId: ownerId,
-
-            locationId: data.locationId === undefined ? null : data.locationId,
-
-            wealth: _resolveCreationNumber(data.wealth, 0),
-            debt: _resolveCreationNumber(data.debt, 0),
-            income: _resolveCreationNumber(data.income, type.baseIncome),
-            expenses: _resolveCreationNumber(data.expenses, type.baseExpenses),
-            wages: _resolveCreationNumber(data.wages, type.baseWages),
-
-            maxWorkers: _resolveCreationNumber(data.maxWorkers, type.maxWorkers),
-            workerList: [],
-            workerWages: {},
-
-            status: data.status === undefined ? 'active' : data.status,
+            locationId: _isMissing(data.locationId) ? null : data.locationId,
+            wealth: data.wealth,
+            debt: data.debt,
+            income: data.income,
+            expenses: data.expenses,
+            wages: data.wages,
+            maxWorkers: data.maxWorkers,
+            status: _isMissing(data.status) ? C.STATUS.ACTIVE : data.status,
             foundedYear: foundedYear,
             lastProcessedYear: foundedYear,
+            notes: _isMissing(data.notes) ? '' : data.notes
+        }, type);
 
-            history: [],
-            notes: data.notes === undefined ? '' : data.notes,
-
+        // Stamp identity and timestamps.
+        var candidate = Object.assign({}, shaped, {
+            id: window.generateId('ent'),
             createdAt: now,
             updatedAt: now
-        };
+        });
 
-        // Record the type snapshot in history — this is the correct place
-        // for "what the type looked like when the enterprise was founded".
-        enterprise.history.push({
+        // Initial history: type assignment.
+        candidate.history.push({
             year: foundedYear,
             type: 'type_assigned',
             typeId: type.id,
@@ -254,10 +441,9 @@
             timestamp: now
         });
 
-        // Record the owner snapshot in history if the owner had a name
-        // at creation time. This is historical, not canonical.
-        if (ownerType !== 'none' && data.ownerName) {
-            enterprise.history.push({
+        // Initial history: owner assignment, if the caller supplied a name.
+        if (ownerType !== C.OWNER_TYPE.NONE && _hasId(data.ownerName)) {
+            candidate.history.push({
                 year: foundedYear,
                 type: 'owner_assigned',
                 ownerType: ownerType,
@@ -267,752 +453,902 @@
             });
         }
 
-        var validation = _validateEnterpriseCandidate(enterprise);
-        if (!validation.ok) {
-            return { success: false, reason: validation.reason };
+        var validation = RULES.validateEnterprise(candidate);
+        if (!validation.valid) {
+            return _failWith(validation.errors);
         }
 
-        var enterprises = _requireEnterprisesArray();
-        enterprises.push(enterprise);
-
-        if (ownerType === 'household' && ownerId) {
-            _registerWithHousehold(ownerId, enterprise.id, foundedYear);
+        try {
+            IS._addEnterprise(candidate);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
         }
 
-        _commit('enterprise_added', { enterprise: enterprise });
-
-        _logEvent('enterprise', 'Enterprise Created',
-            'Enterprise "' + enterprise.name + '" created',
-            []);
-
-        return { success: true, data: enterprise };
-    }
-
-    function updateEnterprise(id, updates) {
-        if (!id) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-        if (!updates || typeof updates !== 'object') {
-            return { success: false, reason: 'Updates object is required' };
-        }
-
-        var index = _findEnterpriseIndex(id);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
-        }
-
-        var enterprises = _requireEnterprisesArray();
-        var existing = enterprises[index];
-        var candidate = _cloneEnterprise(existing);
-
-        // Only canonical fields may be updated.
-        var allowedFields = [
-            'name',
-            'typeId',
-            'ownershipType',
-            'ownerType',
-            'ownerId',
-            'locationId',
-            'wealth',
-            'debt',
-            'income',
-            'expenses',
-            'wages',
-            'maxWorkers',
-            'workerList',
-            'workerWages',
-            'status',
-            'lastProcessedYear',
-            'notes'
-        ];
-
-        var changed = false;
-        for (var i = 0; i < allowedFields.length; i++) {
-            var key = allowedFields[i];
-            if (updates[key] !== undefined) {
-                candidate[key] = updates[key];
-                changed = true;
+        if (ownerType === C.OWNER_TYPE.HOUSEHOLD && ownerId) {
+            try {
+                _registerWithHousehold(ownerId, candidate.id, foundedYear);
+            } catch (e) {
+                // Roll back the enterprise add. This is the only
+                // compensating path in this file; household registration is
+                // a cross-domain invariant that must be all-or-nothing.
+                IS._removeEnterprise(candidate.id);
+                return _fail(e && e.message
+                    ? e.message
+                    : 'Household registration failed.');
             }
         }
 
-        if (!changed) {
-            return { success: false, reason: 'No changes to apply' };
-        }
+        _commit(C.EVENT.ENTERPRISE_ADDED, {
+            enterpriseId: candidate.id,
+            name: candidate.name,
+            ownerType: ownerType,
+            ownerId: ownerId
+        });
 
-        var currentYear = _requireCurrentYear();
-
-        // Record type change in history
-        if (updates.typeId !== undefined && updates.typeId !== existing.typeId) {
-            var getType = _requireTypeLookup();
-            var type = getType(updates.typeId);
-            if (!type) {
-                return { success: false, reason: 'Enterprise type not found: ' + updates.typeId };
-            }
-            candidate.history.push({
-                year: currentYear,
-                type: 'type_changed',
-                previousTypeId: existing.typeId,
-                newTypeId: type.id,
-                newTypeName: type.name,
-                newCategory: type.category,
-                timestamp: Date.now()
-            });
-        }
-
-        // Record owner change in history
-        var ownerChanged =
-            (updates.ownerType !== undefined && updates.ownerType !== existing.ownerType) ||
-            (updates.ownerId !== undefined && updates.ownerId !== existing.ownerId);
-
-        if (ownerChanged && updates.ownerName) {
-            candidate.history.push({
-                year: currentYear,
-                type: 'owner_changed',
-                previousOwnerType: existing.ownerType,
-                previousOwnerId: existing.ownerId,
-                newOwnerType: candidate.ownerType,
-                newOwnerId: candidate.ownerId,
-                newOwnerName: updates.ownerName,
-                timestamp: Date.now()
-            });
-        }
-
-        candidate.updatedAt = Date.now();
-
-        var validation = _validateEnterpriseCandidate(candidate);
-        if (!validation.ok) {
-            return { success: false, reason: validation.reason };
-        }
-
-        enterprises[index] = candidate;
-        _commit('enterprise_updated', { enterprise: candidate });
-
-        _logEvent('enterprise', 'Enterprise Updated',
-            'Enterprise "' + candidate.name + '" updated',
-            []);
-
-        return { success: true, data: candidate };
-    }
-
-    function deleteEnterprise(id) {
-        if (!id) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-
-        var index = _findEnterpriseIndex(id);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
-        }
-
-        var enterprises = _requireEnterprisesArray();
-        var enterprise = enterprises[index];
-
-        if (enterprise.ownerType === 'household' && enterprise.ownerId) {
-            _unregisterFromHousehold(enterprise.ownerId, enterprise.id, _requireCurrentYear());
-        }
-
-        var removed = enterprises.splice(index, 1)[0];
-        _commit('enterprise_deleted', { id: id });
-
-        _logEvent('enterprise', 'Enterprise Deleted',
-            'Enterprise "' + removed.name + '" deleted',
-            []);
-
-        return { success: true };
+        return _ok({ enterprise: IS.getEnterprise(candidate.id) });
     }
 
     // =========================================================================
-    // 5. WORKER MANAGEMENT
+    // 8. ENTERPRISE LIFECYCLE — UPDATE
+    // =========================================================================
+
+    /**
+     * Updates an enterprise.
+     *
+     * Writable fields:
+     *   name, typeId, ownershipType, ownerType, ownerId, locationId,
+     *   wealth, debt, income, expenses, wages, maxWorkers, workerList,
+     *   workerWages, status, lastProcessedYear, notes
+     *
+     * Derived fields are rejected by RULES.validateUpdateInput.
+     * Domain-owned fields are rejected by the same.
+     * Unknown fields are rejected by the command layer's own allowlist
+     * below — if a caller adds a field the domain does not recognize, this
+     * returns a structured rejection rather than silently ignoring it.
+     */
+    var _ALLOWED_UPDATE_FIELDS = {
+        name: true,
+        typeId: true,
+        ownershipType: true,
+        ownerType: true,
+        ownerId: true,
+        locationId: true,
+        wealth: true,
+        debt: true,
+        income: true,
+        expenses: true,
+        wages: true,
+        maxWorkers: true,
+        workerList: true,
+        workerWages: true,
+        status: true,
+        lastProcessedYear: true,
+        notes: true
+    };
+
+    function updateEnterprise(enterpriseId, updates) {
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (!_isPlainObject(updates)) return _fail('Updates must be a plain object.');
+
+        var current = IS.getEnterprise(enterpriseId);
+        if (!current) return _fail('Enterprise not found.');
+
+        var shapeValidation = RULES.validateUpdateInput(updates);
+        if (!shapeValidation.valid) {
+            return _failWith(shapeValidation.errors);
+        }
+
+        // Command-layer allowlist. RULES already rejected derived and
+        // domain-owned fields; this catches the remaining case (a field name
+        // that is simply not writable).
+        for (var key in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+            if (!_ALLOWED_UPDATE_FIELDS[key]) {
+                return _fail(
+                    'Field "' + key + '" is not a writable enterprise field.'
+                );
+            }
+        }
+
+        var currentYear = window.getCurrentYear();
+        var now = Date.now();
+
+        var patch = { updatedAt: now };
+
+        // --- Ownership change coherence ---
+        var ownerChanged =
+            (Object.prototype.hasOwnProperty.call(updates, 'ownerType')
+                && updates.ownerType !== current.ownerType) ||
+            (Object.prototype.hasOwnProperty.call(updates, 'ownerId')
+                && updates.ownerId !== current.ownerId);
+
+        if (ownerChanged || Object.prototype.hasOwnProperty.call(updates, 'ownershipType')) {
+            var nextOwnershipType = Object.prototype.hasOwnProperty.call(
+                updates, 'ownershipType'
+            )
+                ? updates.ownershipType
+                : current.ownershipType;
+            var nextOwnerType = Object.prototype.hasOwnProperty.call(
+                updates, 'ownerType'
+            )
+                ? updates.ownerType
+                : current.ownerType;
+            var nextOwnerId = Object.prototype.hasOwnProperty.call(
+                updates, 'ownerId'
+            )
+                ? updates.ownerId
+                : current.ownerId;
+
+            var coherence = RULES.canApplyOwnershipChange(current, {
+                ownershipType: nextOwnershipType,
+                ownerType: nextOwnerType,
+                ownerId: nextOwnerId
+            });
+            if (!coherence.valid) {
+                return _fail(coherence.reason);
+            }
+
+            // Verify owner references resolve.
+            if (nextOwnerType === C.OWNER_TYPE.CHARACTER && nextOwnerId) {
+                if (!window.getCharacterById(nextOwnerId)) {
+                    return _fail('Owner character not found: ' + nextOwnerId);
+                }
+            }
+            if (nextOwnerType === C.OWNER_TYPE.HOUSEHOLD && nextOwnerId) {
+                if (typeof window.getHouseholdById !== 'function'
+                    || !window.getHouseholdById(nextOwnerId)) {
+                    return _fail('Owner household not found: ' + nextOwnerId);
+                }
+            }
+            if (C.PLACE_OWNER_TYPES.indexOf(nextOwnerType) !== -1 && nextOwnerId) {
+                if (!window.getPlaceById(nextOwnerId)) {
+                    return _fail('Owner place not found: ' + nextOwnerId);
+                }
+            }
+        }
+
+        // --- Type change history ---
+        if (Object.prototype.hasOwnProperty.call(updates, 'typeId')
+            && updates.typeId !== current.typeId) {
+            var newType = IS.getEnterpriseType(updates.typeId);
+            if (!newType) {
+                return _fail('Enterprise type not found: ' + updates.typeId);
+            }
+            if (!Array.isArray(patch.history)) patch.history = current.history.slice();
+            patch.history.push({
+                year: currentYear,
+                type: 'type_changed',
+                previousTypeId: current.typeId,
+                newTypeId: newType.id,
+                newTypeName: newType.name,
+                newCategory: newType.category,
+                timestamp: now
+            });
+        }
+
+        // --- Owner change history ---
+        if (ownerChanged && _hasId(updates.ownerName)) {
+            if (!Array.isArray(patch.history)) patch.history = current.history.slice();
+            patch.history.push({
+                year: currentYear,
+                type: 'owner_changed',
+                previousOwnerType: current.ownerType,
+                previousOwnerId: current.ownerId,
+                newOwnerType: Object.prototype.hasOwnProperty.call(
+                    updates, 'ownerType'
+                ) ? updates.ownerType : current.ownerType,
+                newOwnerId: Object.prototype.hasOwnProperty.call(
+                    updates, 'ownerId'
+                ) ? updates.ownerId : current.ownerId,
+                newOwnerName: updates.ownerName,
+                timestamp: now
+            });
+        }
+
+        // --- Copy writable fields ---
+        for (var f in updates) {
+            if (!Object.prototype.hasOwnProperty.call(updates, f)) continue;
+            if (f === 'history' || f === 'updatedAt') continue;
+            if (f === 'ownerName') continue;   // history only
+            if (f === 'id' || f === 'createdAt') continue; // not writable
+            if (f === 'workerList' && !Array.isArray(updates.workerList)) {
+                return _fail('workerList must be an array.');
+            }
+            if (f === 'workerWages' && !_isPlainObject(updates.workerWages)) {
+                return _fail('workerWages must be a plain object.');
+            }
+            if (f === 'maxWorkers' && !_isNonNegativeFinite(updates.maxWorkers)) {
+                return _fail('maxWorkers must be a non-negative finite number.');
+            }
+            if ((f === 'wealth' || f === 'income'
+                || f === 'expenses' || f === 'wages'
+                || f === 'debt') && !_isNonNegativeFinite(updates[f])
+                && f !== 'wealth') {
+                return _fail(f + ' must be a non-negative finite number.');
+            }
+            if (f === 'wealth'
+                && !(typeof updates.wealth === 'number' && Number.isFinite(updates.wealth))) {
+                return _fail('wealth must be a finite number.');
+            }
+            patch[f] = updates[f];
+        }
+
+        var candidate = Object.assign({}, current, patch);
+        var validation = RULES.validateEnterprise(candidate);
+        if (!validation.valid) {
+            return _failWith(validation.errors);
+        }
+
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
+        }
+
+        _commit(C.EVENT.ENTERPRISE_UPDATED, {
+            enterpriseId: enterpriseId,
+            changedFields: Object.keys(updates)
+        });
+
+        return _ok({ enterprise: IS.getEnterprise(enterpriseId) });
+    }
+
+    // =========================================================================
+    // 9. ENTERPRISE LIFECYCLE — DELETE
+    // =========================================================================
+
+    function deleteEnterprise(enterpriseId) {
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
+
+        var currentYear = window.getCurrentYear();
+
+        if (enterprise.ownerType === C.OWNER_TYPE.HOUSEHOLD && enterprise.ownerId) {
+            try {
+                _unregisterFromHousehold(
+                    enterprise.ownerId, enterprise.id, currentYear
+                );
+            } catch (e) {
+                return _fail(e && e.message
+                    ? e.message
+                    : 'Household unregistration failed.');
+            }
+        }
+
+        try {
+            IS._removeEnterprise(enterpriseId);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the delete.');
+        }
+
+        _commit(C.EVENT.ENTERPRISE_DELETED, {
+            enterpriseId: enterpriseId,
+            name: enterprise.name
+        });
+
+        return _ok({ enterpriseId: enterpriseId });
+    }
+
+    // =========================================================================
+    // 10. WORKER MANAGEMENT
     // =========================================================================
 
     function addWorkerToEnterprise(enterpriseId, workerId, wage) {
-        if (!enterpriseId) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-        if (!workerId) {
-            return { success: false, reason: 'Worker id is required' };
-        }
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (!_hasId(workerId)) return _fail('Worker id is required.');
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
-        }
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
 
-        var enterprises = _requireEnterprisesArray();
-        var candidate = _cloneEnterprise(enterprises[index]);
-
-        if (candidate.status === 'bankrupt' || candidate.status === 'closed') {
-            return { success: false, reason: 'Cannot add workers to a ' + candidate.status + ' enterprise' };
+        if (C.WORKER_BLOCKED_STATUSES.indexOf(enterprise.status) !== -1) {
+            return _fail(
+                'Cannot add workers to a ' + enterprise.status + ' enterprise.'
+            );
         }
 
-        var getChar = _requireCharacterAccessor();
-        var character = getChar(workerId);
-        if (!character) {
-            return { success: false, reason: 'Worker character not found: ' + workerId };
+        if (!window.getCharacterById(workerId)) {
+            return _fail('Worker character not found: ' + workerId);
         }
 
-        if (candidate.workerList.indexOf(workerId) !== -1) {
-            return { success: false, reason: 'Character is already a worker' };
+        if (enterprise.workerList.indexOf(workerId) !== -1) {
+            return _fail('Character is already a worker.');
         }
 
-        if (candidate.workerList.length >= candidate.maxWorkers) {
-            return { success: false, reason: 'Enterprise is at maximum worker capacity' };
+        if (enterprise.workerList.length >= enterprise.maxWorkers) {
+            return _fail('Enterprise is at maximum worker capacity.');
         }
 
         var resolvedWage = wage;
-        if (resolvedWage === undefined || resolvedWage === null) {
-            resolvedWage = candidate.wages;
+        if (_isMissing(resolvedWage)) {
+            resolvedWage = enterprise.wages;
         }
-        if (typeof resolvedWage !== 'number' || resolvedWage < 0) {
-            return { success: false, reason: 'Invalid wage value' };
+        if (!_isNonNegativeFinite(resolvedWage)) {
+            return _fail('Wage must be a non-negative finite number.');
         }
 
-        candidate.workerList.push(workerId);
-        candidate.workerWages[workerId] = resolvedWage;
-        candidate.updatedAt = Date.now();
+        var newWorkerList = enterprise.workerList.slice();
+        newWorkerList.push(workerId);
+        var newWorkerWages = Object.assign({}, enterprise.workerWages);
+        newWorkerWages[workerId] = resolvedWage;
 
-        enterprises[index] = candidate;
-        _commit('enterprise_updated', { enterprise: candidate });
+        var patch = {
+            workerList: newWorkerList,
+            workerWages: newWorkerWages,
+            updatedAt: Date.now()
+        };
 
-        _logEvent('enterprise', 'Worker Added',
-            'Worker added to "' + candidate.name + '"',
-            [workerId]);
+        var candidate = Object.assign({}, enterprise, patch);
+        var validation = RULES.validateEnterprise(candidate);
+        if (!validation.valid) {
+            return _failWith(validation.errors);
+        }
 
-        return { success: true, data: { enterpriseId: enterpriseId, workerId: workerId, wage: resolvedWage } };
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
+        }
+
+        _commit(C.EVENT.ENTERPRISE_UPDATED, {
+            enterpriseId: enterpriseId,
+            workerId: workerId,
+            action: 'worker_added'
+        });
+
+        return _ok({
+            enterpriseId: enterpriseId,
+            workerId: workerId,
+            wage: resolvedWage
+        });
     }
 
     function removeWorkerFromEnterprise(enterpriseId, workerId) {
-        if (!enterpriseId) {
-            return { success: false, reason: 'Enterprise id is required' };
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (!_hasId(workerId)) return _fail('Worker id is required.');
+
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
+
+        var idx = enterprise.workerList.indexOf(workerId);
+        if (idx === -1) return _fail('Worker not found in enterprise.');
+
+        var newWorkerList = enterprise.workerList.slice();
+        newWorkerList.splice(idx, 1);
+        var newWorkerWages = Object.assign({}, enterprise.workerWages);
+        delete newWorkerWages[workerId];
+
+        var patch = {
+            workerList: newWorkerList,
+            workerWages: newWorkerWages,
+            updatedAt: Date.now()
+        };
+
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
         }
-        if (!workerId) {
-            return { success: false, reason: 'Worker id is required' };
-        }
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
-        }
+        _commit(C.EVENT.ENTERPRISE_UPDATED, {
+            enterpriseId: enterpriseId,
+            workerId: workerId,
+            action: 'worker_removed'
+        });
 
-        var enterprises = _requireEnterprisesArray();
-        var candidate = _cloneEnterprise(enterprises[index]);
-
-        var listIndex = candidate.workerList.indexOf(workerId);
-        if (listIndex === -1) {
-            return { success: false, reason: 'Worker not found in enterprise' };
-        }
-
-        candidate.workerList.splice(listIndex, 1);
-        delete candidate.workerWages[workerId];
-        candidate.updatedAt = Date.now();
-
-        enterprises[index] = candidate;
-        _commit('enterprise_updated', { enterprise: candidate });
-
-        _logEvent('enterprise', 'Worker Removed',
-            'Worker removed from "' + candidate.name + '"',
-            [workerId]);
-
-        return { success: true };
+        return _ok({ enterpriseId: enterpriseId, workerId: workerId });
     }
 
     function setWorkerWage(enterpriseId, workerId, wage) {
-        if (!enterpriseId) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-        if (!workerId) {
-            return { success: false, reason: 'Worker id is required' };
-        }
-        if (typeof wage !== 'number' || wage < 0) {
-            return { success: false, reason: 'Invalid wage value' };
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (!_hasId(workerId)) return _fail('Worker id is required.');
+        if (!_isNonNegativeFinite(wage)) {
+            return _fail('Wage must be a non-negative finite number.');
         }
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
+
+        if (enterprise.workerList.indexOf(workerId) === -1) {
+            return _fail('Worker not found in enterprise.');
         }
 
-        var enterprises = _requireEnterprisesArray();
-        var candidate = _cloneEnterprise(enterprises[index]);
+        var newWorkerWages = Object.assign({}, enterprise.workerWages);
+        newWorkerWages[workerId] = wage;
 
-        if (candidate.workerList.indexOf(workerId) === -1) {
-            return { success: false, reason: 'Worker not found in enterprise' };
+        var patch = {
+            workerWages: newWorkerWages,
+            updatedAt: Date.now()
+        };
+
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
         }
 
-        candidate.workerWages[workerId] = wage;
-        candidate.updatedAt = Date.now();
+        _commit(C.EVENT.ENTERPRISE_UPDATED, {
+            enterpriseId: enterpriseId,
+            workerId: workerId,
+            action: 'wage_updated'
+        });
 
-        enterprises[index] = candidate;
-        _commit('enterprise_updated', { enterprise: candidate });
-
-        return { success: true };
+        return _ok({ enterpriseId: enterpriseId, workerId: workerId, wage: wage });
     }
 
     // =========================================================================
-    // 6. FINANCIAL OPERATIONS
+    // 11. FINANCIAL OPERATIONS
     // =========================================================================
 
     function updateEnterpriseWealth(enterpriseId, amount, reason) {
-        if (!enterpriseId) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-        if (typeof amount !== 'number' || !isFinite(amount)) {
-            return { success: false, reason: 'Amount must be a finite number' };
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (typeof amount !== 'number' || !Number.isFinite(amount)) {
+            return _fail('Amount must be a finite number.');
         }
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
+
+        if (C.FINANCIALS_FROZEN_STATUSES.indexOf(enterprise.status) !== -1) {
+            return _fail(
+                'Cannot modify wealth of a ' + enterprise.status + ' enterprise.'
+            );
         }
 
-        var enterprises = _requireEnterprisesArray();
-        var candidate = _cloneEnterprise(enterprises[index]);
+        var newWealth = enterprise.wealth + amount;
+        var currentYear = window.getCurrentYear();
 
-        if (candidate.status === 'demolished') {
-            return { success: false, reason: 'Cannot modify wealth of demolished enterprise' };
-        }
-
-        var oldWealth = candidate.wealth;
-        candidate.wealth = oldWealth + amount;
-        candidate.updatedAt = Date.now();
-
-        candidate.history.push({
-            year: _requireCurrentYear(),
+        var newHistory = enterprise.history.slice();
+        newHistory.push({
+            year: currentYear,
             type: 'wealth_change',
             amount: amount,
-            newWealth: candidate.wealth,
-            reason: reason === undefined ? null : reason
+            newWealth: newWealth,
+            reason: _isMissing(reason) ? null : reason,
+            timestamp: Date.now()
         });
 
-        enterprises[index] = candidate;
-        _commit('enterprise_updated', { enterprise: candidate });
+        var patch = {
+            wealth: newWealth,
+            history: newHistory,
+            updatedAt: Date.now()
+        };
 
-        return { success: true, data: { newWealth: candidate.wealth, change: amount } };
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
+        }
+
+        _commit(C.EVENT.ENTERPRISE_UPDATED, {
+            enterpriseId: enterpriseId,
+            action: 'wealth_updated',
+            amount: amount
+        });
+
+        return _ok({ newWealth: newWealth, change: amount });
     }
 
     function updateEnterpriseDebt(enterpriseId, amount, reason) {
-        if (!enterpriseId) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-        if (typeof amount !== 'number' || !isFinite(amount)) {
-            return { success: false, reason: 'Amount must be a finite number' };
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+        if (typeof amount !== 'number' || !Number.isFinite(amount)) {
+            return _fail('Amount must be a finite number.');
         }
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
+
+        if (C.FINANCIALS_FROZEN_STATUSES.indexOf(enterprise.status) !== -1) {
+            return _fail(
+                'Cannot modify debt of a ' + enterprise.status + ' enterprise.'
+            );
         }
 
-        var enterprises = _requireEnterprisesArray();
-        var candidate = _cloneEnterprise(enterprises[index]);
+        var newDebt = Math.max(0, enterprise.debt + amount);
+        var currentYear = window.getCurrentYear();
 
-        if (candidate.status === 'demolished') {
-            return { success: false, reason: 'Cannot modify debt of demolished enterprise' };
-        }
-
-        var oldDebt = candidate.debt;
-        candidate.debt = Math.max(0, oldDebt + amount);
-        candidate.updatedAt = Date.now();
-
-        candidate.history.push({
-            year: _requireCurrentYear(),
+        var newHistory = enterprise.history.slice();
+        newHistory.push({
+            year: currentYear,
             type: 'debt_change',
             amount: amount,
-            newDebt: candidate.debt,
-            reason: reason === undefined ? null : reason
+            newDebt: newDebt,
+            reason: _isMissing(reason) ? null : reason,
+            timestamp: Date.now()
         });
 
-        enterprises[index] = candidate;
-        _commit('enterprise_updated', { enterprise: candidate });
+        var patch = {
+            debt: newDebt,
+            history: newHistory,
+            updatedAt: Date.now()
+        };
 
-        return { success: true, data: { newDebt: candidate.debt, change: amount } };
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
+        }
+
+        _commit(C.EVENT.ENTERPRISE_UPDATED, {
+            enterpriseId: enterpriseId,
+            action: 'debt_updated',
+            amount: amount
+        });
+
+        return _ok({ newDebt: newDebt, change: amount });
     }
 
     // =========================================================================
-    // 7. ANNUAL PROCESSING
+    // 12. ANNUAL PROCESSING
     // =========================================================================
 
+    /**
+     * Commits the result of IndustryEconomics.calculateAnnualTransition.
+     *
+     * The result must pass validateAnnualTransitionResult. Household
+     * transfer (when present) is applied before the enterprise record is
+     * updated. If the household write fails, the enterprise is untouched.
+     */
     function applyAnnualProcessing(enterpriseId, result) {
-        if (!enterpriseId) {
-            return { success: false, reason: 'Enterprise id is required' };
-        }
-        if (!result) {
-            return { success: false, reason: 'Processing result is required' };
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+
+        var validation = RULES.validateAnnualTransitionResult(result);
+        if (!validation.valid) {
+            return _failWith(validation.errors);
         }
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, reason: 'Enterprise not found' };
-        }
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
 
-        var enterprises = _requireEnterprisesArray();
-        var candidate = _cloneEnterprise(enterprises[index]);
+        var patch = { updatedAt: Date.now() };
 
         if (typeof result.newWealth === 'number') {
-            candidate.wealth = result.newWealth;
+            patch.wealth = result.newWealth;
         }
         if (typeof result.newDebt === 'number') {
-            candidate.debt = result.newDebt;
+            patch.debt = result.newDebt;
         }
-        if (result.nextStatus !== undefined && result.nextStatus !== null) {
-            candidate.status = result.nextStatus;
+        if (!_isMissing(result.nextStatus)) {
+            patch.status = result.nextStatus;
         }
         if (typeof result.currentYear === 'number') {
-            candidate.lastProcessedYear = result.currentYear;
+            patch.lastProcessedYear = result.currentYear;
         }
+
+        var newHistory = enterprise.history.slice();
         if (Array.isArray(result.historyEntries)) {
             for (var i = 0; i < result.historyEntries.length; i++) {
-                candidate.history.push(result.historyEntries[i]);
+                newHistory.push(result.historyEntries[i]);
             }
         }
-        candidate.updatedAt = Date.now();
+        patch.history = newHistory;
 
-        var validation = _validateEnterpriseCandidate(candidate);
-        if (!validation.ok) {
-            return { success: false, reason: validation.reason };
+        var candidate = Object.assign({}, enterprise, patch);
+        var enterpriseValidation = RULES.validateEnterprise(candidate);
+        if (!enterpriseValidation.valid) {
+            return _failWith(enterpriseValidation.errors);
         }
 
         // Household transfer first — if it fails, enterprise is untouched.
-        if (result.householdTransfer !== undefined &&
-            result.householdTransfer !== null &&
-            result.householdId) {
-
-            var hhResult = _applyHouseholdTransfer(
-                result.householdId,
-                result.householdTransfer,
-                result.householdReason
-            );
-
-            if (!hhResult || !hhResult.success) {
-                return {
-                    success: false,
-                    reason: 'Household transfer failed: ' + (hhResult ? hhResult.reason : 'unknown')
-                };
+        if (!_isMissing(result.householdId) && _hasId(result.householdId)) {
+            try {
+                _applyHouseholdTransfer(
+                    result.householdId,
+                    result.householdTransfer,
+                    _isMissing(result.householdReason)
+                        ? 'Enterprise annual processing'
+                        : result.householdReason
+                );
+            } catch (e) {
+                return _fail(e && e.message
+                    ? e.message
+                    : 'Household transfer failed.');
             }
         }
 
-        enterprises[index] = candidate;
-        _commit('enterprise_processed', { enterprise: candidate });
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
+        }
 
-        return { success: true, data: candidate };
+        _commit(C.EVENT.ENTERPRISE_PROCESSED, {
+            enterpriseId: enterpriseId,
+            currentYear: result.currentYear,
+            newWealth: result.newWealth,
+            newDebt: result.newDebt,
+            nextStatus: result.nextStatus
+        });
+
+        return _ok({ enterprise: IS.getEnterprise(enterpriseId) });
     }
 
     // =========================================================================
-    // 8. PUBLIC ENTERPRISE HELPERS
+    // 13. PUBLIC ENTERPRISE HELPERS
     // =========================================================================
 
     function createPublicEnterprise(locationId, data) {
-        if (!locationId) {
-            return { success: false, reason: 'Location id is required for public enterprise' };
+        if (!_hasId(locationId)) {
+            return _fail('Location id is required for public enterprise.');
         }
 
-        var getPlace = _requirePlaceAccessor();
-        var place = getPlace(locationId);
-        if (!place) {
-            return { success: false, reason: 'Location not found: ' + locationId };
+        if (!window.getPlaceById(locationId)) {
+            return _fail('Location not found: ' + locationId);
         }
 
         var payload = {};
         for (var key in data) {
-            if (data.hasOwnProperty(key)) payload[key] = data[key];
+            if (Object.prototype.hasOwnProperty.call(data, key)) {
+                payload[key] = data[key];
+            }
         }
-        payload.ownershipType = 'public';
-        payload.ownerType = 'settlement';
+        payload.ownershipType = C.OWNERSHIP_TYPE.PUBLIC;
+        payload.ownerType = C.OWNER_TYPE.SETTLEMENT;
         payload.ownerId = locationId;
-        if (payload.locationId === undefined || payload.locationId === null) {
+        if (_isMissing(payload.locationId)) {
             payload.locationId = locationId;
         }
-        // ownerName is intentionally NOT set. It is a projection resolved
-        // by IndustryQueries via the Place accessor.
 
         return createEnterprise(payload);
     }
 
     function convertEnterpriseToPublic(enterpriseId, locationId) {
-        if (!locationId) {
-            return { success: false, reason: 'Location id is required' };
+        if (!_hasId(locationId)) {
+            return _fail('Location id is required.');
         }
 
-        var getPlace = _requirePlaceAccessor();
-        var place = getPlace(locationId);
-        if (!place) {
-            return { success: false, reason: 'Location not found: ' + locationId };
+        if (!window.getPlaceById(locationId)) {
+            return _fail('Location not found: ' + locationId);
         }
 
         return updateEnterprise(enterpriseId, {
-            ownershipType: 'public',
-            ownerType: 'settlement',
+            ownershipType: C.OWNERSHIP_TYPE.PUBLIC,
+            ownerType: C.OWNER_TYPE.SETTLEMENT,
             ownerId: locationId
         });
     }
 
     // =========================================================================
-    // 9. DEMOLISH / REBUILD
+    // 14. DEMOLISH / REBUILD
     // =========================================================================
 
     function demolishEnterprise(enterpriseId, reason, year, options) {
-        if (!enterpriseId) {
-            return { success: false, error: 'Enterprise id is required' };
-        }
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, error: 'Enterprise not found' };
-        }
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
 
-        var enterprises = _requireEnterprisesArray();
-        var existing = enterprises[index];
-
-        if (existing.status === 'demolished') {
-            return { success: false, error: 'Enterprise already demolished' };
+        if (enterprise.status === C.STATUS.DEMOLISHED) {
+            return _fail('Enterprise is already demolished.');
         }
 
         options = options || {};
-        var demolishYear = (year === undefined || year === null)
-            ? _requireCurrentYear()
-            : year;
-        var demolishReason = (reason === undefined || reason === null)
-            ? 'Demolished'
-            : reason;
-
-        var candidate = _cloneEnterprise(existing);
+        var demolishYear = _isMissing(year) ? window.getCurrentYear() : year;
+        var demolishReason = _isMissing(reason) ? 'Demolished' : reason;
+        var destroyedBy = _isMissing(options.destroyedBy)
+            ? 'manual' : options.destroyedBy;
+        var disasterId = _isMissing(options.disasterId)
+            ? null : options.disasterId;
 
         var demolitionRecord = {
-            enterpriseId: existing.id,
-            enterpriseName: existing.name,
-            typeId: existing.typeId,
-            locationId: existing.locationId,
+            enterpriseId: enterprise.id,
+            enterpriseName: enterprise.name,
+            typeId: enterprise.typeId,
+            locationId: enterprise.locationId,
             demolishedYear: demolishYear,
             demolishedReason: demolishReason,
-            destroyedBy: options.destroyedBy === undefined ? 'manual' : options.destroyedBy,
-            disasterId: options.disasterId === undefined ? null : options.disasterId,
-            previousStatus: existing.status,
-            previousWealth: existing.wealth,
-            previousDebt: existing.debt,
-            previousWorkerCount: existing.workerList ? existing.workerList.length : 0,
-            workerIds: existing.workerList ? existing.workerList.slice() : [],
-            ownershipType: existing.ownershipType,
-            ownerId: existing.ownerId,
+            destroyedBy: destroyedBy,
+            disasterId: disasterId,
+            previousStatus: enterprise.status,
+            previousWealth: enterprise.wealth,
+            previousDebt: enterprise.debt,
+            previousWorkerCount: enterprise.workerList.length,
+            workerIds: enterprise.workerList.slice(),
+            ownershipType: enterprise.ownershipType,
+            ownerId: enterprise.ownerId,
             timestamp: Date.now()
         };
 
-        candidate.status = 'demolished';
-        candidate.demolishedAt = demolishYear;
-        candidate.demolishedReason = demolishReason;
-        candidate.destroyedBy = demolitionRecord.destroyedBy;
-        candidate.disasterId = demolitionRecord.disasterId;
-        candidate.demolishedRecord = demolitionRecord;
-        candidate.workerList = [];
-        candidate.workerWages = {};
-        candidate.wealth = 0;
-        candidate.debt = 0;
-        candidate.updatedAt = Date.now();
-
-        candidate.history.push({
+        var newHistory = enterprise.history.slice();
+        newHistory.push({
             year: demolishYear,
             type: 'demolished',
             reason: demolishReason,
-            destroyedBy: demolitionRecord.destroyedBy,
-            disasterId: demolitionRecord.disasterId,
+            destroyedBy: destroyedBy,
+            disasterId: disasterId,
             record: demolitionRecord,
             timestamp: Date.now()
         });
 
-        if (existing.ownerType === 'household' && existing.ownerId) {
-            _unregisterFromHousehold(existing.ownerId, existing.id, demolishYear);
+        var patch = {
+            status: C.STATUS.DEMOLISHED,
+            demolishedAt: demolishYear,
+            demolishedReason: demolishReason,
+            destroyedBy: destroyedBy,
+            disasterId: disasterId,
+            demolishedRecord: demolitionRecord,
+            workerList: [],
+            workerWages: {},
+            wealth: 0,
+            debt: 0,
+            history: newHistory,
+            updatedAt: Date.now()
+        };
+
+        if (enterprise.ownerType === C.OWNER_TYPE.HOUSEHOLD && enterprise.ownerId) {
+            try {
+                _unregisterFromHousehold(
+                    enterprise.ownerId, enterprise.id, demolishYear
+                );
+            } catch (e) {
+                return _fail(e && e.message
+                    ? e.message
+                    : 'Household unregistration failed.');
+            }
         }
 
-        enterprises[index] = candidate;
-        _commit('enterprise_demolished', { enterprise: candidate, record: demolitionRecord });
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
+        }
 
-        _logEvent('enterprise', 'Enterprise Demolished',
-            'Enterprise "' + candidate.name + '" demolished: ' + demolishReason,
-            []);
+        _commit(C.EVENT.ENTERPRISE_DEMOLISHED, {
+            enterpriseId: enterpriseId,
+            reason: demolishReason,
+            record: demolitionRecord
+        });
 
-        return { success: true, demolitionRecord: demolitionRecord, enterprise: candidate };
+        return _ok({
+            demolitionRecord: demolitionRecord,
+            enterprise: IS.getEnterprise(enterpriseId)
+        });
     }
 
     function rebuildEnterprise(enterpriseId, rebuildYear, options) {
-        if (!enterpriseId) {
-            return { success: false, error: 'Enterprise id is required' };
+        if (!_hasId(enterpriseId)) return _fail('Enterprise id is required.');
+
+        var enterprise = IS.getEnterprise(enterpriseId);
+        if (!enterprise) return _fail('Enterprise not found.');
+
+        if (enterprise.status !== C.STATUS.DEMOLISHED) {
+            return _fail('Enterprise is not demolished.');
         }
 
-        var index = _findEnterpriseIndex(enterpriseId);
-        if (index === -1) {
-            return { success: false, error: 'Enterprise not found' };
-        }
-
-        var enterprises = _requireEnterprisesArray();
-        var existing = enterprises[index];
-
-        if (existing.status !== 'demolished') {
-            return { success: false, error: 'Enterprise is not demolished' };
-        }
-
-        var record = existing.demolishedRecord;
+        var record = enterprise.demolishedRecord;
         if (!record) {
-            return { success: false, error: 'No demolition record found' };
+            return _fail('No demolition record found.');
         }
 
         options = options || {};
-        var rebuildYearValue = (rebuildYear === undefined || rebuildYear === null)
-            ? _requireCurrentYear()
+        var rebuildYearValue = _isMissing(rebuildYear)
+            ? window.getCurrentYear()
             : rebuildYear;
 
-        var candidate = _cloneEnterprise(existing);
-
         var initialWealth;
-        if (options.initialWealth !== undefined && options.initialWealth !== null) {
+        if (!_isMissing(options.initialWealth)) {
             initialWealth = options.initialWealth;
         } else {
-            initialWealth = Math.max(10, Math.floor((record.previousWealth || 0) / 2));
+            var prior = typeof record.previousWealth === 'number'
+                ? record.previousWealth
+                : 0;
+            initialWealth = Math.max(
+                C.REBUILD_WEALTH_MINIMUM,
+                Math.floor(prior * C.REBUILD_WEALTH_FRACTION)
+            );
         }
 
-        candidate.status = 'active';
-        candidate.demolishedAt = null;
-        candidate.demolishedReason = null;
-        candidate.destroyedBy = null;
-        candidate.disasterId = null;
-        candidate.demolishedRecord = null;
-        candidate.wealth = initialWealth;
-        candidate.debt = 0;
-        candidate.workerList = [];
-        candidate.workerWages = {};
-        candidate.updatedAt = Date.now();
-
-        candidate.history.push({
+        var newHistory = enterprise.history.slice();
+        newHistory.push({
             year: rebuildYearValue,
             type: 'rebuilt',
-            reason: options.reason === undefined ? 'Rebuilt after destruction' : options.reason,
+            reason: _isMissing(options.reason)
+                ? 'Rebuilt after destruction'
+                : options.reason,
             fromRecord: record,
             timestamp: Date.now()
         });
 
-        if (record.ownerId && record.ownerType === 'household') {
-            _registerWithHousehold(record.ownerId, existing.id, rebuildYearValue);
-        }
+        var patch = {
+            status: C.STATUS.ACTIVE,
+            demolishedAt: null,
+            demolishedReason: null,
+            destroyedBy: null,
+            disasterId: null,
+            demolishedRecord: null,
+            wealth: initialWealth,
+            debt: 0,
+            workerList: [],
+            workerWages: {},
+            history: newHistory,
+            updatedAt: Date.now()
+        };
 
-        enterprises[index] = candidate;
-        _commit('enterprise_rebuilt', { enterprise: candidate, rebuiltAt: rebuildYearValue });
-
-        _logEvent('enterprise', 'Enterprise Rebuilt',
-            'Enterprise "' + candidate.name + '" rebuilt',
-            []);
-
-        return { success: true, enterprise: candidate, rebuiltAt: rebuildYearValue };
-    }
-
-    // =========================================================================
-    // 10. VALIDATION
-    // =========================================================================
-
-    function _validateEnterpriseCandidate(candidate) {
-        if (!candidate.name || typeof candidate.name !== 'string' || candidate.name.trim() === '') {
-            return { ok: false, reason: 'Enterprise name is required' };
-        }
-        if (!candidate.typeId) {
-            return { ok: false, reason: 'Enterprise type is required' };
-        }
-        if (candidate.ownershipType !== 'public' && candidate.ownershipType !== 'private') {
-            return { ok: false, reason: 'Invalid ownershipType: ' + candidate.ownershipType };
-        }
-        if (candidate.ownerType !== 'none' &&
-            candidate.ownerType !== 'character' &&
-            candidate.ownerType !== 'household' &&
-            candidate.ownerType !== 'settlement' &&
-            candidate.ownerType !== 'state') {
-            return { ok: false, reason: 'Invalid ownerType: ' + candidate.ownerType };
-        }
-        if (candidate.ownerType === 'none' && candidate.ownerId) {
-            return { ok: false, reason: 'ownerType "none" cannot have an ownerId' };
-        }
-        if (candidate.ownerType !== 'none' && !candidate.ownerId) {
-            return { ok: false, reason: 'ownerType requires an ownerId' };
-        }
-        if (typeof candidate.wealth !== 'number' || !isFinite(candidate.wealth)) {
-            return { ok: false, reason: 'wealth must be a finite number' };
-        }
-        if (typeof candidate.debt !== 'number' || !isFinite(candidate.debt) || candidate.debt < 0) {
-            return { ok: false, reason: 'debt must be a non-negative finite number' };
-        }
-        if (typeof candidate.maxWorkers !== 'number' || candidate.maxWorkers < 0) {
-            return { ok: false, reason: 'maxWorkers must be a non-negative number' };
-        }
-        if (candidate.workerList.length > candidate.maxWorkers) {
-            return { ok: false, reason: 'workerList exceeds maxWorkers' };
-        }
-        return { ok: true };
-    }
-
-    // =========================================================================
-    // 11. CROSS-DOMAIN: HOUSEHOLD
-    // =========================================================================
-
-    function _getHouseholdCommands() {
-        return window.HouseholdCommands || null;
-    }
-
-    function _registerWithHousehold(householdId, enterpriseId, year) {
-        var cmd = _getHouseholdCommands();
-        if (cmd && typeof cmd.addEnterprise === 'function') {
-            var r = cmd.addEnterprise(householdId, enterpriseId, year);
-            if (!r || !r.success) {
-                throw new Error('IndustryCommands: HouseholdCommands.addEnterprise failed for ' +
-                    householdId + ' / ' + enterpriseId);
+        if (record.ownerType === C.OWNER_TYPE.HOUSEHOLD && record.ownerId) {
+            try {
+                _registerWithHousehold(record.ownerId, enterpriseId, rebuildYearValue);
+            } catch (e) {
+                return _fail(e && e.message
+                    ? e.message
+                    : 'Household registration failed.');
             }
-            return;
         }
-        throw new Error('IndustryCommands: HouseholdCommands.addEnterprise is required but unavailable');
-    }
 
-    function _unregisterFromHousehold(householdId, enterpriseId, year) {
-        var cmd = _getHouseholdCommands();
-        if (cmd && typeof cmd.removeEnterprise === 'function') {
-            var r = cmd.removeEnterprise(householdId, enterpriseId, year);
-            if (!r || !r.success) {
-                throw new Error('IndustryCommands: HouseholdCommands.removeEnterprise failed for ' +
-                    householdId + ' / ' + enterpriseId);
-            }
-            return;
+        try {
+            IS._updateEnterprise(enterpriseId, patch);
+        } catch (e) {
+            return _fail(e && e.message
+                ? e.message
+                : 'IndustryState refused the write.');
         }
-        throw new Error('IndustryCommands: HouseholdCommands.removeEnterprise is required but unavailable');
-    }
 
-    function _applyHouseholdTransfer(householdId, amount, reason) {
-        var cmd = _getHouseholdCommands();
-        if (cmd && typeof cmd.adjustWealth === 'function') {
-            return cmd.adjustWealth(householdId, amount, reason);
-        }
-        throw new Error('IndustryCommands: HouseholdCommands.adjustWealth is required but unavailable');
+        _commit(C.EVENT.ENTERPRISE_REBUILT, {
+            enterpriseId: enterpriseId,
+            rebuiltAt: rebuildYearValue
+        });
+
+        return _ok({
+            enterprise: IS.getEnterprise(enterpriseId),
+            rebuiltAt: rebuildYearValue
+        });
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
-    window.IndustryCommands = {
+    window.IndustryCommands = Object.freeze({
+        // Persistence boundary
+        persist: persist,
+
+        // Enterprise lifecycle
         createEnterprise: createEnterprise,
         updateEnterprise: updateEnterprise,
         deleteEnterprise: deleteEnterprise,
 
+        // Workers
         addWorkerToEnterprise: addWorkerToEnterprise,
         removeWorkerFromEnterprise: removeWorkerFromEnterprise,
         setWorkerWage: setWorkerWage,
 
+        // Financials
         updateEnterpriseWealth: updateEnterpriseWealth,
         updateEnterpriseDebt: updateEnterpriseDebt,
 
+        // Annual processing
         applyAnnualProcessing: applyAnnualProcessing,
 
+        // Public enterprises
         createPublicEnterprise: createPublicEnterprise,
         convertEnterpriseToPublic: convertEnterpriseToPublic,
 
+        // Demolish / rebuild
         demolishEnterprise: demolishEnterprise,
         rebuildEnterprise: rebuildEnterprise
-    };
+    });
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryCommands;
     }
-
 })();
