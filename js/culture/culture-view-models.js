@@ -6,23 +6,37 @@
  *
  * Presentation-ready projections of culture data.
  *
+ * This module is the boundary between the domain and the UI. It reads
+ * through CultureQueries (never canonical data directly, never State) and
+ * produces plain objects that the renderers can paint. It does not touch
+ * the DOM, does not decide event handlers, does not escape strings.
+ *
  * Three kinds of "default" exist in this subsystem, and they live in
  * different layers:
  *
- *     Domain default       (CultureCommands + CultureConstants)
- *     Normalization        (this module)
- *     Presentation fallback (this module, optionally)
+ *     Domain default        (CultureCommands + CultureConstants)
+ *     Normalization         (this module — labelFor, iconFor)
+ *     Presentation fallback (this module, optionally — iconPlaceholder)
  *
- * Public single-value helpers (labelFor, iconFor) are exposed so that
- * other domains (Location, Character) can ask "what is this culture's
- * label?" without building a full view model or re-implementing the
+ * Public single-value helpers (labelFor, iconFor) are exposed so that other
+ * domains (Location, Character) can ask "what is this culture's label?"
+ * without building a full view model or re-implementing the
  * displayName/name policy themselves.
+ *
+ * It does NOT:
+ *   - read canonical data                  (CultureQueries)
+ *   - read CultureState                    (CultureQueries)
+ *   - mutate anything                      (nothing here writes)
+ *   - escape strings                       (renderers do)
+ *   - attach event listeners               (renderers do)
+ *   - decide CSS classes                   (renderers do)
+ *   - use _getCultureCanonical             (that is for commands only)
  *
  * Dependencies:
  *   - CultureQueries
  *   - PlaceQueries
  *   - ReligionQueries
- *   - CharacterQueries
+ *   - CharacterQueries     (used only by buildDetails via getCultureSummary)
  *
  * =============================================================================
  */
@@ -70,6 +84,7 @@
      * The human-readable label for a culture.
      *
      * Policy: displayName is authoritative if non-empty; otherwise name.
+     * Returns a string, always. Never null, never undefined.
      *
      * Public API. Other domains should call this rather than re-implement
      * the displayName/name fallback.
@@ -79,7 +94,8 @@
         if (typeof culture.displayName === 'string' && culture.displayName.length > 0) {
             return culture.displayName;
         }
-        return culture.name || '';
+        if (typeof culture.name === 'string') return culture.name;
+        return '';
     }
 
     /**
@@ -192,6 +208,26 @@
     // 5. APPEARANCE SUMMARY
     // =========================================================================
 
+    /**
+     * Produces a row per appearance category.
+     *
+     * Each row: { category, preview, remaining }.
+     *
+     * - category: the appearance key (skinTones, eyeColors, etc.)
+     * - preview: a comma-joined string of the first N values
+     * - remaining: count of values not shown in the preview
+     *
+     * Height is a special case: it produces "male: 170-200, female: 160-185".
+     *
+     * @param {Object} culture       a culture object or a culture-like object
+     *                                with an `appearance` field. In buildDetails
+     *                                this is `{ appearance: culture.appearance }`
+     *                                because the summary already carries the
+     *                                appearance object — see comment there.
+     * @param {Object} [options]
+     * @param {number} [options.previewCount=5]
+     * @returns {Array<{category: string, preview: string, remaining: number}>}
+     */
     function _appearanceSummaryFor(culture, options) {
         if (!culture || !culture.appearance) return [];
         options = options || {};
@@ -314,6 +350,28 @@
     // 8. DETAILS
     // =========================================================================
 
+    /**
+     * Builds a details projection for a single culture.
+     *
+     * Reads through CultureQueries.getCultureSummary — which is itself a
+     * data projection carrying already-resolved locations and religions.
+     * This function re-derives presentation sections (appearance rows,
+     * mythology sections) from the summary's raw fields.
+     *
+     * The double derivation is deliberate: getCultureSummary is a data
+     * projection (what exists); buildDetails is a presentation projection
+     * (how to arrange it). The summary may grow to carry more data without
+     * this module needing to change; this module may add presentation
+     * concerns without the summary needing to grow.
+     *
+     * Note the `_appearanceSummaryFor({ appearance: culture.appearance })`
+     * call: getCultureSummary already carries the appearance object, but
+     * _appearanceSummaryFor reads from a culture-shaped object. Passing a
+     * minimal `{ appearance }` wrapper avoids re-fetching the culture.
+     *
+     * @param {string} cultureId
+     * @returns {Object|null}
+     */
     function buildDetails(cultureId) {
         var queries = _requireQueries();
         var summary = queries.getCultureSummary(cultureId);
@@ -374,6 +432,7 @@
 
         for (var i = 0; i < cultures.length; i++) {
             var c = cultures[i];
+            if (!c) continue;
             out.push({
                 id: c.id,
                 label: labelFor(c),
@@ -382,15 +441,48 @@
             });
         }
 
+        // labelFor always returns a string, but coerce defensively in case
+        // its contract ever drifts. Sorting a null would throw.
         out.sort(function(a, b) {
-            return a.label.localeCompare(b.label);
+            return String(a.label).localeCompare(String(b.label));
         });
 
         return out;
     }
 
     // =========================================================================
-    // 10. PUBLIC API
+    // 10. LOAD-TIME VERIFICATION
+    // =========================================================================
+
+    (function _verifyLoadTimeDependencies() {
+        if (!window.CultureQueries) {
+            throw new Error(
+                'culture-view-models.js loaded but window.CultureQueries is missing. ' +
+                'Check script tag order (culture-queries.js must load first).'
+            );
+        }
+        if (!window.PlaceQueries) {
+            throw new Error(
+                'culture-view-models.js loaded but window.PlaceQueries is missing. ' +
+                'Check script tag order (location-queries.js must load first).'
+            );
+        }
+        if (!window.ReligionQueries) {
+            throw new Error(
+                'culture-view-models.js loaded but window.ReligionQueries is missing. ' +
+                'Check script tag order (religion-queries.js must load first).'
+            );
+        }
+        if (!window.CharacterQueries) {
+            throw new Error(
+                'culture-view-models.js loaded but window.CharacterQueries is missing. ' +
+                'Check script tag order (character-queries.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 11. PUBLIC API
     // =========================================================================
 
     window.CultureViewModels = {
