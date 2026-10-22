@@ -5,216 +5,332 @@
  *
  * LOCATION: js/core/industry/industry-migration.js
  *
- * One-time migration of enterprise records to the canonical shape.
+ * One-time migration of enterprise records to the canonical Phase-3 shape.
  *
- * Removes denormalized fields:
- *   - typeName
- *   - category
- *   - isPublic
- *   - ownerName
- *   - locationName
- *   - workerCount
+ * This file:
+ *   - derives ownershipType from legacy isPublic when ownershipType is
+ *     absent or invalid
+ *   - strips derived fields (typeName, category, isPublic, ownerName,
+ *     locationName, workerCount) from each record
+ *   - validates each record against the canonical shape (via IndustryRules)
+ *   - reports per-record validation failures without throwing
+ *   - saves and marks dirty only when something actually changed
  *
- * Preserves relationships (typeId, ownerType, ownerId, locationId, workerList)
- * and all irreducible facts.
+ * This file does NOT:
+ *   - fabricate missing relationships (a missing typeId is an error, not
+ *     an invitation to invent "other")
+ *   - touch the in-memory IndustryState catalogue (bootstrap hydrates
+ *     after migration runs; if migration mutated the state and hydration
+ *     ran before it, the state would need re-hydration — simpler to make
+ *     migration a pure pre-hydration step)
+ *   - publish events or notify subscribers
+ *   - repair broken cross-record references (typeId → missing type is an
+ *     integrity error, reported by IndustryState.validateIntegrity)
  *
- * ARCHITECTURAL RULES:
- *   - Idempotent. Safe to call multiple times.
- *   - Only writes if something actually changed.
- *   - Does NOT fabricate missing relationships. A missing typeId is a
- *     migration error, not an invitation to invent "other".
- *   - Does NOT save or notify unless it changed something.
+ * IDEMPOTENT:
+ *   Safe to call on every bootstrap. On a clean save (nothing to migrate)
+ *   it returns { ok: true, migrated: N, changed: 0, errors: [] } with
+ *   zero side effects. On a contaminated save it strips and derives,
+ *   validates, and saves once.
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-constants.js (IndustryConstants)
+ *   - industry-rules.js     (IndustryRules)
+ *   - storage.js            (saveMasterData, markDataDirty)
+ *
+ * DEPENDENCIES (OPTIONAL at load):
+ *   - industry-state.js     (IndustryState) — if present, migration calls
+ *                             hydrateFromMasterData() after a changed run
+ *                             so any already-hydrated state stays current.
+ *                             If absent, migration is purely a
+ *                             pre-hydration step and the bootstrap will
+ *                             hydrate after.
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    var DERIVED_FIELDS = [
-        'typeName',
-        'category',
-        'isPublic',
-        'ownerName',
-        'locationName',
-        'workerCount'
-    ];
+    // =========================================================================
+    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // =========================================================================
+
+    if (typeof window.IndustryConstants === 'undefined') {
+        throw new Error(
+            'industry-migration.js requires industry-constants.js to load first.'
+        );
+    }
+    if (typeof window.IndustryRules === 'undefined') {
+        throw new Error(
+            'industry-migration.js requires industry-rules.js to load first.'
+        );
+    }
+    if (typeof window.saveMasterData !== 'function') {
+        throw new Error(
+            'industry-migration.js requires storage.js (saveMasterData).'
+        );
+    }
+    if (typeof window.markDataDirty !== 'function') {
+        throw new Error(
+            'industry-migration.js requires storage.js (markDataDirty).'
+        );
+    }
+
+    var C = window.IndustryConstants;
+    var RULES = window.IndustryRules;
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 2. DEPENDENCY WRAPPERS (call-time)
     // =========================================================================
 
     function _requireMasterData() {
-        var md = window.masterData;
-        if (!md) {
-            throw new Error('IndustryMigration: masterData dependency missing');
+        if (typeof window.masterData === 'undefined'
+            || !window.masterData
+            || !window.masterData.data
+            || typeof window.masterData.data !== 'object') {
+            throw new Error(
+                'industry-migration.js: window.masterData is not initialised. ' +
+                'storage.js must load and run before migration.'
+            );
         }
-        if (!md.data) {
-            md.data = {};
-        }
-        return md;
+        return window.masterData;
     }
 
     function _requireEnterprisesArray() {
         var md = _requireMasterData();
-        if (!md.data.enterprises) {
+        if (!Array.isArray(md.data.enterprises)) {
             md.data.enterprises = [];
         }
         return md.data.enterprises;
     }
 
-    function _requireSaveMasterData() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('IndustryMigration: saveMasterData dependency missing');
-        }
-        return window.saveMasterData;
-    }
-
-    function _requireState() {
-        // State is optional during migration. If it exists, we refresh it
-        // after changing canonical data so the app sees the new shape.
-        return window.IndustryState || null;
-    }
-
     // =========================================================================
-    // 2. VALIDATION
+    // 3. HELPERS
     // =========================================================================
 
-    function _validateCanonicalRelationships(enterprise, index) {
-        var errors = [];
+    function _isMissing(v) {
+        return v === undefined || v === null;
+    }
 
-        if (!enterprise.id) {
-            errors.push('missing id');
-        }
-        if (!enterprise.name || typeof enterprise.name !== 'string' || enterprise.name.trim() === '') {
-            errors.push('missing or empty name');
-        }
-        if (!enterprise.typeId) {
-            errors.push('missing typeId (cannot infer intended type)');
-        }
-        if (enterprise.ownershipType !== 'public' && enterprise.ownershipType !== 'private') {
-            errors.push('invalid ownershipType: ' + enterprise.ownershipType);
-        }
-        if (enterprise.ownerType !== 'none' &&
-            enterprise.ownerType !== 'character' &&
-            enterprise.ownerType !== 'household' &&
-            enterprise.ownerType !== 'settlement' &&
-            enterprise.ownerType !== 'state') {
-            errors.push('invalid ownerType: ' + enterprise.ownerType);
-        }
-        if (enterprise.ownerType === 'none' && enterprise.ownerId) {
-            errors.push('ownerType "none" cannot have an ownerId');
-        }
-        if (enterprise.ownerType !== 'none' && !enterprise.ownerId) {
-            errors.push('ownerType requires an ownerId');
-        }
-        if (!Array.isArray(enterprise.workerList)) {
-            errors.push('workerList is not an array');
-        }
-        if (enterprise.workerWages === null || typeof enterprise.workerWages !== 'object') {
-            errors.push('workerWages is not an object');
-        }
-        if (!Array.isArray(enterprise.history)) {
-            errors.push('history is not an array');
-        }
-
-        return errors;
+    function _isPlainObject(v) {
+        if (v === null || typeof v !== 'object') return false;
+        var proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
     }
 
     // =========================================================================
-    // 3. MIGRATION
+    // 4. PASS 1 — LEGACY isPublic → ownershipType
     // =========================================================================
 
     /**
-     * Strips derived fields from a single enterprise record.
-     * Returns true if anything was removed.
+     * Derives ownershipType from isPublic when ownershipType is missing or
+     * invalid.
      *
-     * @param {Object} enterprise
-     * @returns {boolean} changed
+     * The legacy shape stored a boolean isPublic and did not carry
+     * ownershipType. This pass bridges the two.
+     *
+     * Only fires when ownershipType is absent or not one of the valid
+     * strings — a modern record with a valid ownershipType is never
+     * overridden.
+     *
+     * @param {Object} record
+     * @returns {boolean} true if the record was changed
      */
-    function _stripDerivedFields(enterprise) {
+    function _deriveOwnershipType(record) {
+        var hasValidOwnershipType =
+            record.ownershipType === C.OWNERSHIP_TYPE.PUBLIC
+            || record.ownershipType === C.OWNERSHIP_TYPE.PRIVATE;
+
+        if (hasValidOwnershipType) {
+            return false;
+        }
+
+        if (typeof record.isPublic === 'boolean') {
+            record.ownershipType = record.isPublic
+                ? C.OWNERSHIP_TYPE.PUBLIC
+                : C.OWNERSHIP_TYPE.PRIVATE;
+            return true;
+        }
+
+        return false;
+    }
+
+    // =========================================================================
+    // 5. PASS 2 — STRIP DERIVED FIELDS
+    // =========================================================================
+
+    /**
+     * Removes derived fields from a record.
+     *
+     * @param {Object} record
+     * @returns {boolean} true if anything was removed
+     */
+    function _stripDerivedFields(record) {
         var changed = false;
-        for (var i = 0; i < DERIVED_FIELDS.length; i++) {
-            var key = DERIVED_FIELDS[i];
-            if (Object.prototype.hasOwnProperty.call(enterprise, key)) {
-                delete enterprise[key];
+        for (var i = 0; i < C.DERIVED_FIELDS.length; i++) {
+            var key = C.DERIVED_FIELDS[i];
+            if (Object.prototype.hasOwnProperty.call(record, key)) {
+                delete record[key];
                 changed = true;
             }
         }
         return changed;
     }
 
+    // =========================================================================
+    // 6. MAIN ENTRY POINT
+    // =========================================================================
+
     /**
-     * Migrates all enterprises to the canonical shape.
+     * Migrates masterData.data.enterprises to the canonical shape.
      *
-     * @returns {Object} { ok, migrated, changed, errors }
+     * Runs three passes on every record:
+     *   1. derive ownershipType from legacy isPublic
+     *   2. strip derived fields
+     *   3. validate against canonical shape
+     *
+     * Records that fail validation are collected into errors[] and left
+     * in place (unmigrated). They remain in the canonical array so that
+     * the bootstrap integrity diagnostic and any future repair tool can
+     * see them. Migration does NOT delete failed records.
+     *
+     * Returns:
+     *   { ok: true,  migrated: N, changed: C, errors: [] }
+     *   { ok: false, migrated: N, changed: C, errors: [...] }
+     *
+     * ok is true when every record migrated cleanly (including zero
+     * records). ok is false when at least one record failed validation.
+     *
+     * Side effects:
+     *   - markDataDirty() is called when changed > 0
+     *   - saveMasterData() is called when changed > 0
+     *   - if IndustryState is loaded and changed > 0, its hydrateFromMasterData
+     *     is invoked so already-hydrated state reflects the migrated records
+     *
+     * @returns {{ ok: boolean, migrated: number, changed: number, errors: Object[] }}
      */
     function migrateEnterprisesToCanonicalShape() {
+        var md = _requireMasterData();
         var enterprises = _requireEnterprisesArray();
+
         var migrated = 0;
         var changed = 0;
         var errors = [];
 
         for (var i = 0; i < enterprises.length; i++) {
-            var e = enterprises[i];
+            var record = enterprises[i];
 
-            var validationErrors = _validateCanonicalRelationships(e, i);
-            if (validationErrors.length > 0) {
+            if (!_isPlainObject(record)) {
                 errors.push({
                     index: i,
-                    id: e.id || '(no id)',
-                    name: e.name || '(no name)',
-                    errors: validationErrors
+                    id: '(not an object)',
+                    name: '(not an object)',
+                    errors: ['record is not a plain object']
                 });
                 continue;
             }
 
-            var recordChanged = _stripDerivedFields(e);
+            var recordChanged = false;
+
+            // Pass 1 — derive ownershipType from legacy isPublic.
+            if (_deriveOwnershipType(record)) {
+                recordChanged = true;
+            }
+
+            // Pass 2 — strip derived fields.
+            if (_stripDerivedFields(record)) {
+                recordChanged = true;
+            }
+
+            // Pass 3 — validate against the canonical shape.
+            var validation = RULES.validateEnterprise(record);
+            if (!validation.valid) {
+                errors.push({
+                    index: i,
+                    id: record.id || '(no id)',
+                    name: record.name || '(no name)',
+                    errors: validation.errors
+                });
+                continue;
+            }
+
             if (recordChanged) {
                 changed++;
             }
             migrated++;
         }
 
-        if (errors.length > 0) {
-            return {
-                ok: false,
-                migrated: migrated,
-                changed: changed,
-                errors: errors
-            };
-        }
-
+        // Persist only when we actually changed something.
         if (changed > 0) {
-            _requireSaveMasterData()();
+            md.data.enterprises = enterprises;
+            window.markDataDirty();
 
-            var state = _requireState();
-            if (state && typeof state.rebuildIndexes === 'function') {
-                state.rebuildIndexes();
+            // Re-hydrate state if it is already loaded. This keeps
+            // subscribers, indexes, and any downstream consumer consistent
+            // with the migrated records.
+            if (typeof window.IndustryState !== 'undefined'
+                && typeof window.IndustryState.hydrateFromMasterData === 'function') {
+                try {
+                    window.IndustryState.hydrateFromMasterData(
+                        enterprises,
+                        Array.isArray(md.data.enterpriseTypes)
+                            ? md.data.enterpriseTypes
+                            : []
+                    );
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'industry-migration.js: re-hydration after ' +
+                            'migration failed:', e
+                        );
+                    }
+                }
             }
-            if (state && typeof state.notify === 'function') {
-                state.notify('enterprises_migrated', { changed: changed });
+
+            try {
+                window.saveMasterData();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'industry-migration.js: saveMasterData threw after ' +
+                        'migration:', e
+                    );
+                }
+                return {
+                    ok: false,
+                    migrated: migrated,
+                    changed: changed,
+                    errors: errors.concat([{
+                        index: -1,
+                        id: '(storage)',
+                        name: '(storage)',
+                        errors: ['saveMasterData threw: ' +
+                            (e && e.message ? e.message : String(e))]
+                    }])
+                };
             }
         }
 
         return {
-            ok: true,
+            ok: errors.length === 0,
             migrated: migrated,
             changed: changed,
-            errors: []
+            errors: errors
         };
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
-    window.IndustryMigration = {
+    window.IndustryMigration = Object.freeze({
         migrateEnterprisesToCanonicalShape: migrateEnterprisesToCanonicalShape
-    };
+    });
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryMigration;
     }
-
 })();
