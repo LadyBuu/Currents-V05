@@ -23,7 +23,27 @@
  *         ↓
  *     call a Command
  *         ↓
- *     react to the command result (toast + onSuccess + close)
+ *     react to the command result (toast + persist + onSuccess)
+ *
+ * PERSISTENCE
+ * -----------
+ * Commands do not save (see culture-commands.js). The modal is the save
+ * owner. After each successful command, call CultureCommands.persist()
+ * exactly once. A failed save is a toast, not a thrown error — the
+ * canonical data is already updated and in-memory state is consistent.
+ * The user can retry by saving again from the UI.
+ *
+ * MODAL CONTRACT
+ * --------------
+ * This module assumes openModal() closes the modal when the onConfirm
+ * callback returns true, and keeps it open when onConfirm returns false.
+ * That contract is documented here because it is the sole determinant of
+ * whether the modal stays open after a command failure.
+ *
+ * If openModal's contract ever changes (e.g. it always closes, or it
+ * requires an explicit close()), every onConfirm callback in this file
+ * needs to be updated. The callbacks return boolean; they do not call
+ * close themselves.
  *
  * The modal layer does NOT:
  *   - validate domain rules              (CultureValidation)
@@ -34,13 +54,6 @@
  *   - inspect appearance or mythology    (CultureViewModels)
  *   - mutate anything                    (CultureCommands)
  *   - detect recursion                   (nothing here recurses)
- *
- * It DOES:
- *   - build forms
- *   - read DOM inputs
- *   - call commands
- *   - show toasts
- *   - call onSuccess
  *
  * =============================================================================
  */
@@ -114,9 +127,9 @@
 
     function _requireIconOptions() {
         // The icon list is provided by the shared icon infrastructure.
-        // If it is not available, the form simply offers a free-text
-        // icon field. This is a UI capability decision, not a domain
-        // default — no placeholder icon is invented.
+        // If it is not available, the form offers a free-text icon field.
+        // This is a UI capability decision, not a domain default — no
+        // placeholder icon is invented.
         if (typeof window.getIconOptions === 'function') {
             return window.getIconOptions();
         }
@@ -281,13 +294,34 @@
     // 4. RESULT HANDLING
     // =========================================================================
 
+    /**
+     * Handles the result of a command.
+     *
+     * On success: toast, persist, onSuccess, return true.
+     * On failure: toast, return false.
+     *
+     * The return value is the modal's close signal: true closes the modal,
+     * false keeps it open. This depends on openModal's close-on-truthy
+     * contract (see header).
+     *
+     * Persistence: the modal is the save owner. persist() is called once
+     * per successful command. A failed persist is a toast, not a thrown
+     * error — the canonical data is already updated.
+     */
     function _handleCommandResult(result, successMessage, failurePrefix, onSuccess) {
         var toast = _requireToast();
-        var modals = _requireModals();
+        var commands = _requireCommands();
 
         if (result && result.success) {
             toast(successMessage, 'success');
-            modals.close();
+
+            var saveResult = commands.persist();
+            if (saveResult && saveResult.success === false) {
+                // Non-fatal: canonical data is already updated. The user
+                // can retry the save through whatever save UI exists.
+                toast('Save failed: ' + (saveResult.reason || 'unknown error'), 'error');
+            }
+
             if (typeof onSuccess === 'function') onSuccess(result.data);
             return true;
         }
@@ -476,12 +510,12 @@
         var label = culture.displayName || culture.name;
 
         if (typeof window.confirmDialog !== 'function') {
-            // No confirmation infrastructure available. Refuse rather than
-            // fall back to a browser confirm(), which would leak an
-            // uncontrolled UI pattern into the domain.
-            throw new Error(
-                'CultureModals.confirmDeleteCulture requires confirmDialog.'
-            );
+            // No confirmation infrastructure. Toast and return rather than
+            // throw: a UI entry point throwing in a click handler shows the
+            // user nothing. Load-time verification can catch this earlier
+            // if the caller chooses.
+            toast('Confirmation dialog unavailable', 'error');
+            return;
         }
 
         window.confirmDialog(
@@ -491,6 +525,12 @@
                 var result = commands.deleteCulture(cultureId);
                 if (result && result.success) {
                     toast('Deleted: ' + label, 'info');
+
+                    var saveResult = commands.persist();
+                    if (saveResult && saveResult.success === false) {
+                        toast('Save failed: ' + (saveResult.reason || 'unknown error'), 'error');
+                    }
+
                     if (typeof onSuccess === 'function') onSuccess(result.data);
                 } else {
                     var reason = (result && result.reason) ? result.reason : 'Unknown error';
@@ -624,7 +664,84 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API
+    // 9. LOAD-TIME VERIFICATION
+    // =========================================================================
+    //
+    // Verifies modules every modal path uses. Deliberately does NOT verify
+    // PlaceQueries / ReligionQueries / confirmDialog / getIconOptions:
+    //
+    //   - PlaceQueries / ReligionQueries are only needed for the edit modal.
+    //     Requiring them at load would force every page that loads the modals
+    //     to also load those modules, even if the user never opens the edit
+    //     modal. The lazy _require*() checks remain in the edit path.
+    //
+    //   - confirmDialog is checked at the call site in confirmDeleteCulture
+    //     and degrades to a toast. Hard-requiring it at load would break
+    //     pages that only use create/edit/details.
+    //
+    //   - getIconOptions already has a documented fallback to a free-text
+    //     field. Not a hard dependency.
+    //
+
+    (function _verifyLoadTimeDependencies() {
+        if (typeof window.openModal !== 'function') {
+            throw new Error(
+                'culture-modals.js loaded but window.openModal is missing. ' +
+                'Check script tag order (modals-core.js must load first).'
+            );
+        }
+        if (typeof window.closeTopModal !== 'function') {
+            throw new Error(
+                'culture-modals.js loaded but window.closeTopModal is missing. ' +
+                'Check script tag order (modals-core.js must load first).'
+            );
+        }
+        if (!window.CultureCommands) {
+            throw new Error(
+                'culture-modals.js loaded but window.CultureCommands is missing. ' +
+                'Check script tag order (culture-commands.js must load first).'
+            );
+        }
+        if (typeof window.CultureCommands.persist !== 'function') {
+            throw new Error(
+                'culture-modals.js loaded but CultureCommands.persist is missing. ' +
+                'Modals are the save owner; persist() is required.'
+            );
+        }
+        if (!window.CultureQueries) {
+            throw new Error(
+                'culture-modals.js loaded but window.CultureQueries is missing. ' +
+                'Check script tag order (culture-queries.js must load first).'
+            );
+        }
+        if (!window.CultureViewModels) {
+            throw new Error(
+                'culture-modals.js loaded but window.CultureViewModels is missing. ' +
+                'Check script tag order (culture-view-models.js must load first).'
+            );
+        }
+        var hasEscape =
+            (typeof window.escapeHtml === 'function') ||
+            (typeof window._escapeHtml === 'function');
+        if (!hasEscape) {
+            throw new Error(
+                'culture-modals.js loaded but no escapeHtml/_escapeHtml is available. ' +
+                'Check script tag order (formatting.js must load first).'
+            );
+        }
+        var hasToast =
+            (typeof window.showToast === 'function') ||
+            (typeof window._showToast === 'function');
+        if (!hasToast) {
+            throw new Error(
+                'culture-modals.js loaded but no showToast/_showToast is available. ' +
+                'Check script tag order (modals-core.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 10. PUBLIC API
     // =========================================================================
 
     window.CultureModals = {
