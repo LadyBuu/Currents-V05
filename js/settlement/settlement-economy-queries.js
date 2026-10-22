@@ -7,54 +7,25 @@
  * ECONOMY QUERIES.
  *
  * This file provides read-only calculations for settlement income,
- * expenses, surplus, and derived financial metrics. It answers:
- *   - how much income does a settlement earn annually, and from where?
- *   - how much does it spend annually, and on what?
- *   - what is the annual surplus or deficit?
- *   - what is the debt ratio?
- *   - what is the administrative efficiency score?
+ * expenses, surplus, and derived financial metrics.
  *
- * It is a query module. It:
- *   - reads canonical settlement data through SettlementQueries
- *   - reads features through SettlementFeatureQueries
- *   - reads enterprises through IndustryQueries
- *   - reads employment through SettlementEmploymentQueries
- *   - reads fiscal limits from SettlementFiscalDefinitions
- *   - reads finance constants from SettlementFinanceDefinitions
- *   - does not mutate anything
- *   - does not persist
- *   - does not display UI
- *   - does not fabricate missing values
- *   - does not use recursion guards
+ * It is a query module. It reads through the owning query modules and
+ * does not mutate, persist, or display UI.
  *
- * Contract reference: Settlement Architecture Contracts §10 (Query
- * Contract), §11 (Query Results and Missing Data), §21 (Fiscal Contract),
- * §32 (Completion Standard).
+ * Location hierarchy:
+ *   Location hierarchy is owned by LocationQueries. This file previously
+ *   called LocationState.getAllSubLocationIds, which does not exist on
+ *   LocationState. Corrected to LocationQueries.getAllSubLocationIds.
  *
- * Scope discipline:
- *
- *   This module computes. It does not decide policy. Every numeric input
- *   comes from canonical state or from a definitions module. Where the
- *   economy depends on another domain (features, enterprises,
- *   employment), it reads through that domain's query API. It does not
- *   re-implement those queries.
- *
- *   Allocation vs expense (§21): the settlement record distinguishes
- *   allocated budget from actual spending. Where both exist, this module
- *   uses the actual spending field. Where only an allocation exists, the
- *   allocation is used as the expense, and that substitution is
- *   documented at the point of use.
- *
- *   "Tax revenue" means tax income plus trade income plus industry tax
- *   income. It does not include enterprise profits. Enterprise profits
- *   are separate income categories. The naming is deliberate.
- *
- * Missing data:
- *
- *   - settlement missing             → queries return null
- *   - population unavailable         → returns null
- *   - no enterprises                 → enterprise income is legitimately 0
- *   - missing fiscal policy field    → returns null (not a default)
+ * DEPENDENCIES (REQUIRED at load):
+ *   - SettlementQueries
+ *   - SettlementFeatureQueries
+ *   - SettlementEmploymentQueries
+ *   - SettlementFinanceDefinitions
+ *   - SettlementRankRules
+ *   - IndustryQueries
+ *   - LocationQueries
+ *   - getLocationPopulationCount
  *
  * =============================================================================
  */
@@ -66,41 +37,15 @@
     // 1. DEPENDENCIES
     // =========================================================================
 
-    function _getSettlementQueries() {
-        return window.SettlementQueries;
-    }
-
-    function _getFeatureQueries() {
-        return window.SettlementFeatureQueries;
-    }
-
-    function _getFeatureDefinitions() {
-        return window.SettlementFeatureDefinitions;
-    }
-
-    function _getEmploymentQueries() {
-        return window.SettlementEmploymentQueries;
-    }
-
-    function _getFinanceDefinitions() {
-        return window.SettlementFinanceDefinitions;
-    }
-
-    function _getRankRules() {
-        return window.SettlementRankRules;
-    }
-
-    function _getIndustryQueries() {
-        return window.IndustryQueries;
-    }
-
-    function _getPopulationAccessor() {
-        return window.getLocationPopulationCount;
-    }
-
-    function _getLocationState() {
-        return window.LocationState;
-    }
+    function _getSettlementQueries()        { return window.SettlementQueries; }
+    function _getFeatureQueries()           { return window.SettlementFeatureQueries; }
+    function _getFeatureDefinitions()       { return window.SettlementFeatureDefinitions; }
+    function _getEmploymentQueries()        { return window.SettlementEmploymentQueries; }
+    function _getFinanceDefinitions()       { return window.SettlementFinanceDefinitions; }
+    function _getRankRules()                { return window.SettlementRankRules; }
+    function _getIndustryQueries()          { return window.IndustryQueries; }
+    function _getPopulationAccessor()       { return window.getLocationPopulationCount; }
+    function _getLocationQueries()          { return window.LocationQueries; }
 
     // =========================================================================
     // 2. HELPERS
@@ -111,17 +56,11 @@
     }
 
     function _getLocationIdsForSettlement(locationId) {
-        var locationState = _getLocationState();
-        if (typeof locationState.getAllSubLocationIds === 'function') {
-            var ids = locationState.getAllSubLocationIds(locationId);
-            if (ids && ids.length > 0) return ids;
-        }
+        var ids = _getLocationQueries().getAllSubLocationIds(locationId);
+        if (ids && ids.length > 0) return ids;
         return [locationId];
     }
 
-    /**
-     * Returns the settlement's current rank definition, or null.
-     */
     function _getRank(locationId) {
         return _getSettlementQueries().getCurrentRank(locationId);
     }
@@ -130,22 +69,6 @@
     // 3. INCOME
     // =========================================================================
 
-    /**
-     * Returns tax income for a settlement.
-     *
-     * Formula:
-     *   baseTax * max(1, population / 100) * taxRate
-     *
-     * baseTax comes from the settlement's rank definition. taxRate comes
-     * from the settlement's canonical fiscal policy. Population comes
-     * from the population accessor.
-     *
-     * Returns 0 if the settlement has a rank or tax rate but zero
-     * population. Returns null if a required input is unavailable.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateTaxIncome(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -168,19 +91,6 @@
         return Math.floor(baseTax * populationFactor * taxFactor);
     }
 
-    /**
-     * Returns trade income for a settlement.
-     *
-     * Formula:
-     *   taxIncome * 0.3 * (1 + tariff)
-     *
-     * Note: the 0.3 factor reflects the domain's current model of trade
-     * income as a derived fraction of tax income. It is a domain constant
-     * and is defined here, not duplicated.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateTradeIncome(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -196,16 +106,6 @@
         return Math.floor(taxIncome * 0.3 * (1 + tariffFactor));
     }
 
-    /**
-     * Returns industry tax income for a settlement.
-     *
-     * Formula:
-     *   sum over enterprises with positive profit:
-     *     floor(profit * industryTaxRate / 100)
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateIndustryIncome(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -233,16 +133,6 @@
         return total;
     }
 
-    /**
-     * Returns state-owned enterprise profit for a settlement.
-     *
-     * Reads enterprises in the settlement's location set whose ownership
-     * category is state. Per §19, ownership is determined from the
-     * enterprise's own fields.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateStateEnterpriseIncome(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -267,16 +157,6 @@
         return total;
     }
 
-    /**
-     * Returns public enterprise profit for a settlement.
-     *
-     * Public enterprises are those owned by the settlement (as opposed to
-     * the state or private owners). Their profits accrue to the
-     * settlement treasury.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculatePublicEnterpriseIncome(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -303,13 +183,6 @@
         return total;
     }
 
-    /**
-     * Returns tax revenue for a settlement: taxes + trade + industry tax.
-     * Does not include enterprise profits.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateTaxRevenue(locationId) {
         var tax = calculateTaxIncome(locationId);
         var trade = calculateTradeIncome(locationId);
@@ -320,12 +193,6 @@
         return tax + trade + industry;
     }
 
-    /**
-     * Returns total income for a settlement.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateTotalIncome(locationId) {
         var taxRevenue = calculateTaxRevenue(locationId);
         var stateIncome = calculateStateEnterpriseIncome(locationId);
@@ -342,30 +209,12 @@
     // 4. EXPENSES
     // =========================================================================
 
-    /**
-     * Returns maintenance cost for a settlement: the sum of maintenance
-     * across all built features.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateMaintenanceCosts(locationId) {
         var effects = _getFeatureQueries().getSettlementFeatureEffects(locationId);
         if (effects === null) return null;
         return effects.totalMaintenance;
     }
 
-    /**
-     * Returns wage cost paid by the settlement for state employees.
-     *
-     * State employees are employed by state-owned enterprises; their
-     * wages are a settlement government expense. Private enterprise
-     * wages are enterprise expenses, not settlement expenses. Public
-     * enterprise wages are enterprise expenses as well.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateWageCosts(locationId) {
         var employment = _getEmploymentQueries().getEmployment(locationId);
         if (!employment) return null;
@@ -379,24 +228,6 @@
         return stateEmployed * averageWage;
     }
 
-    /**
-     * Returns the settlement's spending costs.
-     *
-     * Per §21, allocation and expense are distinct concepts. This
-     * function reads actual spending fields when they exist:
-     *   - militarySpending
-     *   - infrastructureSpending
-     *   - educationSpending
-     *
-     * If a spending field is not defined on the settlement, it is
-     * treated as 0 for that category. This is a domain rule: a
-     * settlement that has never set military spending has no military
-     * spending. It is not a substituted default; it is the correct
-     * value.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateSpendingCosts(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -414,24 +245,6 @@
         return military + infrastructure + education;
     }
 
-    /**
-     * Returns the settlement's government salary expense.
-     *
-     * Per §21, this reads actual salary expense, not the allocated
-     * budget. The annual processor is responsible for converting an
-     * allocation into an actual expense. Until that conversion is
-     * performed, the settlement's current canonical field
-     * `governmentSalaryBudget` is interpreted as an allocation, not an
-     * expense.
-     *
-     * If the settlement does not track actual government salary expense
-     * separately, this function returns 0. That is the correct value for
-     * "not tracked": the settlement does not expense what it does not
-     * pay.
-     *
-     * @param {string} locationId
-     * @returns {number}
-     */
     function calculateGovernmentSalaryExpenses(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -443,19 +256,14 @@
         return 0;
     }
 
-    /**
-     * Returns total expenses for a settlement.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateTotalExpenses(locationId) {
         var maintenance = calculateMaintenanceCosts(locationId);
         var wages = calculateWageCosts(locationId);
         var spending = calculateSpendingCosts(locationId);
         var govSalaries = calculateGovernmentSalaryExpenses(locationId);
 
-        if (maintenance === null || wages === null || spending === null || govSalaries === null) {
+        if (maintenance === null || wages === null ||
+            spending === null || govSalaries === null) {
             return null;
         }
 
@@ -466,12 +274,6 @@
     // 5. SURPLUS AND BUDGET SUMMARY
     // =========================================================================
 
-    /**
-     * Returns the settlement's annual surplus: income minus expenses.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function calculateSurplus(locationId) {
         var income = calculateTotalIncome(locationId);
         var expenses = calculateTotalExpenses(locationId);
@@ -481,32 +283,6 @@
         return income - expenses;
     }
 
-    /**
-     * Returns a complete budget summary for a settlement.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     *   {
-     *     income: {
-     *       taxes: number,
-     *       trade: number,
-     *       industry: number,
-     *       stateEnterprises: number,
-     *       publicEnterprises: number,
-     *       total: number
-     *     },
-     *     expenses: {
-     *       maintenance: number,
-     *       wages: number,
-     *       military: number,
-     *       infrastructure: number,
-     *       education: number,
-     *       governmentSalaries: number,
-     *       total: number
-     *     },
-     *     surplus: number
-     *   }
-     */
     function getBudgetSummary(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -558,17 +334,6 @@
     // 6. DERIVED METRICS
     // =========================================================================
 
-    /**
-     * Returns the settlement's debt ratio as an integer percentage.
-     *
-     * Formula:
-     *   debt / max(1, wealth + debt) * 100, clamped to [0, 100]
-     *
-     * If debt is 0, returns 0.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getDebtRatio(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -589,21 +354,6 @@
         return Math.round(ratio);
     }
 
-    /**
-     * Returns the settlement's administrative efficiency score.
-     *
-     * Formula:
-     *   round(min(100, (income / max(1, expenses)) * 50))
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     *   {
-     *     efficiency: number,     // 0-100
-     *     income: number,
-     *     expenses: number,
-     *     surplus: number
-     *   }
-     */
     function getEfficiencyScore(locationId) {
         var income = calculateTotalIncome(locationId);
         var expenses = calculateTotalExpenses(locationId);
