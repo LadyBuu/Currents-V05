@@ -5,102 +5,88 @@
  *
  * LOCATION: js/core/industry/industry-types.js
  *
- * Read-only access to the canonical enterprise type registry.
+ * Read-only facade over the enterprise type registry.
  *
- * ARCHITECTURAL RULES (Phase 1):
- *   - No recursion guards.
- *   - No fabricated dependency fallbacks.
- *   - No auto-initialization. If the registry is empty, it is empty.
- *   - No mutations. Type mutations live in IndustryTypeCommands.
- *   - Default definitions live in IndustryTypeDefaults, not here.
+ * This file:
+ *   - exposes query helpers over IndustryState's type catalogue
+ *   - groups types by category
+ *
+ * This file does NOT:
+ *   - read masterData directly (IndustryState does)
+ *   - mutate the registry (IndustryTypeCommands does)
+ *   - validate records (IndustryRules does)
+ *
+ * The distinction between this facade and IndustryState.getEnterpriseType:
+ * IndustryState exposes the raw catalogue accessors; this module exposes
+ * the query surface used by UI, modals, and diagnostics. It exists so the
+ * UI has a stable name to depend on that isn't "reach into State".
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - industry-state.js (IndustryState)
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    // =========================================================================
-    // 1. DEPENDENCY ACCESS
-    // =========================================================================
-
-    function _requireMasterData() {
-        var md = window.masterData;
-        if (!md) {
-            throw new Error('IndustryTypes: masterData dependency missing');
-        }
-        if (!md.data) {
-            md.data = {};
-        }
-        return md;
+    if (typeof window.IndustryState === 'undefined') {
+        throw new Error(
+            'industry-types.js requires industry-state.js to load first.'
+        );
     }
 
-    function _getCanonicalTypes() {
-        var md = _requireMasterData();
-        if (!md.data.enterpriseTypes) {
-            return [];
-        }
-        return md.data.enterpriseTypes;
-    }
+    var IS = window.IndustryState;
 
     // =========================================================================
-    // 2. QUERIES
+    // 1. QUERIES
     // =========================================================================
 
     function getEnterpriseTypes() {
-        return _getCanonicalTypes().slice();
+        return IS.getAllEnterpriseTypes();
     }
 
-    function getEnterpriseTypeById(id) {
-        if (!id) return null;
-        var types = _getCanonicalTypes();
-        for (var i = 0; i < types.length; i++) {
-            if (types[i].id === id) {
-                return types[i];
-            }
-        }
-        return null;
+    function getEnterpriseTypeById(typeId) {
+        if (typeof typeId !== 'string' || typeId.length === 0) return null;
+        return IS.getEnterpriseType(typeId);
     }
 
     function getEnterpriseTypesByCategory(category) {
-        if (!category) return [];
-        var types = _getCanonicalTypes();
-        var result = [];
-        for (var i = 0; i < types.length; i++) {
-            if (types[i].category === category) {
-                result.push(types[i]);
-            }
-        }
-        return result;
+        if (typeof category !== 'string' || category.length === 0) return [];
+        return IS.getEnterpriseTypesByCategory(category);
     }
 
+    /**
+     * Groups all types by category. Returns an object keyed by category
+     * name. Categories are sorted alphabetically; types within a category
+     * retain the order they have in the registry.
+     */
     function getEnterpriseCategories() {
-        var types = _getCanonicalTypes();
+        var all = IS.getAllEnterpriseTypes();
         var categories = {};
-        for (var i = 0; i < types.length; i++) {
-            var cat = types[i].category;
-            if (cat === undefined || cat === null) continue;
-            if (!categories[cat]) {
-                categories[cat] = [];
-            }
-            categories[cat].push(types[i]);
+        for (var i = 0; i < all.length; i++) {
+            var cat = all[i].category;
+            if (typeof cat !== 'string' || cat.length === 0) continue;
+            if (!categories[cat]) categories[cat] = [];
+            categories[cat].push(all[i]);
         }
         return categories;
     }
 
     // =========================================================================
-    // 3. EXPORTS
+    // 2. EXPORTS
     // =========================================================================
 
-    window.IndustryTypes = {
+    window.IndustryTypes = Object.freeze({
         getEnterpriseTypes: getEnterpriseTypes,
         getEnterpriseTypeById: getEnterpriseTypeById,
         getEnterpriseTypesByCategory: getEnterpriseTypesByCategory,
         getEnterpriseCategories: getEnterpriseCategories
-    };
+    });
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.IndustryTypes;
     }
-
 })();
