@@ -7,24 +7,14 @@
  * PROSPERITY QUERIES.
  *
  * This file provides read-only calculation of a settlement's prosperity
- * and a breakdown of every modifier that contributed to it. It answers:
- *   - what is the prosperity of a settlement?
- *   - how does each factor (rank, features, specialization, tax, crime,
- *     literacy, employment, debt, government, roles, religion,
- *     enterprises) affect it?
- *   - what band does the prosperity fall into?
+ * and a breakdown of every modifier that contributed to it.
  *
  * It is a query module. It:
  *   - reads canonical settlement data through SettlementQueries
- *   - reads features through SettlementFeatureQueries
- *   - reads employment through SettlementEmploymentQueries
- *   - reads crime through SettlementCrimeQueries
- *   - reads literacy through SettlementEducationQueries
- *   - reads religion through SettlementReligionQueries
- *   - reads enterprises through IndustryQueries
- *   - reads government leader through GovernmentQueries
- *   - reads role data through CharacterQueries
- *   - reads definitions from SettlementProsperityDefinitions
+ *   - reads features, employment, crime, literacy, religion, enterprises,
+ *     government leaders, and role data through their owning query modules
+ *   - reads definitions from SettlementProsperityDefinitions and
+ *     SettlementRankRules
  *   - does not mutate anything
  *   - does not persist
  *   - does not display UI
@@ -39,9 +29,7 @@
  * Determinism:
  *
  *   Prosperity is deterministic. The same inputs always produce the same
- *   value. Random variation is NOT part of this calculation. Randomness,
- *   if it is desired, belongs to the annual processor as an explicit
- *   simulation step, not to a query.
+ *   value. Random variation is NOT part of this calculation.
  *
  * Result shape:
  *
@@ -50,29 +38,13 @@
  *     base: number,              // BASE_PROSPERITY
  *     band: { id, name, color }, // from PROSPERITY_BANDS
  *     modifiers: {
- *       rank: number,
- *       features: number,
- *       specialization: number,
- *       taxRate: number,
- *       crime: number,
- *       literacy: number,
- *       employment: number,
- *       debt: number,
- *       governmentLeader: number,
- *       roleDiversity: number,
- *       masterConcentration: number,
- *       specializationSynergy: number,
- *       underservedRoles: number,
- *       averageSkill: number,
- *       religiousUnity: number,
- *       placesOfWorship: number,
- *       dominantReligion: number,
- *       publicEnterprises: number
+ *       rank, features, specialization, taxRate, crime, literacy,
+ *       employment, debt, governmentLeader, roleDiversity,
+ *       masterConcentration, specializationSynergy, underservedRoles,
+ *       averageSkill, religiousUnity, placesOfWorship,
+ *       dominantReligion, publicEnterprises
  *     }
  *   }
- *
- * Each modifier is the delta applied. The sum of modifiers, added to
- * base, clamped to [0, 100], is the final value.
  *
  * Missing data:
  *
@@ -82,12 +54,22 @@
  *     unavailable (e.g. no leader)   → that modifier is 0 for this
  *                                       settlement
  *
+ * Leader lookup:
+ *   Leader data is owned by LocationQueries. The previous version of this
+ *   file called GovernmentQueries.getCurrentLeader, which delegates to
+ *   LocationQueries.getCurrentLeader. That created a load-order cycle
+ *   (government-bootstrap requires SettlementQueries; settlement's
+ *   prosperity queries require GovernmentQueries). This file now calls
+ *   LocationQueries.getCurrentLeader directly. Behavior is identical.
+ *
+ * Location hierarchy:
+ *   The previous version called LocationState.getAllSubLocationIds, which
+ *   does not exist on the frozen LocationState. It lives on
+ *   LocationQueries. This file now calls LocationQueries.getAllSubLocationIds.
+ *
  * Time dependency:
  *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
- *   window.getCurrentYear. The previous version of this file called
- *   window.Time.getCurrentYear() in the government-leader tenure
- *   calculation, which would have thrown. It now uses the canonical
- *   helper directly.
+ *   window.getCurrentYear.
  *
  * =============================================================================
  */
@@ -106,12 +88,11 @@
     function _getEducationQueries()        { return window.SettlementEducationQueries; }
     function _getReligionQueries()         { return window.SettlementReligionQueries; }
     function _getIndustryQueries()         { return window.IndustryQueries; }
-    function _getGovernmentQueries()       { return window.GovernmentQueries; }
+    function _getLocationQueries()         { return window.LocationQueries; }
     function _getCharacterQueries()        { return window.CharacterQueries; }
     function _getProsperityDefinitions()   { return window.SettlementProsperityDefinitions; }
     function _getRankRules()               { return window.SettlementRankRules; }
     function _getPopulationAccessor()      { return window.getLocationPopulationCount; }
-    function _getLocationState()           { return window.LocationState; }
 
     // =========================================================================
     // 2. HELPERS
@@ -122,11 +103,9 @@
     }
 
     function _getLocationIdsForSettlement(locationId) {
-        var locationState = _getLocationState();
-        if (typeof locationState.getAllSubLocationIds === 'function') {
-            var ids = locationState.getAllSubLocationIds(locationId);
-            if (ids && ids.length > 0) return ids;
-        }
+        // Location hierarchy is owned by LocationQueries.
+        var ids = _getLocationQueries().getAllSubLocationIds(locationId);
+        if (ids && ids.length > 0) return ids;
         return [locationId];
     }
 
@@ -156,12 +135,6 @@
     // =========================================================================
     // 3. ROLE ANALYSIS
     // =========================================================================
-    //
-    // Role analysis requires iterating characters in the settlement's
-    // location set once and building a small role summary. It returns
-    // counts used by two prosperity modifiers: role diversity and master
-    // concentration.
-    //
 
     function _computeRoleFacts(locationId) {
         var locationIds = _getLocationIdsForSettlement(locationId);
@@ -223,14 +196,6 @@
     // 4. PROSPERITY CALCULATION
     // =========================================================================
 
-    /**
-     * Returns the settlement's prosperity and its modifier breakdown.
-     *
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function getProsperity(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -278,9 +243,6 @@
         }
 
         // ----- Specialization effect -----
-        // Specialization prosperity bonus is owned by the specialization
-        // calculation. For now, it is not available as a separate module.
-        // When SettlementSpecializationQueries exists, this reads from it.
         if (window.SettlementSpecializationQueries
             && typeof window.SettlementSpecializationQueries.getProsperityBonus === 'function') {
             var specBonus = window.SettlementSpecializationQueries.getProsperityBonus(locationId);
@@ -322,7 +284,8 @@
         }
 
         // ----- Government leader effect -----
-        var leader = _getGovernmentQueries().getCurrentLeader(locationId);
+        // Leader data is owned by LocationQueries. See file header.
+        var leader = _getLocationQueries().getCurrentLeader(locationId);
         if (leader && leader.character) {
             var traits = leader.character.traits || [];
             var leaderDelta = 0;
@@ -354,9 +317,6 @@
             modifiers.specializationSynergy = 2;
         }
 
-        // Underserved roles: count important roles that are absent by
-        // name match. The important-role list is a domain rule, defined
-        // here as the current economy model.
         var importantRoleNames = [
             'blacksmith', 'merchant', 'healer', 'farmer',
             'carpenter', 'baker', 'butcher'
@@ -380,7 +340,6 @@
         if (missingCount > 3) modifiers.underservedRoles = -3;
         else if (missingCount > 1) modifiers.underservedRoles = -1;
 
-        // Average skill
         if (roleFacts.averageSkill > 60) modifiers.averageSkill = 2;
         else if (roleFacts.averageSkill > 40) modifiers.averageSkill = 1;
         else if (roleFacts.averageSkill < 20 && roleFacts.totalProfessions > 0) modifiers.averageSkill = -1;
@@ -445,25 +404,11 @@
         };
     }
 
-    /**
-     * Returns just the prosperity value as an integer in [0, 100].
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getProsperityValue(locationId) {
         var result = getProsperity(locationId);
         return result === null ? null : result.value;
     }
 
-    /**
-     * Returns the prosperity band for a settlement: { id, name, color }.
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function getProsperityBand(locationId) {
         var result = getProsperity(locationId);
         return result === null ? null : result.band;
