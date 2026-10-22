@@ -8,9 +8,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/worldManager.css">
-	    <link rel="stylesheet" href="css/selectors.css">
-			    <link rel="stylesheet" href="css/location-sidebar.css">
-							    <link rel="stylesheet" href="css/gov-manager.css">
+    <link rel="stylesheet" href="css/selectors.css">
+    <link rel="stylesheet" href="css/location-sidebar.css">
+    <link rel="stylesheet" href="css/gov-manager.css">
 </head>
 <body>
 
@@ -40,7 +40,7 @@
         </div>
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
-    
+
     <!-- Main Panel -->
     <div class="main-panel">
         <!-- Tabs - Unified -->
@@ -181,12 +181,14 @@
 <!-- GOVERNMENT SYSTEM                                            -->
 <!-- ============================================================ -->
 
+<script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
-<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-rules.js"></script>
 <script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
 <script src="js/government/government-economy.js"></script>
-<script src="js/government/government-assignment.js"></script>
-<script src="js/government/government-system.js"></script>
+<script src="js/government/government-bootstrap.js"></script>
+<script src="js/government/government-view-models.js"></script>
 <script src="js/government/government-ui-list.js"></script>
 
 <!-- ============================================================ -->
@@ -194,9 +196,9 @@
 <!-- ============================================================ -->
 
 <script src="js/government/modals-government.js"></script>
-<script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-departments.js"></script>
 <script src="js/government/modals-government-positions.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
 
 <!-- ============================================================ -->
@@ -231,19 +233,19 @@
     // =============================================================================
     // ICON HELPERS - Uses icons.js
     // =============================================================================
-    
+
     function getIcon(name) {
         if (window.Icons && window.Icons[name]) {
             return window.Icons[name];
         }
         return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
     }
-    
+
     function iconWithText(icon, text) {
         if (!icon) return text || '';
         return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
     }
-    
+
     var ICONS = {
         CROWN: getIcon('CROWN'),
         LOCATION: getIcon('LOCATION'),
@@ -298,6 +300,30 @@
         }
     }
 
+    function bootstrapGovernment() {
+        if (!window.GovernmentBootstrap || typeof window.GovernmentBootstrap.init !== 'function') {
+            return;
+        }
+        try {
+            window.GovernmentBootstrap.init();
+        } catch (e) {
+            console.error('Government bootstrap failed:', e);
+        }
+    }
+
+    function reinitGovernment() {
+        if (!window.GovernmentBootstrap) return;
+        try {
+            if (typeof window.GovernmentBootstrap.reinit === 'function') {
+                window.GovernmentBootstrap.reinit();
+            } else if (typeof window.GovernmentBootstrap.init === 'function') {
+                window.GovernmentBootstrap.init();
+            }
+        } catch (e) {
+            console.error('Government bootstrap reinit failed:', e);
+        }
+    }
+
     // =============================================================================
     // SETUP UI TEXT WITH ICONS
     // =============================================================================
@@ -305,40 +331,40 @@
     function setupUIText() {
         var title = document.getElementById('govManagerTitle');
         if (title) title.innerHTML = iconWithText(ICONS.CROWN, ' GOVERNMENT MANAGER');
-        
+
         var sidebarTitle = document.getElementById('sidebarTitle');
         if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(ICONS.LOCATION, ' LOCATION HIERARCHY');
-        
+
         var addGovTypeBtn = document.getElementById('addGovTypeBtn');
         if (addGovTypeBtn) addGovTypeBtn.innerHTML = iconWithText(ICONS.PLUS, ' Gov Type');
-        
+
         var addDeptBtn = document.getElementById('addDeptBtn');
         if (addDeptBtn) addDeptBtn.innerHTML = iconWithText(ICONS.PLUS, ' Department');
-        
+
         var importBtn = document.getElementById('importBtn');
         if (importBtn) importBtn.innerHTML = iconWithText(ICONS.IMPORT, ' Import');
-        
+
         var exportBtn = document.getElementById('exportBtn');
         if (exportBtn) exportBtn.innerHTML = iconWithText(ICONS.EXPORT, ' Export');
-        
+
         var refreshBtn = document.getElementById('refreshBtn');
         if (refreshBtn) refreshBtn.innerHTML = iconWithText(ICONS.REFRESH, ' Refresh');
-        
+
         var loadingText = document.getElementById('loadingText');
         if (loadingText) loadingText.textContent = 'Loading locations...';
-        
+
         var emptyState = document.getElementById('emptyStateText');
         if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
-        
+
         var tabGovernment = document.getElementById('tabGovernment');
         if (tabGovernment) tabGovernment.innerHTML = iconWithText(ICONS.CROWN, ' Government');
-        
+
         var tabOverview = document.getElementById('tabOverview');
         if (tabOverview) tabOverview.innerHTML = iconWithText(ICONS.OVERVIEW, ' Overview');
-        
+
         var tabTypes = document.getElementById('tabTypes');
         if (tabTypes) tabTypes.innerHTML = iconWithText(ICONS.GEAR, ' Gov Types');
-        
+
         var tabStructure = document.getElementById('tabStructure');
         if (tabStructure) tabStructure.innerHTML = iconWithText(ICONS.STRUCTURE, ' Structure');
     }
@@ -350,7 +376,7 @@
     function setupLocationTree() {
         var container = document.getElementById('placeList');
         if (!container) return;
-        
+
         if (typeof window.renderLocationTree === 'function') {
             window.renderLocationTree('placeList', function(placeId) {
                 if (placeId) {
@@ -364,7 +390,7 @@
                     }
                 }
             });
-        } else if (typeof window.LocationUI !== 'undefined' && 
+        } else if (typeof window.LocationUI !== 'undefined' &&
                    typeof window.LocationUI.renderLocationTree === 'function') {
             window.LocationUI.renderLocationTree('placeList', function(placeId) {
                 if (placeId) {
@@ -389,7 +415,7 @@
                 }
                 html += '</div>';
                 container.innerHTML = html;
-                
+
                 var items = container.querySelectorAll('.place-item');
                 for (var i = 0; i < items.length; i++) {
                     (function(item) {
@@ -419,7 +445,7 @@
                     renderCurrentTab();
                 }
             });
-        } else if (typeof window.LocationUI !== 'undefined' && 
+        } else if (typeof window.LocationUI !== 'undefined' &&
                    typeof window.LocationUI.refreshLocationTree === 'function') {
             window.LocationUI.refreshLocationTree('placeList', function(placeId) {
                 if (placeId && placeId !== currentPlaceId) {
@@ -466,24 +492,24 @@
         var menuToggle = document.getElementById('menuToggle');
         var sidebar = document.getElementById('locationsSidebar');
         var overlay = document.getElementById('sidebarOverlay');
-        
+
         if (!menuToggle || !sidebar || !overlay) return;
-        
+
         menuToggle.addEventListener('click', function(e) {
             e.stopPropagation();
             toggleSidebar();
         });
-        
+
         overlay.addEventListener('click', function() {
             closeSidebar();
         });
-        
+
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 closeSidebar();
             }
         });
-        
+
         window.addEventListener('resize', function() {
             if (window.innerWidth > 768) {
                 closeSidebar();
@@ -500,10 +526,10 @@
     function renderGovernmentTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-        
+
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-        
+
         if (!placeId) placeId = currentPlaceId;
         if (!placeId) {
             var places = getPlaces();
@@ -521,12 +547,12 @@
                 }
             }
         }
-        
+
         if (!placeId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
         }
-        
+
         if (typeof window.renderGovernmentTab === 'function') {
             window.renderGovernmentTab('panelContent', placeId, function() {
                 if (currentTab === 'government') renderCurrentTab();
@@ -539,10 +565,10 @@
     function renderGovernmentOverviewTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-        
+
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-        
+
         if (!placeId) placeId = currentPlaceId;
         if (!placeId) {
             var places = getPlaces();
@@ -560,12 +586,12 @@
                 }
             }
         }
-        
+
         if (!placeId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
         }
-        
+
         if (typeof window.renderGovernmentOverviewTab === 'function') {
             window.renderGovernmentOverviewTab('panelContent', placeId);
         } else {
@@ -576,7 +602,7 @@
     function renderGovernmentTypesTab() {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-        
+
         var panel = document.getElementById('panelContent');
         if (typeof window.renderGovernmentTypesTab === 'function') {
             window.renderGovernmentTypesTab('panelContent', function() {
@@ -590,10 +616,10 @@
     function renderGovernmentStructureTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-        
+
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-        
+
         if (!placeId) placeId = currentPlaceId;
         if (!placeId) {
             var places = getPlaces();
@@ -611,12 +637,12 @@
                 }
             }
         }
-        
+
         if (!placeId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
         }
-        
+
         if (typeof window.renderGovernmentStructureTab === 'function') {
             window.renderGovernmentStructureTab('panelContent', placeId, function() {
                 if (currentTab === 'governmentStructure') renderCurrentTab();
@@ -633,9 +659,9 @@
     function renderCurrentTab() {
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-        
+
         cleanupEventListeners();
-        
+
         if (!currentPlaceId) {
             var places = getPlaces();
             if (places && places.length > 0) {
@@ -650,15 +676,15 @@
                 }
             }
         }
-        
+
         var needsPlace = ['government', 'governmentOverview', 'governmentStructure'];
         var isLocationTab = needsPlace.indexOf(currentTab) !== -1;
-        
+
         if (isLocationTab && !currentPlaceId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
         }
-        
+
         switch (currentTab) {
             case 'government':
                 renderGovernmentTab(currentPlaceId);
@@ -679,9 +705,9 @@
 
     function switchTab(tabName) {
         var needsPlace = ['government', 'governmentOverview', 'governmentStructure'];
-        
+
         currentTab = tabName;
-        
+
         if (needsPlace.indexOf(tabName) !== -1 && !currentPlaceId) {
             var places = getPlaces();
             if (places && places.length > 0) {
@@ -696,7 +722,7 @@
                 }
             }
         }
-        
+
         document.querySelectorAll('.tab-btn').forEach(function(btn) {
             if (btn.dataset.tab === tabName) {
                 btn.classList.add('active');
@@ -704,7 +730,7 @@
                 btn.classList.remove('active');
             }
         });
-        
+
         renderCurrentTab();
     }
 
@@ -736,7 +762,7 @@
         var importBtn = document.getElementById('importBtn');
         var exportBtn = document.getElementById('exportBtn');
         var refreshBtn = document.getElementById('refreshBtn');
-        
+
         if (addGovTypeBtn) {
             addGovTypeBtn.onclick = function() {
                 if (typeof window.openAddGovernmentTypeModal === 'function') {
@@ -748,15 +774,15 @@
                 }
             };
         }
-        
+
         if (addDeptBtn) {
             addDeptBtn.onclick = function() {
                 var locationId = currentPlaceId;
-                
+
                 if (!locationId) {
                     var places = getPlaces();
-                    var validPlaces = places.filter(function(p) { 
-                        return p.variableKey && p.variableKey !== 'world_root'; 
+                    var validPlaces = places.filter(function(p) {
+                        return p.variableKey && p.variableKey !== 'world_root';
                     });
                     if (validPlaces.length > 0) {
                         locationId = validPlaces[0].id;
@@ -764,12 +790,12 @@
                         locationId = places[0].id;
                     }
                 }
-                
+
                 if (!locationId) {
                     showToast(iconWithText(ICONS.WARNING, ' No location selected'), 'warning');
                     return;
                 }
-                
+
                 if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
                     window.openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
                         if (currentTab === 'governmentStructure') renderCurrentTab();
@@ -785,15 +811,15 @@
                 }
             };
         }
-        
+
         if (importBtn) {
             importBtn.onclick = async function() {
                 if (typeof window.importData === 'function') {
                     try {
                         await window.importData();
-                        setTimeout(function() { 
-                            refreshLocationTree(); 
-                            renderCurrentTab(); 
+                        setTimeout(function() {
+                            refreshLocationTree();
+                            renderCurrentTab();
                         }, 200);
                         showToast(iconWithText(ICONS.CHECK, ' Import successful'), 'success');
                     } catch (error) {
@@ -804,7 +830,7 @@
                 }
             };
         }
-        
+
         if (exportBtn) {
             exportBtn.onclick = function() {
                 if (typeof window.exportData === 'function') {
@@ -814,7 +840,7 @@
                 }
             };
         }
-        
+
         if (refreshBtn) {
             refreshBtn.onclick = function() {
                 if (typeof window.loadMasterData === 'function') {
@@ -836,21 +862,26 @@
     function init() {
         if (isInitialized) return;
         isInitialized = true;
-        
+
         setupUIText();
-        
+
         if (typeof window.loadMasterData === 'function') {
             window.loadMasterData();
         }
-        
+
+        // Hydrate Government indexes now that masterData.data is available.
+        // The bootstrap script auto-init skips if masterData wasn't loaded at
+        // script-evaluation time, which is the case in this page.
+        bootstrapGovernment();
+
         setTimeout(function() {
             setupLocationTree();
         }, 150);
-        
+
         setupTabs();
         setupTopBarActions();
         initMobileSidebar();
-        
+
         currentTab = 'government';
         document.querySelectorAll('.tab-btn').forEach(function(btn) {
             if (btn.dataset.tab === 'government') {
@@ -859,7 +890,7 @@
                 btn.classList.remove('active');
             }
         });
-        
+
         var panel = document.getElementById('panelContent');
         if (panel) {
             if (currentPlaceId) {
@@ -868,19 +899,20 @@
                 panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             }
         }
-        
+
         window.addEventListener('masterDataUpdated', function() {
+            reinitGovernment();
             refreshLocationTree();
             renderCurrentTab();
         });
-        
+
         console.log('✅ Government Manager initialized');
     }
-    
+
     // =============================================================================
     // EXPORTS
     // =============================================================================
-    
+
     window.switchGovTab = switchTab;
     window.renderCurrentGovTab = renderCurrentTab;
     window.refreshGovTree = refreshLocationTree;
@@ -894,11 +926,11 @@
     window.closeMobileSidebar = closeSidebar;
     window.toggleMobileSidebar = toggleSidebar;
     window.getCurrentGovLocationId = function() { return currentPlaceId; };
-    
+
     window.addEventListener('beforeunload', function() {
         cleanupEventListeners();
     });
-    
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
