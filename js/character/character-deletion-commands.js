@@ -4,6 +4,8 @@
  * (js/character/character-deletion-commands.js)
  * =============================================================================
  *
+ * LOCATION: js/character/character-deletion-commands.js
+ *
  * Deletion boundary for the character domain.
  *
  * SCOPE:
@@ -19,13 +21,16 @@
  *   - Field updates       -> character-commands.js
  *   - Family graph cleanup details      -> family-commands.js (called here)
  *   - Children domain cleanup details   -> children-commands.js (called here)
- *   - Relationship cleanup              -> relationship-integrations.js
- *                                          (called here)
- *   - Household cleanup                 -> household-commands.js (if loaded)
- *   - World leader cleanup              -> world-commands.js (if loaded)
- *   - Rank cleanup                      -> rank-issues.js (called here)
- *   - Apprenticeship cleanup            -> apprenticeship-commands.js
- *                                          (if loaded)
+ *   - Relationship cleanup              -> relationships/relationship-integration.js
+ *                                          (called here, when loaded)
+ *   - Household cleanup                 -> households/household-commands.js
+ *                                          (called here, when loaded)
+ *   - World leader cleanup              -> no WorldCommands module exists in
+ *                                          the current tree; the cleanup entry
+ *                                          is retained for the future domain
+ *   - Rank cleanup                      -> ranks/rank-issues.js (called here)
+ *   - Apprenticeship cleanup            -> apprenticeship/apprenticeship-commands.js
+ *                                          (called here, when loaded)
  *   - Persistence                       -> character-state.js
  *   - Events / toasts                   -> caller
  *
@@ -40,7 +45,8 @@
  *   cleanup pass runs AFTER removal. Each domain's cleanup function is
  *   called if the module is loaded. Missing modules do not block deletion;
  *   their references are simply not cleaned. The response records which
- *   domains participated.
+ *   domains participated, which were skipped (module or method not
+ *   present), and which failed.
  *
  * SOFT-DELETE FIELD OWNERSHIP:
  *   isDeleted and deletedAt are domain-owned fields (they are listed in
@@ -57,18 +63,47 @@
  *     ChildrenCommands.removeAllReferencesTo(id)
  *     RelationshipIntegrations.removeAllReferencesTo(id)
  *     HouseholdCommands.removeCharacterReferences(id)
- *     WorldCommands.removeLeaderReferences(id)
  *     RankIssues.removeAllReferencesTo(id)
  *     ApprenticeshipCommands.removeAllReferencesTo(id)
  *
- *   Each is called only if the module and the method exist. The return
- *   value records which calls were made and which were skipped.
+ *   Each is called only if the module and the method exist. The
+ *   returned `cleanup` report per character contains three arrays:
+ *     applied  — domains whose cleanup ran without a reported failure
+ *     skipped  — domains where the module or method was absent
+ *     failed   — domains whose cleanup returned failure or threw
+ *
+ *   The report is informational. Deletion succeeds regardless of cleanup
+ *   outcome. A failing cleanup means the domain's own data still
+ *   references a now-deleted character id; that is a bug in the domain,
+ *   not a reason to refuse the delete.
+ *
+ * NAMING NOTE:
+ *   The relationship domain's cross-domain hook is exported by
+ *   js/relationships/relationship-integration.js under the namespace
+ *   "RelationshipIntegrations" (PLURAL). This is verified at line 505 of
+ *   that file: `window.RelationshipIntegrations = { ... }`.
+ *
+ *   Earlier revisions of this file referenced the singular form, which
+ *   does not exist in the tree and silently skipped relationship cleanup
+ *   on every deletion. The plural form is correct.
+ *
+ * WORLD CLEANUP:
+ *   There is no WorldCommands module in the current tree. The table
+ *   below deliberately omits the `world` entry. When the world domain
+ *   returns, add:
+ *
+ *     { label: 'world', moduleName: 'WorldCommands',
+ *       methodName: 'removeLeaderReferences' }
+ *
+ *   Until then, omitting it is honest: no spurious "skipped: world"
+ *   noise on every deletion.
  *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?, ... }.
  *   - Input is validated before any mutation.
  *   - No mutation lock. Commands are synchronous.
- *   - No fallbacks. If CharacterState is missing at load, this module throws.
+ *   - No fallbacks. If CharacterState is missing at load, this module
+ *     throws.
  *
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js  (CharacterState.removeCharacter,
@@ -78,13 +113,15 @@
  *                          CharacterState._getLiveCharacterForMutation)
  *
  * DEPENDENCIES (OPTIONAL, called only if present):
- *   - family-commands.js
- *   - children-commands.js
- *   - relationship-integrations.js
- *   - household-commands.js
- *   - world-commands.js
- *   - rank-issues.js
- *   - apprenticeship-commands.js
+ *   - family-commands.js          (FamilyCommands.removeAllReferencesTo)
+ *   - children-commands.js        (ChildrenCommands.removeAllReferencesTo)
+ *   - relationships/relationship-integration.js
+ *                                 (RelationshipIntegrations.removeAllReferencesTo)
+ *   - households/household-commands.js
+ *                                 (HouseholdCommands.removeCharacterReferences)
+ *   - apprenticeship/apprenticeship-commands.js
+ *                                 (ApprenticeshipCommands.removeAllReferencesTo)
+ *   - ranks/rank-issues.js        (RankIssues.removeAllReferencesTo)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -168,14 +205,19 @@
     // function, this table is the single place to update.
     //
     // Relationship cleanup: the relationship domain owns its cross-domain
-    // hooks in RelationshipIntegrations, not RelationshipCommands.
-    // RelationshipCommands is the generic edge-command layer; it does not
-    // export removeAllReferencesTo.
+    // hooks in relationship-integration.js, not in relationship-commands.js.
+    // The module name exported by that file is RelationshipIntegrations
+    // (PLURAL) — verified at line 505 of that file.
     //
     // Rank cleanup: the rank domain owns its cross-domain hooks in
-    // RankIssues, not RankCommands. RankCommands is the write boundary for
-    // rank records; RankIssues exposes handleCharacterDeath and
-    // removeAllReferencesTo.
+    // rank-issues.js, not in rank-commands.js. RankCommands is the write
+    // boundary for rank records; RankIssues exposes handleCharacterDeath
+    // and removeAllReferencesTo.
+    //
+    // World cleanup: no WorldCommands module exists in the current tree.
+    // The entry is deliberately absent so we do not emit a "skipped"
+    // every deletion. When the world domain returns, add it back to
+    // this table.
 
     var _CLEANUP_TARGETS = [
         {
@@ -197,11 +239,6 @@
             label: 'households',
             moduleName: 'HouseholdCommands',
             methodName: 'removeCharacterReferences'
-        },
-        {
-            label: 'world',
-            moduleName: 'WorldCommands',
-            methodName: 'removeLeaderReferences'
         },
         {
             label: 'rank',
