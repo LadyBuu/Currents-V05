@@ -60,6 +60,19 @@
  *     CharacterLifecycle.killCharacter.
  *   - The childbed-fever path never records a death in this module.
  *
+ * RANDOMNESS:
+ *   _pickRandom chooses random defaults for suggestion inputs (default
+ *   death-cause detail, default murder motive, default execution
+ *   reason). All such picks route through window.random() from
+ *   randomness.js. This module does NOT call Math.random directly;
+ *   doing so would be inconsistent with the rest of the character
+ *   subsystem, which treats Math.random as forbidden. The dependency
+ *   is required at load.
+ *
+ *   These picks are cosmetic UI defaults, not simulation outcomes.
+ *   Determinism therefore does not matter for correctness here — but
+ *   consistency does.
+ *
  * MODAL CLOSE SEMANTICS (see modals-core.js for the full contract):
  *   - Ordinary death / murder / execution: the user clicks Confirm,
  *     onConfirm runs the killCharacter call, and the modal closes.
@@ -74,6 +87,7 @@
  *   - icons.js:             Icons
  *   - modals-core.js:       openModal, closeTopModal
  *   - time.js:              getCurrentYear, isValidYear, calculateAge
+ *   - randomness.js:        random
  *   - CharacterQueries:     getCharacterSummary
  *   - MortalityRules:       DEATH_CAUSE, isValidDeathCause
  *   - CharacterLifecycle:   killCharacter
@@ -102,7 +116,8 @@
             'closeTopModal',
             'getCurrentYear',
             'isValidYear',
-            'calculateAge'
+            'calculateAge',
+            'random'
         ];
         var missing = [];
         for (var i = 0; i < required.length; i++) {
@@ -268,9 +283,16 @@
         return window.Icons[name] || '';
     }
 
+    /**
+     * Picks a random element from an array using the shared RNG stream.
+     *
+     * Does NOT call Math.random. See the RANDOMNESS section in the file
+     * header for why: consistency with the rest of the character
+     * subsystem, even though these picks are cosmetic UI defaults.
+     */
     function _pickRandom(arr) {
         if (!Array.isArray(arr) || arr.length === 0) return null;
-        return arr[Math.floor(Math.random() * arr.length)];
+        return arr[Math.floor(window.random() * arr.length)];
     }
 
     function _readSubject(characterId) {
@@ -430,9 +452,6 @@
                 );
 
                 if (!modalResult || modalResult.success !== true) {
-                    // The pregnancy modal refused to open (mother has no
-                    // fertile window, etc.). Surface a structured
-                    // failure and let the caller decide what to do.
                     throw new Error(modalResult && modalResult.reason
                         ? modalResult.reason
                         : 'Failed to open pregnancy attempt modal.');
@@ -862,9 +881,9 @@
 
         var modal = window.openModal({
             titleHtml: 'Execute: ' + _esc(condemned.name || ''),
-            contentHtml: content,
             confirmText: 'Confirm Execution',
             cancelText: 'Grant Mercy',
+            contentHtml: content,
             onOpen: function (modalElement) {
                 var reasonContainer = modalElement.querySelector('#execution-reason-suggestions');
                 var reasonInput = modalElement.querySelector('#execution-reason');
