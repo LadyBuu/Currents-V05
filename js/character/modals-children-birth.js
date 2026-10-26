@@ -4,6 +4,8 @@
  * (js/character/modals-children-birth.js)
  * =============================================================================
  *
+ * LOCATION: js/character/modals-children-birth.js
+ *
  * Birth-related modals.
  *
  * SCOPE:
@@ -21,8 +23,16 @@
  *   either before confirming. The modal does not enforce them; the
  *   caller's intent is reflected, not imposed.
  *
+ * RANDOMNESS:
+ *   Where this module makes a random decision (surprise-birth count,
+ *   pregnancy gender assignment), it routes through window.random()
+ *   from randomness.js. Math.random is forbidden. The reason is the
+ *   same as everywhere else in the codebase: seeded simulations must
+ *   be reproducible, and the only way to guarantee that is for every
+ *   random draw to come from the shared stream.
+ *
  * OUT OF SCOPE:
- *   - Mortality policy                -> MortalityRules
+ *   - Mortality policy                -> mortality-rules.js
  *   - Persistence                     -> CharacterState / ChildrenState
  *   - Presentation CSS                -> stylesheet
  *   - Modal stack                     -> modals-core.js
@@ -39,6 +49,7 @@
  *   - icons.js:             Icons
  *   - modals-core.js:       openModal, closeTopModal
  *   - time.js:              getCurrentYear, isValidYear, calculateAge
+ *   - randomness.js:        random
  *   - CharacterQueries:     getCharacterSummary
  *   - ChildrenCommands:     recordBirth, recordPregnancyAttempt
  *   - ChildrenQueries:      getPregnanciesForMother
@@ -60,7 +71,8 @@
             'closeTopModal',
             'getCurrentYear',
             'isValidYear',
-            'calculateAge'
+            'calculateAge',
+            'random'
         ];
         var missing = [];
         for (var i = 0; i < required.length; i++) {
@@ -332,7 +344,9 @@
             return { success: false, reason: 'Mother has no fertile window.' };
         }
 
-        var countRoll = Math.random();
+        // Surprise-birth count comes from the seeded RNG stream so the
+        // same seed produces the same surprise.
+        var countRoll = window.random();
         var childCount;
         if (countRoll < 0.05) childCount = 4;
         else if (countRoll < 0.15) childCount = 3;
