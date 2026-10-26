@@ -3,7 +3,7 @@
  * STILL WATERS - RESIDENCE STAFF MODALS (modals-residence-staff.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/modals-residence-staff.js
+ * LOCATION: js/households/modals-residence-staff.js
  *
  * PURPOSE
  * -------
@@ -22,13 +22,14 @@
  *   Reads:  ResidenceSystem (getResidence, getUnits, getStaffPositions,
  *                            getStaffAssignments)
  *           CharacterQueries (getCharacterById, getCharacters)
- *           RoleQueries (getRoleById, getAllRoles)
+ *           RoleQueries (getRoleById, getAllRoles) — via window.*
  *   Writes: ResidenceSystem (addStaffPosition, updateStaffPosition,
  *                            removeStaffPosition,
  *                            assignCharacterToStaffPosition,
  *                            endStaffAssignment, deleteStaffAssignment)
  *           + one persist() per mutation batch
- *   UI:     modals-core, selectors, icons
+ *   UI:     modals-core, selectors, icons, HouseholdModals,
+ *           HouseholdViewModels
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
@@ -41,6 +42,41 @@
  *     see the outcome. If the command later accepts the option, re-add
  *     the checkbox and pass addRoleIfMissing through.
  *
+ * DOM-SCOPE
+ * ---------
+ *   Every DOM lookup is scoped to the modal's own `handle.element` via
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
+ *   rationale on why the prior _resolveModalRoot() fallback (which
+ *   ended at document.body) was wrong.
+ *
+ * DEFAULT_SKILL_LEVEL
+ * -------------------
+ *   The prior version defined `var DEFAULT_SKILL_LEVEL = 10;` locally.
+ *   That value now lives in HouseholdViewModels.DEFAULT_SKILL_LEVEL.
+ *   This module reads from there so there's one canonical number.
+ *   (Mirrors the same consolidation in modals-household-staff.js.)
+ *
+ * PERSIST CONTRACT
+ * ----------------
+ *   ResidenceSystem.persist returns { success, data } | { success:
+ *   false, code, reason } — not boolean. The local `_persistOrFail`
+ *   adapts the shape. HouseholdModals.persistOrFail is not used here
+ *   because it calls HouseholdCommands.persist specifically.
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - modals-core.js (openModal, closeTopModal, confirmDialog)
+ *   - accessors.js (getCharacterById, getCharacters)
+ *   - household-modals-helper.js (HouseholdModals)
+ *   - household-view-models.js (HouseholdViewModels)
+ *   - residence-system.js (ResidenceSystem)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - RoleQueries / RoleState (falls back to window.getRoleById /
+ *     window.getAllRoles if not present)
+ *   - selectors/modals-char-selector.js (openCharacterSelector)
+ *
+ * ICON POLICY: SVG from icons.js. No emojis.
+ *
  * =============================================================================
  */
 
@@ -48,7 +84,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // 0. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
     function _requireFunction(name, fn) {
@@ -100,8 +136,58 @@
             ? window.closeTopModal
             : window._closeTopModal);
 
+    var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
+    _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
+    _requireFunction('HouseholdModals.esc', _Modals.esc);
+    _requireFunction('HouseholdModals.readValue', _Modals.readValue);
+    _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+
+    var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
+
+    // Local aliases.
+    var _esc = _Modals.esc;
+    var _showSuccess = _Modals.showSuccess;
+    var _showWarning = _Modals.showWarning;
+    var _showInfo = _Modals.showInfo;
+    var _showError = _Modals.showError;
+
+    function _currentYear() {
+        return (typeof window.getCurrentYearSafe === 'function')
+            ? window.getCurrentYearSafe()
+            : null;
+    }
+
     // =========================================================================
-    // 2. HELPERS
+    // 1. LOCAL PERSIST (ResidenceSystem shape)
+    // =========================================================================
+
+    function _persistOrFail(messagePrefix) {
+        var result;
+        try {
+            result = _residence.persist();
+        } catch (e) {
+            var threwReason = (e && e.message) ? e.message : 'persist threw';
+            _showError(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + threwReason);
+            return { ok: false, reason: threwReason };
+        }
+
+        if (!result || result.success === false) {
+            var reason = (result && result.reason) || 'Unknown persist error';
+            _showError(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + reason);
+            return { ok: false, reason: reason };
+        }
+
+        return { ok: true };
+    }
+
+    // =========================================================================
+    // 2. CONFIRM DIALOG
     // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
@@ -118,52 +204,29 @@
         }
     }
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === undefined || str === null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            return window._showToast(message, type);
-        }
-        if (typeof window.showToast === 'function') {
-            return window.showToast(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name) || '';
-        }
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
+    // =========================================================================
+    // 3. ROLE / UNIT LOOKUPS
+    // =========================================================================
 
     function _getRoleById(id) {
         if (!id) return null;
-        if (typeof window.getRoleById === 'function') return window.getRoleById(id);
-        if (typeof window.RoleQueries !== 'undefined' &&
-            typeof window.RoleQueries.getRoleById === 'function') {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window.RoleQueries !== 'undefined'
+            && typeof window.RoleQueries.getRoleById === 'function') {
             return window.RoleQueries.getRoleById(id);
         }
         return null;
     }
 
     function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined' &&
-            typeof window.RoleState.getAllRoles === 'function') {
+        if (typeof window.RoleState !== 'undefined'
+            && typeof window.RoleState.getAllRoles === 'function') {
             return window.RoleState.getAllRoles();
         }
-        if (typeof window.RoleQueries !== 'undefined' &&
-            typeof window.RoleQueries.getAllRoles === 'function') {
+        if (typeof window.RoleQueries !== 'undefined'
+            && typeof window.RoleQueries.getAllRoles === 'function') {
             return window.RoleQueries.getAllRoles();
         }
         return [];
@@ -176,87 +239,34 @@
         return [];
     }
 
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        return null;
+    function _getIcon(name) {
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
+        return '';
     }
 
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
-        _showToast('Character selector not available', 'error');
+        _showError('Character selector not available');
         return null;
     }
 
-    function _resolveModalRoot() {
-        if (typeof document === 'undefined') return null;
-        return document.querySelector('[data-modal-root="top"]') ||
-               document.querySelector('.modal-root:last-of-type') ||
-               document.body;
-    }
-
-    function _attachOnOpen(handler) {
-        return function() {
-            var root = _resolveModalRoot();
-            if (root) handler(root);
-        };
-    }
-
-    function _parseIntOrNull(value) {
-        if (value === undefined || value === null) return null;
-        var s = String(value).trim();
-        if (s === '') return null;
-        var n = Number(s);
-        if (!isFinite(n)) return null;
-        return Math.floor(n);
-    }
-
-    function _persistOrFail(messagePrefix) {
-        var result = _residence.persist();
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showToast(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason,
-                'error');
-            return { ok: false, reason: reason };
-        }
-        return { ok: true };
-    }
-
-    function _reportFailure(result, fallbackPrefix) {
-        var reason = (result && result.reason) || 'Unknown error';
-        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
-            'error');
-    }
-
-    // Deferred: presentation default. Move to view-models in a later pass.
-    // Only used for the assignCharacterToStaffPosition skillLevelAtAssignment
-    // default when a role is already present.
-    var DEFAULT_SKILL_LEVEL = 10;
-
-    // =========================================================================
-    // 3. ROLE / UNIT OPTIONS BUILDERS
-    // =========================================================================
-
     function _buildRoleOptions(selectedId, emptyLabel) {
         emptyLabel = emptyLabel || 'No role required';
-        var html = '<option value="">' + _escapeHtml(emptyLabel) + '</option>';
+        var html = '<option value="">' + _esc(emptyLabel) + '</option>';
         var roles = _getAllRoles();
         if (!Array.isArray(roles)) return html;
 
         for (var i = 0; i < roles.length; i++) {
             var r = roles[i];
             var selected = (r.id === selectedId) ? ' selected' : '';
-            var icon = _getIcon(r.iconKey || r.icon) || '';
+            var icon = _getIcon(r.iconKey || r.icon);
             var category = r.category || 'Uncategorized';
             var label = (icon ? icon + ' ' : '') + (r.name || 'Unnamed') +
                 ' (' + category + ')';
-            html += '<option value="' + _escapeHtml(r.id) + '"' + selected + '>' +
-                _escapeHtml(label) + '</option>';
+            html += '<option value="' + _esc(r.id) + '"' + selected + '>' +
+                _esc(label) + '</option>';
         }
         return html;
     }
@@ -283,7 +293,7 @@
     function openCreateResidenceStaffPositionModal(residenceId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -294,7 +304,7 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Creating a staff position for <strong>' +
-                        _escapeHtml(residence.name) + '</strong>' +
+                        _esc(residence.name) + '</strong>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
@@ -342,39 +352,41 @@
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Create Residence Staff Position',
             content: content,
             confirmText: 'Create Position',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
-
-                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) {
-                    _showToast('Position name is required', 'error');
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
                     return false;
                 }
 
-                var unitNumberRaw = (root.querySelector('[data-field="unitNumber"]') || {}).value;
+                var name = _Modals.readValue(root, '[data-field="name"]').trim();
+                if (!name) {
+                    _showError('Position name is required');
+                    return false;
+                }
+
+                var unitNumberRaw = _Modals.readValue(root, '[data-field="unitNumber"]');
                 var unitNumber = unitNumberRaw === ''
                     ? null
-                    : _parseIntOrNull(unitNumberRaw);
+                    : _Modals.readIntOrNull(root, '[data-field="unitNumber"]');
                 if (unitNumberRaw !== '' && unitNumber === null) {
-                    _showToast('Invalid unit number', 'error');
+                    _showError('Invalid unit number');
                     return false;
                 }
 
                 var requiredRoleId =
-                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                    _Modals.readValue(root, '[data-field="requiredRoleId"]') || null;
 
-                var minSkillLevel = _parseIntOrNull(
-                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _Modals.readIntOrNull(
+                    root, '[data-field="minSkillLevel"]');
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var notes =
-                    ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+                var notes = _Modals.readValue(root, '[data-field="notes"]').trim();
 
                 var result = _residence.addStaffPosition(residenceId, {
                     name: name,
@@ -385,21 +397,22 @@
                 });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to create position');
+                    _Modals.reportFailure(result, 'Failed to create position');
                     return false;
                 }
 
                 var persisted = _persistOrFail('Position created');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Position "' + name + '" created', 'success');
+                _showSuccess('Position "' + name + '" created');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
@@ -409,7 +422,7 @@
     function openEditResidenceStaffPositionModal(residenceId, positionId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -422,7 +435,7 @@
             }
         }
         if (!position) {
-            _showToast('Position not found', 'error');
+            _showError('Position not found');
             return null;
         }
 
@@ -434,13 +447,13 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Editing staff position for <strong>' +
-                        _escapeHtml(residence.name) + '</strong>' +
+                        _esc(residence.name) + '</strong>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Position Name *</label>' +
                     '<input type="text" data-field="name" value="' +
-                        _escapeHtml(position.name) +
+                        _esc(position.name) +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
 
@@ -469,44 +482,46 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
                     '<textarea data-field="notes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                        _escapeHtml(position.notes || '') +
+                        _esc(position.notes || '') +
                     '</textarea>' +
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Edit Staff Position: ' + position.name,
             content: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
-
-                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
-                if (!name) {
-                    _showToast('Position name is required', 'error');
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
                     return false;
                 }
 
-                var unitNumberRaw = (root.querySelector('[data-field="unitNumber"]') || {}).value;
+                var name = _Modals.readValue(root, '[data-field="name"]').trim();
+                if (!name) {
+                    _showError('Position name is required');
+                    return false;
+                }
+
+                var unitNumberRaw = _Modals.readValue(root, '[data-field="unitNumber"]');
                 var unitNumber = unitNumberRaw === ''
                     ? null
-                    : _parseIntOrNull(unitNumberRaw);
+                    : _Modals.readIntOrNull(root, '[data-field="unitNumber"]');
                 if (unitNumberRaw !== '' && unitNumber === null) {
-                    _showToast('Invalid unit number', 'error');
+                    _showError('Invalid unit number');
                     return false;
                 }
 
                 var requiredRoleId =
-                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                    _Modals.readValue(root, '[data-field="requiredRoleId"]') || null;
 
-                var minSkillLevel = _parseIntOrNull(
-                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _Modals.readIntOrNull(
+                    root, '[data-field="minSkillLevel"]');
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var notes =
-                    ((root.querySelector('[data-field="notes"]') || {}).value || '').trim();
+                var notes = _Modals.readValue(root, '[data-field="notes"]').trim();
 
                 var result = _residence.updateStaffPosition(
                     residenceId, positionId, {
@@ -518,21 +533,22 @@
                     });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to update position');
+                    _Modals.reportFailure(result, 'Failed to update position');
                     return false;
                 }
 
                 var persisted = _persistOrFail('Position updated');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Position updated', 'success');
+                _showSuccess('Position updated');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
@@ -542,7 +558,7 @@
     function openDeleteResidenceStaffPositionModal(residenceId, positionId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -555,7 +571,7 @@
             }
         }
         if (!position) {
-            _showToast('Position not found', 'error');
+            _showError('Position not found');
             return null;
         }
 
@@ -572,7 +588,7 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                     '<strong>Delete Staff Position: ' +
-                        _escapeHtml(position.name) + '</strong>' +
+                        _esc(position.name) + '</strong>' +
                     '<div style="margin-top:8px;font-size:0.65rem;">' +
                         'This will permanently remove the position from the residence.' +
                         (activeAssignments.length > 0
@@ -589,7 +605,7 @@
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
                         '<span>Position:</span>' +
                         '<span><strong>' +
-                            _escapeHtml(position.name) + '</strong></span>' +
+                            _esc(position.name) + '</strong></span>' +
                     '</div>' +
                     (position.unitNumber !== null && position.unitNumber !== undefined
                         ? '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
@@ -600,7 +616,7 @@
                     (roleName
                         ? '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
                             '<span>Required Role:</span>' +
-                            '<span>' + _escapeHtml(roleName) + '</span>' +
+                            '<span>' + _esc(roleName) + '</span>' +
                           '</div>'
                         : '') +
                     '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
@@ -618,17 +634,21 @@
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Delete Staff Position: ' + position.name,
             content: content,
             confirmText: 'Delete Position',
             cancelText: 'Cancel',
             confirmStyle: 'danger',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                var removeAssignments = root
-                    ? (root.querySelector('[data-field="removeAssignments"]') || {}).checked !== false
-                    : true;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
+
+                var removeAssignments = _Modals.readChecked(
+                    root, '[data-field="removeAssignments"]');
 
                 var result = _residence.removeStaffPosition(
                     residenceId, positionId, {
@@ -636,21 +656,22 @@
                     });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to delete position');
+                    _Modals.reportFailure(result, 'Failed to delete position');
                     return false;
                 }
 
                 var persisted = _persistOrFail('Position deleted');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Position "' + position.name + '" deleted', 'info');
+                _showInfo('Position "' + position.name + '" deleted');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
@@ -660,12 +681,11 @@
     // Note: the residence command does not support addRoleIfMissing. The
     // old checkbox is removed. Role indicators (has role / missing role)
     // are preserved so users can see the outcome.
-    // =========================================================================
 
     function openAssignResidenceStaffModal(residenceId, positionId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -678,7 +698,7 @@
             }
         }
         if (!position) {
-            _showToast('Position not found', 'error');
+            _showError('Position not found');
             return null;
         }
 
@@ -741,12 +761,12 @@
 
         var content =
             '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
-                '<strong>Residence:</strong> ' + _escapeHtml(residence.name) + '<br>' +
-                '<strong>Position:</strong> ' + _escapeHtml(position.name) +
+                '<strong>Residence:</strong> ' + _esc(residence.name) + '<br>' +
+                '<strong>Position:</strong> ' + _esc(position.name) +
                 (position.unitNumber !== null && position.unitNumber !== undefined
                     ? ' (Unit ' + position.unitNumber + ')' : '') +
                 '<br><strong>Required Role:</strong> ' +
-                    _escapeHtml(roleDisplay) +
+                    _esc(roleDisplay) +
                 (position.minSkillLevel > 0
                     ? ' · <strong>Min Skill:</strong> ' + position.minSkillLevel
                     : '') +
@@ -764,7 +784,7 @@
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Custom Title</label>' +
                 '<input type="text" data-field="title" value="' +
-                    _escapeHtml(position.name) +
+                    _esc(position.name) +
                     '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);">' +
             '</div>' +
 
@@ -794,45 +814,48 @@
                 'Assignments track who holds this position over time. Setting an end year records it as historical.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Assign Staff to ' + position.name,
             content: content,
             confirmText: 'Assign Staff',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
                 var selected = root.querySelector('.staff-candidate.selected');
                 var characterId = selected ? selected.dataset.characterId : null;
                 if (!characterId) {
-                    _showToast('Please select a character', 'error');
+                    _showError('Please select a character');
                     return false;
                 }
 
-                var startYear = _parseIntOrNull(
-                    (root.querySelector('[data-field="startYear"]') || {}).value);
+                var startYear = _Modals.readIntOrNull(root, '[data-field="startYear"]');
                 if (startYear === null || startYear < 1) {
-                    _showToast('Start year is required', 'error');
+                    _showError('Start year is required');
                     return false;
                 }
 
-                var endYearRaw = (root.querySelector('[data-field="endYear"]') || {}).value;
-                var endYear = (endYearRaw === '' || endYearRaw === undefined)
-                    ? null
-                    : _parseIntOrNull(endYearRaw);
-                if (endYearRaw !== '' && endYear === null) {
-                    _showToast('End year must be a valid year', 'error');
-                    return false;
+                var endYearRaw = _Modals.readValue(root, '[data-field="endYear"]');
+                var endYear = null;
+                if (endYearRaw !== '') {
+                    endYear = _Modals.readIntOrNull(root, '[data-field="endYear"]');
+                    if (endYear === null) {
+                        _showError('End year must be a valid year');
+                        return false;
+                    }
                 }
                 if (endYear !== null && endYear <= startYear) {
-                    _showToast('End year must be after start year', 'error');
+                    _showError('End year must be after start year');
                     return false;
                 }
 
-                var title = ((root.querySelector('[data-field="title"]') || {}).value || '').trim() ||
+                var title = _Modals.readValue(root, '[data-field="title"]').trim() ||
                     position.name;
-                var notes = (root.querySelector('[data-field="notes"]') || {}).value || '';
+                var notes = _Modals.readValue(root, '[data-field="notes"]');
 
                 var result = _residence.assignCharacterToStaffPosition(
                     residenceId,
@@ -843,32 +866,31 @@
                         endYear: endYear,
                         title: title,
                         notes: notes,
-                        skillLevelAtAssignment: DEFAULT_SKILL_LEVEL
+                        skillLevelAtAssignment: _VM.DEFAULT_SKILL_LEVEL
                     }
                 );
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to assign staff');
+                    _Modals.reportFailure(result, 'Failed to assign staff');
                     return false;
                 }
 
                 var persisted = _persistOrFail('Staff assigned');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Staff assigned to ' + position.name, 'success');
+                _showSuccess('Staff assigned to ' + position.name);
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireCandidateSelection(root, residenceId, positionId, onSuccess);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _buildCandidateList(candidates, position) {
@@ -896,14 +918,14 @@
                 : '';
 
             html += '<div class="staff-candidate" data-character-id="' +
-                _escapeHtml(c.characterId) +
+                _esc(c.characterId) +
                 '" style="padding:8px 10px;margin-bottom:4px;background:var(--bg2);' +
                 'border:1px solid var(--border);border-left:3px solid ' +
                     (position.requiredRoleId && !c.hasRole
                         ? 'var(--warn)' : 'var(--success)') +
                 ';border-radius:4px;cursor:pointer;transition:background 0.1s;">' +
                 '<div>' +
-                    '<strong>' + _escapeHtml(c.displayName) + '</strong>' +
+                    '<strong>' + _esc(c.displayName) + '</strong>' +
                     ageText +
                     ' ' + roleIndicator + ' ' + skillText +
                 '</div>' +
@@ -935,14 +957,14 @@
 
             html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
                 'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
-                '<span>' + _escapeHtml(h.characterName || 'Unknown') +
+                '<span>' + _esc(h.characterName || 'Unknown') +
                     (h.title
                         ? ' <span style="color:var(--dim);">(' +
-                            _escapeHtml(h.title) + ')</span>'
+                            _esc(h.title) + ')</span>'
                         : '') +
                     (roleName
                         ? ' <span style="color:var(--accent);">(' +
-                            _escapeHtml(roleName) + ')</span>'
+                            _esc(roleName) + ')</span>'
                         : '') +
                 '</span>' +
                 '<span style="color:' + color + ';">' +
@@ -1008,7 +1030,7 @@
     function openViewResidenceStaffPositionsModal(residenceId, onSelect) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -1039,18 +1061,18 @@
                     : 'None';
 
                 rows += '<div class="position-item" data-position-id="' +
-                    _escapeHtml(pos.id) +
+                    _esc(pos.id) +
                     '" style="background:var(--bg3);border:1px solid var(--border);' +
                     'border-radius:6px;padding:10px 12px;cursor:pointer;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
                         '<div>' +
-                            '<strong>' + _escapeHtml(pos.name) + '</strong>' +
+                            '<strong>' + _esc(pos.name) + '</strong>' +
                             (pos.unitNumber !== null && pos.unitNumber !== undefined
                                 ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:8px;">Unit ' +
                                     pos.unitNumber + '</span>'
                                 : '') +
                             '<span style="font-size:0.55rem;color:var(--accent);margin-left:8px;">Role: ' +
-                                _escapeHtml(roleName) + '</span>' +
+                                _esc(roleName) + '</span>' +
                             (pos.minSkillLevel > 0
                                 ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:4px;">(Min: ' +
                                     pos.minSkillLevel + ')</span>'
@@ -1062,7 +1084,7 @@
                     '</div>' +
                     (pos.notes
                         ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
-                            _escapeHtml(pos.notes) + '</div>'
+                            _esc(pos.notes) + '</div>'
                         : '') +
                 '</div>';
             }
@@ -1071,7 +1093,7 @@
 
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<strong>Residence:</strong> ' + _escapeHtml(residence.name) +
+                '<strong>Residence:</strong> ' + _esc(residence.name) +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                     positions.length + ' staff positions · ' +
                     assignments.length + ' active assignments' +
@@ -1082,7 +1104,7 @@
                 'Click on a position to manage it.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Staff Positions: ' + residence.name,
             content: content,
             confirmText: 'Close',
@@ -1090,20 +1112,22 @@
             onConfirm: function() { /* close only */ }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             var items = root.querySelectorAll('.position-item');
             for (var j = 0; j < items.length; j++) {
                 (function(el) {
                     el.onclick = function() {
                         var posId = el.dataset.positionId;
                         _closeTopModal();
-                        if (typeof onSelect === 'function') onSelect(posId);
+                        setTimeout(function() {
+                            if (typeof onSelect === 'function') onSelect(posId);
+                        }, 0);
                     };
                 })(items[j]);
             }
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     // =========================================================================
@@ -1113,7 +1137,7 @@
     function openViewResidenceStaffAssignmentsModal(residenceId) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -1144,20 +1168,20 @@
                     'padding:8px 10px;background:var(--bg2);border-radius:4px;' +
                     'border-left:3px solid var(--accent);">' +
                     '<div>' +
-                        '<strong>' + _escapeHtml(asg.characterName || 'Unknown') + '</strong>' +
+                        '<strong>' + _esc(asg.characterName || 'Unknown') + '</strong>' +
                         (pos
                             ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:6px;">' +
-                                _escapeHtml(pos.name) + '</span>'
+                                _esc(pos.name) + '</span>'
                             : '') +
                         (roleName !== 'None'
                             ? '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' +
-                                _escapeHtml(roleName) + '</span>'
+                                _esc(roleName) + '</span>'
                             : '') +
                     '</div>' +
                     '<div style="font-size:0.5rem;color:var(--dim);display:flex;align-items:center;gap:8px;">' +
                         'Since ' + asg.startYear +
                         '<button data-action="end-assignment" data-assignment-id="' +
-                            _escapeHtml(asg.id) +
+                            _esc(asg.id) +
                             '" style="padding:2px 6px;font-size:0.45rem;background:#8a5a20;border:none;color:white;border-radius:3px;cursor:pointer;">End</button>' +
                     '</div>' +
                 '</div>';
@@ -1168,7 +1192,7 @@
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<strong>Staff Assignments: ' +
-                    _escapeHtml(residence.name) + '</strong>' +
+                    _esc(residence.name) + '</strong>' +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                     assignments.length + ' active staff members' +
                 '</div>' +
@@ -1178,7 +1202,7 @@
                 'Click "End" to terminate a staff assignment.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Staff Assignments: ' + residence.name,
             content: content,
             confirmText: 'Close',
@@ -1186,7 +1210,7 @@
             onConfirm: function() { /* close only */ }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             var btns = root.querySelectorAll('[data-action="end-assignment"]');
             for (var b = 0; b < btns.length; b++) {
                 (function(btn) {
@@ -1206,18 +1230,17 @@
                                     'Ended by user'
                                 );
                                 if (!result.success) {
-                                    _reportFailure(result,
+                                    _Modals.reportFailure(result,
                                         'Failed to end assignment');
                                     return;
                                 }
 
                                 var persisted = _persistOrFail('Assignment ended');
                                 if (!persisted.ok) {
-                                    // Leave modal open so user sees the error toast
                                     return;
                                 }
 
-                                _showToast('Assignment ended', 'success');
+                                _showSuccess('Assignment ended');
                                 _closeTopModal();
                                 setTimeout(function() {
                                     openViewResidenceStaffAssignmentsModal(
@@ -1229,9 +1252,9 @@
                     };
                 })(btns[b]);
             }
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     // =========================================================================
@@ -1241,7 +1264,7 @@
     function openResidenceStaffManagementModal(residenceId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -1276,25 +1299,25 @@
                     'border-left:3px solid ' +
                     (activeCount > 0 ? 'var(--accent)' : 'var(--border)') + ';">' +
                     '<div>' +
-                        '<strong>' + _escapeHtml(pos.name) + '</strong>' +
+                        '<strong>' + _esc(pos.name) + '</strong>' +
                         (pos.unitNumber !== null && pos.unitNumber !== undefined
                             ? '<span style="font-size:0.45rem;color:var(--dim);margin-left:4px;">Unit ' +
                                 pos.unitNumber + '</span>'
                             : '') +
                         '<span style="font-size:0.45rem;color:var(--accent);margin-left:4px;">Role: ' +
-                            _escapeHtml(roleName) + '</span>' +
+                            _esc(roleName) + '</span>' +
                     '</div>' +
                     '<div style="display:flex;gap:4px;align-items:center;">' +
                         '<span style="font-size:0.5rem;color:var(--accent);">' +
                             activeCount + ' assigned</span>' +
                         '<button data-action="pos-assign" data-position-id="' +
-                            _escapeHtml(pos.id) +
+                            _esc(pos.id) +
                             '" style="padding:2px 6px;font-size:0.4rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Assign</button>' +
                         '<button data-action="pos-edit" data-position-id="' +
-                            _escapeHtml(pos.id) +
+                            _esc(pos.id) +
                             '" style="padding:2px 6px;font-size:0.4rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Edit</button>' +
                         '<button data-action="pos-delete" data-position-id="' +
-                            _escapeHtml(pos.id) +
+                            _esc(pos.id) +
                             '" style="padding:2px 6px;font-size:0.4rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Del</button>' +
                     '</div>' +
                 '</div>';
@@ -1306,7 +1329,7 @@
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
                     '<div><strong>Staff Management: ' +
-                        _escapeHtml(residence.name) + '</strong></div>' +
+                        _esc(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.6rem;color:var(--dim);">' +
                         positions.length + ' positions · ' +
                         assignments.length + ' assigned' +
@@ -1325,7 +1348,7 @@
                 'Manage staff positions and assignments. Click "Assign" to add staff, "Edit" to modify a position, "Del" to remove it.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Staff Management: ' + residence.name,
             content: content,
             confirmText: 'Close',
@@ -1336,14 +1359,19 @@
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireStaffManagement(root, residenceId, onSuccess);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _wireStaffManagement(root, residenceId, onSuccess) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
         function _reopen() {
             setTimeout(function() {
                 openResidenceStaffManagementModal(residenceId, onSuccess);
@@ -1353,16 +1381,18 @@
         var createBtn = root.querySelector('[data-action="create-position"]');
         if (createBtn) {
             createBtn.onclick = function() {
-                _closeTopModal();
-                openCreateResidenceStaffPositionModal(residenceId, _reopen);
+                _closeThen(function() {
+                    openCreateResidenceStaffPositionModal(residenceId, _reopen);
+                });
             };
         }
 
         var viewBtn = root.querySelector('[data-action="view-assignments"]');
         if (viewBtn) {
             viewBtn.onclick = function() {
-                _closeTopModal();
-                openViewResidenceStaffAssignmentsModal(residenceId);
+                _closeThen(function() {
+                    openViewResidenceStaffAssignmentsModal(residenceId);
+                });
             };
         }
 
@@ -1371,8 +1401,9 @@
             (function(btn) {
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
-                    _closeTopModal();
-                    openAssignResidenceStaffModal(residenceId, posId, _reopen);
+                    _closeThen(function() {
+                        openAssignResidenceStaffModal(residenceId, posId, _reopen);
+                    });
                 };
             })(assignBtns[i]);
         }
@@ -1382,9 +1413,10 @@
             (function(btn) {
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
-                    _closeTopModal();
-                    openEditResidenceStaffPositionModal(
-                        residenceId, posId, _reopen);
+                    _closeThen(function() {
+                        openEditResidenceStaffPositionModal(
+                            residenceId, posId, _reopen);
+                    });
                 };
             })(editBtns[j]);
         }
@@ -1394,9 +1426,10 @@
             (function(btn) {
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
-                    _closeTopModal();
-                    openDeleteResidenceStaffPositionModal(
-                        residenceId, posId, _reopen);
+                    _closeThen(function() {
+                        openDeleteResidenceStaffPositionModal(
+                            residenceId, posId, _reopen);
+                    });
                 };
             })(deleteBtns[k]);
         }
