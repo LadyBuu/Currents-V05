@@ -3,7 +3,7 @@
  * STILL WATERS - HOUSEHOLD SNAPSHOT MODALS (modals-household-snapshot.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/modals-household-snapshot.js
+ * LOCATION: js/households/modals-household-snapshot.js
  *
  * PURPOSE
  * -------
@@ -21,19 +21,55 @@
  *           getHouseholdSnapshot / getCharacterHouseholdSnapshot /
  *           getHousehold
  *   Writes: HouseholdCommands.editNamePeriod / deleteNamePeriod +
- *           one HouseholdCommands.persist() per mutation
- *   UI:     modals-core, icons
+ *           one HouseholdCommands.persist() per mutation (via
+ *           HouseholdModals.persistOrFail)
+ *   UI:     modals-core, icons, HouseholdModals, HouseholdViewModels
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
- *   - All three snapshot queries are now implemented in
- *     household-queries.js. Before the queries refactor, these modals
- *     silently failed because the query methods returned undefined.
+ *   - All snapshot queries are implemented in household-queries.js.
  *   - Name period mutations persist once each.
  *   - No HouseholdState access.
  *   - No snapshot computation here; all projection lives in queries.
  *   - No mutation of nameHistory records during reads.
  *   - Historical references use explicit referenceYear.
+ *
+ * DOM-SCOPE
+ * ---------
+ *   Every DOM lookup is scoped to the modal's own `handle.element` via
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
+ *   rationale on why the prior _resolveModalRoot() fallback (which ended
+ *   at document.body) was wrong.
+ *
+ * PERSIST FAILURE CONTRACT (REVISED)
+ * ----------------------------------
+ *   The prior edit-name-period and delete-name-period modals returned
+ *   `true` from onConfirm even when persist failed, closing the modal
+ *   and leaving the user with an in-memory mutation and an error toast.
+ *   That behaviour was inconsistent with the modals-core close contract
+ *   and left the user without a way to retry.
+ *
+ *   This version keeps the modal OPEN when persist fails, so the user
+ *   sees the error toast, can retry the persist by clicking Save again,
+ *   or can cancel. This is the only correct behaviour when the mutation
+ *   is destructive (a deleted name period cannot be un-deleted).
+ *
+ *   For the create/edit household modals (modals-household.js), which
+ *   close on persist failure with a success toast, the reasoning is
+ *   documented there: those flows treat "create succeeded in memory"
+ *   as a valid outcome for the caller. Name periods are different —
+ *   they're a list the user is actively editing, and a partial save is
+ *   a state the user should see.
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - modals-core.js (openModal, closeTopModal, confirmDialog)
+ *   - accessors.js (getCharacterById)
+ *   - household-queries.js (HouseholdQueries)
+ *   - household-commands.js (HouseholdCommands)
+ *   - household-modals-helper.js (HouseholdModals)
+ *   - household-view-models.js (HouseholdViewModels)
+ *
+ * ICON POLICY: SVG from icons.js. No emojis.
  *
  * =============================================================================
  */
@@ -42,7 +78,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // 0. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
     function _requireFunction(name, fn) {
@@ -69,7 +105,6 @@
         _queries.getCharacterHouseholdSnapshot);
 
     var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
-    _requireFunction('HouseholdCommands.persist', _commands.persist);
     _requireFunction('HouseholdCommands.editNamePeriod',
         _commands.editNamePeriod);
     _requireFunction('HouseholdCommands.deleteNamePeriod',
@@ -87,8 +122,31 @@
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
 
+    var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
+    _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.persistOrFail', _Modals.persistOrFail);
+    _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
+    _requireFunction('HouseholdModals.esc', _Modals.esc);
+    _requireFunction('HouseholdModals.readValue', _Modals.readValue);
+    _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+
+    var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
+
+    // Local aliases.
+    var _esc = _Modals.esc;
+    var _showSuccess = _Modals.showSuccess;
+    var _showInfo = _Modals.showInfo;
+    var _showError = _Modals.showError;
+
+    function _currentYear() {
+        return (typeof window.getCurrentYearSafe === 'function')
+            ? window.getCurrentYearSafe()
+            : null;
+    }
+
     // =========================================================================
-    // 2. HELPERS
+    // 1. CONFIRM DIALOG
     // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
@@ -105,96 +163,14 @@
         }
     }
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === undefined || str === null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            return window._showToast(message, type);
-        }
-        if (typeof window.showToast === 'function') {
-            return window.showToast(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name) || '';
-        }
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        return null;
-    }
-
-    function _resolveModalRoot() {
-        if (typeof document === 'undefined') return null;
-        return document.querySelector('[data-modal-root="top"]') ||
-               document.querySelector('.modal-root:last-of-type') ||
-               document.body;
-    }
-
-    function _attachOnOpen(handler) {
-        return function() {
-            var root = _resolveModalRoot();
-            if (root) handler(root);
-        };
-    }
-
-    function _parseIntOrNull(value) {
-        if (value === undefined || value === null) return null;
-        var s = String(value).trim();
-        if (s === '') return null;
-        var n = Number(s);
-        if (!isFinite(n)) return null;
-        return Math.floor(n);
-    }
-
-    function _persistOrFail(messagePrefix) {
-        var result = _commands.persist();
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showToast(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason,
-                'error');
-            return { ok: false, reason: reason };
-        }
-        return { ok: true };
-    }
-
-    function _reportFailure(result, fallbackPrefix) {
-        var reason = (result && result.reason) || 'Unknown error';
-        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
-            'error');
-    }
-
     // =========================================================================
-    // 3. VIEW HOUSEHOLD HISTORY MODAL
-    // =========================================================================
-    //
-    // Reads getHouseholdNamePeriods — a projection of nameHistory with
-    // index / periodEnd / isCurrent computed by the queries layer.
+    // 2. VIEW HOUSEHOLD HISTORY MODAL
     // =========================================================================
 
     function openViewHouseholdHistoryModal(householdId) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -202,7 +178,7 @@
 
         var content = _buildHistoryContent(household, periods);
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Household History: ' + household.name,
             content: content,
             confirmText: 'Close',
@@ -210,19 +186,18 @@
             onConfirm: function() { /* close only */ }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireHistoryActions(root, householdId, periods);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _buildHistoryContent(household, periods) {
         var html = '<div style="margin-bottom:16px;">';
 
-        // Header
         html += '<div style="background:var(--bg2);padding:12px;border-radius:8px;margin-bottom:16px;">' +
-            '<div><strong>' + _escapeHtml(household.name) + '</strong></div>' +
+            '<div><strong>' + _esc(household.name) + '</strong></div>' +
             '<div style="font-size:0.65rem;color:var(--dim);">' +
                 'Founded: ' + (household.foundedYear !== null
                     ? household.foundedYear : '?') +
@@ -237,7 +212,6 @@
             '</div>' +
         '</div>';
 
-        // Periods list
         html += '<div style="margin-bottom:16px;">';
         html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:8px;">' +
             'Name Change History' +
@@ -256,7 +230,6 @@
         }
         html += '</div>';
 
-        // Footer note
         html += '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
             'Name changes help track the evolution of a household through generations.' +
         '</div>';
@@ -281,10 +254,10 @@
         html += '<div>';
         html += '<span style="font-weight:bold;">' + period.year + '</span>';
         html += '<span style="margin-left:8px;">' +
-            _escapeHtml(period.oldName || '—') + ' → <strong>' +
-            _escapeHtml(period.newName) + '</strong></span>';
+            _esc(period.oldName || '—') + ' → <strong>' +
+            _esc(period.newName) + '</strong></span>';
         html += '<span style="font-size:0.55rem;color:var(--dim);margin-left:8px;">' +
-            _escapeHtml(periodDisplay) + '</span>';
+            _esc(periodDisplay) + '</span>';
         html += '</div>';
         if (isCurrent) {
             html += '<span style="font-size:0.55rem;color:var(--accent);">Current</span>';
@@ -293,12 +266,12 @@
 
         if (period.reason) {
             html += '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
-                'Reason: ' + _escapeHtml(period.reason) +
+                'Reason: ' + _esc(period.reason) +
             '</div>';
         }
         if (period.changedBy) {
             html += '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
-                'By: ' + _escapeHtml(period.changedBy) +
+                'By: ' + _esc(period.changedBy) +
             '</div>';
         }
 
@@ -318,18 +291,28 @@
     }
 
     function _wireHistoryActions(root, householdId, periods) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
         var editBtns = root.querySelectorAll('[data-action="edit-period"]');
         for (var i = 0; i < editBtns.length; i++) {
             (function(btn) {
                 btn.onclick = function(event) {
                     event.stopPropagation();
-                    var index = _parseIntOrNull(btn.dataset.periodIndex);
-                    if (index === null) return;
-                    _closeTopModal();
-                    openEditNamePeriodModal(householdId, index, function() {
-                        setTimeout(function() {
-                            openViewHouseholdHistoryModal(householdId);
-                        }, 0);
+                    var index = _Modals.readIntOrNull(btn, '') !== null
+                        ? parseInt(btn.dataset.periodIndex, 10)
+                        : null;
+                    // Simpler read: parse dataset directly.
+                    var parsed = parseInt(btn.dataset.periodIndex, 10);
+                    if (!Number.isInteger(parsed)) return;
+                    _closeThen(function() {
+                        openEditNamePeriodModal(householdId, parsed, function() {
+                            setTimeout(function() {
+                                openViewHouseholdHistoryModal(householdId);
+                            }, 0);
+                        });
                     });
                 };
             })(editBtns[i]);
@@ -340,8 +323,8 @@
             (function(btn) {
                 btn.onclick = function(event) {
                     event.stopPropagation();
-                    var index = _parseIntOrNull(btn.dataset.periodIndex);
-                    if (index === null) return;
+                    var index = parseInt(btn.dataset.periodIndex, 10);
+                    if (!Number.isInteger(index)) return;
 
                     var period = null;
                     for (var k = 0; k < periods.length; k++) {
@@ -361,18 +344,20 @@
                             var result = _commands.deleteNamePeriod(
                                 householdId, index);
                             if (!result.success) {
-                                _reportFailure(result,
+                                _Modals.reportFailure(result,
                                     'Failed to delete name period');
                                 return;
                             }
 
-                            var persisted = _persistOrFail('Name period deleted');
+                            var persisted = _Modals.persistOrFail('Name period deleted');
                             if (!persisted.ok) {
-                                // Leave modal open so user sees the error
+                                // Modal already closed by confirmDialog.
+                                // Show toast; the caller can retry via the
+                                // history modal.
                                 return;
                             }
 
-                            _showToast('Name period deleted', 'info');
+                            _showInfo('Name period deleted');
                             _closeTopModal();
                             setTimeout(function() {
                                 openViewHouseholdHistoryModal(householdId);
@@ -386,13 +371,13 @@
     }
 
     // =========================================================================
-    // 4. EDIT NAME PERIOD MODAL
+    // 3. EDIT NAME PERIOD MODAL
     // =========================================================================
 
     function openEditNamePeriodModal(householdId, periodIndex, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -406,7 +391,7 @@
         }
 
         if (!period) {
-            _showToast('Name period not found', 'error');
+            _showError('Name period not found');
             return null;
         }
 
@@ -427,7 +412,7 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name</label>' +
                     '<input type="text" data-field="name" value="' +
-                        _escapeHtml(period.newName) +
+                        _esc(period.newName) +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
 
@@ -444,7 +429,7 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Reason</label>' +
                     '<input type="text" data-field="reason" value="' +
-                        _escapeHtml(period.reason || '') +
+                        _esc(period.reason || '') +
                         '" placeholder="e.g., Succession, Marriage..." ' +
                         'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
@@ -452,39 +437,38 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Changed By (optional)</label>' +
                     '<input type="text" data-field="changedBy" value="' +
-                        _escapeHtml(period.changedBy || '') +
+                        _esc(period.changedBy || '') +
                         '" placeholder="Who changed the name" ' +
                         'style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Edit Name Period: ' + period.newName,
             content: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
-                var newName =
-                    ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                var newName = _Modals.readValue(root, '[data-field="name"]').trim();
                 if (!newName) {
-                    _showToast('Please enter a name', 'error');
+                    _showError('Please enter a name');
                     return false;
                 }
 
-                var year = _parseIntOrNull(
-                    (root.querySelector('[data-field="year"]') || {}).value);
+                var year = _Modals.readIntOrNull(root, '[data-field="year"]');
                 if (year === null || year < 1) {
-                    _showToast('Please enter a valid year', 'error');
+                    _showError('Please enter a valid year');
                     return false;
                 }
 
-                var reason =
-                    (root.querySelector('[data-field="reason"]') || {}).value || '';
-                var changedBy =
-                    (root.querySelector('[data-field="changedBy"]') || {}).value || '';
+                var reason = _Modals.readValue(root, '[data-field="reason"]');
+                var changedBy = _Modals.readValue(root, '[data-field="changedBy"]');
 
                 var result = _commands.editNamePeriod(householdId, periodIndex, {
                     newName: newName,
@@ -494,31 +478,34 @@
                 });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to update name period');
+                    _Modals.reportFailure(result, 'Failed to update name period');
                     return false;
                 }
 
-                var persisted = _persistOrFail('Name period updated');
+                var persisted = _Modals.persistOrFail('Name period updated');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    // Keep the modal open so the user can retry. The
+                    // mutation is in memory; clicking Save again persists.
+                    return false;
                 }
 
-                _showToast('Name period updated', 'success');
+                _showSuccess('Name period updated');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
-    // 5. DELETE NAME PERIOD MODAL
+    // 4. DELETE NAME PERIOD MODAL
     // =========================================================================
 
     function openDeleteNamePeriodModal(householdId, periodIndex, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -532,12 +519,12 @@
         }
 
         if (!period) {
-            _showToast('Name period not found', 'error');
+            _showError('Name period not found');
             return null;
         }
 
         if (periods.length <= 1) {
-            _showToast('Cannot delete the only name period', 'error');
+            _showError('Cannot delete the only name period');
             return null;
         }
 
@@ -549,7 +536,7 @@
                     '<strong>Delete Name Period</strong>' +
                     '<div style="margin-top:8px;font-size:0.65rem;">' +
                         'You are about to delete the name period "' +
-                        _escapeHtml(period.newName) + '" (' + period.year + ').' +
+                        _esc(period.newName) + '" (' + period.year + ').' +
                         (isCurrent
                             ? ' This is the current name period. The household name will revert to the previous period.'
                             : '') +
@@ -569,22 +556,22 @@
                     '</div>' +
                     '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
                         '<span>Name:</span>' +
-                        '<span><strong>' + _escapeHtml(period.newName) + '</strong>' +
+                        '<span><strong>' + _esc(period.newName) + '</strong>' +
                             (period.oldName
-                                ? ' (was ' + _escapeHtml(period.oldName) + ')'
+                                ? ' (was ' + _esc(period.oldName) + ')'
                                 : '') +
                         '</span>' +
                     '</div>' +
                     (period.reason
                         ? '<div style="display:flex;justify-content:space-between;font-size:0.55rem;margin-top:4px;color:var(--dim);">' +
                             '<span>Reason:</span>' +
-                            '<span>' + _escapeHtml(period.reason) + '</span>' +
+                            '<span>' + _esc(period.reason) + '</span>' +
                           '</div>'
                         : '') +
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Delete Name Period',
             content: content,
             confirmText: 'Delete Period',
@@ -593,44 +580,41 @@
             onConfirm: function() {
                 var result = _commands.deleteNamePeriod(householdId, periodIndex);
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to delete name period');
+                    _Modals.reportFailure(result, 'Failed to delete name period');
                     return false;
                 }
 
-                var persisted = _persistOrFail('Name period deleted');
+                var persisted = _Modals.persistOrFail('Name period deleted');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    // Keep the modal open so the user can retry.
+                    return false;
                 }
 
-                _showToast('Name period deleted', 'info');
+                _showInfo('Name period deleted');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
-    // 6. HOUSEHOLD SNAPSHOT MODAL
-    // =========================================================================
-    //
-    // Previously broken: getHouseholdSnapshot was not implemented in
-    // household-queries.js, so this modal always showed "Could not
-    // generate snapshot." Now works.
+    // 5. HOUSEHOLD SNAPSHOT MODAL
     // =========================================================================
 
     function openHouseholdSnapshotModal(householdId, year, viewMode) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
-        var snapshotYear = year !== undefined && year !== null
+        var snapshotYear = (year !== undefined && year !== null)
             ? year
             : _currentYear();
         if (snapshotYear === null) {
-            _showToast('Current year unavailable', 'error');
+            _showError('Current year unavailable');
             return null;
         }
 
@@ -644,7 +628,7 @@
         }
 
         if (!snapshot) {
-            _showToast('Could not generate snapshot', 'error');
+            _showError('Could not generate snapshot');
             return null;
         }
 
@@ -661,10 +645,7 @@
     }
 
     // =========================================================================
-    // 7. CHARACTER HOUSEHOLD SNAPSHOT MODAL
-    // =========================================================================
-    //
-    // Previously broken for the same reason as above.
+    // 6. CHARACTER HOUSEHOLD SNAPSHOT MODAL
     // =========================================================================
 
     function openCharacterHouseholdSnapshotModal(characterId, viewMode) {
@@ -675,7 +656,7 @@
             character = null;
         }
         if (!character) {
-            _showToast('Character not found', 'error');
+            _showError('Character not found');
             return null;
         }
 
@@ -689,7 +670,7 @@
         }
 
         if (!snapshot) {
-            _showToast('Could not generate snapshot for character', 'info');
+            _showInfo('Could not generate snapshot for character');
             return null;
         }
 
@@ -706,17 +687,8 @@
     }
 
     // =========================================================================
-    // 8. SNAPSHOT CONTENT BUILDER
+    // 7. SNAPSHOT CONTENT BUILDER
     // =========================================================================
-
-    function _viewModeLabel(mode) {
-        switch (mode) {
-            case 'all': return 'All Members';
-            case 'at_death': return 'At Death';
-            case 'at_join': return 'At Join';
-            default: return mode || 'All Members';
-        }
-    }
 
     function _buildSnapshotContent(snapshot, targetCharacterId) {
         var html = '<div style="margin-bottom:16px;">';
@@ -730,14 +702,14 @@
         html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
         html += '<div>';
         html += '<div style="font-size:0.8rem;font-weight:bold;">' +
-            _escapeHtml(periodLabel) + '</div>';
+            _esc(periodLabel) + '</div>';
         if (snapshot.householdName && snapshot.householdName !== periodLabel) {
             html += '<div style="font-size:0.65rem;color:var(--dim);">' +
-                _escapeHtml(snapshot.householdName) + '</div>';
+                _esc(snapshot.householdName) + '</div>';
         }
         html += '</div>';
         html += '<div style="font-size:0.6rem;color:var(--dim);">' +
-            _escapeHtml(_viewModeLabel(snapshot.viewMode)) + '</div>';
+            _esc(_VM.getViewModeLabel(snapshot.viewMode)) + '</div>';
         html += '</div>';
 
         html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;font-size:0.55rem;">';
@@ -760,14 +732,14 @@
             html += '<div style="font-size:0.5rem;color:var(--dim);margin-top:4px;">';
             html += 'Period: ' + periodStart + ' - ' + periodEnd;
             if (snapshot.period.reason) {
-                html += ' · ' + _escapeHtml(snapshot.period.reason);
+                html += ' · ' + _esc(snapshot.period.reason);
             }
             html += '</div>';
         }
 
         html += '</div>';
 
-        // Members list
+        // Members list.
         html += '<div style="margin-bottom:12px;">';
         html += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:8px;">Members</div>';
 
@@ -837,16 +809,21 @@
         var dim = (!aliveAtSnapshot && !isTarget) ? 'opacity:0.6;' : '';
         var highlight = isTarget ? 'background:var(--accent-dim);' : '';
 
+        var headIcon = '';
+        if (isHead && window.Icons && window.Icons.CROWN) {
+            headIcon = window.Icons.CROWN;
+        }
+
         var html = '<div style="display:flex;justify-content:space-between;align-items:center;' +
             'padding:6px 8px;border-bottom:1px solid var(--border-light);' +
             dim + highlight + '">';
 
         html += '<div>';
-        if (isHead) html += _getIcon('CROWN') + ' ';
-        html += _escapeHtml(displayName);
+        if (headIcon) html += headIcon + ' ';
+        html += _esc(displayName);
         if (member.role) {
             html += ' <span style="font-size:0.5rem;color:var(--dim);">(' +
-                _escapeHtml(member.role) + ')</span>';
+                _esc(member.role) + ')</span>';
         }
         html += '</div>';
 
@@ -865,7 +842,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.openViewHouseholdHistoryModal = openViewHouseholdHistoryModal;
