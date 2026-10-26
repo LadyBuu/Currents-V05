@@ -33,12 +33,23 @@
  *   - This module is read-only.
  *   - No recursion guard.
  *
+ * ERROR MESSAGES:
+ *   When a read fails, the error message names the failing level:
+ *     - "accessors.getNameLists() returned non-object" — accessor broken
+ *     - "name list for '<countryId>' is not an object" — data broken
+ *   The distinction matters because the fix is different.
+ *
  * ANCESTOR MODEL:
  *   Slots (all resolved against the starting character):
  *     father, mother,
  *     paternal_grandfather, paternal_grandmother,
  *     maternal_grandfather, maternal_grandmother,
  *     paternal_great_grandfather, maternal_great_grandfather
+ *
+ *   _resolveAncestor is recursive but bounded: each slot is a fixed
+ *   path through the ancestor graph (father→father→father, etc.). There
+ *   are no arbitrary-depth slots, so recursion terminates at the leaves
+ *   of the slot grammar.
  *
  *   getAncestorData(character, slot) returns
  *     { id, firstName, surname }
@@ -49,6 +60,10 @@
  *   getAncestorNames(character, order, source) resolves each slot in
  *   `order` against the starting character. There is no `depth`
  *   parameter; `order.length` is the depth.
+ *
+ *   Deduplication in getAncestorNames is by ancestor ID. If two slots
+ *   resolve to the same ancestor (e.g. a consanguineous marriage), the
+ *   name is returned once.
  *
  * NAME STATE:
  *   NameState is an OPTIONAL cache hint. The character record is
@@ -67,6 +82,14 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Original: cache-hint-based read module with defensive clone.
+ *   Current:
+ *     - Error messages name the failing level (accessor vs. data).
+ *     - Ancestor recursion bounded-by-grammar documented.
+ *     - getAncestorNames dedup reason documented.
+ *     - No behavioural change.
  * =============================================================================
  */
 
@@ -165,15 +188,17 @@
     /**
      * Returns a defensive copy of the full name-list map, keyed by place ID.
      *
-     * If the canonical accessor returns something that is not a plain
-     * object, this throws. That is a schema violation, not an empty map.
+     * If the accessor returns something that is not a plain object, this
+     * throws. The error names the accessor, because the fix is in the
+     * accessor or in whatever populates masterData.data.nameLists, not
+     * in this module.
      */
     function getNameLists() {
         var lists = window.getNameLists();
         if (!_isPlainObject(lists)) {
             throw new Error(
-                'name-queries.js: getNameLists() returned non-object; ' +
-                'canonical name-list data is malformed'
+                'name-queries.js: accessors.getNameLists() returned non-object; ' +
+                'canonical name-list data is missing or malformed'
             );
         }
         return _clone(lists);
@@ -183,7 +208,9 @@
      * Returns a defensive copy of the name list for a place ID, or null.
      *
      * A place with no configured list returns null. A place whose list is
-     * present but malformed (e.g. `male` is not an array) throws.
+     * present but malformed (e.g. `male` is not an array) throws with the
+     * place ID in the message, so the caller knows exactly which entry is
+     * broken.
      */
     function getNameList(countryId) {
         if (!_hasId(countryId)) return null;
@@ -191,8 +218,8 @@
         var lists = window.getNameLists();
         if (!_isPlainObject(lists)) {
             throw new Error(
-                'name-queries.js: getNameLists() returned non-object; ' +
-                'canonical name-list data is malformed'
+                'name-queries.js: accessors.getNameLists() returned non-object; ' +
+                'canonical name-list data is missing or malformed'
             );
         }
 
@@ -297,6 +324,11 @@
      * Returns the character's display name (the `name` field), or null
      * when the character does not exist.
      *
+     * If the character exists but has no string `name` field, returns ''.
+     * (Distinct from null: null = character not found; '' = found but
+     * nameless. In practice, nameless characters shouldn't exist, but the
+     * projection is honest about what it found.)
+     *
      * This is the only character-record projection this module exposes.
      * It exists so that UI modules do not reach for getCharacterById
      * directly.
@@ -312,6 +344,13 @@
     // 5. ANCESTOR DATA
     // =========================================================================
 
+    /**
+     * Resolves one ancestor slot relative to the starting character.
+     *
+     * The recursion is bounded by the ancestor slot grammar — each slot
+     * is a fixed path (father→father→father for paternal great-grandfather,
+     * for example). There is no arbitrary-depth slot, so this terminates.
+     */
     function _resolveAncestor(character, slot) {
         if (!character) return null;
 
@@ -391,6 +430,11 @@
      * Resolves each absolute slot in `order` against the starting
      * character and returns the requested source field.
      *
+     * Deduplication is by ancestor ID. If two slots resolve to the same
+     * ancestor (e.g. through consanguineous marriage), the name appears
+     * once. This is what a caller wants: "give me the names of each
+     * distinct ancestor in this chain."
+     *
      * @param {Object} character
      * @param {string[]} order - list of absolute ancestor slots
      * @param {string} source - 'firstname' | 'surname'
@@ -442,6 +486,12 @@
     // The canonical owner of surname history is the character record. This
     // module reads it, optionally through the NameState cache, and returns
     // a defensive copy so callers cannot mutate canonical data by accident.
+    //
+    // Three failure modes, three responses:
+    //   - character does not exist          → null (singular) / [] (entries)
+    //   - character exists, no surnameHistory → null / []
+    //   - surnameHistory present, malformed   → throw with character id
+    //
 
     function _readSurnameHistory(characterId) {
         if (!_hasId(characterId)) return null;
@@ -538,6 +588,8 @@
     /**
      * Returns a defensive copy of the surname rules configured for a
      * country, or null when no list or no rules are configured.
+     *
+     * A rules object present but malformed throws with the country ID.
      */
     function getCountrySurnameRules(countryId) {
         if (!_hasId(countryId)) return null;
