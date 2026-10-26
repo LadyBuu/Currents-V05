@@ -3,6 +3,8 @@
  * STILL WATERS - CHARACTER COMMANDS (js/character/character-commands.js)
  * =============================================================================
  *
+ * LOCATION: js/character/character-commands.js
+ *
  * Mutation boundary for character-owned state.
  *
  * SCOPE:
@@ -35,12 +37,13 @@
  *   - Rank orchestration           -> rank-commands.js / rank-assignment.js
  *
  * DEATH TRANSITION (markDeceased):
- *   markDeceased(characterId, deathData) is the ONLY function that writes
- *   isDeceased = true and the associated death fields. It validates via
- *   MortalityRules.validateDeath, then calls CharacterState.updateCharacter
- *   once. It does not dispatch family/relationship/rank/succession
- *   consequences; the caller (CharacterLifecycle.killCharacter or a UI
- *   command) is responsible for that.
+ *   markDeceased(characterId, deathData, options) is the ONLY function
+ *   that writes isDeceased = true and the associated death fields. It
+ *   validates via MortalityRules.validateDeath, then calls
+ *   CharacterState.updateCharacter once. It does not dispatch
+ *   family/relationship/rank/succession consequences; the caller
+ *   (CharacterLifecycle.killCharacter or a UI command) is responsible
+ *   for that.
  *
  *   deathData is a plain object:
  *   {
@@ -58,83 +61,41 @@
  *     executionLocation,     string, optional
  *   }
  *
+ *   options is optional and supports:
+ *   {
+ *     referenceYear,         number, optional.
+ *                            The year to treat as "now" for death-year
+ *                            validation. Defaults to window.getCurrentYear().
+ *                            This exists because CharacterLifecycle
+ *                            simulates multi-year advances: a death in
+ *                            year N+K is ahead of wall-clock current year,
+ *                            so validating against getCurrentYear() would
+ *                            reject every death after the first simulated
+ *                            year. The simulation passes the simulated
+ *                            year here. UI callers and direct commands
+ *                            omit it and get the wall-clock behaviour.
+ *   }
+ *
  * EDUCATION FIELDS:
  *   Four character-owned fields are written only by this module:
  *
  *     character.education         object, keyed by institutionId.
- *                                 Shape per entry:
- *                                 {
- *                                   institutionName,
- *                                   institutionType,
- *                                   enrolledYear,
- *                                   graduated: boolean,
- *                                   graduationYear: number|null,
- *                                   grantedRole: string|null,
- *                                   withdrawn: boolean,
- *                                   withdrawnReason: string,
- *                                   withdrawnYear: number|null
- *                                 }
- *
- *     character.educationHistory  array of history entries. Each entry is
- *                                 shaped by the caller (EducationCommands).
- *                                 This module does not validate its shape.
- *
+ *     character.educationHistory  array of history entries.
  *     character.subjectProgress   object, keyed by subject key.
- *                                 Shape per entry:
- *                                 {
- *                                   level: number 0-100,
- *                                   lastStudied: number|null,
- *                                   source: string|null,
- *                                   type: 'subject'|'role',
- *                                   roleId: string|null
- *                                 }
+ *     character.isLiterate        boolean mirror of the literacy subject.
  *
- *     character.isLiterate        boolean. Materialized mirror of
- *                                 subjectProgress.literacy.level crossing the
- *                                 literacy threshold. The subjectProgress
- *                                 level is the source of truth; this field is
- *                                 a cache for fast reads. Writers must keep
- *                                 them in sync (EducationCommands does).
- *
- *   The generic updateCharacterFields / updateCharactersFields refuse these
- *   four fields. Use the dedicated writers below.
+ *   The generic updateCharacterFields / updateCharactersFields refuse
+ *   these four fields. Use the dedicated writers below.
  *
  * RANK FIELDS:
  *   Three character-owned fields are written only by this module:
  *
- *     character.rankAssignments   array of assignment records. Each entry:
- *                                 {
- *                                   rankId: string,
- *                                   customTitle: string|null,
- *                                   address: string|null,
- *                                   number: {
- *                                     rawNumber: number,
- *                                     display: string,
- *                                     type: 'ordinal'|'roman'|'custom',
- *                                     groupId: string|null,
- *                                     holdersInGroup: number|null
- *                                   } | null,
- *                                   order: number,
- *                                   isActive: boolean,
- *                                   isDeprecated: boolean,
- *                                   assignedYear: number|null,
- *                                   notes: string,
- *                                   inheritedFrom: string|null
- *                                 }
+ *     character.rankAssignments   array of assignment records.
+ *     character.activeRankId      string|null.
+ *     character.activeRankNumber  number|null.
  *
- *     character.activeRankId      string|null. Pointer to the currently active
- *                                 (non-deprecated) rank assignment. Must match
- *                                 the rankId of exactly one non-deprecated
- *                                 entry in rankAssignments, or be null when
- *                                 there are no non-deprecated entries.
- *
- *     character.activeRankNumber  number|null. Raw number of the active rank
- *                                 assignment, mirrored for fast reads. Kept in
- *                                 sync with activeRankId. When the active
- *                                 assignment has no number, this is null.
- *
- *   The generic updateCharacterFields / updateCharactersFields refuse these
- *   three fields. Use the dedicated writers below.
+ *   The generic updateCharacterFields / updateCharactersFields refuse
+ *   these three fields. Use the dedicated writers below.
  *
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js: CharacterState
@@ -263,24 +224,6 @@
     // =========================================================================
     // 3. DOMAIN-OWNED FIELD GATE
     // =========================================================================
-    //
-    // Fields refused by the generic update path. Each has a dedicated writer
-    // owned by some module. Update via the dedicated writer, not through
-    // updateCharacterFields.
-    //
-    //   professions             -> CharacterCommands (this file)
-    //   rankAssignments         -> CharacterCommands (this file, rank API)
-    //   activeRankId            -> CharacterCommands (this file, rank API)
-    //   activeRankNumber        -> CharacterCommands (this file, rank API)
-    //   relationships           -> RelationshipCommands
-    //   friends                 -> RelationshipCommands
-    //   apprenticeshipDetails   -> ApprenticeshipCommands
-    //   apprentices             -> ApprenticeshipCommands
-    //   isDeleted, deletedAt    -> CharacterDeletionCommands
-    //   education               -> CharacterCommands (this file, education API)
-    //   educationHistory        -> CharacterCommands (this file, education API)
-    //   subjectProgress         -> CharacterCommands (this file, education API)
-    //   isLiterate              -> CharacterCommands (this file, education API)
 
     var _DOMAIN_OWNED_FIELDS = {
         professions: true,
@@ -394,12 +337,24 @@
     /**
      * Marks a character as deceased. The single canonical death writer.
      *
+     * @param {string} characterId
+     * @param {Object} deathData
+     * @param {Object} [options]
+     * @param {number} [options.referenceYear]
+     *   The year to treat as "now" for validation. Defaults to
+     *   window.getCurrentYear(). CharacterLifecycle.advanceMortality
+     *   supplies the simulated year here so that multi-year simulation
+     *   can produce deaths in years ahead of the wall-clock year.
+     *
      * Returns { success, reason?, deathRecord? }.
      */
-    function markDeceased(characterId, deathData) {
+    function markDeceased(characterId, deathData, options) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_isPlainObject(deathData)) {
             return _fail('deathData must be a plain object.');
+        }
+        if (!_isMissing(options) && !_isPlainObject(options)) {
+            return _fail('options must be a plain object when provided.');
         }
 
         var character = CS._getLiveCharacterForMutation(characterId);
@@ -411,14 +366,20 @@
         var deps = _requireMortalityRules();
         if (!deps.ok) return _fail(deps.reason);
 
-        var currentYear = window.getCurrentYear();
+        // Reference year: caller-supplied (simulation) or wall-clock.
+        // Validation is against this, not against getCurrentYear().
+        var referenceYear = (_isPlainObject(options)
+            && !_isMissing(options.referenceYear)
+            && window.isValidYear(options.referenceYear) === true)
+            ? options.referenceYear
+            : window.getCurrentYear();
 
         var validationFacts = {
             characterId: characterId,
             isDeceased: character.isDeceased === true,
             birthYear: character.birthYear,
             deathYear: deathData.deathYear,
-            currentYear: currentYear,
+            currentYear: referenceYear,
             deathCause: deathData.deathCause,
             isMurder: deathData.isMurder === true,
             killerId: _isMissing(deathData.killerId) ? null : deathData.killerId,
@@ -1081,18 +1042,6 @@
     // =========================================================================
     // 11. EDUCATION CONTAINER INITIALISATION
     // =========================================================================
-    //
-    // Ensures the four education-owned containers exist on the character with
-    // neutral defaults. Idempotent. Called by
-    // EducationLearning.ensureCharacterEducationRecord.
-    //
-    //   subjectProgress   -> {}
-    //   isLiterate        -> false
-    //   education         -> {}
-    //   educationHistory  -> []
-    //
-    // A character created by CharacterCreationCommands should already have
-    // these. This is a defensive backstop, not the primary initialiser.
 
     function initializeEducationContainers(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -1139,18 +1088,6 @@
     // =========================================================================
     // 12. EDUCATION RECORD (character.education)
     // =========================================================================
-    //
-    // character.education is an object keyed by institutionId. Each entry
-    // records the character's enrolment state at that institution.
-    //
-    // Read:  getEducationRecord(characterId, institutionId)
-    //        getEducationRecords(characterId)
-    // Write: recordEducationEnrollment(characterId, institutionId, data)
-    //        recordEducationGraduation(characterId, institutionId, data)
-    //        recordEducationWithdrawal(characterId, institutionId, data)
-    //
-    // Called by EducationCommands.enrollStudent / graduateStudent /
-    // withdrawStudent.
 
     function _normaliseEducationEntry(current, incoming) {
         var base = _isPlainObject(current) ? current : {};
@@ -1339,10 +1276,6 @@
     // =========================================================================
     // 13. EDUCATION HISTORY (character.educationHistory)
     // =========================================================================
-    //
-    // character.educationHistory is an append-only array of history entries.
-    // Each entry is shaped by EducationCommands.graduateStudent. This module
-    // does not validate entry shape — it just appends.
 
     function getEducationHistory(characterId) {
         if (!_hasId(characterId)) return [];
@@ -1386,15 +1319,6 @@
     // =========================================================================
     // 14. SUBJECT PROGRESS (character.subjectProgress)
     // =========================================================================
-    //
-    // character.subjectProgress is an object keyed by subject key. Keys are
-    // produced by EducationRules.progressKeyFor (bare subject id for
-    // 'subject', 'role_<id>' for 'role').
-    //
-    // Read:  getSubjectProgress(characterId, key)
-    //        getAllSubjectProgress(characterId)
-    // Write: ensureSubjectProgress(characterId, key, initial)  -- create if missing
-    //        updateSubjectProgress(characterId, key, patch)    -- merge onto existing
 
     function getSubjectProgress(characterId, key) {
         if (!_hasId(characterId)) return null;
@@ -1528,14 +1452,6 @@
     // =========================================================================
     // 15. LITERACY (character.isLiterate)
     // =========================================================================
-    //
-    // isLiterate is a materialized mirror of subjectProgress.literacy.level
-    // crossing the threshold. Writes must keep them in sync — EducationCommands
-    // is responsible for calling setLiterate at the correct moment.
-    //
-    // The read here returns the field. EducationLearning.isLiterate reads the
-    // subjectProgress level and applies the threshold. The two should agree;
-    // if they can drift, EducationLearning should read this field instead.
 
     function isLiterate(characterId) {
         if (!_hasId(characterId)) return false;
@@ -1576,11 +1492,6 @@
     // =========================================================================
     // 16. RANK API - NORMALISATION
     // =========================================================================
-    //
-    // The rank assignment record is authored by RankAssignment and consumed by
-    // RankQueries, RankIssues, and the character summary. This module owns its
-    // shape: every write runs through _normaliseRankAssignment so the stored
-    // record is always well-formed. Callers do not shape it.
 
     function _normaliseNumberInfo(raw) {
         if (_isMissing(raw)) return null;
@@ -1651,16 +1562,6 @@
         return -1;
     }
 
-    /**
-     * Recomputes isActive flags across an assignment array, ensuring exactly
-     * one non-deprecated entry is active. If activeRankId is supplied and
-     * matches a non-deprecated entry, that entry is marked active. Otherwise
-     * the first non-deprecated entry (by order) is marked active. If there are
-     * no non-deprecated entries, all entries are inactive.
-     *
-     * Also recomputes activeRankId and activeRankNumber from the resulting
-     * state. Callers use the returned object to build the write patch.
-     */
     function _reconcileRankActives(assignments, preferredActiveRankId) {
         var next = [];
         for (var i = 0; i < assignments.length; i++) {
@@ -1739,10 +1640,6 @@
     // =========================================================================
     // 17. RANK API - CONTAINER INITIALISATION
     // =========================================================================
-    //
-    // Ensures rankAssignments exists as an array and activeRankId /
-    // activeRankNumber exist as null. Idempotent. Called by
-    // RankState/RankCommands bootstrap and by CharacterCreationCommands.
 
     function initializeRankContainers(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -1833,13 +1730,6 @@
     // 19. RANK API - WRITES
     // =========================================================================
 
-    /**
-     * Adds a rank assignment. If the character has no active rank, the new
-     * assignment becomes active. Duplicate non-deprecated assignments for the
-     * same rank are refused; a previously deprecated assignment is reactivated
-     * instead (its isDeprecated is cleared and it is treated as the write
-     * target). Returns { success, assignment, activeRankId }.
-     */
     function addRankAssignment(characterId, assignmentData) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_isPlainObject(assignmentData)) {
@@ -1859,7 +1749,6 @@
             ? character.rankAssignments.slice()
             : [];
 
-        // Non-deprecated duplicate: refuse.
         for (var i = 0; i < existing.length; i++) {
             var a = existing[i];
             if (a && a.rankId === assignmentData.rankId && a.isDeprecated !== true) {
@@ -1869,7 +1758,6 @@
 
         var normalised = _normaliseRankAssignment(assignmentData);
 
-        // Reactivate a deprecated entry if one exists.
         var reactivated = false;
         for (var j = 0; j < existing.length; j++) {
             if (existing[j] && existing[j].rankId === assignmentData.rankId
@@ -1911,10 +1799,6 @@
         });
     }
 
-    /**
-     * Patches an existing rank assignment. The rankId itself cannot be changed;
-     * remove the assignment and add a new one instead.
-     */
     function updateRankAssignment(characterId, rankId, patch) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
@@ -1999,11 +1883,6 @@
         });
     }
 
-    /**
-     * Marks a rank assignment as deprecated. Active pointer is recomputed.
-     * Idempotent: deprecating an already-deprecated assignment is a no-op that
-     * returns { unchanged: true }.
-     */
     function deprecateRankAssignment(characterId, rankId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
@@ -2029,7 +1908,6 @@
         current.isActive = false;
         existing[idx] = current;
 
-        // If the active pointer pointed at this rank, force a reselection.
         var preferredActive = character.activeRankId === rankId
             ? null
             : (character.activeRankId || null);
@@ -2044,10 +1922,6 @@
         });
     }
 
-    /**
-     * Hard-removes a rank assignment (deprecated or not). Active pointer is
-     * recomputed.
-     */
     function removeRankAssignment(characterId, rankId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
@@ -2079,10 +1953,6 @@
         });
     }
 
-    /**
-     * Sets the active rank. The rankId must exist on the character and must
-     * not be deprecated. Idempotent.
-     */
     function setActiveRank(characterId, rankId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
@@ -2130,7 +2000,6 @@
             return _ok({ unchanged: true });
         }
 
-        // Force a reselection among non-deprecated entries.
         var existing = Array.isArray(character.rankAssignments)
             ? character.rankAssignments.slice()
             : [];
@@ -2150,15 +2019,12 @@
     // =========================================================================
 
     window.CharacterCommands = {
-        // Character-owned field updates
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
         updateCharacter: updateCharacter,
 
-        // Death
         markDeceased: markDeceased,
 
-        // Professions
         getProfession: getProfession,
         getProfessions: getProfessions,
         addProfession: addProfession,
@@ -2169,48 +2035,38 @@
         setPrimaryProfession: setPrimaryProfession,
         clearPrimaryProfession: clearPrimaryProfession,
 
-        // Surname history
         recordCharacterSurnameChange: recordCharacterSurnameChange,
         revertCharacterSurnameChange: revertCharacterSurnameChange,
 
-        // Religion
         assignCharacterReligion: assignCharacterReligion,
         removeCharacterReligion: removeCharacterReligion,
 
-        // Education containers
         initializeEducationContainers: initializeEducationContainers,
 
-        // Education record
         getEducationRecord: getEducationRecord,
         getEducationRecords: getEducationRecords,
         recordEducationEnrollment: recordEducationEnrollment,
         recordEducationGraduation: recordEducationGraduation,
         recordEducationWithdrawal: recordEducationWithdrawal,
 
-        // Education history
         getEducationHistory: getEducationHistory,
         appendEducationHistory: appendEducationHistory,
 
-        // Subject progress
         getSubjectProgress: getSubjectProgress,
         getAllSubjectProgress: getAllSubjectProgress,
         ensureSubjectProgress: ensureSubjectProgress,
         updateSubjectProgress: updateSubjectProgress,
 
-        // Literacy
         isLiterate: isLiterate,
         setLiterate: setLiterate,
 
-        // Rank containers
         initializeRankContainers: initializeRankContainers,
 
-        // Rank reads
         getRankAssignments: getRankAssignments,
         getRankAssignment: getRankAssignment,
         getActiveRank: getActiveRank,
         hasRankAssignment: hasRankAssignment,
 
-        // Rank writes
         addRankAssignment: addRankAssignment,
         updateRankAssignment: updateRankAssignment,
         deprecateRankAssignment: deprecateRankAssignment,
