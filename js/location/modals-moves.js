@@ -3,6 +3,8 @@
  * MOVES MODALS
  * =============================================================================
  *
+ * LOCATION: js/location/modals-moves.js
+ *
  * UI form orchestration for movement.
  * Reads prepared ViewModels, invokes LocationCommands.
  * Local UI state only.
@@ -22,8 +24,8 @@
  *   - window.openModal, window.closeTopModal
  *
  * Optional, used when present:
- *   - window._escapeHtml
- *   - window._showToast
+ *   - window.escapeHtml  (formatting.js)
+ *   - window.showToast   (ui.js)
  *
  * =============================================================================
  */
@@ -59,8 +61,8 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
         }
         if (str === null || str === undefined) return '';
         return String(str)
@@ -72,8 +74,8 @@
     }
 
     function _toast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type || 'info');
+        if (typeof window.showToast === 'function') {
+            window.showToast(msg, type || 'info');
         }
     }
 
@@ -176,8 +178,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Move Character',
-            content: html,
+            titleHtml: 'Move Character',
+            contentHtml: html,
             confirmText: 'Move',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -264,8 +266,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Bulk Move',
-            content: html,
+            titleHtml: 'Bulk Move',
+            contentHtml: html,
             confirmText: 'Move',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -406,8 +408,8 @@
         html += '</div>';
 
         window.openModal({
-            title: 'Move History',
-            content: html,
+            titleHtml: 'Move History',
+            contentHtml: html,
             confirmText: 'Close',
             cancelText: '',
             onConfirm: function () {
