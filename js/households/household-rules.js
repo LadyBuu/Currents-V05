@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - HOUSEHOLD RULES (js/households/household-rules.js)
+ * STILL WATERS - HOUSEHOLD RULES (household-rules.js)
  * =============================================================================
  *
  * LOCATION: js/households/household-rules.js
@@ -10,47 +10,77 @@
  * Pure policy for the household domain. Every function here is either:
  *
  *   - a pure calculation (no side effects, deterministic given inputs)
- *   - an explicitly-labelled helper that mutates a passed-in record
- *     (applyHeadChange) — everything else is side-effect free
+ *   - an explicitly-labelled helper that mutates a caller-supplied record
+ *     (applyHeadChange) — nothing else is side-effecting
+ *
+ * This module is the SINGLE SOURCE OF TRUTH for:
+ *
+ *   - Succession policy (pickSuccessor, deriveDeprecationSuccessor)
+ *   - Head-change application (applyHeadChange)
+ *   - Economic policy (getEconomicTier, netAnnualChange,
+ *     calculateAnnualDebtInterest, evaluateBankruptcy,
+ *     calculateEnterpriseNet)
+ *   - Service quality (calculateServiceQuality, calculateRecommendation)
+ *   - Residence policy (calculateRepairCost, calculateRehabilitatedValue,
+ *     calculateOccupiedUnitCount, calculateVacantUnitCount,
+ *     isResidenceVacant, calculateUnitStats)
+ *   - Household status (calculateHouseholdStatus, isHouseholdVacant)
+ *   - Heir eligibility (filterEligibleHeirs)
+ *   - Demographics (calculateDemographics)
  *
  * WHAT THIS MODULE IS NOT
  * -----------------------
  *   - Not state. State lives in household-state.js / residence-system.js.
- *   - Not persistence. Persistence lives in commands' persist() methods.
- *   - Not I/O. No window access, no fetch, no localStorage.
- *   - Not randomness. The one randomness call (economic event probability)
- *     stays in household-economy.js.
+ *   - Not persistence. Persistence lives in the commands' persist().
+ *   - Not I/O. No window access except the constants dep, no fetch, no
+ *     localStorage.
+ *   - Not randomness. This module NEVER generates random numbers. Any
+ *     function that needs a random value accepts it as a parameter.
+ *   - Not the constants catalog. Every threshold, tier boundary, service
+ *     type, and residence condition lives in household-constants.js. This
+ *     module consumes them, it does not duplicate them.
  *
  * DESIGN NOTES
  * ------------
- *   - Rules functions take *snapshots* and *ids* as inputs, not live
- *     canonical records. The one exception is applyHeadChange, which must
- *     mutate the passed household record — it is documented as such.
+ *   - Rules functions take SNAPSHOTS and ids as inputs, not live canonical
+ *     records. The one exception is applyHeadChange, which must mutate the
+ *     passed household record — it is documented as such.
  *   - Rules functions call the caller-supplied character lookup
- *     (getCharacterById) when they need character data. This keeps the
- *     module decoupled from global window state during tests.
+ *     (getCharacterById) when they need character data. This keeps this
+ *     module decoupled from global state during tests.
  *   - Rules functions never persist. The caller (a command) persists.
+ *   - Missing constants throw at load. This module has NO fallbacks.
+ *     Prior revisions duplicated the economic and service catalogs
+ *     "just in case constants.js wasn't loaded". That made three copies
+ *     of every threshold and was the single largest divergence risk in
+ *     the household subsystem. The fallbacks are gone.
  *
  * CONSUMERS
  * ---------
- *   household-commands.js     — pickSuccessor, applyHeadChange,
- *                               getEconomicTier, netAnnualChange
+ *   household-commands.js     — pickSuccessor, applyHeadChange
  *   household-queries.js      — calculateHouseholdStatus,
  *                               calculateDemographics,
  *                               isHouseholdVacant, filterEligibleHeirs
- *   household-economy.js      — getEconomicTier, calculateEnterpriseNet,
- *                               netAnnualChange, calculateAnnualDebtInterest,
- *                               evaluateBankruptcy
+ *   household-economy.js      — getEconomicTier, netAnnualChange,
+ *                               calculateAnnualDebtInterest,
+ *                               evaluateBankruptcy, calculateEnterpriseNet
  *   household-servant.js      — calculateServiceQuality,
  *                               calculateRecommendation
- *   residence-system.js       — calculateRepairCost, calculateOccupiedUnitCount,
- *                               calculateVacantUnitCount, isResidenceVacant,
- *                               calculateUnitStats, calculateRehabilitatedValue
+ *   residence-system.js       — calculateRepairCost,
+ *                               calculateRehabilitatedValue,
+ *                               calculateOccupiedUnitCount,
+ *                               calculateVacantUnitCount,
+ *                               isResidenceVacant,
+ *                               calculateUnitStats
+ *   household-view-models.js  — (indirect; view-models reads constants
+ *                               directly for dropdowns/badges)
  *
  * LOAD ORDER
  * ----------
  *   household-constants.js
  *   household-rules.js        ← this file
+ *   household-view-models.js
+ *   household-orchestration.js
  *   household-state.js
  *   household-queries.js
  *   household-commands.js
@@ -59,11 +89,12 @@
  *   household-servant.js
  *   residence-system.js
  *   household-bootstrap.js
+ *   household-ui-list.js
+ *   modals-*.js
  *
  * DEPENDENCIES
  * ------------
- *   - household-constants.js (optional — falls back to inline thresholds
- *     if missing; see _constants())
+ *   - household-constants.js  (REQUIRED — throws if missing)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -74,69 +105,63 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 0. DEPENDENCY GUARD
     // =========================================================================
 
-    /**
-     * Constants are optional for this module. If household-constants.js is
-     * not loaded, we use inline fallbacks so the rules functions still
-     * return the correct values. This lets rules be unit-tested without
-     * loading the entire domain.
-     */
-    function _constants() {
-        return typeof window.HouseholdConstants !== 'undefined'
-            ? window.HouseholdConstants
-            : null;
+    if (typeof window.HouseholdConstants === 'undefined'
+        || window.HouseholdConstants === null) {
+        throw new Error(
+            'household-rules.js: household-constants.js must load first ' +
+            '(window.HouseholdConstants is missing).'
+        );
     }
 
-    function _threshold(key, fallback) {
-        var c = _constants();
-        if (c && c.THRESHOLDS && c.THRESHOLDS[key] !== undefined) {
-            return c.THRESHOLDS[key];
+    var C = window.HouseholdConstants;
+
+    // Sanity-check the specific sub-catalogs we consume. A missing catalog
+    // means constants.js is stale (older version loaded). Fail loudly
+    // rather than fall back to inline copies.
+    var _REQUIRED_CONSTANTS = [
+        'ECONOMIC_TIERS',
+        'ECONOMIC_TIER_ORDER',
+        'SERVICE_QUALITY_ORDER',
+        'RESIDENCE_CONDITIONS',
+        'CONDITION_MULTIPLIER',
+        'THRESHOLDS'
+    ];
+    for (var _i = 0; _i < _REQUIRED_CONSTANTS.length; _i++) {
+        if (typeof C[_REQUIRED_CONSTANTS[_i]] === 'undefined'
+            || C[_REQUIRED_CONSTANTS[_i]] === null) {
+            throw new Error(
+                'household-rules.js: HouseholdConstants.' +
+                _REQUIRED_CONSTANTS[_i] + ' is missing. ' +
+                'The loaded household-constants.js is too old.'
+            );
         }
-        return fallback;
     }
 
-    function _conditionMultiplier(conditionId, fallback) {
-        var c = _constants();
-        if (c && c.CONDITION_MULTIPLIER &&
-            c.CONDITION_MULTIPLIER[conditionId] !== undefined) {
-            return c.CONDITION_MULTIPLIER[conditionId];
-        }
-        return fallback;
+    // =========================================================================
+    // 1. PRIVATE HELPERS
+    // =========================================================================
+
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
-    function _serviceQualityOrder() {
-        var c = _constants();
-        if (c && Array.isArray(c.SERVICE_QUALITY_ORDER)) {
-            return c.SERVICE_QUALITY_ORDER;
-        }
-        // Inline fallback matching household-constants.js
-        return [
-            { id: 'excellent',      name: 'Excellent',      minSatisfaction: 90 },
-            { id: 'good',           name: 'Good',           minSatisfaction: 70 },
-            { id: 'average',        name: 'Average',        minSatisfaction: 50 },
-            { id: 'poor',           name: 'Poor',           minSatisfaction: 30 },
-            { id: 'unsatisfactory', name: 'Unsatisfactory', minSatisfaction: 0 }
-        ];
+    function _isFiniteNumber(v) {
+        return typeof v === 'number' && isFinite(v);
     }
 
-    function _economicTiers() {
-        var c = _constants();
-        if (c && c.ECONOMIC_TIERS) {
-            return c.ECONOMIC_TIERS;
+    function _readArray(v) {
+        return Array.isArray(v) ? v : [];
+    }
+
+    function _intersect(a, b) {
+        var out = [];
+        for (var i = 0; i < a.length; i++) {
+            if (b.indexOf(a[i]) !== -1) out.push(a[i]);
         }
-        // Inline fallback matching household-constants.js
-        return {
-            DESTITUTE:  { id: 'destitute',  minWealth: 0,    maxWealth: 10,       label: 'Destitute' },
-            POOR:       { id: 'poor',       minWealth: 11,   maxWealth: 30,       label: 'Poor' },
-            MODERATE:   { id: 'moderate',   minWealth: 31,   maxWealth: 70,       label: 'Moderate' },
-            PROSPEROUS: { id: 'prosperous', minWealth: 71,   maxWealth: 120,      label: 'Prosperous' },
-            WEALTHY:    { id: 'wealthy',    minWealth: 121,  maxWealth: 200,      label: 'Wealthy' },
-            NOBLE:      { id: 'noble',      minWealth: 201,  maxWealth: 500,      label: 'Noble' },
-            VERY_NOBLE: { id: 'very_noble', minWealth: 501,  maxWealth: 1000,     label: 'High Noble' },
-            ROYAL:      { id: 'royal',      minWealth: 1001, maxWealth: Infinity, label: 'Royal' }
-        };
+        return out;
     }
 
     // =========================================================================
@@ -147,13 +172,15 @@
      * Picks the successor to a household headship.
      *
      * Policy: oldest living family member (by birth year). Ties broken by
-     * member order in the array. Staff are never successors. Deceased
-     * characters are excluded.
+     * member order in the household.members array (first encountered wins).
+     * Staff are never successors. Deceased characters are excluded. A
+     * member whose character cannot be resolved is excluded.
      *
      * @param {Object} household - household snapshot or canonical record.
-     *   Must have a `members` array. Members must have `characterId` and
-     *   `type`. The `type` must be 'family' for the member to be eligible.
+     *   Must have a `members` array. Each member must have `characterId`
+     *   and `type`. Only members with `type === 'family'` are eligible.
      * @param {Function} getCharacterById - callback for character lookup.
+     *   Returns a projection or null.
      * @returns {string|null} characterId of the successor, or null.
      */
     function pickSuccessor(household, getCharacterById) {
@@ -163,7 +190,8 @@
         var candidates = [];
         for (var i = 0; i < household.members.length; i++) {
             var m = household.members[i];
-            if (m.type !== 'family') continue;
+            if (!m || m.type !== 'family') continue;
+            if (!_hasId(m.characterId)) continue;
 
             var character = null;
             try {
@@ -171,28 +199,30 @@
             } catch (e) {
                 character = null;
             }
-            if (!character || character.isDeceased) continue;
+            if (!character || character.isDeceased === true) continue;
 
             candidates.push({
                 id: m.characterId,
-                birthYear: character.birthYear !== undefined
+                birthYear: _isFiniteNumber(character.birthYear)
                     ? character.birthYear
-                    : 9999
+                    : 9999,
+                order: i
             });
         }
 
         if (candidates.length === 0) return null;
         candidates.sort(function(a, b) {
-            return a.birthYear - b.birthYear;
+            if (a.birthYear !== b.birthYear) return a.birthYear - b.birthYear;
+            return a.order - b.order;
         });
         return candidates[0].id;
     }
 
     /**
-     * Deprecation-fallback successor. Same policy as pickSuccessor, but
-     * documented here as the "the household is about to lose its head,
-     * who is next?" case. Callers should use pickSuccessor for the general
-     * case.
+     * Deprecation-fallback successor. Semantically identical to
+     * pickSuccessor; kept as a distinct name so callers expressing
+     * "the household is about to be deprecated, who inherits?" intent
+     * can do so without a second code path. Delegates.
      *
      * @param {Object} household
      * @param {Function} getCharacterById
@@ -209,9 +239,11 @@
      * that mutates. It clears every existing head, sets the new head, and
      * appends an eventLog entry.
      *
-     * @param {Object} household - live canonical household record. This
-     *   function is called from within a command, on the record the command
-     *   is about to commit.
+     * Callers are commands (household-commands.js) running on the live
+     * canonical record they are about to commit. Snapshot in, mutate out
+     * does not apply here.
+     *
+     * @param {Object} household - live canonical household record.
      * @param {string} characterId - who should become head.
      * @param {number} year - when.
      * @param {string} reason - why.
@@ -219,35 +251,37 @@
      */
     function applyHeadChange(household, characterId, year, reason) {
         if (!household || !Array.isArray(household.members)) return false;
+        if (!_hasId(characterId)) return false;
 
-        // Clear all existing heads
+        // Clear every existing head.
         for (var i = 0; i < household.members.length; i++) {
-            if (household.members[i].isHead) {
+            if (household.members[i] && household.members[i].isHead) {
                 household.members[i].isHead = false;
                 household.members[i].headSince = null;
                 household.members[i].role = 'Family Member';
             }
         }
 
-        // Set the new head
+        // Set the new head.
         for (var j = 0; j < household.members.length; j++) {
-            if (household.members[j].characterId === characterId) {
-                household.members[j].isHead = true;
-                household.members[j].role = 'Head of Household';
-                household.members[j].headSince = year;
+            var m = household.members[j];
+            if (!m || m.characterId !== characterId) continue;
 
-                if (!Array.isArray(household.eventLog)) {
-                    household.eventLog = [];
-                }
-                household.eventLog.push({
-                    year: year,
-                    type: 'head_appointed',
-                    characterId: characterId,
-                    reason: reason || null,
-                    timestamp: Date.now()
-                });
-                return true;
+            m.isHead = true;
+            m.role = 'Head of Household';
+            m.headSince = year;
+
+            if (!Array.isArray(household.eventLog)) {
+                household.eventLog = [];
             }
+            household.eventLog.push({
+                year: year,
+                type: 'head_appointed',
+                characterId: characterId,
+                reason: reason || null,
+                timestamp: Date.now()
+            });
+            return true;
         }
         return false;
     }
@@ -257,18 +291,25 @@
     // =========================================================================
 
     /**
-     * Returns the economic tier for a wealth value.
-     * Pure. Tiers loaded from household-constants.js or inline fallback.
+     * Returns the economic tier for a wealth value. The tiers form a total
+     * partition of [0, +Infinity), so this always returns a tier — the
+     * destitute tier for invalid input.
+     *
+     * Pure. Delegates to HouseholdConstants.ECONOMIC_TIER_ORDER.
+     *
+     * @param {number} wealth
+     * @returns {Object} tier object with {id, minWealth, maxWealth, label}
      */
     function getEconomicTier(wealth) {
-        var w = typeof wealth === 'number' && isFinite(wealth) ? wealth : 0;
-        var tiers = _economicTiers();
-        var keys = Object.keys(tiers);
-        for (var i = 0; i < keys.length; i++) {
-            var tier = tiers[keys[i]];
-            if (w >= tier.minWealth && w <= tier.maxWealth) return tier;
+        var w = _isFiniteNumber(wealth) ? wealth : 0;
+        var tiers = C.ECONOMIC_TIER_ORDER;
+        for (var i = 0; i < tiers.length; i++) {
+            if (w >= tiers[i].minWealth && w <= tiers[i].maxWealth) {
+                return tiers[i];
+            }
         }
-        return tiers.DESTITUTE;
+        // Unreachable with the current partition; defensive fallback.
+        return tiers[0];
     }
 
     /**
@@ -276,31 +317,36 @@
      * Pure.
      */
     function netAnnualChange(income, expenses) {
-        var i = typeof income === 'number' && isFinite(income) ? income : 0;
-        var e = typeof expenses === 'number' && isFinite(expenses) ? expenses : 0;
+        var i = _isFiniteNumber(income) ? income : 0;
+        var e = _isFiniteNumber(expenses) ? expenses : 0;
         return i - e;
     }
 
     /**
-     * Annual debt interest for a debt value.
+     * Annual debt interest for a debt value. Positive debt accrues at
+     * THRESHOLDS.DEBT_INTEREST_RATE. Zero or negative debt accrues nothing.
      * Pure.
      */
     function calculateAnnualDebtInterest(debt) {
-        var d = typeof debt === 'number' && isFinite(debt) ? debt : 0;
+        var d = _isFiniteNumber(debt) ? debt : 0;
         if (d <= 0) return 0;
-        var rate = _threshold('DEBT_INTEREST_RATE', 0.05);
-        return d * rate;
+        return d * C.THRESHOLDS.DEBT_INTEREST_RATE;
     }
 
     /**
      * Whether a wealth value puts the household below the bankruptcy
      * threshold. Pure.
+     *
+     * @param {number} wealth
+     * @param {number} [threshold] - override; defaults to
+     *   THRESHOLDS.BANKRUPTCY.
+     * @returns {boolean}
      */
     function evaluateBankruptcy(wealth, threshold) {
-        var w = typeof wealth === 'number' && isFinite(wealth) ? wealth : 0;
-        var t = typeof threshold === 'number'
+        var w = _isFiniteNumber(wealth) ? wealth : 0;
+        var t = _isFiniteNumber(threshold)
             ? threshold
-            : _threshold('BANKRUPTCY', -50);
+            : C.THRESHOLDS.BANKRUPTCY;
         return w < t;
     }
 
@@ -308,10 +354,13 @@
      * Enterprise net income/expense from a list of enterprise summaries.
      *
      * `summaries` are the objects returned by
-     * `IndustryQueries.getEnterpriseSummary(id)`. Public enterprises are
+     * IndustryQueries.getEnterpriseSummary(id). Public enterprises are
      * excluded (their profits belong to the Crown).
      *
      * Pure.
+     *
+     * @param {Array} summaries
+     * @returns {{income: number, expense: number}}
      */
     function calculateEnterpriseNet(summaries) {
         var income = 0;
@@ -323,7 +372,7 @@
             var s = summaries[i];
             if (!s) continue;
             if (s.ownershipType === 'public') continue;
-            var profit = typeof s.annualProfit === 'number' ? s.annualProfit : 0;
+            var profit = _isFiniteNumber(s.annualProfit) ? s.annualProfit : 0;
             if (profit > 0) income += profit;
             else if (profit < 0) expense += -profit;
         }
@@ -336,29 +385,38 @@
 
     /**
      * Service quality tier from average employer + servant satisfaction.
+     *
+     * The average of the two satisfactions is compared against each tier's
+     * minSatisfaction, best-first. The first tier whose threshold the
+     * average meets or exceeds wins. If neither satisfaction is a number,
+     * both default to 70 (the "neutral" starting value used by
+     * household-servant.js when creating a relationship).
+     *
      * Pure.
+     *
+     * @param {number} employerSatisfaction - 0..100
+     * @param {number} servantSatisfaction - 0..100
+     * @returns {Object} SERVICE_QUALITY tier object
      */
     function calculateServiceQuality(employerSatisfaction, servantSatisfaction) {
-        var e = typeof employerSatisfaction === 'number'
-            ? employerSatisfaction : 70;
-        var s = typeof servantSatisfaction === 'number'
-            ? servantSatisfaction : 70;
+        var e = _isFiniteNumber(employerSatisfaction) ? employerSatisfaction : 70;
+        var s = _isFiniteNumber(servantSatisfaction) ? servantSatisfaction : 70;
         var avg = (e + s) / 2;
 
-        var order = _serviceQualityOrder();
+        var order = C.SERVICE_QUALITY_ORDER;
         for (var i = 0; i < order.length; i++) {
             if (avg >= order[i].minSatisfaction) return order[i];
         }
-        // Fallback — should never hit
+        // The last tier has minSatisfaction 0; this is unreachable.
         return order[order.length - 1];
     }
 
     /**
-     * Recommendation string from satisfaction.
+     * Recommendation string from a satisfaction score.
      * Pure.
      */
     function calculateRecommendation(satisfaction) {
-        var s = typeof satisfaction === 'number' ? satisfaction : 0;
+        var s = _isFiniteNumber(satisfaction) ? satisfaction : 0;
         if (s >= 90) return 'highly recommended';
         if (s >= 70) return 'recommended';
         if (s >= 50) return 'recommended with reservations';
@@ -374,9 +432,13 @@
      *
      * Cost = baseValue × (targetMultiplier − currentMultiplier) × 0.5
      * Returns 0 if target is worse than or equal to current (no repair).
+     * Returns 0 for unknown conditions or missing residence.
+     *
+     * Pure.
      *
      * @param {Object} residence - residence snapshot with `condition` and
-     *   `estimatedValue`. If missing, uses default estimated value 500.
+     *   `estimatedValue`. Missing estimatedValue defaults to
+     *   THRESHOLDS.DEFAULT_ESTIMATED_VALUE.
      * @param {string} targetCondition - one of RESIDENCE_CONDITIONS ids.
      * @returns {number} repair cost in gold, or 0.
      */
@@ -384,13 +446,15 @@
         if (!residence) return 0;
 
         var currentCondition = residence.condition || 'good';
-        var currentM = _conditionMultiplier(currentCondition, undefined);
-        var targetM = _conditionMultiplier(targetCondition, undefined);
-        if (currentM === undefined || targetM === undefined) return 0;
+        var currentM = C.CONDITION_MULTIPLIER[currentCondition];
+        var targetM = C.CONDITION_MULTIPLIER[targetCondition];
+        if (typeof currentM !== 'number' || typeof targetM !== 'number') {
+            return 0;
+        }
 
-        var baseValue = residence.estimatedValue !== undefined
+        var baseValue = _isFiniteNumber(residence.estimatedValue)
             ? residence.estimatedValue
-            : _threshold('DEFAULT_ESTIMATED_VALUE', 500);
+            : C.THRESHOLDS.DEFAULT_ESTIMATED_VALUE;
 
         var repairFactor = targetM - currentM;
         if (repairFactor <= 0) return 0;
@@ -399,18 +463,25 @@
 
     /**
      * New estimated value after rehabilitation.
-     * Value grows by 5% of the multiplier change, applied to old value.
-     * Pure.
+     *
+     * Value grows by 5% of the multiplier change, applied to the old value.
+     * Returns the old value for unknown conditions. Pure.
+     *
+     * @param {number} estimatedValue
+     * @param {string} currentCondition
+     * @param {string} targetCondition
+     * @returns {number}
      */
-    function calculateRehabilitatedValue(estimatedValue,
-                                          currentCondition,
-                                          targetCondition) {
-        var oldValue = typeof estimatedValue === 'number' && isFinite(estimatedValue)
+    function calculateRehabilitatedValue(estimatedValue, currentCondition, targetCondition) {
+        var oldValue = _isFiniteNumber(estimatedValue)
             ? estimatedValue
-            : _threshold('DEFAULT_ESTIMATED_VALUE', 500);
-        var currentM = _conditionMultiplier(currentCondition, undefined);
-        var targetM = _conditionMultiplier(targetCondition, undefined);
-        if (currentM === undefined || targetM === undefined) return oldValue;
+            : C.THRESHOLDS.DEFAULT_ESTIMATED_VALUE;
+
+        var currentM = C.CONDITION_MULTIPLIER[currentCondition];
+        var targetM = C.CONDITION_MULTIPLIER[targetCondition];
+        if (typeof currentM !== 'number' || typeof targetM !== 'number') {
+            return oldValue;
+        }
 
         var factor = 1 + 0.05 * (targetM - currentM);
         if (factor <= 0) return oldValue;
@@ -419,50 +490,66 @@
 
     /**
      * Count occupied units. A unit is occupied if it has a householdId,
-     * is not demolished, and is not vacant.
-     * Pure.
+     * is not demolished, and is not vacant. Pure.
+     *
+     * @param {Array} units
+     * @returns {number}
      */
     function calculateOccupiedUnitCount(units) {
         if (!Array.isArray(units)) return 0;
         var n = 0;
         for (var i = 0; i < units.length; i++) {
             var u = units[i];
-            if (!u.isDemolished && !u.isVacant && u.householdId) n++;
+            if (!u || u.isDemolished === true) continue;
+            if (u.isVacant !== true && _hasId(u.householdId)) n++;
         }
         return n;
     }
 
     /**
-     * Count vacant (usable) units.
-     * Pure.
+     * Count vacant (usable) units. Pure.
+     *
+     * @param {Array} units
+     * @returns {number}
      */
     function calculateVacantUnitCount(units) {
         if (!Array.isArray(units)) return 0;
         var n = 0;
         for (var i = 0; i < units.length; i++) {
             var u = units[i];
-            if (!u.isDemolished && u.isVacant) n++;
+            if (!u || u.isDemolished === true) continue;
+            if (u.isVacant === true) n++;
         }
         return n;
     }
 
     /**
-     * Whether a residence is vacant (no occupied units).
-     * Pure.
+     * Whether a residence is vacant (no occupied units). Pure.
+     *
+     * A residence with zero units is vacant. A residence whose only units
+     * are demolished is vacant.
+     *
+     * @param {Array} units
+     * @returns {boolean}
      */
     function isResidenceVacant(units) {
         if (!Array.isArray(units)) return true;
-        if (units.length === 0) return true;
         for (var i = 0; i < units.length; i++) {
             var u = units[i];
-            if (!u.isDemolished && !u.isVacant && u.householdId) return false;
+            if (!u || u.isDemolished === true) continue;
+            if (u.isVacant !== true && _hasId(u.householdId)) return false;
         }
         return true;
     }
 
     /**
-     * Full unit statistics for a residence's units.
-     * Pure.
+     * Full unit statistics for a residence's units. Pure.
+     *
+     * occupancyRate is a rounded integer 0..100. A residence with zero
+     * usable units (all demolished, or empty) has occupancyRate 0.
+     *
+     * @param {Array} units
+     * @returns {{total, usable, occupied, vacant, demolished, occupancyRate}}
      */
     function calculateUnitStats(units) {
         var total = Array.isArray(units) ? units.length : 0;
@@ -471,7 +558,7 @@
         var demolished = 0;
         if (Array.isArray(units)) {
             for (var i = 0; i < units.length; i++) {
-                if (units[i].isDemolished) demolished++;
+                if (units[i] && units[i].isDemolished === true) demolished++;
             }
         }
         var usable = total - demolished;
@@ -492,37 +579,37 @@
     // =========================================================================
 
     /**
-     * Derives household status from member counts and persisted status.
+     * Derives household status from member counts and the persisted status.
      *
      * Precedence:
-     *   1. 'destroyed' (persisted)
+     *   1. 'destroyed'  (persisted)
      *   2. 'deprecated' (persisted)
-     *   3. 'empty' (no members)
-     *   4. 'vacant' (all members deceased or missing)
-     *   5. 'declining' (>half deceased, at least 4 members)
+     *   3. 'empty'      (totalMembers === 0)
+     *   4. 'vacant'     (livingCount === 0, totalMembers > 0)
+     *   5. 'declining'  (living/total ≤ 0.5 with ≥ 4 members)
      *   6. 'active'
      *
+     * The caller computes the counts from member → character lookups and
+     * passes them in. This function does not read state.
+     *
+     * Pure.
+     *
      * @param {Object} counts - {livingCount, deceasedCount, missingCount,
-     *   totalMembers}. Caller computes these from member lookups.
-     * @param {string|null} persistedStatus - household.status
+     *   totalMembers}. Anything missing is treated as 0.
+     * @param {string|null} persistedStatus
      * @returns {string} status id
      */
     function calculateHouseholdStatus(counts, persistedStatus) {
         var c = counts || {};
-        var living = typeof c.livingCount === 'number' ? c.livingCount : 0;
-        var total = typeof c.totalMembers === 'number' ? c.totalMembers : 0;
+        var living = _isFiniteNumber(c.livingCount) ? c.livingCount : 0;
+        var total = _isFiniteNumber(c.totalMembers) ? c.totalMembers : 0;
 
         if (persistedStatus === 'destroyed') return 'destroyed';
         if (persistedStatus === 'deprecated') return 'deprecated';
 
-        var isEmpty = total === 0;
-        var isVacant = living === 0 && total > 0;
-        var isDeclining = living > 0 && total > 3 &&
-            (living / total) <= 0.5;
-
-        if (isEmpty) return 'empty';
-        if (isVacant) return 'vacant';
-        if (isDeclining) return 'declining';
+        if (total === 0) return 'empty';
+        if (living === 0) return 'vacant';
+        if (total > 3 && (living / total) <= 0.5) return 'declining';
         return 'active';
     }
 
@@ -542,22 +629,18 @@
         if (!Array.isArray(household.members) || household.members.length === 0) {
             return true;
         }
-        if (typeof getCharacterById !== 'function') {
-            return false;
-        }
+        if (typeof getCharacterById !== 'function') return false;
 
         for (var i = 0; i < household.members.length; i++) {
             var m = household.members[i];
-            if (!m || !m.characterId) continue;
+            if (!m || !_hasId(m.characterId)) continue;
             var character = null;
             try {
                 character = getCharacterById(m.characterId);
             } catch (e) {
                 character = null;
             }
-            if (character && !character.isDeceased) {
-                return false;
-            }
+            if (character && character.isDeceased !== true) return false;
         }
         return true;
     }
@@ -569,9 +652,9 @@
     /**
      * Filters heir candidates by age range.
      *
-     * @param {Array} candidates - [{id, age, ...}] from
-     *   HouseholdQueries.getHouseholdHeirs (which already handles
-     *   external children/siblings).
+     * @param {Array} candidates - [{id, age, ...}] already collected from
+     *   HouseholdQueries.getHouseholdHeirs (which handles external
+     *   children/siblings).
      * @param {Object} options - {minAge, maxAge}. Both optional.
      * @returns {Array} filtered candidates (same order).
      */
@@ -579,15 +662,13 @@
         if (!Array.isArray(candidates)) return [];
         options = options || {};
 
-        var minAge = options.minAge !== undefined && options.minAge !== null
-            ? options.minAge : null;
-        var maxAge = options.maxAge !== undefined && options.maxAge !== null
-            ? options.maxAge : null;
+        var minAge = _isFiniteNumber(options.minAge) ? options.minAge : null;
+        var maxAge = _isFiniteNumber(options.maxAge) ? options.maxAge : null;
 
         if (minAge === null && maxAge === null) return candidates.slice();
 
         return candidates.filter(function(c) {
-            if (c.age === null || c.age === undefined) return false;
+            if (!c || c.age === null || c.age === undefined) return false;
             if (minAge !== null && c.age < minAge) return false;
             if (maxAge !== null && c.age > maxAge) return false;
             return true;
@@ -602,9 +683,9 @@
      * Aggregate demographic statistics from member projections.
      *
      * @param {Array} members - member projections from
-     *   HouseholdQueries.getHouseholdMembers. Must have `age`,
+     *   HouseholdQueries.getHouseholdMembers. Each must have `age`,
      *   `character.gender`, `isDeceased`, `isMissing`.
-     * @returns {Object} stats
+     * @returns {Object} demographic counts + byAgeGroup map
      */
     function calculateDemographics(members) {
         var stats = {
@@ -618,6 +699,7 @@
 
         for (var i = 0; i < members.length; i++) {
             var m = members[i];
+            if (!m) continue;
             stats.total++;
 
             if (m.isMissing) {
@@ -630,11 +712,15 @@
             else if (c.gender === 'female') stats.female++;
             else stats.unknown++;
 
-            if (m.isDeceased) stats.deceased++;
+            if (m.isDeceased === true) stats.deceased++;
             else stats.living++;
 
             var age = m.age;
             if (age === null || age === undefined) {
+                stats.ageUnknown++;
+                continue;
+            }
+            if (!_isFiniteNumber(age) || age < 0) {
                 stats.ageUnknown++;
                 continue;
             }
@@ -702,8 +788,9 @@
         calculateDemographics: calculateDemographics,
 
         // Diagnostics
-        version: 2,
-        isPure: true
+        version: 3,
+        isPure: true,
+        dependsOnConstants: true
     };
 
     window.HouseholdRules = api;
