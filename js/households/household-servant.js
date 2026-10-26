@@ -25,28 +25,19 @@
  *       → validate
  *       → create canonical relationship (RelationshipSystem)
  *       → add household membership (HouseholdCommands)
- *       → persist relationship system
- *       → persist household system
+ *       → close batch (household persist + relationship persist)
  *       → return structured result
  *
  * Everything it does is either:
  *   - a pure projection (query)
  *   - a coordinated sequence of other systems' commands
  *
- * CONVERGED PATTERN
- * -----------------
- *   - Every orchestration ends with _finish, which:
- *       1. dispatches a CustomEvent (subscribers observe the domain event),
- *       2. persists the household system,
- *       3. persists the relationship system (if it exposes a
- *          persist() function).
- *     If EITHER persist fails, _finish returns a structured failure
- *     with a `partial` field describing which side saved and which did
- *     not. The caller cannot silently believe both sides are durable.
- *   - No _processingService guard.
- *   - Partial failures are explicit (result.partial === true).
- *   - Constants and rules live in their canonical modules. This file
- *     imports, does not duplicate.
+ * SHARED ORCHESTRATION HELPERS
+ * ----------------------------
+ * Result builders (ok, fail), year resolution, dispatch, and the
+ * household-persist close come from household-orchestration.js. This
+ * module does NOT redefine them. That keeps the dispatch-then-persist
+ * ordering in one place.
  *
  * CONSTANTS AND RULES
  * -------------------
@@ -57,11 +48,8 @@
  * calculateServiceQuality / calculateRecommendation live in
  * household-rules.js.
  *
- * This file DOES NOT redefine any of them. It DOES NOT assign to
- * window.SERVICE_TYPES, window.SERVICE_QUALITY, etc. Those globals were
- * a shadowing hazard: whichever module loaded last won, and this module
- * (loading late) silently overwrote the constants module's frozen
- * catalogs with mutable ones.
+ * This module DOES NOT redefine any of them. It DOES NOT assign to
+ * window.SERVICE_TYPES, window.SERVICE_QUALITY, etc.
  *
  * CROSS-DOMAIN PERSISTENCE
  * ------------------------
@@ -71,16 +59,14 @@
  * system's canonical state. This module must ensure the change is
  * flushed.
  *
- * The relationship system is expected to expose:
+ * The relationship system is expected to expose one of:
  *
  *   window.RelationshipCommands.persist()   ->  { success, reason? }
- *   or
  *   window.RelationshipSystem.persist()     ->  { success, reason? }
  *
- * If neither is present, this module still completes the orchestration
- * (the household side saves; the relationship side is in-memory only)
- * but reports `relationshipPersisted: false` in the result so callers
- * can see the gap.
+ * If neither is present, this module completes the orchestration (the
+ * household side saves; the relationship side is in-memory only) and
+ * reports `relationshipPersisted: false` in the result.
  *
  * SERVICE RELATIONSHIP FIELD CONTRACT
  * -----------------------------------
@@ -93,18 +79,18 @@
  *   startYear: number
  *   endYear: number | null
  *   metadata: {
- *     serviceTypeId: string         (lowercase, from HouseholdConstants.SERVICE_TYPES)
+ *     serviceTypeId: string
  *     serviceTypeName: string
  *     wage: number
- *     contractTerm: string          (id from HouseholdConstants.SERVICE_CONTRACT_TERMS)
- *     quality: string               (id from HouseholdConstants.SERVICE_QUALITY_ORDER)
- *     employerSatisfaction: number  (0..100)
- *     servantSatisfaction: number   (0..100)
+ *     contractTerm: string
+ *     quality: string
+ *     employerSatisfaction: number
+ *     servantSatisfaction: number
  *     employerSatisfactionHistory: array
- *     previousServiceTypeId: string|null   (after promotion)
+ *     previousServiceTypeId: string|null
  *     promotionYear: number|null
  *     promotionNotes: string
- *     previousWage: number|null            (after adjustment)
+ *     previousWage: number|null
  *     wageAdjustmentYear: number|null
  *     wageAdjustmentReason: string|null
  *     qualityLastUpdated: number|null
@@ -113,7 +99,7 @@
  *
  * RESULT SHAPE
  * ------------
- *   { success: true,  data: { ..., relationshipPersisted, householdPersisted } }
+ *   { success: true,  data: { ..., householdPersisted, relationshipPersisted } }
  *   { success: false, code: 'SOME_CODE', reason: 'human message',
  *     partial: true (when partial mutation occurred),
  *     ...extra fields }
@@ -122,20 +108,19 @@
  *   - household-constants.js    (SERVICE_TYPES, SERVICE_QUALITY_ORDER)
  *   - household-rules.js        (calculateServiceQuality,
  *                                calculateRecommendation)
- *   - household-commands.js     (addMember, removeMember, updateMember,
- *                                persist)
+ *   - household-orchestration.js (ok, fail, resolveYear, dispatch,
+ *                                finish, hasId)
+ *   - household-commands.js     (addMember, removeMember, updateMember)
  *   - household-queries.js      (getCharacterHousehold, getHouseholdStaff)
  *   - accessors.js              (getCharacterById)
- *   - time.js                   (getCurrentYearSafe)
  *   - relationship domain       (createRelationship, endRelationship,
  *                                updateRelationship, getRelationshipBetween,
  *                                getRelationshipsForCharacter,
  *                                getRelationshipById)
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
- *   - RelationshipCommands / RelationshipSystem persist() for cross-domain
- *     durability
- *   - modifyTrust / modifyLoyalty for satisfaction effects
+ *   - RelationshipCommands / RelationshipSystem persist()
+ *   - modifyTrust / modifyLoyalty
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -178,6 +163,15 @@
     _requireFunction('HouseholdRules.calculateRecommendation',
         R.calculateRecommendation);
 
+    var O = _requireObject('HouseholdOrchestration',
+        window.HouseholdOrchestration);
+    _requireFunction('HouseholdOrchestration.ok', O.ok);
+    _requireFunction('HouseholdOrchestration.fail', O.fail);
+    _requireFunction('HouseholdOrchestration.resolveYear', O.resolveYear);
+    _requireFunction('HouseholdOrchestration.dispatch', O.dispatch);
+    _requireFunction('HouseholdOrchestration.finish', O.finish);
+    _requireFunction('HouseholdOrchestration.hasId', O.hasId);
+
     var _householdCommands = _requireObject('HouseholdCommands',
         window.HouseholdCommands);
     _requireFunction('HouseholdCommands.addMember', _householdCommands.addMember);
@@ -185,7 +179,6 @@
         _householdCommands.removeMember);
     _requireFunction('HouseholdCommands.updateMember',
         _householdCommands.updateMember);
-    _requireFunction('HouseholdCommands.persist', _householdCommands.persist);
 
     var _householdQueries = _requireObject('HouseholdQueries',
         window.HouseholdQueries);
@@ -196,8 +189,6 @@
 
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
-    var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
-        window.getCurrentYearSafe);
 
     var _createRelationship = _requireFunction('createRelationship',
         window.createRelationship);
@@ -212,36 +203,18 @@
     var _getRelationshipById = _requireFunction('getRelationshipById',
         window.getRelationshipById);
 
+    // Aliased helpers — used throughout, imported once.
+    var _ok = O.ok;
+    var _fail = O.fail;
+    var _resolveYear = O.resolveYear;
+    var _hasId = O.hasId;
+
     // Optional
     var _trustPresent = typeof window.modifyTrust === 'function';
     var _loyaltyPresent = typeof window.modifyLoyalty === 'function';
 
     // =========================================================================
-    // 1. RESULT HELPERS
-    // =========================================================================
-
-    function _ok(data) {
-        return { success: true, data: data === undefined ? null : data };
-    }
-    function _fail(code, reason, extra) {
-        var result = { success: false, code: code, reason: reason || code };
-        if (extra) {
-            for (var k in extra) {
-                if (Object.prototype.hasOwnProperty.call(extra, k)) {
-                    result[k] = extra[k];
-                }
-            }
-        }
-        return result;
-    }
-    function _resolveYear(value) {
-        if (value === undefined || value === null) return _getCurrentYearSafe();
-        if (typeof value !== 'number' || !isFinite(value)) return null;
-        return value;
-    }
-
-    // =========================================================================
-    // 2. CROSS-DOMAIN PERSISTENCE
+    // 1. CROSS-DOMAIN PERSISTENCE
     // =========================================================================
     //
     // The relationship domain owns its own canonical state and its own
@@ -249,18 +222,8 @@
     // domain's commands, so it must ensure those commands' changes are
     // flushed.
     //
-    // The relationship system is not required to expose a persist()
-    // function — if it flushes lazily or on another schedule, that's
-    // its design. But when it DOES expose one, we call it so a service
-    // creation is durable immediately.
-    //
     // Returns:
     //   { attempted: boolean, persisted: boolean, reason: string|null }
-    //
-    // `attempted` distinguishes "the relationship system has no persist"
-    // (attempted: false) from "the relationship system's persist failed"
-    // (attempted: true, persisted: false). Callers that care about the
-    // difference read this field.
 
     function _persistRelationshipSystem() {
         // Try RelationshipCommands first (the usual write boundary).
@@ -307,7 +270,6 @@
             }
         }
 
-        // No persist available. The relationship change is in-memory only.
         return {
             attempted: false,
             persisted: false,
@@ -316,53 +278,35 @@
     }
 
     // =========================================================================
-    // 3. ORCHESTRATION FINISHER
+    // 2. SERVANT-SPECIFIC FINISHER
     // =========================================================================
     //
-    // _finish closes an orchestration. It:
-    //   1. dispatches a CustomEvent so cross-domain listeners can react;
-    //   2. persists the household system;
-    //   3. persists the relationship system;
-    //   4. returns a structured result describing BOTH save outcomes.
+    // Wraps HouseholdOrchestration.finish (which dispatches + persists
+    // household) with relationship-system persistence.
     //
-    // The result distinguishes:
-    //   - both saved:                   success: true
-    //   - household saved, rel. missing: success: true, rel. attempted: false
-    //   - household saved, rel. failed:  success: false, partial: true
-    //   - household failed:              success: false
-    //
-    // The last case is the only one where we return false without
-    // partial: true — nothing saved, so nothing is partial.
-
-    function _dispatch(eventName, payload) {
-        if (typeof window.dispatchEvent !== 'function') return;
-        if (typeof window.CustomEvent !== 'function') return;
-        try {
-            window.dispatchEvent(new window.CustomEvent(eventName, {
-                detail: payload || {}
-            }));
-        } catch (e) {
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn('HouseholdServant: failed to dispatch ' +
-                    eventName, e);
-            }
-        }
-    }
+    // Outcomes:
+    //   - both saved:                   success, both flags true
+    //   - household saved, rel. missing: success, rel. attempted: false
+    //   - household saved, rel. failed:  failure, partial: true
+    //   - household failed:              failure, partial depends on rel.
 
     function _finish(eventName, payload) {
-        _dispatch(eventName, payload || {});
+        // Household side: dispatch + persist.
+        var householdResult = O.finish(eventName, payload);
 
-        var householdPersist = _householdCommands.persist();
-        var householdOk = !!(householdPersist && householdPersist.success !== false);
-
+        // Relationship side: persist (independent of household outcome —
+        // the relationship system is not "rolled back" by a household
+        // persist failure, because the relationship change is in that
+        // system's memory and needs to be flushed on its own merit).
         var rel = _persistRelationshipSystem();
 
+        var householdOk = householdResult && householdResult.success !== false;
+
         if (!householdOk) {
-            // Nothing saved (well, relationship might have saved — that's
-            // the cross-domain atomicity gap. Report it explicitly).
             return _fail(
-                (householdPersist && householdPersist.code) || 'PERSIST_FAILED',
-                (householdPersist && householdPersist.reason) || 'Failed to persist household state',
+                (householdResult && householdResult.code) || 'PERSIST_FAILED',
+                (householdResult && householdResult.reason) ||
+                    'Failed to persist household state',
                 {
                     householdPersisted: false,
                     relationshipPersisted: rel.persisted,
@@ -373,7 +317,6 @@
             );
         }
 
-        // Household saved. Did the relationship side save too?
         if (rel.attempted && !rel.persisted) {
             return _fail(
                 'RELATIONSHIP_PERSIST_FAILED',
@@ -388,7 +331,6 @@
             );
         }
 
-        // Both saved, or relationship has no persist boundary.
         return _ok({
             householdPersisted: true,
             relationshipPersisted: rel.persisted,
@@ -398,7 +340,7 @@
     }
 
     // =========================================================================
-    // 4. PURE CALCULATIONS (delegates to HouseholdRules)
+    // 3. PURE CALCULATIONS (delegates to HouseholdRules)
     // =========================================================================
 
     function calculateServiceQuality(employerSatisfaction, servantSatisfaction) {
@@ -410,7 +352,7 @@
     }
 
     // =========================================================================
-    // 5. PROJECTIONS
+    // 4. PROJECTIONS
     // =========================================================================
 
     function _snapshotRelationship(rel) {
@@ -429,12 +371,11 @@
 
     function _resolveServiceType(input) {
         if (!input) return null;
-        // getServiceTypeById accepts either uppercase key or lowercase id.
         return C.getServiceTypeById(input);
     }
 
     // =========================================================================
-    // 6. SERVICE RELATIONSHIP COMMANDS
+    // 5. SERVICE RELATIONSHIP COMMANDS
     // =========================================================================
 
     /**
@@ -450,10 +391,6 @@
      * If step 3 fails, step 2 is rolled back (endRelationship). If step
      * 5's persistence fails, both domains' in-memory state has been
      * modified; the failure is surfaced with partial: true.
-     *
-     * Returns:
-     *   { success: true, data: { relationshipId, householdId, ... } }
-     *   { success: false, code, reason, partial?: true }
      */
     function createServiceRelationship(employerId, servantId, options) {
         options = options || {};
@@ -1030,7 +967,7 @@
     }
 
     // =========================================================================
-    // 7. SERVICE QUERIES (defensive snapshots)
+    // 6. SERVICE QUERIES (defensive snapshots)
     // =========================================================================
 
     function getServiceBetween(employerId, servantId) {
@@ -1162,7 +1099,7 @@
     }
 
     // =========================================================================
-    // 8. HOUSEHOLD INTEGRATION
+    // 7. HOUSEHOLD INTEGRATION
     // =========================================================================
 
     function assignServantToDepartment(employerId, servantId, departmentId, options) {
@@ -1222,10 +1159,6 @@
      *   2. Create new service FIRST
      *   3. Terminate old service
      *   4. If termination fails, best-effort roll back the new service
-     *
-     * Each step is its own orchestration with its own _finish. The whole
-     * sequence is not atomic; partial failures are reported with
-     * partial: true and a `step` field.
      */
     function transferServantToHousehold(currentEmployerId, servantId,
                                         newEmployerId, options) {
@@ -1351,12 +1284,12 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     var api = {
-        // Constant re-exports (compatibility surface; point at the frozen
-        // HouseholdConstants objects — no shadow copy).
+        // Constant re-exports (point at the frozen HouseholdConstants
+        // objects — no shadow copy).
         SERVICE_TYPES: C.SERVICE_TYPES,
         SERVICE_STATUS: C.SERVICE_STATUS,
         SERVICE_QUALITY: C.SERVICE_QUALITY,
@@ -1393,19 +1326,12 @@
     window.HouseholdServant = api;
 
     // =========================================================================
-    // 10. LEGACY FLAT ALIASES
+    // 9. LEGACY FLAT ALIASES
     // =========================================================================
     //
-    // Prior to the constants consolidation, this module (loading late)
-    // unconditionally overwrote window.SERVICE_TYPES with a mutable copy
-    // of its own catalog. That silently disabled the frozen guarantee
-    // the constants module establishes.
-    //
-    // The aliases below use the "only if undefined" guard — they will
-    // NOT overwrite the frozen catalog. If a future module ever loads
-    // earlier and (incorrectly) defines window.SERVICE_TYPES first, the
-    // alias here is a no-op and the earlier definition wins. This is the
-    // correct behaviour: constants.js should always be first.
+    // Guarded: only assign if undefined. The constants module loads
+    // first and owns the frozen catalogs. This block will be removed
+    // once callers migrate to window.HouseholdConstants.* directly.
 
     if (typeof window.SERVICE_TYPES === 'undefined') {
         window.SERVICE_TYPES = C.SERVICE_TYPES;
