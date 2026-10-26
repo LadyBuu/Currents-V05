@@ -17,6 +17,12 @@
  *   - EXECUTION_METHODS (UI/system selection vocabulary; legal eligibility
  *     and permitted methods are determined by the law layer)
  *   - RELIGIOUS_PUNISHMENTS (vocabulary; actual punishments come from laws)
+ *   - SEVERITY_BANDS and classifySeverity (severity band thresholds)
+ *   - CONSEQUENCE_TYPES (the vocabulary emitted by the law layer and
+ *     executed by the command layer)
+ *   - CODES (error codes for structured command results)
+ *   - EVENTS, STATE_EVENTS (subscription and cross-domain event names)
+ *   - Default analysis windows and history caps
  *
  * WHAT THIS MODULE DOES NOT DO:
  *   - It does not map crimes to law domains. That is owned by the law layer.
@@ -181,7 +187,57 @@
     };
 
     // =========================================================================
-    // 4. VENDETTA STATUS
+    // 4. SEVERITY BANDS (single source of truth)
+    // =========================================================================
+
+    // Severity is numeric (1-10). Bands are the single source for
+    // classification. No other module re-derives the thresholds.
+
+    var SEVERITY_BANDS = {
+        LOW: 'low',
+        MEDIUM: 'medium',
+        HIGH: 'high',
+        CRITICAL: 'critical'
+    };
+
+    /**
+     * Classifies a numeric severity (1-10) into a band.
+     * Returns null for non-numeric input. This is the ONLY place the
+     * thresholds live.
+     *
+     * @param {number} severity
+     * @returns {string|null}
+     */
+    function classifySeverity(severity) {
+        if (typeof severity !== 'number' || isNaN(severity)) return null;
+        if (severity <= 3) return SEVERITY_BANDS.LOW;
+        if (severity <= 6) return SEVERITY_BANDS.MEDIUM;
+        if (severity <= 8) return SEVERITY_BANDS.HIGH;
+        return SEVERITY_BANDS.CRITICAL;
+    }
+
+    // =========================================================================
+    // 5. CONSEQUENCE TYPES
+    // =========================================================================
+
+    // The vocabulary the law layer emits and the command layer executes.
+    // Adding a new type requires updating _classifyConsequenceString and
+    // _executeConsequence together in the modules that produce and consume
+    // these values. Unknown types remain 'other' and are surfaced without
+    // being executed.
+
+    var CONSEQUENCE_TYPES = {
+        EXECUTION: 'execution',
+        IMPRISONMENT: 'imprisonment',
+        EXILE: 'exile',
+        FINE: 'fine',
+        PENANCE: 'penance',
+        EXCOMMUNICATION: 'excommunication',
+        OTHER: 'other'
+    };
+
+    // =========================================================================
+    // 6. VENDETTA STATUS
     // =========================================================================
 
     var VENDETTA_STATUS = {
@@ -194,7 +250,7 @@
     var VENDETTA_ESCALATION_THRESHOLD = 3;
 
     // =========================================================================
-    // 5. RELIGIOUS PUNISHMENT VOCABULARY
+    // 7. RELIGIOUS PUNISHMENT VOCABULARY
     // =========================================================================
 
     // These are labels for consequences that laws may prescribe.
@@ -214,7 +270,7 @@
     };
 
     // =========================================================================
-    // 6. MURDER REASONS (UI/input vocabulary)
+    // 8. MURDER REASONS (UI/input vocabulary)
     // =========================================================================
 
     // These are suggestions for UI and manual data entry. They are not the
@@ -302,7 +358,7 @@
     };
 
     // =========================================================================
-    // 7. EXECUTION METHODS (UI/system selection vocabulary)
+    // 9. EXECUTION METHODS (UI/system selection vocabulary)
     // =========================================================================
 
     // Legal eligibility and permitted methods are determined by the law
@@ -327,7 +383,71 @@
     };
 
     // =========================================================================
-    // 8. HELPER FUNCTIONS (pure, no state, no fallbacks)
+    // 10. ERROR CODES
+    // =========================================================================
+
+    // Used as the `code` field of failed Command results. Stable strings.
+    // Additive only; codes are never removed once they have appeared in a
+    // shipped result. Callers may switch on these values.
+
+    var CODES = {
+        VALIDATION: 'VALIDATION',
+        NOT_FOUND: 'NOT_FOUND',
+        ALREADY_DECEASED: 'ALREADY_DECEASED',
+        ALREADY_SOLVED: 'ALREADY_SOLVED',
+        ALREADY_RESOLVED: 'ALREADY_RESOLVED',
+        SAME_CHARACTER: 'SAME_CHARACTER',
+        SAME_HOUSEHOLD: 'SAME_HOUSEHOLD',
+        NO_HOUSEHOLD: 'NO_HOUSEHOLD',
+        DUPLICATE_VENDETTA: 'DUPLICATE_VENDETTA',
+        ESCALATION_FAILED: 'ESCALATION_FAILED',
+        PROFESSION_FAILED: 'PROFESSION_FAILED',
+        KILL_FAILED: 'KILL_FAILED',
+        PERSIST_FAILED: 'PERSIST_FAILED',
+        STATE_MUTATING: 'STATE_MUTATING',
+        MISSING_DEPENDENCY: 'MISSING_DEPENDENCY'
+    };
+
+    // =========================================================================
+    // 11. EVENT NAMES
+    // =========================================================================
+
+    // Cross-domain events, fired as CustomEvents in the command commit tail.
+    // Consumers subscribe to these instead of polling.
+
+    var EVENTS = {
+        CRIME_RECORDED:     'crimeRecorded',
+        CRIME_SOLVED:       'crimeSolved',
+        CRIME_DELETED:      'crimeDeleted',
+        VENDETTA_CREATED:   'vendettaCreated',
+        VENDETTA_DEATH:     'vendettaDeath',
+        VENDETTA_ESCALATED: 'vendettaEscalated',
+        VENDETTA_RESOLVED:  'vendettaResolved',
+        VENDETTA_DELETED:   'vendettaDeleted'
+    };
+
+    // In-process State subscription event names (State.publish).
+
+    var STATE_EVENTS = {
+        HYDRATED:       'hydrated',
+        CACHE_RELOADED: 'cacheReloaded'
+    };
+
+    // =========================================================================
+    // 12. DEFAULTS
+    // =========================================================================
+
+    // Analysis windows and history caps that were previously inline in
+    // crime-queries.js and crime-state.js. Moving them here means no other
+    // module re-derives the default.
+
+    var DEFAULT_STATS_WINDOW_YEARS = 5;
+    var DEFAULT_TREND_YEARS = 10;
+    var DEFAULT_CLEARANCE_WINDOW = 10;
+    var DEFAULT_VENDETTA_MAX_HISTORY = 100;
+
+    // =========================================================================
+    // 13. HELPER FUNCTIONS (pure, no state, no fallbacks)
     // =========================================================================
 
     function getAllCrimeTypes() {
@@ -370,7 +490,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     // Canonical API. New code should use CrimeConstants.* exclusively.
@@ -382,11 +502,26 @@
         LAW_DOMAINS: LAW_DOMAINS,
         LAW_SEVERITY: LAW_SEVERITY,
         CRIME_SEVERITY: CRIME_SEVERITY,
+        SEVERITY_BANDS: SEVERITY_BANDS,
+        CONSEQUENCE_TYPES: CONSEQUENCE_TYPES,
         VENDETTA_STATUS: VENDETTA_STATUS,
         VENDETTA_ESCALATION_THRESHOLD: VENDETTA_ESCALATION_THRESHOLD,
         RELIGIOUS_PUNISHMENTS: RELIGIOUS_PUNISHMENTS,
         MURDER_REASONS: MURDER_REASONS,
         EXECUTION_METHODS: EXECUTION_METHODS,
+
+        // Error codes
+        CODES: CODES,
+
+        // Event names
+        EVENTS: EVENTS,
+        STATE_EVENTS: STATE_EVENTS,
+
+        // Defaults
+        DEFAULT_STATS_WINDOW_YEARS: DEFAULT_STATS_WINDOW_YEARS,
+        DEFAULT_TREND_YEARS: DEFAULT_TREND_YEARS,
+        DEFAULT_CLEARANCE_WINDOW: DEFAULT_CLEARANCE_WINDOW,
+        DEFAULT_VENDETTA_MAX_HISTORY: DEFAULT_VENDETTA_MAX_HISTORY,
 
         // Helpers
         getAllCrimeTypes: getAllCrimeTypes,
@@ -395,12 +530,14 @@
         isReligiousCrime: isReligiousCrime,
         isSecularCrime: isSecularCrime,
         isKnownCrimeType: isKnownCrimeType,
-        getDefaultCrimeSeverity: getDefaultCrimeSeverity
+        getDefaultCrimeSeverity: getDefaultCrimeSeverity,
+        classifySeverity: classifySeverity
     };
 
     // Legacy global aliases. Retained during migration so that older modules
     // (and any UI still reading window.CRIME_TYPES) continue to work.
-    // New code should not read these directly.
+    // New code should not read these directly. Removed once every consumer
+    // has migrated to CrimeConstants.*.
     window.CRIME_TYPES = CRIME_TYPES;
     window.LAW_TYPES = LAW_TYPES;
     window.LAW_CATEGORIES = LAW_CATEGORIES;
