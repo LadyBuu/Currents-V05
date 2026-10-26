@@ -1,6 +1,14 @@
+# 7/7 — `name-doc.md`
+
+New file. Replaces `name-docs.txt` (which should be deleted). The existing `name-docs.txt` is unusually good and accurate for the *pre-refactor* state — but the save contract changed across the name module in this refactor, and the doc needs to reflect it. The rewrite preserves the structure and voice of the original (which was the best-written doc in the codebase) while updating the persistence section, adding persist calls to the flow diagrams, adding the verification checklist items, and resolving the new open question.
+
+```markdown
 # Name System — Architecture Documentation
 
 A reference document for the name/character-naming subsystem.
+
+**Version:** 2.0 (post-refactor)
+**Last updated:** 2026-07-14
 
 ---
 
@@ -8,12 +16,17 @@ A reference document for the name/character-naming subsystem.
 
 The name system answers four questions:
 
-1. **What is this character's name and surname?** (canonical data, on the character record)
-2. **How are names generated for a new character?** (rules over cultural data)
+1. **What is this character's name and surname?** (canonical data, on the
+   character record)
+2. **How are names generated for a new character?** (rules over cultural
+   data)
 3. **Where does a name come from?** (cultural pools keyed by country)
-4. **What has this character's surname been historically?** (surname history)
+4. **What has this character's surname been historically?** (surname
+   history)
 
-It does **not** answer: who is married to whom, who lives where, what a character looks like, or what the UI should display. Those belong to their own domains.
+It does **not** answer: who is married to whom, who lives where, what a
+character looks like, or what the UI should display. Those belong to
+their own domains.
 
 ---
 
@@ -24,9 +37,9 @@ It does **not** answer: who is married to whom, who lives where, what a characte
 | `name-queries.js` | Read-only retrieval of name lists, ancestor data, surname history, character display names. Random selection. | `accessors.js`, `randomness.js`, `world.js` (optional `NameState` as cache hint) |
 | `name-rules.js` | Rule vocabulary, validation, presets, application. Newborn surname policy. Marriage surname calculation policy. Base-first-name extraction. | `name-queries.js` |
 | `name-state.js` | Runtime caches over canonical data. UI generation state. Subscriptions. Targeted invalidation. | `accessors.js`, `name-rules.js` |
-| `name-commands.js` | All write operations. Surname changes, marriage application, revert, clear, name-list mutations. | `accessors.js`, `name-state.js`, `name-rules.js`, `storage.js`, `time.js` |
-| `modals-name.js` | Name generator and surname management UIs. | `modals-core.js`, `name-queries.js`, `name-commands.js`, `world.js`, `formatting.js`, `icons.js` |
-| `name-system.js` | Legacy compatibility layer. Thin adapters over the canonical modules. Temporary. | `name-queries.js`, `name-commands.js`, `name-rules.js` |
+| `name-commands.js` | All write operations. Surname changes, marriage application, revert, clear, name-list mutations. **`persist()` is the single save site.** | `accessors.js`, `name-state.js`, `name-rules.js`, `storage.js`, `time.js` |
+| `modals-name.js` | Name generator and surname management UIs. **Calls `NameCommands.persist()` once per successful command.** | `modals-core.js`, `name-queries.js`, `name-commands.js`, `world.js`, `formatting.js`, `icons.js` |
+| `name-system.js` | Legacy compatibility layer. Thin adapters over the canonical modules. **Legacy command wrappers call `persist()` to preserve the old save-immediately contract.** Temporary. | `name-queries.js`, `name-commands.js`, `name-rules.js` |
 | `name-modals.css` | Presentation for the name modals. | — |
 
 Plus the world-side helpers these depend on:
@@ -45,6 +58,7 @@ And the shared infrastructure these depend on:
 | `getNameLists()` | `accessors.js` |
 | `pickRandom(array)` | `randomness.js` |
 | `saveMasterData()` | `storage.js` |
+| `markDataDirty()` | `storage.js` (best-effort; not fatal if missing) |
 | `getCurrentYearSafe()` | `time.js` |
 | `escapeHtml(v)` | `formatting.js` |
 | `Icons` | `icons.js` |
@@ -90,11 +104,26 @@ And the shared infrastructure these depend on:
 
 Rules of the graph:
 
-- **Nothing depends upward.** `name-queries.js` never calls `name-rules.js`. `name-rules.js` never calls `name-commands.js`. Commands do not call modals.
-- **Load order**: `name-queries.js` → `name-rules.js` → `name-state.js` → `name-commands.js` → `modals-name.js` / `name-system.js`.
-- **`NameState` is optional to Queries.** Queries reads through it as a cache hint if present, but falls through to the character record if not. The character record is canonical in both cases.
-- **`NameState` requires `NameRules`** for the rule-type vocabulary used to validate the `generationMode` UI field. This is the one cross-module dependency that isn't strictly "state depends only on accessors."
-- **`name-system.js` and `modals-name.js` are the only files that reference legacy globals.** `modals-name.js` does not — it uses only canonical modules. `name-system.js` is the entire legacy compatibility surface.
+- **Nothing depends upward.** `name-queries.js` never calls
+  `name-rules.js`. `name-rules.js` never calls `name-commands.js`.
+  Commands do not call modals.
+- **Load order**: `name-queries.js` → `name-rules.js` → `name-state.js`
+  → `name-commands.js` → `name-system.js` → `modals-name.js`.
+- **`NameState` is optional to Queries.** Queries reads through it as a
+  cache hint if present, but falls through to the character record if
+  not. The character record is canonical in both cases.
+- **`NameState` requires `NameRules`** for the rule-type vocabulary used
+  to validate the `generationMode` UI field. This is the one
+  cross-module dependency that isn't strictly "state depends only on
+  accessors."
+- **`name-system.js` and `modals-name.js` are the only files that
+  reference legacy globals.** `modals-name.js` does not — it uses only
+  canonical modules. `name-system.js` is the entire legacy
+  compatibility surface.
+- **`NameRules` transitively depends on `world.js`** via
+  `NameQueries.getCharacterCountryId` and
+  `NameQueries.getCountrySurnameRules`. When load order is reshuffled,
+  the edge to watch is `name-queries → world`.
 
 ---
 
@@ -115,6 +144,7 @@ Rules of the graph:
 | Country resolution | `world.js` | `getCharacterCountryId`, `getCountryIdForPlace`; facades in `NameQueries` |
 | Surname history mutations | `name-commands.js` | `recordSurnameChange`, `revertLastSurnameChange`, `clearSurnameHistory` |
 | Name list mutations | `name-commands.js` | `addNameToList`, `removeNameFromList` |
+| **Persistence** | `name-commands.js` | **`NameCommands.persist()` is the single save site** |
 | Runtime caches | `name-state.js` | Surname history, name lists |
 | UI generation state | `name-state.js` | `selectedCountryId`, `selectedGender`, etc. |
 
@@ -220,7 +250,8 @@ Stored in `masterData.data.nameLists[placeId]`:
 
 ### 5.4 Ancestor slots
 
-`getAncestorData(character, slot)` and `getAncestorNames(character, order, source)` support these slots, all resolved against the starting character:
+`getAncestorData(character, slot)` and `getAncestorNames(character, order, source)`
+support these slots, all resolved against the starting character:
 
 ```
 father
@@ -233,7 +264,8 @@ paternal_great_grandfather
 maternal_great_grandfather
 ```
 
-There is no `depth` parameter. `order.length` is the depth. Duplicate slots in `order` are rejected at rule validation.
+There is no `depth` parameter. `order.length` is the depth. Duplicate
+slots in `order` are rejected at rule validation.
 
 ### 5.5 Rule presets
 
@@ -297,9 +329,16 @@ Called from `character-commands.js` during `createCharacter`:
    - surnameSource = 'none'
 4. CharacterCommands calls NameCommands.recordSurnameChange(
        newCharacterId, surname, birthYear, 'birth', { previousSurname: '' }
-   ) — the initial entry is the birth surname.
-5. The character is persisted once by CharacterCommands.
+   ) — the initial entry is the birth surname. This does NOT save.
+5. CharacterCommands calls NameCommands.persist() once at the end of
+   the batch. This is the single save for the whole character creation.
 ```
+
+**Note:** `NameCommands.recordSurnameChange` no longer saves. Character
+creation calls `persist()` once after all mutations are applied. This
+is a change from the pre-refactor flow, where `recordSurnameChange`
+saved internally and character creation saved again — two saves instead
+of one.
 
 ### 6.2 Newborn surname determination
 
@@ -319,10 +358,8 @@ Called when a character is born into an existing family:
 4. The result is:
    { surname, surnameSource, surnameRules, countryId }
 5. The caller (character-commands or lifecycle) passes `surname` into
-   the new character's `createCharacter` call.
+   the new character's `createCharacter` call, which follows flow 6.1.
 ```
-
-The cascade is a named policy. It lives in one place: `_tryParentCountryRules` and the sequence in `determineNewbornSurname`.
 
 ### 6.3 Manual surname change
 
@@ -342,18 +379,25 @@ Called from the surname modal or any other UI:
 6. NameState subscribes; invalidates its surname-history cache for
    that character.
 7. Any UI subscribed to NameState re-renders.
+8. Caller calls NameCommands.persist() once.
 ```
+
+Steps 1–7 happen inside the command. Step 8 is the caller's
+responsibility. `modals-name.js` performs step 8 automatically after
+the surname modal's command paths.
 
 ### 6.4 Revert
 
 ```
 1. UI calls NameCommands.revertLastSurnameChange(characterId).
-2. Command pops the last entry from surnameHistory.entries.
+2. Command pops the last entry from surnameHistory.entries (via the
+   private inverse primitive `_undoSurnameChange`).
 3. Command restores character.surname from the entry's previousSurname
    (or birthSurname).
 4. Command restores character.surnameSource and character.surnameRules
    from the entry's recorded previous values.
-5. Command persists, invalidates, emits 'surnameRevert'.
+5. Command invalidates, emits 'surnameRevert'. Does NOT save.
+6. Caller calls NameCommands.persist() once.
 ```
 
 ### 6.5 Marriage surname application
@@ -366,19 +410,58 @@ Called from the surname modal or any other UI:
 4. If neither side needs a change, returns success without mutating.
 5. Command validates both changes before applying either.
 6. Command applies both changes in memory (via the private primitive
-   _recordSurnameChange, not via the public command).
-7. If the second application fails, the first is rolled back.
-8. Command persists once, invalidates both characters, emits ONE
-   characterChanged event with both IDs.
+   _appendSurnameChange, not via the public command).
+7. The second-application failure path is provably unreachable given
+   the validate-both-then-apply-both structure. An inline rollback via
+   _undoSurnameChange is retained as defense-in-depth.
+8. Command invalidates both characters, emits ONE characterChanged event
+   with both IDs. Does NOT save.
+9. Caller calls NameCommands.persist() once.
 ```
 
-The whole marriage operation is atomic from the caller's perspective: either both surnamed change or neither does.
+The whole marriage operation is atomic from the caller's perspective:
+either both surnames change or neither does, and either the whole batch
+persists or the whole batch is recoverable by re-persisting.
 
 ---
 
-## 7. Randomness
+## 7. Persistence
 
-**The name system consumes the canonical RNG stream.** No `Math.random()` anywhere in the name modules.
+**`NameCommands.persist()` is the single save site in the name domain.**
+No other module calls `saveMasterData()` directly.
+
+- **Commands do NOT save.** They mark data dirty (best-effort
+  `markDataDirty()`), publish in-process via `NameState.publish`, and
+  dispatch a cross-domain `CustomEvent`. They return
+  `{success, reason?, ...}`.
+- **The UI (or the caller) saves.** After a successful command batch,
+  the caller invokes `NameCommands.persist()`. It returns
+  `{success, reason?}` — a save failure is a user-visible error, not a
+  thrown exception.
+- **Batch operations save once.** Character creation (one call to
+  `recordSurnameChange`), marriage application (one call to
+  `applyMarriageSurnames`), and any other multi-command flow save once
+  at the end, not once per command.
+- **Legacy wrappers save to preserve their old contract.** The four
+  command wrappers in `name-system.js` call `NameCommands.persist()`
+  after the canonical command succeeds. This is a deliberate divergence
+  from the "commands don't save" rule: the wrapper's job is to keep old
+  callers working, not to enforce the new contract. When the wrapper is
+  deleted, callers must call `persist()` themselves.
+
+**Save failure surfacing:** The UI reports a failed persist via a toast
+or an inline error. The canonical in-memory state is updated; the next
+successful persist catches up. This is a deliberate UX choice: showing
+the failure without blocking the UI is better than leaving the user
+stuck. A persistent banner or action-disable is a future improvement
+(see deferrals).
+
+---
+
+## 8. Randomness
+
+**The name system consumes the canonical RNG stream.** No `Math.random()`
+anywhere in the name modules.
 
 Functions that consume RNG:
 
@@ -389,17 +472,24 @@ Functions that consume RNG:
 | `NameRules._applyRandomRule` (via `NameQueries.getRandomSurname`) | indirect |
 | `NameRules.determineNewbornSurname` (priority 3 only) | indirect |
 
-**Random results are never cached.** There is no `country + gender → name` cache. That would turn a random query into a stable lookup.
+**Random results are never cached.** There is no `country + gender →
+name` cache. That would turn a random query into a stable lookup.
 
-**Reproducibility contract:** given the same RNG seed and the same call sequence, name generation is deterministic. This is what the simulation layer relies on.
+**Reproducibility contract:** given the same RNG seed and the same call
+sequence, name generation is deterministic. This is what the simulation
+layer relies on.
 
-**Callers who want stability** (e.g., "show me one name and don't change it when the user looks away") must store the result themselves. `modals-name.js` does this via a local `state.generatedName`.
+**Callers who want stability** (e.g., "show me one name and don't change
+it when the user looks away") must store the result themselves.
+`modals-name.js` does this via a local `state.generatedName`.
 
-**`NameRules` does not depend on `randomness.js` directly.** It calls `NameQueries.getRandomSurname`, which owns the RNG contract. This keeps the RNG implementation behind a single module boundary.
+**`NameRules` does not depend on `randomness.js` directly.** It calls
+`NameQueries.getRandomSurname`, which owns the RNG contract. This keeps
+the RNG implementation behind a single module boundary.
 
 ---
 
-## 8. Caching
+## 9. Caching
 
 `NameState` maintains exactly two caches:
 
@@ -408,46 +498,78 @@ Functions that consume RNG:
 | `_surnameHistoryCache` | `characterId` | surname history object (live reference) | `invalidateSurnameHistory(id)`; event `characterChanged` with action `surnameChange` / `surnameRevert` / `surnameHistoryCleared` / `birthSurname` |
 | `_nameListCache` | `countryId` | name list object (live reference) | `invalidateNameList(countryId)`; event `nameListChanged` |
 
-Caches are cleared entirely by `NameState.clearAllCaches()` on masterData reload or import. The caller is responsible for invoking it; there is no auto-wiring, because the loaded dependency set does not include a masterData-reload event.
+Caches are cleared entirely by `NameState.clearAllCaches()` (alias:
+`hydrateFromMasterData()`) on masterData reload or import. The caller
+is responsible for invoking it; there is no auto-wiring, because the
+loaded dependency set does not include a masterData-reload event.
+
+**Why an alias?** `hydrateFromMasterData()` is the reference-pattern
+name for "discard derived state and rebuild from canonical." For
+`NameState`, there are no derived indexes over canonical records —
+only per-key caches of records it already has via accessors. There is
+nothing to *rebuild*; clearing is the correct operation. The alias
+exists so bootstrap code can use the reference-pattern name without
+pretending `NameState` has a hydrate operation.
 
 **Accessor mutability contract:**
 
-- `NameState.getMutableSurnameHistory(id)` — returns the **live** reference. Intended for `NameQueries` as a cache hint and for `NameCommands` to mutate through. UI must not use this.
-- `NameState.getMutableNameList(countryId)` — returns the **live** reference. Intended for `NameCommands` add/remove operations.
+- `NameState.getMutableSurnameHistory(id)` — returns the **live**
+  reference. Intended for `NameQueries` as a cache hint and for
+  `NameCommands` to mutate through. UI must not use this.
+- `NameState.getMutableNameList(countryId)` — returns the **live**
+  reference. Intended for `NameCommands` add/remove operations.
 - `NameState.getUiState()` — returns a **frozen shallow snapshot**.
-- `NameState.getSurnameHistory(id)` — **does not exist**; that name belongs to `NameQueries`, which returns a deep clone.
-- `NameState.getNameList(countryId)` — **does not exist**; that name belongs to `NameQueries`, which returns a deep clone.
+- `NameState.getSurnameHistory(id)` — **does not exist**; that name
+  belongs to `NameQueries`, which returns a deep clone.
+- `NameState.getNameList(countryId)` — **does not exist**; that name
+  belongs to `NameQueries`, which returns a deep clone.
 
-The `getMutable*` prefix makes the mutability contract enforceable at the call site rather than aspirational.
+The `getMutable*` prefix makes the mutability contract enforceable at
+the call site rather than aspirational.
 
-**Nothing else is cached.** Not random results. Not ancestor data. Not country resolution.
+**Nothing else is cached.** Not random results. Not ancestor data. Not
+country resolution.
 
-**Cache misses return `null`**, not `undefined`, and not a synthesized empty object.
+**Cache misses return `null`**, not `undefined`, and not a synthesized
+empty object.
+
+**Diagnostics:** `NameState.validateIntegrity()` returns an array of
+`{level, message}` findings (warn-only, never throws).
+`NameState.getCacheStats()` returns a summary object. Both are intended
+for bootstrap-time diagnostics.
 
 ---
 
-## 9. Events
+## 10. Events
 
-The name system participates in two events. Both use `CustomEvent` on `window`.
+The name system participates in two events. Both use `CustomEvent` on
+`window`.
 
 | Event | Emitted by | Detail | Consumed by |
 |-------|-----------|--------|-------------|
 | `characterChanged` | `name-commands.js` (also `character-commands.js`, `family-commands.js`) | `{ action: string, characterIds: string[] }` | `NameState`, `CharacterState`, accessor cache |
 | `nameListChanged` | `name-commands.js` | `{ countryId: string, name: string }` | `NameState` |
 
-`NameState` re-emits its own internal events to its own subscribers (`cachesCleared`, `surnameHistoryInvalidated`, `nameListInvalidated`, `uiStateChanged`). These are private callbacks, not DOM events.
+`NameState` re-emits its own internal events to its own subscribers
+(`cachesCleared`, `surnameHistoryInvalidated`, `nameListInvalidated`,
+`uiStateChanged`). These are private callbacks, not DOM events. They
+are published via `NameState.publish(eventName, data)`, which emits
+`{type, ...data}` — the same shape existing subscribers have always
+received.
 
-For compound operations, `NameCommands` emits ONE `characterChanged` event covering all affected character IDs. `applyMarriageSurnames` does not emit one event per participant.
+For compound operations, `NameCommands` emits ONE `characterChanged`
+event covering all affected character IDs. `applyMarriageSurnames` does
+not emit one event per participant.
 
 ---
 
-## 10. What lives where — the anti-confusion table
+## 11. What lives where — the anti-confusion table
 
 | Not here | Here |
 |----------|------|
 | Country hierarchy walking → `world.js` | `getCountryPlaces`, `getCharacterCountryId`, `getCountryIdForPlace` |
 | Random selection implementation → `randomness.js` | `getRandomName`, `getRandomSurname` (delegate) |
-| Persistence, storage → `storage.js` | Commands call `saveMasterData` |
+| Persistence, storage → `storage.js` | Commands call `saveMasterData` **via `persist()` only** |
 | Schema repair → `storage-schema.js` | NameState does not create missing entries |
 | UI notifications → caller / modals | Commands return `{ success, reason }` |
 | Icons → `icons.js` | Domain modules never see icon markup |
@@ -459,11 +581,12 @@ For compound operations, `NameCommands` emits ONE `characterChanged` event cover
 
 ---
 
-## 11. Deprecated API surface (the legacy wrapper)
+## 12. Deprecated API surface (the legacy wrapper)
 
-`name-system.js` exists to give old callers a migration path. It is not a permanent API.
+`name-system.js` exists to give old callers a migration path. It is not
+a permanent API.
 
-### 11.1 Delegating wrappers
+### 12.1 Delegating wrappers
 
 These still work and delegate:
 
@@ -485,12 +608,25 @@ These still work and delegate:
 | `getBirthSurname` | `NameQueries.getBirthSurname` (null → '') |
 | `getCurrentSurname` | `NameQueries.getCurrentSurname` |
 | `getSurnameChanges` | `NameQueries.getSurnameChanges` |
-| `recordSurnameChange` | `NameCommands.recordSurnameChange` |
-| `recordBirthSurname` | `NameCommands.recordBirthSurname` |
-| `revertLastSurnameChange` | `NameCommands.revertLastSurnameChange` |
-| `applyMarriageSurnames` | `NameCommands.applyMarriageSurnames` |
+| `recordSurnameChange` | `NameCommands.recordSurnameChange` + `NameCommands.persist` |
+| `recordBirthSurname` | `NameCommands.recordBirthSurname` + `NameCommands.persist` |
+| `revertLastSurnameChange` | `NameCommands.revertLastSurnameChange` + `NameCommands.persist` |
+| `applyMarriageSurnames` | `NameCommands.applyMarriageSurnames` + `NameCommands.persist` |
 
-### 11.2 Removed wrappers
+**Persistence:** The four command wrappers in this section call
+`NameCommands.persist()` after the canonical command succeeds, to
+preserve the old "saves immediately" contract. This diverges from the
+canonical "commands don't save" rule because the wrapper's job is to
+keep old callers working, not to enforce the new contract. When the
+wrapper is deleted, callers must call `NameCommands.persist()`
+themselves.
+
+A persist failure inside a wrapper is reported via the returned
+`{success: false, reason: 'Save failed: ...', canonical: <original result>}`
+object. This is a strict improvement over the pre-refactor behaviour,
+where a save failure inside a command was invisible to the caller.
+
+### 12.2 Removed wrappers
 
 These exist only to throw a clear error:
 
@@ -503,9 +639,10 @@ These exist only to throw a clear error:
 | `_getSurnamePart` | Same |
 | `getAncestorChain` | `NameQueries.getAncestorData` (single slot) or `NameQueries.getAncestorNames` (list) |
 
-### 11.3 Removed adapters (world-domain)
+### 12.3 Removed adapters (world-domain)
 
-These were removed entirely, not stubbed. They were never name-domain concerns:
+These were removed entirely, not stubbed. They were never name-domain
+concerns:
 
 | Removed global | Original owner |
 |----------------|----------------|
@@ -516,60 +653,78 @@ These were removed entirely, not stubbed. They were never name-domain concerns:
 | `capitalizeFirstLetter` | `formatting.js` |
 | `getCharacterGender` | character domain |
 
-Grep for each of these. If any live caller exists, migrate it to the canonical owner.
+Grep for each of these. If any live caller exists, migrate it to the
+canonical owner.
 
 ---
 
-## 12. Extending the system
+## 13. Extending the system
 
-### 12.1 Adding a new rule type
+### 13.1 Adding a new rule type
 
 1. Add the type to `RULE_TYPES` in `name-rules.js`.
 2. Add a validator branch in `validateRules`.
 3. Add a dispatch branch in `generateSurnameFromRules`.
 4. Add a description branch in `describeRule`.
 5. Add a preset if useful.
-6. Add the type to `NameState`'s generation-mode vocabulary — this happens automatically because `_getValidGenerationModes` reads from `NameRules.RULE_TYPES`.
+6. Add the type to `NameState`'s generation-mode vocabulary — this
+   happens automatically because `_getValidGenerationModes` reads from
+   `NameRules.RULE_TYPES`.
 
-Do not add a new public global. Do not add a second implementation in `NameQueries`.
+Do not add a new public global. Do not add a second implementation in
+`NameQueries`.
 
-### 12.2 Adding a new preset
+### 13.2 Adding a new preset
 
 1. Add the definition to `RULE_PRESETS` in `name-rules.js`.
 2. Ensure every field validates. Run `validateRules` on it in a test.
 3. Name it after what it does, not where it comes from.
 
-### 12.3 Adding a name list field
+### 13.3 Adding a name list field
 
 1. Extend the shape in `storage-schema.js` if a default is needed.
 2. Update `NameQueries.getNameList` if consumers need typed access.
-3. Update `NameCommands.addNameToList` / `removeNameFromList` if the field is user-editable.
+3. Update `NameCommands.addNameToList` / `removeNameFromList` if the
+   field is user-editable.
 4. Nothing else changes.
 
-### 12.4 Adding a country field to name resolution
+### 13.4 Adding a country field to name resolution
 
-1. Extend `world.js`, not the name modules. Country semantics belong to the world domain.
-2. If the field is exposed through `NameQueries`, add a facade. If not, name-domain consumers call `World` directly.
+1. Extend `world.js`, not the name modules. Country semantics belong to
+   the world domain.
+2. If the field is exposed through `NameQueries`, add a facade. If not,
+   name-domain consumers call `World` directly.
 
-### 12.5 Adding a new ancestor slot
+### 13.5 Adding a new ancestor slot
 
 1. Add the slot name to `VALID_ANCESTOR_TYPES` in `name-rules.js`.
-2. Add the slot to `_isValidAncestorSlot` and `_resolveAncestor` in `name-queries.js`.
+2. Add the slot to `_isValidAncestorSlot` and `_resolveAncestor` in
+   `name-queries.js`.
 3. `getAncestorData` and `getAncestorNames` handle it automatically.
 4. Update the ancestor slot list in this document.
 
-### 12.6 Adding a new command
+### 13.6 Adding a new command
 
 1. Implement in `name-commands.js`.
 2. Return `{ success, reason, ... }`. Never `null`.
 3. Take an ID, not an object.
-4. Call `window.saveMasterData()`, invalidate the relevant cache, and emit exactly one domain event.
-5. Do not call another public command. Compose via private primitives, or accept that the operation is not atomic across commands.
+4. Call `NameState.invalidate*`, call `_commit(eventName, payload)`,
+   and do NOT call `saveMasterData()`. The caller persists.
+5. Do not call another public command. Compose via private primitives,
+   or accept that the operation is not atomic across commands.
 6. Do not call `_showToast`. Commands return structured results.
+
+### 13.7 Adding a new modal command path
+
+1. In the modal, after a successful command, call
+   `NameCommands.persist()`.
+2. If persist fails, show an error (toast or inline). Do not retry
+   silently.
+3. Do not call `saveMasterData()` directly from the modal.
 
 ---
 
-## 13. Verification checklist
+## 14. Verification checklist
 
 Before deploying the name system, confirm:
 
@@ -578,6 +733,11 @@ Before deploying the name system, confirm:
 - [ ] `grep -r "_processingCommand" js/modules/names/` — zero hits
 - [ ] `grep -r "Math.random" js/modules/names/` — zero hits
 - [ ] `grep -r ": 1250" js/modules/names/` — zero hits
+- [ ] `grep -r "saveMasterData" js/modules/names/name-commands.js` — one hit, inside `persist()`
+- [ ] `grep -r "saveMasterData" js/modules/names/modals-name.js` — zero hits
+- [ ] `grep -r "saveMasterData" js/modules/names/name-system.js` — zero hits (uses `NameCommands.persist`)
+- [ ] `grep -r "NameCommands.persist" js/modules/names/modals-name.js` — at least two hits (one per command path in surname management)
+- [ ] `grep -r "NameCommands.persist" js/modules/names/name-system.js` — at least four hits (one per command wrapper)
 - [ ] `grep -r "getCurrentYearSafe" js/modules/names/` — one hit in `name-commands.js` dependency guard, one hit in its `_getCurrentYear` delegation
 - [ ] `grep -r "style=" js/modules/names/modals-name.js` — zero hits
 - [ ] `grep -r "confirm(" js/modules/names/modals-name.js` — zero hits
@@ -596,7 +756,7 @@ Before deploying the name system, confirm:
 - [ ] Test `NameRules.determineNewbornSurname` with an invalid persisted rule → throws (does not fall through)
 - [ ] Test `NameRules.validateRules` rejects duplicate chain slots
 - [ ] Test `NameRules.validateRules` rejects `customConnector` when `connector === 'custom'` is missing or empty (for both family and chain)
-- [ ] Test `NameCommands.applyMarriageSurnames` with both parties alive — both records updated, one `characterChanged` event, one `saveMasterData` call
+- [ ] Test `NameCommands.applyMarriageSurnames` with both parties alive — both records updated, one `characterChanged` event, **zero `saveMasterData` calls**
 - [ ] Test `NameCommands.applyMarriageSurnames` with an invalid rule → returns `{ success: false }`
 - [ ] Test `NameCommands.applyMarriageSurnames` with a deceased party → returns `{ success: false }`
 - [ ] Test `NameCommands.revertLastSurnameChange` on a character with one entry → entry removed, surname reverted, `surnameSource` and `surnameRules` restored
@@ -609,45 +769,132 @@ Before deploying the name system, confirm:
 - [ ] Test `NameState.getUiState` returns a frozen snapshot: attempt to mutate, verify no change
 - [ ] Test `NameState.setUiState` rejects `undefined` for every field
 - [ ] Test `NameState.setUiState` rejects an unknown `generationMode`
+- [ ] Test `NameState.setUiState` rejects a `previewName` longer than 200 chars
 - [ ] Test `NameState.getMutableNameList` returns the live reference: mutate through it, verify canonical data affected
 - [ ] Test `NameQueries.getAncestorData` resolves `paternal_great_grandfather` when present
 - [ ] Test `NameQueries.getAncestorData` returns raw `name` (not base name) in `firstName`
 - [ ] Test `NameRules.getBaseFirstName` strips one trailing epithet and one trailing locative
+- [ ] Test `NameCommands.persist()` returns `{success: true}` on success, `{success: false, reason}` on failure
+- [ ] Test: revert surname → save succeeds → modal refreshes → check persisted data
+- [ ] Test: revert surname → save fails → toast shown → modal still refreshes → in-memory data correct, persisted data stale (recoverable)
 
 ---
 
-## 14. Open questions
+## 15. Open questions
 
 These are not blockers but are worth resolving as the codebase grows.
 
-1. **Canonical character-mutation owner.** `name-commands.js` writes character surname fields directly through `_applySurnameToCharacter`. When a general character-state mutation module exists, that helper becomes a delegation and nothing else changes. Until then, the write point is centralized but not externally owned.
+1. **Canonical character-mutation owner.** `name-commands.js` writes
+   character surname fields directly through `_applySurnameToCharacter`
+   (and reverses them via `_undoSurnameChange`). When a general
+   character-state mutation module exists, both helpers become
+   delegations and nothing else changes. Until then, the write point is
+   centralized but not externally owned.
 
-2. **Marriage surname policy ownership.** Currently in `name-rules.js` as `calculateMarriageSurnames`. If marriage rules become per-country or per-religion, the policy could migrate to a dedicated module. The name system would keep the mechanics.
+2. **Marriage surname policy ownership.** Currently in `name-rules.js`
+   as `calculateMarriageSurnames`. If marriage rules become per-country
+   or per-religion, the policy could migrate to a dedicated module. The
+   name system would keep the mechanics.
 
-3. **Cross-country name rules.** `determineNewbornSurname` prefers the mother's country rules, then the father's. If the world has interfaith or international marriages, this is a policy decision that may need a more explicit resolution — "whose culture wins for the child?" — with an explicit answer.
+3. **Cross-country name rules.** `determineNewbornSurname` prefers the
+   mother's country rules, then the father's. If the world has
+   interfaith or international marriages, this is a policy decision
+   that may need a more explicit resolution — "whose culture wins for
+   the child?" — with an explicit answer.
 
-4. **Surname inheritance beyond great-grandparents.** The FAMILY rule uses parent surnames directly. The CHAIN rule walks up to great-grandparent slots. If the world needs deeper dynastic chains, `VALID_ANCESTOR_TYPES` needs to grow, and the naming grammar needs to decide whether "great-great-grandfather" is a distinct slot or a repeated relative step.
+4. **Surname inheritance beyond great-grandparents.** The FAMILY rule
+   uses parent surnames directly. The CHAIN rule walks up to
+   great-grandparent slots. If the world needs deeper dynastic chains,
+   `VALID_ANCESTOR_TYPES` needs to grow, and the naming grammar needs to
+   decide whether "great-great-grandfather" is a distinct slot or a
+   repeated relative step.
 
-5. **Name list mutation UI.** `addNameToList` and `removeNameFromList` are commands, but no modal uses them yet. When you build a "manage country name lists" UI, it will be the third name modal.
+5. **Name list mutation UI.** `addNameToList` and `removeNameFromList`
+   are commands, but no modal uses them yet. When you build a "manage
+   country name lists" UI, it will be the third name modal.
 
-6. **Rule editing UI.** Similarly, no UI lets a user edit a country's surname rules. When you build one, it should use `NameRules.validateRules` for inline validation and a new `NameCommands.setCountrySurnameRules` command for persistence (the command does not exist yet).
+6. **Rule editing UI.** Similarly, no UI lets a user edit a country's
+   surname rules. When you build one, it should use
+   `NameRules.validateRules` for inline validation and a new
+   `NameCommands.setCountrySurnameRules` command for persistence (the
+   command does not exist yet).
 
-7. **Base first-name extraction grammar.** `NameRules.getBaseFirstName` strips one token after `"the"` and one after `"of"`. Multi-token epithets (`John of Saint Orleans`) are not fully handled. If the naming grammar grows, this function needs to grow with it, and it will deserve its own test suite.
+7. **Base first-name extraction grammar.** `NameRules.getBaseFirstName`
+   strips one token after `"the"` and one after `"of"`. Multi-token
+   epithets (`John of Saint Orleans`) are not fully handled. If the
+   naming grammar grows, this function needs to grow with it, and it
+   will deserve its own test suite.
 
-8. **`name-system.js` removal timeline.** The legacy wrapper is meant to be deleted. Grep for each deprecated global (and its aliases and definitions, not just call sites); when the count reaches zero, delete the corresponding wrapper. When the count for the whole file reaches zero, delete the file.
+8. **`name-system.js` removal timeline.** The legacy wrapper is meant to
+   be deleted. Grep for each deprecated global (and its aliases and
+   definitions, not just call sites); when the count reaches zero,
+   delete the corresponding wrapper. When the count for the whole file
+   reaches zero, delete the file. **Note:** deleting `name-system.js`
+   also removes the wrapper's `persist()` calls, so callers must be
+   migrated to call `NameCommands.persist()` themselves before the
+   wrapper is deleted.
 
-9. **`modals-core.js` modal-body contract.** `modals-name.js` requires a `.modal-body` element inside the modal root for in-place content refresh. If `modals-core.js` uses a different class name or structure, the refresh throws. Worth confirming and, if needed, aligning the class name at one end.
+9. **`modals-core.js` modal-body contract.** `modals-name.js` requires
+   a `.modal-body` element inside the modal root for in-place content
+   refresh. If `modals-core.js` uses a different class name or
+   structure, the refresh throws. Worth confirming and, if needed,
+   aligning the class name at one end.
 
-10. **`NameState` dependency on `NameRules`.** State reads `NameRules.RULE_TYPES` to validate the `generationMode` UI field. This makes State no longer a leaf in the dependency graph. If the load order is ever reshuffled, this is the edge that will break first. An alternative is a shared `NameConstants` module that both consume, but that adds a module for five strings. Current choice: accept the dependency, keep the load order documented.
-</parameter>
-<task_progress>
-- [x] name-commands.js rewritten with all fixes
-- [x] name-queries.js rewritten with all fixes
-- [x] name-rules.js rewritten with all fixes
-- [x] name-state.js rewritten with all fixes
-- [x] modals-name.js rewritten with all fixes
-- [x] name-system.js rewritten with all fixes
-- [x] All cross-file follow-up patches applied
-- [x] name-docs.txt rewritten to match the code
-</task_progress>
-</result>
+10. **`NameState` dependency on `NameRules`.** State reads
+    `NameRules.RULE_TYPES` to validate the `generationMode` UI field.
+    This makes State no longer a leaf in the dependency graph. If the
+    load order is ever reshuffled, this is the edge that will break
+    first. An alternative is a shared `NameConstants` module that both
+    consume, but that adds a module for five strings. Current choice:
+    accept the dependency, keep the load order documented.
+
+11. **Persist failure surfacing in name modals.** A failed persist is
+    currently a toast + a successful-looking UI refresh. The in-memory
+    state is correct and the next successful persist will catch up.
+    This is deliberate: showing the failure without blocking the UI is
+    better than leaving the user stuck. But a persistent storage failure
+    looks like success. A future improvement is to disable the modal's
+    actions until a save succeeds, or to show a persistent banner. Out
+    of scope for this refactor.
+
+---
+
+*End of document.*
+```
+
+---
+
+## What changed, precisely
+
+| Change | Why |
+|---|---|
+| Version bumped to 2.0, dated 2026-07-14 | Post-refactor. |
+| Added `markDataDirty` to infrastructure table | New dependency in commands. |
+| Dependency direction section: added note that `name-system.js` loads before `modals-name.js` | Was implicit; now explicit. |
+| Dependency direction section: added `NameRules` transitive dependency on `world.js` | Was missing; now documented. |
+| Ownership table: added "Persistence" row pointing at `NameCommands.persist()` | New single-save-site contract. |
+| Section 6.1 flow: added step 5 for `persist()` | Save contract change. |
+| Section 6.3 flow: added step 8 for `persist()` | Same. |
+| Section 6.4 flow: added step 6 for `persist()`, corrected step 5 to remove "Command persists" | Same. |
+| Section 6.5 flow: added step 9 for `persist()`, corrected step 8 to remove "Command persists once" | Same. |
+| Section 7 "Persistence": new section | The save contract is the biggest structural change; it deserves its own section. |
+| Section 9 "Caching": added `hydrateFromMasterData()` alias note and rationale | New alias. |
+| Section 9 "Caching": added `validateIntegrity()` and `getCacheStats()` diagnostics | New functions. |
+| Section 10 "Events": clarified the `{type, ...data}` shape of `NameState.publish` | Unchanged behaviour, now documented. |
+| Section 12.1: added "+ `NameCommands.persist`" to the four command wrapper rows | The wrappers now persist. |
+| Section 12.1: added "Persistence" paragraph | Wrapper contract. |
+| Section 13.6 "Adding a new command": updated the persist guidance | Was "Call `window.saveMasterData()`" — now "Do NOT call `saveMasterData()`; caller persists." |
+| Section 13.7 "Adding a new modal command path": new subsection | Modal persist contract. |
+| Section 14 "Verification checklist": added six persist-related checks | Save contract verification. |
+| Section 14: added preview-length check | New `setUiState` validation. |
+| Section 14: added persist success/failure test for revert | Save failure surfacing. |
+| Section 15 "Open questions": added item 11 about persist failure surfacing | New UX concern. |
+| Section 15 item 8: added note that deleting `name-system.js` also removes its `persist()` calls | Removal plan impact. |
+
+## What to do next
+
+1. **Delete `name-docs.txt`.** It describes the pre-refactor save contract and would actively mislead anyone implementing against it.
+2. **The doc's verification checklist has 50+ items.** Run them before merging. The persist-related ones are the newest additions and deserve extra attention.
+3. **Verify `character-commands.js` saves at the end of the character-creation batch.** If it was relying on `recordSurnameChange`'s internal save, character creation now persists zero times (which is worse than the pre-refactor behaviour). If it already calls `persist()` at the batch end, nothing needs to change. This is the one integration point outside the name module that the refactor's save-contract change can break.
+
+That's the name module fully converged. Seven deliverables, all delivered. The module now matches the reference pattern (culture, religion) structurally, with documented deferrals where it doesn't.
