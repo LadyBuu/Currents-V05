@@ -2,46 +2,42 @@
  * =============================================================================
  * STILL WATERS - RELIGION LAWS (religion-laws.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/religion/religion-laws.js
- * 
- * Law/taboo definitions for religions.
- * These are definitions only - enforcement will be handled by the Crime System.
- * 
- * Three sections:
- *   1. Law mutation operations (add, update, remove)
- *   2. Law query operations (read-only, from canonical data)
- *   3. Law validation
- * 
+ *
+ * Law/taboo QUERIES for religions.
+ *
+ * This module is queries only. It does not mutate. It does not save. It
+ * does not touch canonical data directly. It reads through ReligionQueries
+ * and ReligionState and returns clones or projections.
+ *
+ * The mutation half of this module (addLaw, updateLaw, removeLaw) moved to
+ * ReligionCommands in phase 7. See the refactor history below.
+ *
+ * Law definitions are consumed by the Crime System. Crime Mapping fields
+ * (crimeType, isEnforced, punishment, etc.) live on each law record and are
+ * read here for dispatch. The Crime System is responsible for enforcement;
+ * this module only exposes the definitions.
+ *
  * DEPENDENCIES:
- *   - religion-state.js: ReligionState (rebuildIndexes, notify)
- *   - religion-queries.js: ReligionQueries
- *   - religion-validation.js: ReligionValidation (via direct call)
- *   - ids.js: generateId
- *   - storage.js: saveMasterData
- * 
+ *   - religion-state.js:   ReligionState (for getLawById clone access)
+ *   - religion-queries.js: ReligionQueries (for law enumeration)
+ *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
- * 
+ *
  * =============================================================================
- * PHASE 0 STABILISATION (2026):
- *   - Removed _processingLaw re-entry guard.
- * 
- * PHASE 2 VOCABULARY CONSOLIDATION (2026):
- *   - Display name helpers delegate to ReligionFormat.
- *   - Deleted getLawSeverityColor / getLawTypeIcon.
- * 
- * PHASE 3 BOUNDARY RESTRUCTURE (2026):
- *   - Law mutations write to religion.laws directly and commit.
- *   - Clone-before-mutate.
- *   - Empty-name rejection on update.
- * 
- * PHASE 6 CLEANUP (2026):
- *   - Deleted the four delegating formatting helpers (getLawTypeName,
- *     getLawCategoryName, getLawDomainName, getLawSeverityName). Consumers
- *     call ReligionFormat.* directly.
- *   - _validateLawInput now delegates to ReligionValidation.validateLawInput.
- *     The local copy is deleted; validation is one source of truth.
- * 
+ * REFACTOR HISTORY:
+ *   Phase 0: recursion guard removal.
+ *   Phase 2: display-name helpers delegate to ReligionFormat.
+ *   Phase 3: clone-before-mutate, empty-name rejection on update.
+ *   Phase 6: deleted the four delegating formatting helpers; _validateLawInput
+ *            delegated to ReligionValidation.
+ *   Phase 7 (current): converge to the reference pattern.
+ *     - Mutation functions (addLaw, updateLaw, removeLaw) moved to
+ *       ReligionCommands. This module is now queries only.
+ *     - Load-time verification of dependencies.
+ *     - Reads route through ReligionQueries / ReligionState; no direct
+ *       canonical access; every returned law is a clone.
  * =============================================================================
  */
 
@@ -66,254 +62,72 @@
         return window.ReligionQueries;
     }
 
-    function _validation() {
-        if (typeof window.ReligionValidation === 'undefined') {
-            throw new Error('ReligionLaws requires ReligionValidation.');
-        }
-        return window.ReligionValidation;
-    }
-
-    function _generateId(prefix) {
-        if (typeof window.generateId !== 'function') {
-            throw new Error('ReligionLaws requires ids.generateId.');
-        }
-        return window.generateId(prefix);
-    }
-
-    function _save() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('ReligionLaws requires storage.saveMasterData.');
-        }
-        window.saveMasterData();
-    }
-
-    function _getCanonicalReligions() {
-        if (!window.masterData || !window.masterData.data) {
-            throw new Error('masterData.data is not initialized.');
-        }
-        if (!Array.isArray(window.masterData.data.religions)) {
-            window.masterData.data.religions = [];
-        }
-        return window.masterData.data.religions;
-    }
-
     // =========================================================================
-    // 2. TRANSACTION BOUNDARY
+    // 2. CLONE HELPER
     // =========================================================================
+    //
+    // This module must return clones even after ReligionQueries is updated
+    // to return clones (deliverable #4). Until then, and as a matter of
+    // defense, we clone here.
+    //
 
-    function _commit(eventType, eventData) {
-        _state().rebuildIndexes();
-        _save();
-        _state().notify({
-            type: eventType,
-            data: eventData,
-            timestamp: Date.now()
-        });
-    }
-
-    // =========================================================================
-    // 3. CONSTANTS REFERENCE
-    // =========================================================================
-    // Law enums still live on window globals. When they migrate to
-    // ReligionConstants, only the reads in this file change.
-
-    function _getLawTypes() {
-        return window.LAW_TYPES || {};
-    }
-    function _getLawCategories() {
-        return window.LAW_CATEGORIES || {};
-    }
-    function _getLawDomains() {
-        return window.LAW_DOMAINS || {};
-    }
-    function _getLawSeverity() {
-        return window.LAW_SEVERITY || {};
-    }
-
-    // =========================================================================
-    // 4. LAW MUTATION OPERATIONS
-    // =========================================================================
-
-    function addLaw(religionId, lawData) {
-        var religion = _queries().getReligion(religionId);
-        if (!religion) {
-            return { success: false, reason: 'Religion not found' };
+    function _clone(value) {
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            var arr = new Array(value.length);
+            for (var i = 0; i < value.length; i++) arr[i] = _clone(value[i]);
+            return arr;
         }
-
-        var validation = _validation().validateLawInput(lawData, { requireName: true });
-        if (!validation.valid) {
-            return { success: false, reason: validation.errors.join(', ') };
-        }
-
-        var types = _getLawTypes();
-        var categories = _getLawCategories();
-        var domains = _getLawDomains();
-        var severities = _getLawSeverity();
-
-        var law = {
-            id: _generateId('law'),
-            name: lawData.name.trim(),
-            type: lawData.type || types.LAW || 'law',
-            lawCategory: lawData.lawCategory || categories.RELIGIOUS || 'religious',
-            domain: lawData.domain || domains.BEHAVIOR || 'behavior',
-            description: lawData.description || '',
-            severity: lawData.severity || severities.MINOR || 'minor',
-            crimeMapping: {
-                crimeType: lawData.crimeType || null,
-                crimeSeverity: lawData.crimeSeverity || null,
-                isEnforced: lawData.isEnforced === true,
-                punishment: lawData.punishment || null,
-                notes: lawData.crimeNotes || ''
-            },
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            notes: lawData.notes || ''
-        };
-
-        var laws = (religion.laws || []).slice();
-        laws.push(law);
-        religion.laws = laws;
-        religion.updatedAt = Date.now();
-
-        _commit('religion_law_added', {
-            religionId: religionId,
-            law: law
-        });
-
-        return { success: true, data: law, reason: 'Law added successfully' };
-    }
-
-    function updateLaw(lawId, updates) {
-        var owner = _findReligionByLawId(lawId);
-        if (!owner) {
-            return { success: false, reason: 'Law not found' };
-        }
-
-        var validation = _validation().validateLawInput(updates, { requireName: false });
-        if (!validation.valid) {
-            return { success: false, reason: validation.errors.join(', ') };
-        }
-
-        var lawIndex = -1;
-        for (var i = 0; i < owner.laws.length; i++) {
-            if (owner.laws[i].id === lawId) {
-                lawIndex = i;
-                break;
+        var out = {};
+        for (var k in value) {
+            if (Object.prototype.hasOwnProperty.call(value, k)) {
+                out[k] = _clone(value[k]);
             }
         }
-        if (lawIndex === -1) {
-            return { success: false, reason: 'Law not found in religion' };
-        }
-
-        var original = owner.laws[lawIndex];
-        var updated = {
-            id: original.id,
-            name: updates.name !== undefined ? updates.name.trim() : original.name,
-            type: updates.type !== undefined ? updates.type : original.type,
-            lawCategory: updates.lawCategory !== undefined ? updates.lawCategory : original.lawCategory,
-            domain: updates.domain !== undefined ? updates.domain : original.domain,
-            description: updates.description !== undefined ? updates.description : original.description,
-            severity: updates.severity !== undefined ? updates.severity : original.severity,
-            crimeMapping: _mergeCrimeMapping(original.crimeMapping, updates.crimeMapping),
-            createdAt: original.createdAt,
-            updatedAt: Date.now(),
-            notes: updates.notes !== undefined ? updates.notes : original.notes
-        };
-
-        var laws = owner.laws.slice();
-        laws[lawIndex] = updated;
-        owner.laws = laws;
-        owner.updatedAt = Date.now();
-
-        _commit('religion_law_updated', {
-            religionId: owner.id,
-            law: updated
-        });
-
-        return { success: true, data: updated, reason: 'Law updated successfully' };
+        return out;
     }
 
-    function removeLaw(religionId, lawId) {
-        var religion = _queries().getReligion(religionId);
-        if (!religion) {
-            return { success: false, reason: 'Religion not found' };
-        }
-
-        if (!religion.laws || religion.laws.length === 0) {
-            return { success: false, reason: 'No laws found in this religion' };
-        }
-
-        var index = -1;
-        for (var i = 0; i < religion.laws.length; i++) {
-            if (religion.laws[i].id === lawId) {
-                index = i;
-                break;
-            }
-        }
-        if (index === -1) {
-            return { success: false, reason: 'Law not found in this religion' };
-        }
-
-        var laws = religion.laws.slice();
-        laws.splice(index, 1);
-        religion.laws = laws;
-        religion.updatedAt = Date.now();
-
-        _commit('religion_law_removed', {
-            religionId: religionId,
-            lawId: lawId
-        });
-
-        return { success: true, reason: 'Law removed successfully' };
-    }
-
-    function _mergeCrimeMapping(original, updates) {
-        var base = original || {
-            crimeType: null,
-            crimeSeverity: null,
-            isEnforced: false,
-            punishment: null,
-            notes: ''
-        };
-
-        if (!updates) {
-            return {
-                crimeType: base.crimeType,
-                crimeSeverity: base.crimeSeverity,
-                isEnforced: base.isEnforced,
-                punishment: base.punishment,
-                notes: base.notes
-            };
-        }
-
-        return {
-            crimeType: updates.crimeType !== undefined ? updates.crimeType : base.crimeType,
-            crimeSeverity: updates.crimeSeverity !== undefined ? updates.crimeSeverity : base.crimeSeverity,
-            isEnforced: updates.isEnforced !== undefined ? updates.isEnforced : base.isEnforced,
-            punishment: updates.punishment !== undefined ? updates.punishment : base.punishment,
-            notes: updates.notes !== undefined ? updates.notes : base.notes
-        };
+    function _cloneArray(list) {
+        if (!list || !list.length) return [];
+        var out = new Array(list.length);
+        for (var i = 0; i < list.length; i++) out[i] = _clone(list[i]);
+        return out;
     }
 
     // =========================================================================
-    // 5. LAW QUERY OPERATIONS
+    // 3. LAW QUERIES
     // =========================================================================
 
     function getLaw(lawId) {
         if (!lawId) return null;
-        return _queries().getLaw(lawId);
+        // State.getLawById returns a clone (see religion-state.js).
+        return _state().getLawById(lawId);
     }
 
     function getLawsByReligion(religionId) {
-        return _queries().getLawsByReligion(religionId);
+        if (!religionId) return [];
+        var laws = _queries().getLawsByReligion(religionId);
+        return _cloneArray(laws);
     }
 
     function getLawsByDomain(religionId, domain) {
-        return _queries().getLawsByDomain(religionId, domain);
+        if (!domain) return getLawsByReligion(religionId);
+        var laws = getLawsByReligion(religionId);
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].domain === domain) result.push(laws[i]);
+        }
+        return result;
     }
 
     function getLawsByCategory(religionId, category) {
-        return _queries().getLawsByCategory(religionId, category);
+        if (!category) return getLawsByReligion(religionId);
+        var laws = getLawsByReligion(religionId);
+        var result = [];
+        for (var i = 0; i < laws.length; i++) {
+            if (laws[i].lawCategory === category) result.push(laws[i]);
+        }
+        return result;
     }
 
     function getLawsByType(religionId, type) {
@@ -348,7 +162,7 @@
     }
 
     // =========================================================================
-    // 6. CRIME MAPPING QUERIES
+    // 4. CRIME MAPPING QUERIES
     // =========================================================================
 
     function getCrimeMappingForLaw(lawId) {
@@ -367,6 +181,13 @@
         };
     }
 
+    /**
+     * Every law across every religion that maps to a given crime type.
+     *
+     * Returns an array of { law, religionId, religionName }. The law is a
+     * clone; the religionId and religionName are snapshots taken at query
+     * time.
+     */
     function getLawsByCrimeType(crimeType) {
         if (!crimeType) return [];
 
@@ -375,16 +196,16 @@
 
         for (var i = 0; i < allReligions.length; i++) {
             var religion = allReligions[i];
-            if (religion.laws) {
-                for (var j = 0; j < religion.laws.length; j++) {
-                    var law = religion.laws[j];
-                    if (law.crimeMapping && law.crimeMapping.crimeType === crimeType) {
-                        result.push({
-                            law: law,
-                            religionId: religion.id,
-                            religionName: religion.name
-                        });
-                    }
+            if (!Array.isArray(religion.laws)) continue;
+
+            for (var j = 0; j < religion.laws.length; j++) {
+                var law = religion.laws[j];
+                if (law && law.crimeMapping && law.crimeMapping.crimeType === crimeType) {
+                    result.push({
+                        law: _clone(law),
+                        religionId: religion.id,
+                        religionName: religion.name
+                    });
                 }
             }
         }
@@ -404,14 +225,14 @@
     }
 
     // =========================================================================
-    // 7. STATISTICS
+    // 5. STATISTICS
     // =========================================================================
 
     function getLawStatistics(religionId) {
         var religion = _queries().getReligion(religionId);
         if (!religion) return null;
 
-        var laws = religion.laws || [];
+        var laws = getLawsByReligion(religionId);
 
         var stats = {
             totalLaws: laws.length,
@@ -463,7 +284,7 @@
 
         for (var i = 0; i < allReligions.length; i++) {
             var religion = allReligions[i];
-            var laws = religion.laws || [];
+            var laws = getLawsByReligion(religion.id);
 
             if (laws.length > 0) {
                 stats.totalReligionsWithLaws++;
@@ -497,38 +318,30 @@
     }
 
     // =========================================================================
-    // 8. INTERNAL HELPERS
+    // 6. LOAD-TIME VERIFICATION
     // =========================================================================
 
-    function _findReligionByLawId(lawId) {
-        if (!lawId) return null;
-
-        var law = _state().getLawByIdIndex(lawId);
-        if (!law) return null;
-
-        var religions = _getCanonicalReligions();
-        for (var i = 0; i < religions.length; i++) {
-            var r = religions[i];
-            if (r.laws) {
-                for (var j = 0; j < r.laws.length; j++) {
-                    if (r.laws[j].id === lawId) return r;
-                }
-            }
+    (function _verifyLoadTimeDependencies() {
+        if (!window.ReligionState) {
+            throw new Error(
+                'religion-laws.js loaded but window.ReligionState is missing. ' +
+                'Check script tag order (religion-state.js must load first).'
+            );
         }
-        return null;
-    }
+        if (!window.ReligionQueries) {
+            throw new Error(
+                'religion-laws.js loaded but window.ReligionQueries is missing. ' +
+                'Check script tag order (religion-queries.js must load first).'
+            );
+        }
+    })();
 
     // =========================================================================
-    // 9. EXPORTS
+    // 7. PUBLIC API
     // =========================================================================
 
     window.ReligionLaws = {
-        // Mutations
-        addLaw: addLaw,
-        updateLaw: updateLaw,
-        removeLaw: removeLaw,
-
-        // Queries
+        // Law queries
         getLaw: getLaw,
         getLawsByReligion: getLawsByReligion,
         getLawsByDomain: getLawsByDomain,
