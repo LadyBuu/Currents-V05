@@ -1,19 +1,43 @@
 # HOUSEHOLD & RESIDENCE SYSTEM - ARCHITECTURE DOCUMENTATION
-#
-# Version: 5.0 (post-refactor)
-# Replaces: household-doc.txt v4.0
+
+Version: 6.0 (post-consolidation)
+Supersedes: v5.0 (post-refactor) and v4.0
 
 ================================================================================
 SYSTEM OVERVIEW
 ================================================================================
 
-The Household & Residence System manages household structures, family units,
-staff, departments, residence ownership and occupancy, rental contracts, and
-integration with enterprises, government, education, and character systems.
+The Household & Residence System manages household structures, family
+units, staff, departments, residence ownership and occupancy, rental
+contracts, and integration with enterprises, character, family,
+relationship, and industry domains.
 
-The system underwent a comprehensive architectural refactor to establish clear
-ownership boundaries, remove global processing mutexes, eliminate fabricated
-domain defaults, and route all mutations through explicit command layers.
+The v5.0 refactor established clear ownership boundaries, removed
+global processing mutexes, eliminated fabricated domain defaults, and
+routed all mutations through explicit command layers.
+
+This v6.0 revision consolidates three latent bugs the v5.0 refactor
+left behind:
+
+  1. Constant and rule duplication. The economy and servant modules
+     carried private copies of the economic catalogs and quality
+     thresholds. Those copies were removed; every household module now
+     reads from household-constants.js (catalogs) and household-rules.js
+     (pure policy).
+
+  2. Reverse-index corruption. household.residenceId and
+     residence.units[].householdId are two views of the same fact. When
+     a mutation on one side fails to update the other, the divergence
+     survived indefinitely with no signal. Reverse-index failures are
+     now hard failures (reverseIndexFailed:true on the result, plus a
+     damageHistory entry on the residence), and household-state.js
+     diagnostics cross-check both sides.
+
+  3. Multi-year simulation clock drift. HouseholdEconomy.processAnnualEconomy
+     and CharacterLifecycle.advanceMortality both used wall-clock "now"
+     for year-tagged accounting, so a 5-year advance produced 5 ledger
+     entries all tagged with the same year. Both now accept an explicit
+     year and propagate it through every calculation.
 
 ================================================================================
 KEY DESIGN PRINCIPLES
@@ -23,57 +47,111 @@ KEY DESIGN PRINCIPLES
 
    Each layer owns exactly one kind of operation:
 
+     Constants    → canonical catalogs, thresholds, multipliers
+     Rules        → pure policy and calculation (no I/O, no state)
+     View Models  → presentation defaults, form helpers, color helpers
+     Orchestration→ shared result/dispatch/finish helpers for
+                    multi-command coordinators
      State        → canonical storage, indexes, cache, subscriptions
      Queries      → semantic reads returning defensive snapshots
-     Rules        → pure policy/calculation (no persistence, no notification)
      Commands     → canonical mutations, transaction boundary, persistence
+     Assignment   → cross-operation orchestration (newborn, spouse,
+                    inheritance, cadet, merge, split)
+     Servant      → service-relationship orchestration
+     Economy      → wealth / debt / resource accounting, rent, trade
+     Residence    → residence CRUD, units, occupancy, rental, staff
+     Bootstrap    → load-time verification + hydration + diagnostics
      UI           → rendering, input collection, presentation, toasts
 
-2. NO GLOBAL PROCESSING MUTEXES
+2. NO DUPLICATED CATALOGS OR RULES
 
-   The previous system used `_processingX` boolean flags across modules.
-   These broke legitimate composition: a command that internally called
-   another command would find itself locked out.
+   Before v6.0, ECONOMIC_TIERS / INCOME_SOURCES / EXPENSE_CATEGORIES /
+   ECONOMIC_EVENTS / SERVICE_TYPES / SERVICE_QUALITY /
+   SERVICE_QUALITY_ORDER existed in three places:
+     - household-constants.js (canonical)
+     - household-economy.js and household-servant.js (private copies)
+     - household-rules.js (inline fallbacks)
 
-   Example of the OLD bug:
+   Now there is exactly one copy of each catalog, in
+   household-constants.js. household-rules.js consumes it; household-
+   economy.js and household-servant.js import it. The private copies
+   are gone.
 
-     processHouseholdInheritanceOnDeath()
-       → transferHouseholdToHeir()
-         → sees _processingAssignment === true
-         → returns { success: false, reason: 'Already processing' }
+3. NO GLOBAL PROCESSING MUTEXES
+
+   The pre-refactor system used `_processingX` boolean flags across
+   modules. These broke legitimate composition: a command that
+   internally called another command would find itself locked out.
 
    All such guards have been removed. Commands compose freely.
 
-3. NO FABRICATED DOMAIN DEFAULTS
+4. NO FABRICATED DOMAIN DEFAULTS
 
-   Missing infrastructure is never converted into valid-looking domain data.
-   The old system did:
+   Missing infrastructure is never converted into valid-looking domain
+   data. No magic 1250 year. No silent empty array in place of a
+   missing collection. No fabricated {mother: null, father: null} in
+   place of a missing parent.
 
-     _getCurrentYear() → 1250
-     _getCharacters() → []
-     _getParents() → { mother: null, father: null }
+   Required dependencies fail loudly. Empty results are only returned
+   when the domain fact is genuinely empty.
 
-   These were removed. Required dependencies fail loudly. Empty results are
-   only returned when the domain fact is genuinely empty.
+5. NO LIVE RECORD LEAKS
 
-4. NO LIVE RECORD LEAKS
+   Public queries return defensive snapshots, not live canonical
+   objects. Callers cannot mutate domain state without going through
+   commands.
 
-   Public queries return defensive snapshots, not live canonical objects.
-   Callers cannot mutate domain state without going through commands.
+6. ONE PERSISTENCE BOUNDARY PER LOGICAL OPERATION
 
-5. ONE PERSISTENCE BOUNDARY PER LOGICAL OPERATION
+   Each command performs exactly one commit. Helper functions that
+   touch the canonical record do NOT persist; the top-level command
+   does, once.
 
-   Each command performs exactly one commit. Helper functions that touch the
-   canonical record do NOT persist; the top-level command does, once.
+   Orchestrators (assignment, servant) end with a single _finish call
+   that dispatches the event and persists the household system.
+   Servant additionally persists the relationship system, since
+   service-relationship writes live there.
 
-6. STRUCTURED COMMAND RESULTS
+7. STRUCTURED COMMAND RESULTS
 
    Every command returns:
      { success: true, data: ... }
    or:
-     { success: false, code: 'SOME_CODE', reason: 'human message' }
+     { success: false, code: 'SOME_CODE', reason: 'human message',
+       partial: true (when partial mutation occurred),
+       ...extra fields }
 
    No more boolean `success` returns mixed with object returns.
+
+8. REVERSE-INDEX DISCIPLINE
+
+   The household↔residence relationship is two views of one fact:
+
+     household.residenceId          (household-owned reverse index)
+     household.residenceUnitNumber  (household-owned reverse index)
+     residence.units[].householdId  (canonical occupancy)
+
+   ResidenceSystem is the single authority that mutates unit occupancy.
+   It calls HouseholdCommands.associateWithResidence /
+   disassociateFromResidence to keep the reverse index in step.
+
+   When the reverse-index update fails:
+     - the residence mutation still succeeds (canonical occupancy is
+       what it is),
+     - the result carries reverseIndexFailed:true and the specific
+       failures list,
+     - a reverse_index_failure entry is appended to the residence's
+       damageHistory (persistent audit trail).
+
+   household-state.js's _diagnostics.getIntegrityReport() cross-checks
+   both directions:
+     - householdsWithMissingResidence: household.residenceId points
+       at a residence that no longer exists
+     - residencesWithOrphanHouseholdOccupancy: residence unit still
+       names a householdId that no longer exists
+     - residenceReverseIndexAvailable: false if the check couldn't run
+       (ResidenceSystem not loaded and canonical residences not yet
+       populated)
 
 ================================================================================
 LAYER ARCHITECTURE
@@ -101,35 +179,131 @@ LAYER ARCHITECTURE
       │ snapshots    │                 │ Notify once  │
       └───────┬──────┘                 └───────┬──────┘
               │                                │
-              │                                │
               ▼                                ▼
       ┌──────────────┐                 ┌──────────────┐
-      │              │                 │              │
-      │              │◄────────────────┤              │
-      │              │                 │              │
-      └──────────────┘                 └───────┬──────┘
-              │                                │
-              └────────────┬───────────────────┘
-                           ▼
-                    ┌──────────────┐
-                    │    STATE     │
-                    │              │
-                    │  Storage     │
-                    │  Indexes     │
-                    │  Cache       │
-                    │  Subscribers │
-                    │  UI state    │
-                    └──────────────┘
+      │    RULES     │                 │   CONSTANTS  │
+      │   (pure)     │◄────────────────┤  (frozen)    │
+      └──────────────┘                 └──────────────┘
+              │
+              ▼
+      ┌──────────────┐
+      │    STATE     │
+      │              │
+      │  Storage     │
+      │  Indexes     │
+      │  Cache       │
+      │  Subscribers │
+      │  UI state    │
+      └──────────────┘
+              ▲
+              │
+      ┌──────────────┐
+      │ ORCHESTRATION│  (shared result/dispatch/finish helpers)
+      └──────────────┘
+              ▲
+              │
+      ┌──────────────┐
+      │  ASSIGNMENT  │  (multi-command coordinators)
+      │   SERVANT    │
+      │   ECONOMY    │
+      └──────────────┘
 
 ================================================================================
 MODULE RESPONSIBILITIES
 ================================================================================
 
+household-constants.js
+──────────────────────
+OWNER OF:
+  • Economic catalogs: ECONOMIC_TIERS, ECONOMIC_TIER_ORDER,
+    INCOME_SOURCES, EXPENSE_CATEGORIES, ECONOMIC_EVENTS,
+    ECONOMIC_EVENT_IDS
+  • Service catalogs: SERVICE_TYPES, SERVICE_STATUS, SERVICE_QUALITY,
+    SERVICE_QUALITY_ORDER, SERVICE_CONTRACT_TERMS
+  • Residence catalogs: RESIDENCE_TYPES, RESIDENCE_STATUS,
+    RENTAL_STATUS, RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER
+  • THRESHOLDS (bankruptcy, interest, history caps, default values)
+  • getEconomicEventDelta(eventId, randomFn) — pure delta calculator
+    that takes a caller-supplied random source
+  • Lookup helpers (getEconomicTierById, getServiceTypeById, etc.)
+
+PROPERTIES:
+  • Every catalog is deeply frozen.
+  • No catalog holds a function (ECONOMIC_EVENTS uses minDelta /
+    maxDelta bounds; the draw comes from the caller).
+  • No Math.random() anywhere.
+
+household-rules.js
+──────────────────
+OWNER OF (pure calculations only):
+  • Succession: pickSuccessor, deriveDeprecationSuccessor,
+    applyHeadChange (the one mutating rules function)
+  • Economy: getEconomicTier, netAnnualChange,
+    calculateAnnualDebtInterest, evaluateBankruptcy,
+    calculateEnterpriseNet
+  • Service: calculateServiceQuality, calculateRecommendation
+  • Residence: calculateRepairCost, calculateRehabilitatedValue,
+    calculateOccupiedUnitCount, calculateVacantUnitCount,
+    isResidenceVacant, calculateUnitStats
+  • Household: calculateHouseholdStatus, isHouseholdVacant
+  • Heirs: filterEligibleHeirs
+  • Demographics: calculateDemographics
+
+PROPERTIES:
+  • No fallbacks to inline catalogs. Every catalog read delegates to
+    HouseholdConstants. Missing constants throw at load.
+  • No state access. No persistence. No randomness (callers pass rolls).
+  • The one mutating function (applyHeadChange) is documented.
+
+household-view-models.js
+────────────────────────
+OWNER OF (presentation defaults only):
+  • Form defaults: DEFAULT_SKILL_LEVEL, DEFAULT_INITIAL_WEALTH,
+    DEFAULT_INITIAL_REPUTATION, DEFAULT_INITIAL_RENT,
+    DEFAULT_UNIT_COUNT, DEFAULT_MAX_UNITS
+  • Option list builders (return <option> inner HTML):
+    getHouseholdStatusOptions, getHouseholdFilterStatusOptions,
+    getVacancyReasonOptions, getRentalEndReasonOptions,
+    getDemolitionReasonOptions, getResidenceConditionOptions,
+    getResidenceTypeOptions
+  • Status badges: getStatusBadge, getMemberBadge
+  • Color helpers: getWealthColor, getDebtColor, getNetChangeColor,
+    getProfitColor, getUnitOccupancyColor
+  • Label helpers: getViewModeLabel, getUnitStatusLabel,
+    getResidenceStatusLabel
+
+PROPERTIES:
+  • Pure. No DOM. No side effects.
+  • Constants (ECONOMIC_TIERS, RESIDENCE_TYPES) come from
+    household-constants.js when available; inline defaults match
+    exactly for isolation-test scenarios.
+
+household-orchestration.js
+──────────────────────────
+PURPOSE:
+  Shared helpers for multi-command orchestrators (assignment,
+  servant). Not a domain module; owns no state, no policy, no catalogs.
+
+PROVIDES:
+  • Result builders: ok(data), fail(code, reason, extra)
+  • Year resolution: resolveYear(value) → number|null
+  • Event dispatch: dispatch(eventName, payload) — never throws
+  • Batch close: finish(eventName, payload) — dispatches then
+    persists the household system once
+  • Small validators: hasId, isPlainObject, isFiniteNumber
+
+CONTRACT:
+  • finish dispatches BEFORE persist. Subscribers observe the
+    post-mutation in-memory state; a subscriber that triggers further
+    writes gets those included in the same save.
+  • finish does NOT persist the relationship system. Servant wraps
+    finish with its own _finish that adds the relationship persist.
+
 household-state.js
 ──────────────────
 OWNER OF:
   • Canonical household/position/assignment arrays
-  • Indexes (byId, byLocation, byStatus, byMember, byHead)
+  • Indexes (byId, byLocation, byStatus, byMember)
   • Cache rebuild
   • Loading/hydration from masterData (schema shape only)
   • Subscriptions
@@ -139,9 +313,10 @@ PUBLIC API (deliberately tiny):
   HouseholdState.subscribe(cb)
   HouseholdState.invalidateCache()
   HouseholdState.refresh()
-  HouseholdState.getUIState()
-  HouseholdState.setUIState(key, value)
-  HouseholdState.updateUIState(updates)
+  HouseholdState.hydrateFromMasterData()
+  HouseholdState.markDirty() / hasDirty() / clearDirty()
+  HouseholdState.publish(eventType, payload)
+  HouseholdState.getUIState() / setUIState() / updateUIState()
 
 INTERNAL API (HouseholdState._internal):
   Only HouseholdCommands and HouseholdQueries should call these.
@@ -155,11 +330,20 @@ INTERNAL API (HouseholdState._internal):
   replaceHouseholdPositions(arr)
   replaceHouseholdAssignments(arr)
 
-LOADING POLICY:
-  Ensures structural shape (arrays/objects exist).
-  Does NOT default domain facts:
-    status, reputation, wealth, foundedYear, etc. are NOT fabricated.
-  Missing domain fields are a migration problem, not a runtime one.
+DIAGNOSTICS:
+  HouseholdState._diagnostics.getIntegrityReport() returns:
+    {
+      ok,
+      duplicates: { households, positions, assignments },
+      duplicateHouseholdHeads,
+      householdsWithMissingResidence,
+      residencesWithOrphanHouseholdOccupancy,
+      residenceReverseIndexAvailable,
+      counts: { households, positions, assignments }
+    }
+
+  The reverse-index fields are the v6.0 addition. Non-throwing;
+  safe at any time.
 
 household-queries.js
 ────────────────────
@@ -178,129 +362,146 @@ CONTRACT:
   • Historical queries accept explicit referenceYear
 
 KEY FUNCTIONS:
-  getHousehold(id)                        — snapshot
-  getAllHouseholds(opts)
-  getHouseholdsByLocation(locationId)
-  getHouseholdsByStatus(status)
-  getHouseholdsByMember(characterId)
-  getHouseholdsHeadedBy(characterId)
-  getCharacterHousehold(characterId)
-  getHouseholdStatus(id)                  — semantic status projection
-  getHouseholdMembers(id, opts)           — with character snapshots
-  getHouseholdHead(id)
+  getHousehold(id) / getAllHouseholds(opts)
+  getHouseholdsByLocation / ByStatus / ByMember / HeadedBy
+  getCharacterHousehold(characterId)   — canonical current-household
+  getHouseholdMembers(id, opts)
+  getHouseholdHead(id) / getHouseholdStatus(id)
+  getHouseholdStatuses(ids)            — batch
   getDemographics(id, opts)
-  getHouseholdPosition(id)
-  getHouseholdPositions(opts)
-  getHouseholdAssignment(id)
-  getAssignmentsForPosition(id, activeOnly)
-  getAssignmentsForCharacter(id, activeOnly)
-  getAssignmentsForHousehold(id, activeOnly)
-  getHouseholdStaff(id, opts)
-  getUnassignedHouseholdStaff(id)
-  getHouseholdEnterprises(id)
-  getHouseholdEnterpriseSummaries(id)
-  getHouseholdEnterpriseStats(id)
+  getHouseholdPositions / getHouseholdAssignments
+  getHouseholdEnterpriseSummaries / Stats / Value
   getHouseholdHeirs(householdId, deceasedId, opts)
-  getHouseholdDetails(id)                 — composite for UI modals
+  getHouseholdDetails(id)              — composite
   getStatistics(opts)
+  getHouseholdNamePeriods(id)
+  getHouseholdSnapshot(id, year, mode)
+  getCharacterHouseholdSnapshot(characterId, mode)
 
 household-commands.js
 ─────────────────────
 OWNER OF:
   • All canonical household mutations
-  • Persistence boundary via HouseholdState._internal.replaceHouseholds
+  • Persistence boundary via HouseholdCommands.persist()
   • Cross-command composition
 
 CONTRACT:
   • Every command: validate, mutate, commit once, return structured result
   • No `_processingCommand` guard
   • No toasts, no icons, no UI concerns
-  • No cross-domain canonical mutation (delegates to IndustryCommands,
-    ResidenceCommands)
+  • No cross-domain canonical mutation (delegates to CharacterCommands,
+    IndustryCommands, ResidenceSystem)
 
 KEY FUNCTIONS:
-  createHousehold(data)
-  deleteHousehold(id, opts)
-  updateHousehold(id, updates)
-  setStatus(id, status, opts)
+  createHousehold(data) / deleteHousehold(id, opts) /
+  updateHousehold(id, updates) / setStatus(id, status, opts) /
   recordEvent(id, event)
 
-  addMember(householdId, characterId, type, opts)
-  removeMember(householdId, characterId, opts)
-  updateMember(householdId, characterId, updates, opts)
-  transferMember(characterId, targetHouseholdId, opts)
+  addMember / removeMember / updateMember / transferMember
 
-  setHead(householdId, characterId, opts)
+  setHead(householdId, characterId, opts)   — SINGLE-COMMIT CONTRACT
+
+    Prior versions called addMember internally when the character
+    wasn't a member, producing two commits (one for the add, one for
+    the head change) for what is one logical operation. Now setHead
+    creates the member record inline (no commit) and commits once
+    with event 'householdHeadSet'. The result carries addedInline:true
+    when a new member record was created as part of the call.
+
   autoAssignHead(householdId, opts)
 
-  addDepartment(householdId, name, opts)
-  removeDepartment(householdId, departmentId, opts)
-  updateDepartment(householdId, departmentId, updates)
+  addDepartment / removeDepartment / updateDepartment
+  editNamePeriod / deleteNamePeriod
 
-  editNamePeriod(householdId, periodIndex, updates)
-  deleteNamePeriod(householdId, periodIndex)
+  associateWithResidence / disassociateFromResidence
 
-  associateWithResidence(householdId, residenceId, opts)
-  disassociateFromResidence(householdId, residenceId, reason, year)
+  setHouseholdEnterprises / addEnterpriseToHousehold /
+  removeEnterpriseFromHousehold
 
-  createPosition(data)
-  updatePosition(positionId, updates)
-  deletePosition(positionId, opts)
-  assignCharacterToPosition(positionId, characterId, opts)
-  endAssignment(assignmentId, endYear, reason)
-  deleteAssignment(assignmentId)
-  bulkAssign(assignments, opts)
+  createPosition / updatePosition / deletePosition
+  assignCharacterToPosition(positionId, characterId, opts)   — SUPPORTS
+    addRoleIfMissing
+  endAssignment / deleteAssignment / bulkAssign
 
   repairMemberships(opts)
+
+ADD-ROLE-IF-MISSING CONTRACT (Prompt 33):
+
+  assignCharacterToPosition and bulkAssign accept
+  options.addRoleIfMissing. When true and the position requires a role
+  the character lacks, the profession is added via
+  CharacterCommands.addProfession before assignment. If the
+  profession cannot be added, the assignment is REFUSED with code
+  ROLE_ADD_FAILED (the caller asked for the role to be added; silently
+  skipping would produce an assignment whose precondition was not met).
+
+  When addRoleIfMissing is false/absent, the assignment proceeds. The
+  result carries roleWarning when a required role is missing but the
+  caller opted out of auto-adding.
 
 household-economy.js
 ────────────────────
 OWNER OF:
-  • Pure economic calculations
-  • Economic policy constants (ECONOMIC_TIERS, INCOME_SOURCES, etc.)
-  • Wealth/debt/resource mutation via HouseholdCommands
+  • Pure economic calculations (delegating to HouseholdRules for the
+    thresholds; reading HouseholdConstants for the catalogs)
+  • Wealth/debt/resource mutation via HouseholdCommands.updateHousehold
+    with real patch objects
   • Annual economy processing
   • Trade
   • Bankruptcy
 
-CONTRACT:
-  • Pure calculations never mutate
-  • Mutations route through HouseholdCommands
-  • No `_processingEconomy` guard
-  • No `1250` fallback
-  • No toasts
+PERSIST CONTRACT:
+  • _applyMutation is the ONLY place this module mutates a household.
+    It runs a pure projection function (mutator) to build a patch,
+    applies the patch via HouseholdCommands.updateHousehold, then
+    persists via HouseholdCommands.persist.
+  • One _applyMutation = one commit + one persist.
+  • The prior version mutated the live record directly and used
+    updateHousehold(id, {}) as a "touch" hack. That is gone.
+
+CLOCK CONTRACT:
+  • Every calculation accepts options.year. When omitted, the fallback
+    is getCurrentYearSafe().
+  • processAnnualEconomy(householdId, { year }) applies annual income
+    and expenses against the specified year.
+  • This is required so a multi-year simulation driver can call
+    processAnnualEconomy(householdId, { year: y }) for each simulated
+    year without every entry collapsing onto wall-clock now.
+
+RANDOMNESS:
+  • No Math.random anywhere. Event deltas come from
+    HouseholdConstants.getEconomicEventDelta(eventId, randomFn).
+  • randomFn is options.random (caller-supplied) or window.random
+    (from randomness.js). Missing both throws — silent fallback to
+    Math.random would break seeded reproducibility.
 
 PURE CALCULATIONS:
-  getEconomicTier(wealth)
-  getHouseholdWealth(id)
-  getHouseholdDebt(id)
-  getHouseholdResources(id)
-  calculateRentIncome(id)
-  calculateRentExpenses(id)
-  calculateEnterpriseNet(id)
-  calculateAnnualIncome(id)
-  calculateAnnualExpenses(id)
-  computeNetAnnualChange(id)
-  isBankrupt(id)
+  getEconomicTier / getHouseholdWealth / getHouseholdDebt /
+  getHouseholdResources
+  calculateRentIncome / calculateRentExpenses / calculateEnterpriseNet
+  calculateAnnualIncome(householdId, opts)
+  calculateAnnualExpenses(householdId, opts)
+  computeNetAnnualChange(householdId, opts)
+  isBankrupt(householdId)
 
 MUTATIONS:
-  updateHouseholdWealth(id, delta, reason)
-  modifyHouseholdDebt(id, delta)
-  updateHouseholdResources(id, type, delta)
-  receiveSalary(id, characterId, roleId, salary, year)
-  trackTuitionExpense(id, tuition, institutionId, studentId, year)
-  receiveSchoolProfit(id, amount, institutionId, year)
-  executeTrade(sourceId, targetId, trade)
-  triggerEconomicEvent(id, eventId)
-  applyRandomEconomicEvent(id)
-  processAnnualEconomy(id)          — one transaction per household
-  consumeAnnualFood(id)
-  handleBankruptcy(id)
+  updateHouseholdWealth(householdId, delta, reason, opts)
+  modifyHouseholdDebt(householdId, delta, opts)
+  updateHouseholdResources(householdId, resourceType, delta, opts)
+  receiveSalary(householdId, characterId, roleId, salary, year)
+  trackTuitionExpense(householdId, tuition, institutionId, studentId, year)
+  receiveSchoolProfit(householdId, amount, institutionId, year)
+  executeTrade(sourceId, targetId, trade, opts)
+  triggerEconomicEvent(householdId, eventId, opts)
+  applyRandomEconomicEvent(householdId, opts)
+  processAnnualEconomy(householdId, opts)      — one patch per year
+  consumeAnnualFood(householdId, opts)
+  handleBankruptcy(householdId, opts)
 
 household-assignment.js
 ───────────────────────
 OWNER OF:
-  • Cross-domain orchestration
+  • Cross-operation orchestration
   • Newborn assignment
   • Spouse assignment
   • Inheritance (with enterprise transfer)
@@ -312,19 +513,31 @@ OWNER OF:
 
 CONTRACT:
   • Thin orchestrator: reads via Queries, writes via Commands
+  • Uses HouseholdOrchestration.ok / fail / resolveYear / finish
   • No direct state mutation
   • No `_processingAssignment` guard
-  • No `_recordingHistory` dead code
   • No toasts
-  • Every command result is checked
-  • Partial failures reported explicitly
+  • Partial failures reported explicitly (partial: true)
+
+ENTERPRISE TRANSFER:
+  • Hard-fails when IndustryCommands is missing AND the household
+    actually has enterprises to transfer. Returns
+    industryAvailable:false, hardFailure:true.
+  • Succeeds trivially when there's nothing to transfer (no enterprises
+    to move → no failure).
+
+CADET BRANCH (REVISED):
+  • Removes the head from the parent BEFORE transferring the rest,
+    fixing a bug where the head was left as a member of both parent
+    and new household. If removal fails, the new household is rolled
+    back via deleteHousehold(removeFromCharacters: true).
 
 KEY FUNCTIONS:
   assignNewbornToHousehold(childId, motherId, fatherId, opts)
   assignToSpouseHousehold(characterId, spouseId, opts)
   processHouseholdInheritanceOnDeath(characterId, opts)
   transferHouseholdToHeir(householdId, heirId, opts)
-  getHouseholdHeirs(householdId, deceasedId, opts)  — passthrough to Queries
+  getHouseholdHeirs(householdId, deceasedId, opts)  — passthrough
   transferCharacterToHousehold(characterId, targetId, opts)
   createCadetBranch(parentId, name, memberIds, opts)
   mergeHouseholds(id1, id2, survivorId, opts)
@@ -340,36 +553,49 @@ OWNER OF:
   • Service reference generation
 
 OWNERSHIP MODEL:
-  • Canonical service relationship is owned by the Relationship system
-    (createRelationship / endRelationship / updateRelationship)
+  • Canonical service relationship is owned by the Relationship
+    system (createRelationship / endRelationship / updateRelationship)
   • Household membership is owned by HouseholdCommands
   • This module ORCHESTRATES between them
-  • Wages are a SUGGESTED default; economic authority is HouseholdEconomy
 
-CONTRACT:
-  • No `_processingService` guard
-  • No `_recordingServiceHistory` dead code
-  • No toasts
-  • No live metadata mutation (builds new arrays before canonical update)
-  • Transfer creates new service before terminating old
+PERSIST CONTRACT:
+  • _finish wraps HouseholdOrchestration.finish (dispatch + persist
+    household) with a subsequent relationship-system persist.
+  • The result carries:
+      householdPersisted,
+      relationshipPersisted,
+      relationshipPersistAttempted,
+      relationshipPersistReason
+  • If household persist succeeds but relationship persist fails,
+    returns success:false, partial:true.
+
+CONSTANTS:
+  • SERVICE_TYPES / SERVICE_STATUS / SERVICE_QUALITY /
+    SERVICE_QUALITY_ORDER / SERVICE_CONTRACT_TERMS come from
+    HouseholdConstants.
+  • The prior version re-exported window.SERVICE_TYPES = SERVICE_TYPES
+    unconditionally, silently replacing the frozen constants catalog
+    with a mutable copy. That overwrite is gone — the aliases are
+    guarded by `if (typeof window.X === 'undefined')` so the frozen
+    catalog always wins.
+
+PURE CALCULATIONS:
+  calculateServiceQuality / calculateRecommendation  — delegate to
+    HouseholdRules
 
 KEY FUNCTIONS:
   createServiceRelationship(employerId, servantId, opts)
   terminateService(employerId, servantId, opts)
   promoteServant(employerId, servantId, newTypeId, opts)
-  adjustServantWages(employerId, servantId, newWage, reason)
-  recordEmployerSatisfaction(relationshipId, satisfaction, reason)
+  adjustServantWages(employerId, servantId, newWage, reason, opts)
+  recordEmployerSatisfaction(relationshipId, satisfaction, reason, opts)
   updateServiceQuality(relationshipId)
-  getServiceBetween(employerId, servantId)
-  getServants(employerId)
-  getEmployer(servantId)
-  getActiveService(characterId)
-  getServiceHistory(characterId)
-  getServiceQuality(relationshipId)
-  generateServiceReference(employerId, servantId)
+  getServiceBetween / getServants / getEmployer / getActiveService
+  getServiceHistory / getServiceQuality / generateServiceReference
   getStaffByDepartment(employerId, departmentId)
-  assignServantToDepartment(employerId, servantId, departmentId)
-  transferServantToHousehold(currentEmployerId, servantId, newEmployerId, opts)
+  assignServantToDepartment(employerId, servantId, departmentId, opts)
+  transferServantToHousehold(currentEmployerId, servantId,
+                              newEmployerId, opts)
 
 residence-system.js
 ───────────────────
@@ -399,13 +625,27 @@ FROZEN DOMAIN CONTRACT:
     household.residenceUnitNumber  ← maintained by HouseholdCommands
     (ResidenceSystem calls HouseholdCommands when occupancy changes)
 
+REVERSE-INDEX FAILURE POLICY (REVISED v6.0):
+  • When _disassociateHouseholdFromUnit's reverse-index call fails,
+    the result carries reverseIndexFailed:true (hard field, not
+    advisory warning) and reverseIndexFailures list.
+  • A reverse_index_failure entry is appended to the residence's
+    damageHistory — persistent audit trail.
+  • The unit-side canonical occupancy (householdId, isVacant) is
+    STILL cleared. Only the household-side reverse index may be stale.
+
+UNIFIED VACANCY ACCOUNTING (v6.0):
+  • deleteResidence (force path), markResidenceVacant, and
+    demolishResidence all cause every occupied unit to become vacant.
+  • Every path now writes a vacancyHistory entry. (Prior versions:
+    only markResidenceVacant did.)
+
 CONTRACT:
   • No `_processingResidence` guard
   • No `_processingAssignment` guard
   • No `1250` fallback
   • No toasts, no confirm() dialogs
   • Every mutation returns structured result
-  • Multi-household vacancy correctly updates every affected household
 
 KEY FUNCTION GROUPS:
 
@@ -415,68 +655,87 @@ KEY FUNCTION GROUPS:
     deleteResidence(residenceId, opts)
 
   Units:
-    addUnit(residenceId, opts)
-    removeUnit(residenceId, unitNumber, opts)
-    assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, opts)
-    markUnitVacant(residenceId, unitNumber, reason, year)
-    demolishUnit(residenceId, unitNumber, reason, year)
+    addUnit / removeUnit / assignHouseholdToUnit /
+    markUnitVacant / demolishUnit
 
   Vacancy:
     getVacantResidences(locationId)
     markResidenceVacant(residenceId, reason, year)
     getResidenceVacancyDetails(residenceId)
-    assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, opts)
+    assignHouseholdToVacantResidence(residenceId, householdId,
+                                      householdName, year, opts)
 
   Name:
     updateResidenceName(residenceId, newName, opts)
 
   Rental:
-    setResidenceOwner(residenceId, ownerType, ownerId, opts)
-    getResidenceOwner(residenceId)
-    setResidenceRenter(residenceId, renterType, renterId, rentAmount, opts)
-    getResidenceRenter(residenceId)
-    endResidenceRental(residenceId, endYear, reason)
-    updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason)
-    recordRentPayment(residenceId, renterId, amount, year)
+    setResidenceOwner / getResidenceOwner
+    setResidenceRenter / getResidenceRenter
+    endResidenceRental / updateResidenceRent / recordRentPayment
 
   Staff:
-    addStaffPosition(residenceId, data)
-    updateStaffPosition(residenceId, positionId, updates)
-    removeStaffPosition(residenceId, positionId, opts)
-    assignCharacterToStaffPosition(residenceId, positionId, characterId, opts)
-    endStaffAssignment(residenceId, assignmentId, endYear, reason)
-    deleteStaffAssignment(residenceId, assignmentId)
+    addStaffPosition / updateStaffPosition / removeStaffPosition /
+    assignCharacterToStaffPosition / endStaffAssignment /
+    deleteStaffAssignment
 
   Rehabilitation/Demolition:
     calculateRepairCost(residenceId, targetCondition)
     rehabilitateResidence(residenceId, targetCondition, year)
     demolishResidence(residenceId, reason, year, opts)
 
-  Queries (return snapshots):
-    getResidence(residenceId)
-    getAllResidences(opts)
-    getResidencesByLocation(locationId)
-    getResidencesByOwner(ownerId, ownerType)
-    getResidencesByRenter(renterId, renterType)
-    getResidencesByHousehold(householdId)
-    getUnits(residenceId)
-    getUnit(residenceId, unitNumber)
-    getVacantUnits(residenceId)
-    getOccupiedUnits(residenceId)
-    getUnitStats(residenceId)
-    getResidenceHistory(residenceId, limit)
-    getResidenceTimeline(residenceId, limit)
-    getResidenceNameHistory(residenceId)
-    getResidenceAssociationHistory(residenceId)
-    getResidenceRentalHistory(residenceId, limit)
-    getRentPayments(residenceId, limit)
-    getTotalRentIncome(ownerId, ownerType)
-    getTotalRentExpenses(renterId, renterType)
-    getStaffPositions(residenceId, opts)
-    getStaffAssignments(residenceId, opts)
-    getResidenceRecommendations(residenceId)
-    getResidenceStatistics(locationId)
-    getHouseholdUnits(householdId)
+  Queries:
+    getResidence / getAllResidences / getResidencesByLocation /
+    getResidencesByOwner / getResidencesByRenter /
+    getResidencesByHousehold
+    getUnits / getUnit / getVacantUnits / getOccupiedUnits
+    getUnitStats / getResidenceHistory / getResidenceTimeline /
+    getResidenceNameHistory / getResidenceAssociationHistory
+    getResidenceRentalHistory / getRentPayments
+    getTotalRentIncome / getTotalRentExpenses
+    getStaffPositions / getStaffAssignments
+    getResidenceRecommendations / getResidenceStatistics
+    getHouseholdUnits
+
+household-bootstrap.js
+──────────────────────
+OWNER OF:
+  • Load-time verification of the household module set
+  • Cross-domain dependency verification
+  • Canonical data verification
+  • Hydration orchestration (HouseholdState + ResidenceSystem)
+  • Integrity report log (warn-only)
+  • window.Household consolidated namespace
+
+CONTRACT:
+  • Throws on missing required modules, methods, or globals.
+  • Warns (does not throw) on integrity issues in canonical data.
+  • Idempotent: init() returns { success:true, alreadyInitialized:true }
+    on subsequent calls.
+  • Auto-inits when masterData is present at load; listeners for
+    masterDataUpdated re-hydrate.
+
+VERIFIED MODULE SURFACE:
+  • HouseholdConstants (catalogs, getEconomicEventDelta)
+  • HouseholdRules (16 pure functions)
+  • HouseholdViewModels (4 presentation helpers)
+  • HouseholdOrchestration (ok, fail, resolveYear, dispatch, finish, hasId)
+  • HouseholdState + _internal
+  • HouseholdQueries (7 entry points)
+  • HouseholdCommands (30+ functions)
+  • HouseholdEconomy (11 functions)
+  • HouseholdAssignment (10 functions)
+  • HouseholdServant (8 functions)
+  • ResidenceSystem (28 functions)
+  • HouseholdModals (OPTIONAL — verified if present)
+
+INTEGRITY REPORT (v6.0):
+  init() returns integritySummary with:
+    householdsWithMissingResidence (count),
+    residencesWithOrphanHouseholdOccupancy (count),
+    residenceReverseIndexAvailable (boolean)
+
+  These are the reverse-index drift signals documented in §8 above.
+  No repair at bootstrap; repairs are a user-initiated action.
 
 ================================================================================
 CROSS-DOMAIN INTEGRATION
@@ -492,25 +751,35 @@ Household ↔ Residence (CRITICAL):
   • CANONICAL: unit.householdId
   • Household reverse index maintained by HouseholdCommands
   • ResidenceSystem.assignHouseholdToUnit() updates both sides
-  • markResidenceVacant() updates ALL affected households (multi-unit fix)
-  • No competing residence.householdId canonical field
+  • markResidenceVacant() disassociates every affected household
+  • Reverse-index failures are hard (reverseIndexFailed) and
+    persistent (damageHistory)
+  • HouseholdState._diagnostics cross-checks both directions
 
 Household ↔ Industry (Enterprise ownership):
   • CANONICAL: enterprise.ownerId / enterprise.ownerType
   • Household maintains enterprises[] as a REVERSE INDEX
   • Updates flow through IndustryCommands.updateEnterprise()
   • HouseholdCommands does NOT own enterprise ownership
+  • HouseholdAssignment hard-fails enterprise transfer if
+    IndustryCommands is unavailable AND the household has enterprises
 
 Household ↔ Economy (Government salaries, taxes):
   • Government salary → HouseholdEconomy.receiveSalary()
   • Salaries stored in economy.salaryIncome + salaryIncomeHistory
-  • Wealth updated via HouseholdCommands.updateHousehold()
+  • Wealth updated via HouseholdCommands.updateHousehold
   • Taxes flow through HouseholdEconomy.updateHouseholdWealth()
 
 Household ↔ Servant (Master-servant relationships):
   • Canonical relationship owned by Relationship system
   • Household membership owned by HouseholdCommands
   • HouseholdServant orchestrates between them
+  • Persists BOTH domains; result reports both save outcomes
+
+Household ↔ Family (Parentage, kinship):
+  • Parentage canonical: FamilyState.parentChildEdges
+  • Household ↔ Family interaction is READ-ONLY in the household
+    domain (queries via FamilyQueries)
 
 Residence ↔ Rental (Rent income/expenses):
   • residence.ownerId/renterId/rentAmount         — canonical contract
@@ -527,6 +796,15 @@ Every command returns one of:
   { success: true,  data: <any> }
   { success: false, code: 'SOME_CODE', reason: 'human-readable message' }
 
+Some commands add:
+  partial: true      when some but not all sub-operations succeeded
+  reverseIndexFailed: true    when a reverse-index update failed
+  roleWarning: {...}          when a required role was missing but the
+                              caller opted out of auto-adding
+  industryAvailable: false    when industry transfer couldn't run
+  householdPersisted / relationshipPersisted    on orchestrator
+                                                 cross-domain results
+
 Common codes:
   INVALID_INPUT, INVALID_NAME, INVALID_YEAR, INVALID_TYPE, INVALID_WAGE,
   NOT_FOUND, ALREADY_MEMBER, NOT_MEMBER, CHARACTER_NOT_FOUND,
@@ -534,10 +812,13 @@ Common codes:
   RESIDENCE_NOT_FOUND, DUPLICATE_NAME, ALREADY_ASSIGNED, ALREADY_ENDED,
   INVALID_YEAR_RANGE, OCCUPIED_UNITS, NO_VACANT_UNIT, NO_OWNER, NO_RENTER,
   INSUFFICIENT_WEALTH, INSUFFICIENT_FOOD, INSUFFICIENT_GOODS,
-  DEMOLISHED, CANNOT_DELETE_LAST, SAME_NAME, SAME_CONDITION
+  DEMOLISHED, CANNOT_DELETE_LAST, SAME_NAME, SAME_CONDITION,
+  INDUSTRY_COMMANDS_UNAVAILABLE, ROLE_ADD_FAILED,
+  RELATIONSHIP_PERSIST_FAILED, PERSIST_FAILED, SAVE_FAILED
 
 Bulk operations:
-  { success: true, data: { succeeded: [...], failed: [...] } }
+  { success: true, data: { succeeded: [...], failed: [...],
+                           warnings: [...] } }
   with explicit per-item failure reasons.
 
 ================================================================================
@@ -549,13 +830,18 @@ The following order MUST be respected:
   <!-- Core -->
   constants.js, randomness.js, collections.js, validation.js
   formatting.js, ids.js, names.js, time.js, state.js, storage.js
-  accessors.js, family-accessors.js, query-helpers.js
+  accessors.js, query-helpers.js
   icons.js, ui.js, collapsible.js, responsive.js, integrity.js
   exportUtils.js, world.js, modals-core.js
 
+  NOTE: family-accessors.js is DELETED. query-helpers.js now loads
+        after accessors.js and time.js (it depends on FamilyQueries
+        at call time but not at load time, and family-queries.js is
+        further down).
+
   <!-- Selectors -->
-  selector-base.js, locationDropdown.js, modals-char-selector.js,
-  modals-household-selector.js
+  selector-base.js, locationDropdown.js,
+  modals-char-selector.js, modals-household-selector.js
 
   <!-- Role System -->
   role-constants.js, role-state.js, role-queries.js, role-commands.js,
@@ -563,14 +849,25 @@ The following order MUST be respected:
   modals-role-select.js, modals-roles.js
 
   <!-- Character System -->
-  character-state.js, character-queries.js, character-commands.js,
-  character-lifecycle.js, character-ui-list.js, modals-character.js
+  character-constants.js, character-state.js, character-queries.js,
+  character-commands.js, character-factory.js,
+  character-creation-commands.js, character-deletion-commands.js,
+  character-generator.js, character-lifecycle.js,
+  character-ui-list.js, modals-character.js, modals-death.js
+
+  <!-- Family System (character-owned but separate module group) -->
+  family-rules.js, family-state.js, family-queries.js,
+  family-commands.js, family-statistics.js
 
   <!-- Children/Pregnancy -->
   children-state.js, children-queries.js, children-commands.js,
-  children-lifecycle.js, adoption-service.js, pregnancy-service.js,
-  surrogacy-service.js, modals-adoption.js, modals-birth.js,
-  modals-surrogacy.js
+  children-generator.js, children-statistics.js,
+  modals-children-adoption.js, modals-children-birth.js,
+  modals-children-surrogacy.js  <!-- Mortality -->
+  mortality-rules.js, mortality-queries.js, mortality-statistics.js
+
+  <!-- Character compatibility shim -->
+  character-system.js   ← loads LAST among character scripts
 
   <!-- Location System -->
   location-state.js, location-hierarchy.js, location-queries.js,
@@ -586,7 +883,11 @@ The following order MUST be respected:
   <!-- Industry -->
   ... (unchanged)
 
-  <!-- HOUSEHOLD SYSTEM - CORE (must load before UI) -->
+  <!-- HOUSEHOLD SYSTEM - CORE -->
+  household-constants.js
+  household-rules.js
+  household-view-models.js
+  household-orchestration.js
   household-state.js
   household-queries.js
   household-commands.js
@@ -595,1369 +896,209 @@ The following order MUST be respected:
   household-servant.js
   residence-system.js
 
+  <!-- HOUSEHOLD SYSTEM - BOOTSTRAP -->
+  household-bootstrap.js
+
   <!-- HOUSEHOLD SYSTEM - UI -->
+  household-modals-helper.js    ← modals-helper.js (shared UI helpers)
   household-ui-list.js
   modals-household.js
   modals-household-economy.js
   modals-household-snapshot.js
   modals-household-staff.js
-  modals-assign-staff.js           ← SHIM (must load AFTER modals-household-staff.js)
-
   modals-residence.js
-  modals-residence-rental.js
   modals-residence-owner.js
+  modals-residence-rental.js
   modals-residence-staff.js
-  modals-residence-vacancy.js      ← SHIM (must load AFTER modals-residence.js)
-  modals-residence-history.js      ← SHIM (must load AFTER modals-residence.js)
-  modals-residence-snapshot.js     ← DEPRECATED STUB (can be removed)
+
+  NOTE: modals-assign-staff.js, modals-residence-history.js,
+        modals-residence-snapshot.js, modals-residence-vacancy.js
+        are DELETED (their functionality is consolidated into the
+        canonical files above).
 
   <!-- Name System, Mortality, Crime, Ranks, Relationships, Events,
        Apprenticeship, Education, Disaster, Tabs -->
+  ... (unchanged)
 
 ================================================================================
-MIGRATION NOTES
+FILES REMOVED OR CONSOLIDATED (v5.0 → v6.0)
 ================================================================================
 
-Files REPLACED in this refactor:
+DELETED:
+  js/core/family-accessors.js               (parentage now lives in
+                                             family-* modules; no
+                                             FamilyAccessors shim
+                                             exists)
+  js/households/modals-assign-staff.js      (canonical is
+                                             modals-household-staff.js)
+  js/households/modals-residence-history.js (canonical is
+                                             modals-residence.js)
+  js/households/modals-residence-snapshot.js(deprecated stub)
+  js/households/modals-residence-vacancy.js (canonical is
+                                             modals-residence.js)
 
-  household-state.js              — rewritten (storage/index only)
-  household-queries.js            — rewritten (semantic reads + snapshots)
-  household-commands.js           — rewritten (canonical mutations + create)
-  household-economy.js            — rewritten (pure calc + command-routed)
-  household-assignment.js         — rewritten (thin orchestration)
-  household-servant.js            — rewritten (orchestration + pure calc)
-  residence-system.js             — rewritten (frozen unit-occupancy contract)
-  household-ui-list.js            — rewritten (pure UI, no State reach-around)
-  modals-household.js             — rewritten (Queries + Commands only)
-  modals-household-economy.js     — rewritten (structured results)
-  modals-household-snapshot.js    — rewritten (delegates to Queries)
-  modals-household-staff.js       — rewritten (merged with assign-staff)
-  modals-residence.js             — rewritten (merged with vacancy + history)
-  modals-residence-rental.js      — rewritten (single command per action)
-  modals-residence-owner.js       — rewritten (no direct history mutation)
-  modals-residence-staff.js       — rewritten (no direct record mutation)
+NEW:
+  js/households/household-orchestration.js  (shared result/dispatch/
+                                             finish helpers)
+  js/households/modals-helper.js            (shared DOM scoping +
+                                             toast + persist wrappers;
+                                             exposed as
+                                             window.HouseholdModals)
 
-Files REDUCED to shims:
-
-  modals-assign-staff.js          — re-export verification of household-staff
-  modals-residence-vacancy.js     — re-export verification of residence
-  modals-residence-history.js     — re-export verification of residence
-
-Files DEPRECATED:
-
-  modals-residence-snapshot.js    — duplicate of modals-household-snapshot.js;
-                                    verification stub only, delete in cleanup
-
-File COUNT:
-  Before: 21 files (many overlapping)
-  After:  17 files (4 consolidated into existing)
+RECLASSIFIED:
+  js/households/household-view-models.js    (promoted from "already
+                                             done" to "needs doing";
+                                             the file existed but was
+                                             bypassed by five call
+                                             sites that had their
+                                             own duplicated helpers)
 
 ================================================================================
-KEY BUGS FIXED
+KEY BUGS FIXED (v5.0 → v6.0)
 ================================================================================
 
-1. Inheritance composition bug
-   processHouseholdInheritanceOnDeath() → transferHouseholdToHeir() no longer
-   fails with "Already processing".
+1. Triple economic catalog
+   ECONOMIC_TIERS / INCOME_SOURCES / EXPENSE_CATEGORIES /
+   ECONOMIC_EVENTS existed in household-constants.js,
+   household-economy.js, and household-rules.js. Now: one copy in
+   household-constants.js.
 
-2. Auto-succession bug
-   autoAssignHouseholdHead() → getHouseholdHeirs() no longer returns empty
-   because of its own processing guard.
+2. SERVICE_TYPES window binding collision
+   household-servant.js unconditionally overwrote window.SERVICE_TYPES
+   with a mutable copy of its own catalog, silently disabling the
+   frozen guarantee. Now: guarded aliases.
 
-3. Enterprise stats bug
-   getHouseholdEnterpriseStats() → getHouseholdEnterpriseSummaries() now
-   returns actual data instead of [].
+3. Math.random in economy and constants
+   ECONOMIC_EVENTS.*.delta() used Math.random(). Now: the catalog
+   carries minDelta/maxDelta; getEconomicEventDelta(eventId, randomFn)
+   takes a caller-supplied RNG.
 
-4. Annual economy bug
-   computeNetAnnualChange() now returns the real value; processAnnualEconomy()
-   no longer silently processes a zero net change.
+4. Double-commit in _applyMutation
+   household-economy.js called updateHousehold(id, {}) as a "touch"
+   commit AND then published a domain-specific event. Now: it builds
+   a real patch and calls updateHousehold(householdId, patch) once.
 
-5. Bankruptcy self-block
-   handleBankruptcy() → isBankrupt() now works; bankruptcy can process.
+5. Multi-year simulation clock drift
+   CharacterLifecycle.advanceMortality iterated currentYear + offset
+   but never advanced masterData.currentYear, so a second call replayed
+   the same years. HouseholdEconomy.processAnnualEconomy used
+   getCurrentYearSafe() internally, so every year's ledger landed on
+   the wall-clock year. Both now accept explicit years.
 
-6. Servant transfer bug
-   transferServantToHousehold() → terminateService() now completes.
+6. Silent reverse-index corruption
+   Reverse-index failures were reported as reverseIndexWarning but
+   universally ignored. Now: hard reverseIndexFailed field,
+   damageHistory audit entry, and household-state diagnostics that
+   surface drift through householdsWithMissingResidence and
+   residencesWithOrphanHouseholdOccupancy.
 
-7. Residence demolition composition bug
-   demolishResidence() → demolishUnit() now works.
+7. Cadet branch head dangling membership
+   HouseholdAssignment.createCadetBranch added the head to the new
+   household via createHousehold(headId), then skipped the head in
+   the transfer loop, leaving the head as a member of BOTH the parent
+   and the new household. Now: the head is explicitly removed from
+   the parent before transferring the rest.
 
-8. Multi-unit vacancy bug
-   markResidenceVacant() now disassociates EVERY affected household, not just
-   residence.householdId.
+8. setHead double-commit
+   household-commands.js setHead called addMember for non-member
+   characters, producing two commits (one for the add, one for the
+   head change) and two different events. Now: single commit, event
+   householdHeadSet, addedInline flag in the result.
 
-9. Stale residence.householdId
-   Removed. Occupancy is now unit-level canonical; residence-level occupant is
-   derived.
+9. Service relationship persistence gap
+   household-servant.js persisted only the household system; service-
+   relationship writes were left in the relationship domain's memory.
+   Now: _finish persists both, reports both save outcomes.
 
-10. markUnitVacant stale household bug
-    Fixed by removing residence-level occupant field.
+10. Dead parentage reads in query-helpers.js
+    getCharacterParents / getCharacterChildren / getCharacterHasChildren
+    read char.motherId / char.fatherId — dead fields. Every call
+    returned null/false on any post-refactor dataset. Now: delegated to
+    FamilyQueries.
 
-11. assignHouseholdToVacantResidence with no unit
-    Now returns NO_VACANT_UNIT failure instead of success.
+11. Dead relationship reads in selector-base.js
+    isBloodRelativeBasic / isSpouseBasic read char.motherId /
+    char.fatherId / char.relationships. Every call returned false.
+    Now: delegated to FamilyQueries.isBloodRelated and
+    getRelationshipBetween.
 
-12. Inheritance historical age bug
-    getHouseholdHeirs() now uses the operation year, not the current year.
+12. FamilyAccessors references in modals-household-selector.js
+    The picker resolved "current household" and "relatives in this
+    household" via the deleted FamilyAccessors module. Now: reads
+    HouseholdQueries and FamilyQueries directly.
 
-13. Snapshot read mutates canonical data
-    Fixed: name-period projection lives in HouseholdQueries; UI no longer
-    decorates nameHistory records in place.
+13. Magic-depth caps in location hierarchy walkers
+    locationDropdown.js and query-helpers.js capped hierarchy walk
+    at 20 iterations, contradicting world.js's Set-based cycle
+    detection. Now: both use Set-based cycle detection.
 
-14. Ownership transfer mutates history from UI
-    Fixed: setResidenceOwner() owns the entire transaction.
+14. getLocationCountry / getLocationDistrict used priority
+    Both read locationType.priority (legacy schema) instead of
+    locationType.locationScope (current schema). Now: prefer scope,
+    fall back to priority only when scope is undefined (legacy).
 
-15. Staff position edit directly mutates canonical data
-    Fixed: routes through ResidenceSystem.updateStaffPosition().
-
-16. Silent failure swallowing
-    Removed. Errors surface as structured command results.
-
-17. 1250 fallback
-    Removed everywhere. Required time dependency fails loudly.
-
-18. Emoji icon policy violations
-    Removed. All icons via _getIcon() or plain text.
-
-19. Live record leaks
-    Fixed. Queries return defensive snapshots.
-
-20. Modal guard deadlocks
-    Removed _processing*Modal guards.
+15. AGE_GROUPS_MAP phantom in query-helpers.js
+    getAgeGroupLabel read window.AGE_GROUPS_MAP, which doesn't exist
+    in the current tree. Every call fell through to the raw band-key
+    string. Now: walks LIFE_STAGES for a matching group when the map
+    is absent.
 
 ================================================================================
 REMAINING ARCHITECTURAL DEBT
 ================================================================================
 
-1. ResidenceSystem is a single large file
-   It is not yet split into ResidenceState / ResidenceQueries /
-   ResidenceCommands / ResidenceRules. This is deliberate: the internal
-   structure is command/query separated by section, and no second consumer
-   has forced the split. If it grows past ~1500 lines or a second consumer
-   appears, split then.
+1. ResidenceSystem is still a single large file
+   It has not been split into ResidenceState / ResidenceQueries /
+   ResidenceCommands / ResidenceRules. That split is deferred until
+   either the file exceeds ~1500 lines or a second consumer forces it.
 
-2. DEFAULT_SKILL_LEVEL is a UI-presented constant
-   Currently defined in modals-household-staff.js and
-   modals-residence-staff.js. Should move to HouseholdRules /
-   ResidenceRules when a second consumer needs it.
+2. ResidenceSystem inlines the residence catalogs
+   RESIDENCE_TYPES, RESIDENCE_STATUS, RENTAL_STATUS,
+   RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER, and the history caps
+   are still local to residence-system.js even though the same
+   values live in household-constants.js. The two are byte-identical
+   today; unifying them is a mechanical pass (delete the local
+   block, `var RESIDENCE_TYPES = window.HouseholdConstants.RESIDENCE_TYPES;`
+   etc.). No behavior change; the header comment on residence-system.js
+   flags the defer.
 
-3. HouseholdRules module does not exist yet
-   Succession policy, merge/split validation, cadet branch rules, and
-   recommendation thresholds are currently implicit in the queries and
-   commands. Should be extracted when a second consumer appears.
+3. household-view-models.js uses inline defaults for some catalogs
+   getResidenceConditionOptions and getResidenceTypeOptions fall back
+   to inline defaults when HouseholdConstants isn't loaded. The values
+   match the current catalog exactly. This is intentional so the file
+   can be tested in isolation; the fallbacks will be removed once the
+   constants are guaranteed to load.
 
-4. Cross-domain atomicity is not always possible
-   Household merge and split cannot fully roll back a partial member
-   transfer. They return { transferred: [...], failed: [...] } explicitly
-   so callers can decide. A proper transaction framework would be needed
-   for full atomicity.
+4. HouseholdRules does not model economic policy beyond what
+   HouseholdEconomy delegates. Complex policy (bracket rates, tier
+   progression over time, tax structures) is still inline in
+   HouseholdEconomy. Extraction is deferred until a second consumer
+   appears.
 
-5. modals-residence-snapshot.js still loaded
-   Deprecation stub. Delete from index.html.
+5. Cross-domain atomicity in HouseholdAssignment and HouseholdServant
+   is not transactional. Failure in one subsystem can leave partial
+   state. Both modules report partial:true and their results carry
+   enough information for a caller to resume or report the failure.
+   A proper transaction framework is out of scope.
 
-6. Shims still loaded
-   modals-assign-staff.js, modals-residence-vacancy.js,
-   modals-residence-history.js are verification shims. Delete from
-   index.html once callers migrate.
+6. The modals-*.js files still share some inline HTML helpers.
+   _buildOwnerDetailsContent, _buildSnapshotContent, etc. could be
+   extracted to a shared HTML-builder module. Currently they live
+   where they're used, which is a reasonable trade-off (the HTML is
+   tightly coupled to each modal's data shape).
+
+7. History array caps (MAX_TIMELINE_ENTRIES, MAX_HISTORY_ENTRIES,
+   MAX_RENTAL_HISTORY, MAX_RENT_PAYMENTS, MAX_TRANSACTION_HISTORY,
+   MAX_RESOURCE_HISTORY, MAX_SALARY_HISTORY, MAX_TUITION_HISTORY,
+   MAX_SCHOOL_PROFIT_HISTORY, MAX_EVENT_LOG) are duplicated in
+   household-constants.js THRESHOLDS and in residence-system.js and
+   household-economy.js. The constants values match; unifying them
+   is part of the same mechanical pass as #2.
 
 ================================================================================
 END OF DOCUMENTATION
 
-Version: 5.0 (post-refactor)
-Date: 2026-10-02
-Previous version: 4.0
-================================================================================# HOUSEHOLD & RESIDENCE SYSTEM - COMPLETE DOCUMENTATION
-
-## SYSTEM OVERVIEW
-
-The Household & Residence System manages all household structures, family units, staff, departments, residence management, and rental/ownership relationships. It provides a complete API for household CRUD operations, member management, household economy, staff positions, servant relationships, residence management including units, vacancy, history, and full rental/ownership tracking with rent income/expense integration.
-
-**Key Design Principles:**
-- **Single Source of Truth**: `household-state.js` holds all household data; `residence-system.js` holds all residence data
-- **Command-Query Separation**: Commands (writes) vs Queries (reads) separated
-- **Separation of Concerns**: State, commands, queries, economy, UI all separate
-- **Recursion Guards**: All public functions protected from infinite loops
-- **Role Integration**: Positions can require roles (generic professions)
-- **Name Period Management**: Full household and residence name history with period tracking
-- **Deceased Members**: Remain in household (don't stop being part of the family)
-- **History Preservation**: All previous households always stay in history
-- **Residence Integration**: Households can be assigned to residences and units
-- **Rental System**: Full ownership/renter tracking with adjustable annual rent
-- **Rent Income/Expenses**: Rent flows to owner's household wealth; deducted from renter's household wealth
-- **Government Integration**: Government salaries flow into household economy; taxes collected
-- **Enterprise Integration**: Households can own and manage enterprises
-
----
-
-## LOAD ORDER (IMPORTANT)
-
-The following load order **MUST** be followed to avoid dependency issues:
-
-```html
-<!-- ============================================================ -->
-<!-- CORE - NO SYSTEM DEPENDENCIES                                -->
-<!-- ============================================================ -->
-<script src="js/core/constants.js"></script>
-<script src="js/core/randomness.js"></script>
-<script src="js/core/collections.js"></script>
-<script src="js/core/validation.js"></script>
-<script src="js/core/formatting.js"></script>
-<script src="js/core/ids.js"></script>
-<script src="js/core/names.js"></script>
-<script src="js/core/time.js"></script>
-<script src="js/core/state.js"></script>
-<script src="js/core/storage.js"></script>
-<script src="js/core/accessors.js"></script>
-<script src="js/core/family-accessors.js"></script>
-<script src="js/core/query-helpers.js"></script>
-<script src="js/core/icons.js"></script>
-<script src="js/core/ui.js"></script>
-<script src="js/core/collapsible.js"></script>
-<script src="js/core/responsive.js"></script>
-<script src="js/core/integrity.js"></script>
-<script src="js/core/exportUtils.js"></script>
-<script src="js/core/world.js"></script>
-<script src="js/core/modals-core.js"></script>
-
-<!-- ============================================================ -->
-<!-- SELECTORS                                                    -->
-<!-- ============================================================ -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- ============================================================ -->
-<!-- ROLE SYSTEM - Load in THIS order                            -->
-<!-- ============================================================ -->
-<script src="js/roles/role-constants.js"></script>
-<script src="js/roles/role-state.js"></script>
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/role-commands.js"></script>
-<script src="js/roles/role-system.js"></script>
-<script src="js/roles/skill-utils.js"></script>
-<script src="js/roles/role-ui-list.js"></script>
-<script src="js/roles/modals-role-select.js"></script>
-<script src="js/roles/modals-roles.js"></script>
-
-<!-- ============================================================ -->
-<!-- CHARACTER SYSTEM                                             -->
-<!-- ============================================================ -->
-<script src="js/character/character-state.js"></script>
-<script src="js/character/character-queries.js"></script>
-<script src="js/character/character-commands.js"></script>
-<script src="js/character/character-lifecycle.js"></script>
-<script src="js/character/character-ui-list.js"></script>
-<script src="js/character/modals-character.js"></script>
-
-<!-- ============================================================ -->
-<!-- CHILDREN/PREGNANCY SYSTEM                                    -->
-<!-- ============================================================ -->
-<script src="js/children/children-state.js"></script>
-<script src="js/children/children-queries.js"></script>
-<script src="js/children/children-commands.js"></script>
-<script src="js/children/children-lifecycle.js"></script>
-<script src="js/children/adoption-service.js"></script>
-<script src="js/children/pregnancy-service.js"></script>
-<script src="js/children/surrogacy-service.js"></script>
-<script src="js/children/modals-adoption.js"></script>
-<script src="js/children/modals-birth.js"></script>
-<script src="js/children/modals-surrogacy.js"></script>
-
-<!-- ============================================================ -->
-<!-- LOCATION SYSTEM                                              -->
-<!-- ============================================================ -->
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
-<script src="js/location/location-queries.js"></script>
-<script src="js/location/location-commands.js"></script>
-<script src="js/location/location-movement.js"></script>
-<script src="js/location/location-ui-list.js"></script>
-<script src="js/location/modals-location.js"></script>
-<script src="js/location/modals-moves.js"></script>
-
-<!-- ============================================================ -->
-<!-- RELIGION SYSTEM - Load in THIS order                        -->
-<!-- ============================================================ -->
-<script src="js/religion/religion-constants.js"></script>
-<script src="js/religion/religion-state.js"></script>
-<script src="js/religion/religion-queries.js"></script>
-<script src="js/religion/religion-commands.js"></script>
-<script src="js/religion/religion-laws.js"></script>
-<script src="js/religion/religion-inheritance.js"></script>
-<script src="js/religion/religion-ui-list.js"></script>
-<script src="js/religion/modals-religion.js"></script>
-
-<!-- ============================================================ -->
-<!-- CULTURE SYSTEM - FULL                                       -->
-<!-- ============================================================ -->
-<script src="js/culture/culture-constants.js"></script>
-<script src="js/culture/culture-state.js"></script>
-<script src="js/culture/culture-queries.js"></script>
-<script src="js/culture/culture-commands.js"></script>
-<script src="js/culture/culture-generation.js"></script>
-<script src="js/culture/culture-ui-list.js"></script>
-<script src="js/culture/modals-culture.js"></script>
-
-<!-- ============================================================ -->
-<!-- SETTLEMENT SYSTEM                                            -->
-<!-- ============================================================ -->
-<script src="js/settlement/settlement-state.js"></script>
-<script src="js/settlement/settlement-queries.js"></script>
-<script src="js/settlement/settlement-crud.js"></script>
-<script src="js/settlement/settlement-commands-core.js"></script>
-<script src="js/settlement/settlement-commands-writes.js"></script>
-<script src="js/settlement/settlement-commands-annual.js"></script>
-<script src="js/settlement/settlement-economy-core.js"></script>
-<script src="js/settlement/settlement-budget.js"></script>
-<script src="js/settlement/settlement-prosperity.js"></script>
-<script src="js/settlement/settlement-government.js"></script>
-<script src="js/settlement/settlement-ranks.js"></script>
-<script src="js/settlement/settlement-enterprises.js"></script>
-<script src="js/settlement/settlement-features.js"></script>
-<script src="js/settlement/settlement-ui-list.js"></script>
-<script src="js/settlement/modals-settlement-core.js"></script>
-<script src="js/settlement/modals-settlement-economy.js"></script>
-<script src="js/settlement/modals-settlement-roles.js"></script>
-
-<!-- ============================================================ -->
-<!-- GOVERNMENT SYSTEM                                            -->
-<!-- ============================================================ -->
-<script src="js/government/government-state.js"></script>
-<script src="js/government/government-queries.js"></script>
-<script src="js/government/government-commands.js"></script>
-<script src="js/government/government-assignment.js"></script>
-<script src="js/government/government-economy.js"></script>
-<script src="js/government/government-laws.js"></script>
-<script src="js/government/government-system.js"></script>
-<script src="js/government/government-ui-list.js"></script>
-<script src="js/government/modals-government.js"></script>
-<script src="js/government/modals-government-assign.js"></script>
-<script src="js/government/modals-government-departments.js"></script>
-<script src="js/government/modals-government-economy.js"></script>
-<script src="js/government/modals-government-positions.js"></script>
-
-<!-- ============================================================ -->
-<!-- INDUSTRY SYSTEM - FULL                                      -->
-<!-- ============================================================ -->
-<script src="js/industry/industry-types.js"></script>
-<script src="js/industry/industry-state.js"></script>
-<script src="js/industry/industry-queries.js"></script>
-<script src="js/industry/industry-commands.js"></script>
-<script src="js/industry/industry-processor.js"></script>
-<script src="js/industry/industry-ui-list.js"></script>
-<script src="js/industry/modals-industry.js"></script>
-
-<!-- ============================================================ -->
-<!-- HOUSEHOLD SYSTEM - FULL                                     -->
-<!-- ============================================================ -->
-<script src="js/households/household-state.js"></script>
-<script src="js/households/household-queries.js"></script>
-<script src="js/households/household-commands.js"></script>
-<script src="js/households/household-assignment.js"></script>
-<script src="js/households/household-economy.js"></script>
-<script src="js/households/household-servant.js"></script>
-<script src="js/households/residence-system.js"></script>
-<script src="js/households/household-ui-list.js"></script>
-<script src="js/households/modals-household.js"></script>
-<script src="js/households/modals-household-economy.js"></script>
-<script src="js/households/modals-household-snapshot.js"></script>
-<script src="js/households/modals-household-staff.js"></script>
-<script src="js/households/modals-assign-staff.js"></script>
-<script src="js/households/modals-residence.js"></script>
-<script src="js/households/modals-residence-history.js"></script>
-<script src="js/households/modals-residence-rental.js"></script>
-<script src="js/households/modals-residence-snapshot.js"></script>
-<script src="js/households/modals-residence-staff.js"></script>
-<script src="js/households/modals-residence-vacancy.js"></script>
-<script src="js/households/modals-residence-owner.js"></script>
-
-<!-- ============================================================ -->
-<!-- NAME SYSTEM - FULL                                          -->
-<!-- ============================================================ -->
-<script src="js/names/name-state.js"></script>
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-commands.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/name-system.js"></script>
-<script src="js/names/modals-name.js"></script>
-
-<!-- ============================================================ -->
-<!-- MORTALITY SYSTEM - FULL                                     -->
-<!-- ============================================================ -->
-<script src="js/mortality/mortality-state.js"></script>
-<script src="js/mortality/mortality-queries.js"></script>
-<script src="js/mortality/mortality-commands.js"></script>
-<script src="js/mortality/modals-death.js"></script>
-
-<!-- ============================================================ -->
-<!-- CRIME SYSTEM - MOVED AFTER Government                        -->
-<!-- ============================================================ -->
-<script src="js/crime/crime-constants.js"></script>
-<script src="js/crime/crime-state.js"></script>
-<script src="js/crime/crime-queries.js"></script>
-<script src="js/crime/crime-commands.js"></script>
-<script src="js/crime/crime-law-integration.js"></script>
-<script src="js/crime/vendetta-system.js"></script>
-<script src="js/crime/crime-ui-stats.js"></script>
-<script src="js/crime/modals-crime.js"></script>
-
-<!-- ============================================================ -->
-<!-- RANK SYSTEM                                                  -->
-<!-- ============================================================ -->
-<script src="js/ranks/rank-constants.js"></script>
-<script src="js/ranks/rank-state.js"></script>
-<script src="js/ranks/rank-queries.js"></script>
-<script src="js/ranks/rank-commands.js"></script>
-<script src="js/ranks/rank-assignments.js"></script>
-<script src="js/ranks/rank-issues.js"></script>
-<script src="js/ranks/rank-ui-list.js"></script>
-<script src="js/ranks/modals-rank.js"></script>
-
-<!-- ============================================================ -->
-<!-- RELATIONSHIP SYSTEM - FULL                                  -->
-<!-- ============================================================ -->
-<script src="js/relationships/relationship-types.js"></script>
-<script src="js/relationships/relationship-registry.js"></script>
-<script src="js/relationships/relationship-queries.js"></script>
-<script src="js/relationships/relationshipFinder.js"></script>
-<script src="js/relationships/family-logic.js"></script>
-<script src="js/relationships/friendship-logic.js"></script>
-<script src="js/relationships/professional-logic.js"></script>
-<script src="js/relationships/romance-logic.js"></script>
-<script src="js/relationships/affair-system.js"></script>
-<script src="js/relationships/jealousy-system.js"></script>
-<script src="js/relationships/modals-family.js"></script>
-<script src="js/relationships/modals-friendship.js"></script>
-<script src="js/relationships/modals-relationship.js"></script>
-
-<!-- ============================================================ -->
-<!-- SOCIAL EVENTS SYSTEM - FULL                                  -->
-<!-- ============================================================ -->
-<script src="js/events/timeline-core.js"></script>
-<script src="js/events/census-core.js"></script>
-<script src="js/events/annualProcessing.js"></script>
-<script src="js/events/social-events-system.js"></script>
-
-<!-- ============================================================ -->
-<!-- APPRENTICESHIP SYSTEM - MOVED AFTER Relationship             -->
-<!-- ============================================================ -->
-<script src="js/apprenticeship/apprenticeship-constants.js"></script>
-<script src="js/apprenticeship/apprenticeship-system.js"></script>
-<script src="js/apprenticeship/modals-apprenticeship.js"></script>
-
-<!-- ============================================================ -->
-<!-- EDUCATION SYSTEM                                             -->
-<!-- ============================================================ -->
-<script src="js/education/education-constants.js"></script>
-<script src="js/education/education-state.js"></script>
-<script src="js/education/education-queries.js"></script>
-<script src="js/education/education-commands.js"></script>
-<script src="js/education/education-system.js"></script>
-<script src="js/education/education-annual.js"></script>
-<script src="js/education/education-learning.js"></script>
-<script src="js/education/education-history.js"></script>
-<script src="js/education/education-ui-list.js"></script>
-<script src="js/education/modals-education.js"></script>
-
-<!-- ============================================================ -->
-<!-- DISASTER SYSTEM - MOVED AFTER Education                      -->
-<!-- ============================================================ -->
-<script src="js/disaster/disaster-constants.js"></script>
-<script src="js/disaster/disaster-state.js"></script>
-<script src="js/disaster/disaster-queries.js"></script>
-<script src="js/disaster/disaster-commands.js"></script>
-<script src="js/disaster/disaster-damage.js"></script>
-<script src="js/disaster/disaster-ui-stats.js"></script>
-<script src="js/disaster/modals-disaster.js"></script>
-
-<!-- UI Tabs -->
-<script src="js/tabs/location-tab.js"></script>
-<script src="js/tabs/location-type-manager-tab.js"></script>
-<script src="js/tabs/settlement-overview-tab.js"></script>
-<script src="js/tabs/settlement-economy-tab.js"></script>
-<script src="js/tabs/settlement-education-tab.js"></script>
-<script src="js/tabs/settlement-religion-tab.js"></script>
-<script src="js/tabs/settlement-industry-tab.js"></script>
-<script src="js/tabs/settlement-features-tab.js"></script>
-<script src="js/tabs/settlement-history-tab.js"></script>
-<script src="js/tabs/settlement-roles-tab.js"></script>
-<script src="js/tabs/rank-manager-tab.js"></script>
-<script src="js/tabs/apprenticeship-tab.js"></script>
-<script src="js/tabs/roles-tab.js"></script>
-<script src="js/tabs/roles-analytics-tab.js"></script>
-<script src="js/tabs/government-type-manager-tab.js"></script>
-<script src="js/tabs/household-overview-tab.js"></script>
-<script src="js/tabs/household-members-tab.js"></script>
-<script src="js/tabs/household-departments-tab.js"></script>
-<script src="js/tabs/household-economy-tab.js"></script>
-```
-
----
-
-## FILE STRUCTURE
-
-```
-js/households/
-├── household-state.js              # Single source of truth + cache + notifications
-├── household-commands.js           # All write operations (members, departments, positions, assignments)
-├── household-queries.js            # All read operations (search, filter, stats, staff)
-├── household-economy.js            # Business logic for household wealth, resources, trade, RENT INTEGRATION
-├── household-assignment.js         # Business logic for transfers, inheritance, cadet branches
-├── household-servant.js            # Business logic for master-servant relationships
-├── household-ui-list.js            # UI list rendering
-├── residence-system.js             # Business logic for residence management + RENTAL SYSTEM
-├── modals-household.js             # Main household modals
-├── modals-household-economy.js     # Economy modals
-├── modals-household-snapshot.js    # Snapshot modals
-├── modals-household-staff.js       # Staff modals
-├── modals-assign-staff.js          # Staff assignment modals
-├── modals-residence.js             # Residence modals
-├── modals-residence-history.js     # Residence history modals
-├── modals-residence-rental.js      # RENTAL MODALS (NEW)
-├── modals-residence-snapshot.js    # Residence snapshot modals
-├── modals-residence-staff.js       # Residence staff modals
-├── modals-residence-vacancy.js     # Residence vacancy modals
-└── modals-residence-owner.js       # RESIDENCE OWNER MODALS (NEW)
-```
-
----
-
-## 1. HOUSEHOLD-STATE.JS
-
-**PURPOSE:** Single source of truth for all household data. Manages caching, subscriptions, and data loading.
-
-**DEPENDENCIES:**
-- `accessors.js` - `getCharacters`, `getPlaceById`, `getCurrentYear`
-- `storage.js` - `saveMasterData`
-- `ids.js` - `generateId`
-
-### Household Status Values
-
-| Status | Description |
-|--------|-------------|
-| `active` | Household is active with living members |
-| `vacant` | Household has no living members |
-| `abandoned` | Household has only deceased members |
-| `declining` | Household has few living members |
-| `deprecated` | Household is no longer in use |
-| `bankrupt` | Household is in financial bankruptcy |
-| `destroyed` | Household has been destroyed |
-
-### Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `getHousehold(id)` | Gets a single household by ID |
-| `getAllHouseholds(options)` | Gets all households |
-| `getCharacterHousehold(id)` | Gets the household a character belongs to |
-| `getHouseholdMembersWithCharacters(id)` | Gets members with full character data |
-| `getHouseholdHead(id)` | Gets the head of a household |
-| `getHouseholdStatus(id)` | Gets the status of a household |
-| `updateHousehold(id, updates, options)` | Updates a household (NEW) |
-| `getHouseholdWealth(id)` | Gets household wealth (NEW) |
-| `updateHouseholdWealth(id, delta, reason)` | Updates household wealth (NEW) |
-
----
-
-## 2. HOUSEHOLD-COMMANDS.JS
-
-**PURPOSE:** All write operations for household management.
-
-**DEPENDENCIES:**
-- `household-state.js` - `HouseholdState`
-- `household-queries.js` - `HouseholdQueries`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getCurrentYear`
-- `storage.js` - `saveMasterData`
-- `role-system.js` - `getRoleById`
-
-### Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `addMember(householdId, characterId, type, options)` | Adds a member to a household |
-| `removeMember(householdId, characterId, options)` | Removes a member from a household |
-| `updateMember(householdId, characterId, updates, options)` | Updates a member's role or properties |
-| `transferMember(characterId, targetHouseholdId, options)` | Transfers a member between households |
-| `setHead(householdId, characterId, options)` | Sets the head of a household |
-| `addDepartment(householdId, name, options)` | Adds a department to a household |
-| `removeDepartment(householdId, departmentId, options)` | Removes a department from a household |
-| `updateDepartment(householdId, departmentId, updates)` | Updates a department |
-| `createHouseholdPosition(data)` | Creates a household position |
-| `updateHouseholdPosition(positionId, updates)` | Updates a household position |
-| `deleteHouseholdPosition(positionId, options)` | Deletes a household position |
-| `assignCharacterToHouseholdPosition(positionId, characterId, options)` | Assigns a character to a position |
-| `endHouseholdAssignment(assignmentId, endYear, reason)` | Ends a household assignment |
-| `deleteHouseholdAssignment(assignmentId)` | Deletes a household assignment |
-| `addSalaryToHousehold(householdId, characterId, roleId, amount, reason, year)` | Adds salary income |
-| `deductTuitionFromHousehold(householdId, studentId, institutionId, amount, reason, year)` | Deducts tuition expenses |
-| `addSchoolProfitToHousehold(householdId, amount, institutionId, year)` | Adds school profit income |
-| `repairMemberships(options)` | Repairs household memberships |
-| `fixCharacterHousehold(characterId, householdId, options)` | Fixes a single character's membership |
-| `demolishHousehold(householdId, reason, year, options)` | Destroys a household (NEW) |
-| `getDemolishedHouseholds(options)` | Gets demolished households (NEW) |
-| `getHouseholdDemolitionStats(locationId)` | Gets demolition statistics (NEW) |
-
----
-
-## 3. HOUSEHOLD-QUERIES.JS
-
-**PURPOSE:** All read-only queries for household data.
-
-**DEPENDENCIES:**
-- `household-state.js` - `HouseholdState`
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getCurrentYear`
-
-### Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `search(options, queryOptions)` | Searches households with various filters |
-| `advancedSearch(filters, options)` | Advanced household search |
-| `getStatistics(options)` | Comprehensive household statistics |
-| `getMemberBreakdown(householdId)` | Member type breakdown with position info |
-| `getDemographics(householdId)` | Age/gender demographics |
-| `getHouseholdPositions(options)` | Gets positions with filtering |
-| `getHouseholdPositionsWithDetails(householdId, options)` | Positions with assignment/role details |
-| `getHouseholdPositionStatistics(householdId)` | Position statistics |
-| `getHouseholdStaff(householdId, options)` | Gets staff members with position/role info |
-| `getUnassignedHouseholdStaff(householdId)` | Gets unassigned staff members |
-| `getHouseholdEnterprises(householdId)` | Gets enterprises owned by a household |
-| `getHouseholdEnterpriseSummaries(householdId)` | Enterprise summaries for a household |
-| `getHouseholdEnterpriseStats(householdId)` | Enterprise statistics |
-| `getHouseholdEnterpriseValue(householdId)` | Total enterprise value |
-| `searchHouseholdEnterprises(householdId, query)` | Searches enterprises owned by a household |
-
----
-
-## 4. HOUSEHOLD-ECONOMY.JS
-
-**PURPOSE:** Business logic for household economy management including wealth, resources, income, expenses, and enterprise integration.
-
-**DEPENDENCIES:**
-- `household-state.js` - `HouseholdState`
-- `household-queries.js` - `HouseholdQueries`
-- `household-commands.js` - `HouseholdCommands`
-- `residence-system.js` - `ResidenceSystem` (for rent integration)
-- `accessors.js` - `getCharacterById`, `getCharacters`, `getPlaceById`, `getCurrentYear`
-
-### Economic Tiers
-
-| Tier | minWealth | maxWealth | Description |
-|------|-----------|-----------|-------------|
-| DESTITUTE | 0 | 10 | Struggling to survive |
-| POOR | 11 | 30 | Barely making ends meet |
-| MODERATE | 31 | 70 | Comfortable but not wealthy |
-| PROSPEROUS | 71 | 120 | Well-off and secure |
-| WEALTHY | 121 | 200 | Considerable assets |
-| NOBLE | 201 | 500 | Nobility status |
-| VERY_NOBLE | 501 | 1000 | High nobility |
-| ROYAL | 1001+ | ∞ | Royal or Imperial wealth |
-
-### Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `getHouseholdWealth(householdId)` | Gets household wealth |
-| `updateHouseholdWealth(householdId, delta, reason)` | Updates household wealth |
-| `getHouseholdDebt(householdId)` | Gets household debt |
-| `modifyHouseholdDebt(householdId, delta)` | Modifies household debt |
-| `getEconomicTier(wealth)` | Gets economic tier for wealth amount |
-| `getHouseholdResources(householdId)` | Gets household resources |
-| `updateHouseholdResources(householdId, resourceType, delta)` | Updates household resources |
-| `calculateRentIncome(householdId)` | Calculates rent income from owned properties (NEW) |
-| `calculateRentExpenses(householdId)` | Calculates rent expenses for rented properties (NEW) |
-| `calculateAnnualIncome(householdId)` | Calculates annual income (includes rent income) |
-| `calculateAnnualExpenses(householdId)` | Calculates annual expenses (includes rent expenses) |
-| `computeNetAnnualChange(householdId)` | Computes net annual change |
-| `processAnnualEconomy(householdId)` | Processes annual economy (includes rent) |
-| `consumeAnnualFood(householdId)` | Consumes annual food supply |
-| `receiveSalary(householdId, characterId, roleId, salary, year)` | Records salary received |
-| `getSalaryIncome(householdId, year)` | Gets salary income |
-| `getTotalSalariesReceived(householdId)` | Gets total salaries received |
-| `trackTuitionExpense(householdId, tuition, institutionId, studentId, year)` | Records tuition expense |
-| `getTuitionExpenses(householdId, year)` | Gets tuition expenses |
-| `receiveSchoolProfit(householdId, amount, institutionId, year)` | Records school profit |
-| `getSchoolProfits(householdId, year)` | Gets school profit income |
-| `executeTrade(sourceId, targetId, trade)` | Executes a trade between households |
-| `getTradePartners(householdId)` | Gets potential trade partners |
-| `triggerEconomicEvent(householdId, eventTypeId)` | Triggers an economic event |
-| `applyRandomEconomicEvent(householdId)` | Applies a random economic event |
-| `isBankrupt(householdId)` | Checks if household is bankrupt |
-| `handleBankruptcy(householdId)` | Handles bankruptcy |
-
----
-
-## 5. RESIDENCE-SYSTEM.JS
-
-**PURPOSE:** Business logic for residence management with full rental/ownership tracking.
-
-**DEPENDENCIES:**
-- `household-state.js` - `HouseholdState`
-- `household-commands.js` - `HouseholdCommands`
-- `household-queries.js` - `HouseholdQueries`
-- `accessors.js` - `getCharacterById`, `getPlaceById`, `getPlaces`, `getCurrentYear`
-
-### Residence Types
-
-| ID | Name | isMultiUnit | capacity |
-|----|------|------------|----------|
-| estate | Estate | false | 20 |
-| manor | Manor House | false | 15 |
-| house | House | false | 8 |
-| cottage | Cottage | false | 4 |
-| apartment | Apartment Building | true | 30 |
-| tenement | Tenement | true | 25 |
-| suite | Suite | false | 6 |
-| room | Room | false | 2 |
-| tower | Tower | false | 10 |
-| palace | Palace | false | 50 |
-| castle | Castle | false | 40 |
-| barracks | Barracks | true | 30 |
-
-### Residence Status
-
-| ID | Description |
-|----|-------------|
-| active | Actively used |
-| abandoned | Abandoned |
-| demolished | Demolished |
-| under_construction | Under construction |
-| renovating | Being renovated |
-
-### Rental Status (NEW)
-
-| ID | Description |
-|----|-------------|
-| owner_occupied | Owner lives in the residence |
-| rented | Residence is rented to a tenant |
-| vacant | Residence is vacant |
-
-### Key Functions
-
-| Function | Description |
-|----------|-------------|
-| `createResidence(name, locationId, typeId, options)` | Creates a new residence |
-| `getResidenceById(residenceId)` | Gets a residence by ID |
-| `getResidences()` | Gets all residences |
-| `getResidencesByLocation(locationId)` | Gets residences by location |
-| `getResidencesByType(typeId)` | Gets residences by type |
-| `getResidencesByStatus(status)` | Gets residences by status |
-| `getResidencesByHousehold(householdId)` | Gets residences by household |
-| `updateResidence(residenceId, updates)` | Updates a residence |
-| `deleteResidence(residenceId, options)` | Deletes a residence |
-| `addResidenceHistory(residenceId, action, details, actorId)` | Adds history entry |
-| `getResidenceHistory(residenceId, limit)` | Gets history entries |
-| `addResidenceTimelineEvent(residenceId, event)` | Adds timeline event |
-| `getResidenceTimeline(residenceId, limit)` | Gets timeline events |
-| `getResidenceAssociationHistory(residenceId)` | Gets association history |
-| `endResidenceAssociation(residenceId, householdId, endedYear, reason)` | Ends association |
-| `getResidenceNameHistory(residenceId)` | Gets name history |
-| `getResidenceCurrentNameInfo(residenceId)` | Gets current name info |
-| `getResidenceOriginalName(residenceId)` | Gets original name |
-| `getResidenceNameChangeCount(residenceId)` | Gets name change count |
-| `updateResidenceNameWithHistory(residenceId, newName, options)` | Updates name with history |
-| `addResidenceUnit(residenceId, options)` | Adds a unit |
-| `removeResidenceUnit(residenceId, unitNumber, options)` | Removes a unit |
-| `getResidenceUnits(residenceId)` | Gets all units |
-| `getResidenceUnit(residenceId, unitNumber)` | Gets a specific unit |
-| `getVacantUnits(residenceId)` | Gets vacant units |
-| `getOccupiedUnits(residenceId)` | Gets occupied units |
-| `assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options)` | Assigns household to unit |
-| `markUnitVacant(residenceId, unitNumber, reason, year)` | Marks unit vacant |
-| `demolishUnit(residenceId, unitNumber, reason, year)` | Demolishes a unit |
-| `getVacantResidences(locationId)` | Gets vacant residences |
-| `markResidenceVacant(residenceId, reason, year)` | Marks residence vacant |
-| `getResidenceVacancyDetails(residenceId)` | Gets vacancy details |
-| `assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options)` | Assigns household to vacant residence |
-| `calculateRepairCost(residence, targetCondition)` | Calculates repair cost |
-| `rehabilitateResidence(residenceId, targetCondition, year)` | Rehabilitates a residence |
-| `getResidenceRecommendations(residenceId)` | Gets recommendations |
-| `getHouseholdUnits(householdId)` | Gets units occupied by a household |
-| `getHouseholdPrimaryResidence(householdId)` | Gets primary residence |
-| `getHouseholdUnitCount(householdId)` | Gets unit count |
-| `getResidenceHouseholds(residenceId)` | Gets households in residence |
-| `getResidenceCapacity(residenceId)` | Gets capacity |
-| `getAvailableCapacity(residenceId)` | Gets available capacity |
-| `hasAvailableUnits(residenceId)` | Checks if units available |
-| `getResidenceStatistics(locationId)` | Gets residence statistics |
-| `getUnitStats(residenceId)` | Gets unit statistics |
-| `getLocationUnitStats(locationId)` | Gets location unit statistics |
-| `addResidenceStaffPosition(residenceId, data)` | Adds staff position |
-| `removeResidenceStaffPosition(residenceId, positionId, options)` | Removes staff position |
-| `getResidenceStaffPositions(residenceId, options)` | Gets staff positions |
-| `assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options)` | Assigns character to staff position |
-| `endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason)` | Ends staff assignment |
-| `getResidenceStaffAssignments(residenceId, options)` | Gets staff assignments |
-| `demolishResidence(residenceId, reason, year, options)` | Demolishes a residence |
-| `getDemolishedResidences(options)` | Gets demolished residences |
-| `getResidenceDamageHistory(residenceId, limit)` | Gets damage history |
-| `getResidenceDemolitionStats(locationId)` | Gets demolition stats |
-
-### RENTAL FUNCTIONS (NEW)
-
-| Function | Description |
-|----------|-------------|
-| `setResidenceOwner(residenceId, ownerType, ownerId, options)` | Sets the owner of a residence |
-| `getResidenceOwner(residenceId)` | Gets the owner of a residence |
-| `setResidenceRenter(residenceId, renterType, renterId, rentAmount, options)` | Sets the renter with annual rent |
-| `getResidenceRenter(residenceId)` | Gets the renter of a residence |
-| `endResidenceRental(residenceId, endYear, reason)` | Ends a rental agreement |
-| `updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason)` | Updates annual rent amount |
-| `getResidenceRentalHistory(residenceId, limit)` | Gets rental history |
-| `getResidencesByOwner(ownerId, ownerType)` | Gets residences owned by an owner |
-| `getResidencesByRenter(renterId, renterType)` | Gets residences rented by a renter |
-| `getTotalRentIncome(ownerId, ownerType)` | Gets total annual rent income for an owner |
-| `getTotalRentExpenses(renterId, renterType)` | Gets total annual rent expenses for a renter |
-| `recordRentPayment(residenceId, renterId, amount, year)` | Records a rent payment |
-| `getRentPayments(residenceId, limit)` | Gets rent payment history |
-
----
-
-## 6. RENTAL DATA SCHEMA
-
-### Residence Rental Fields (Added to Residence Object)
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ownerType` | string | 'household' or 'character' |
-| `ownerId` | string | Owner ID |
-| `ownerName` | string | Owner display name |
-| `ownerSince` | number | Year owner acquired |
-| `renterType` | string | 'household' or 'character' |
-| `renterId` | string | Renter ID |
-| `renterName` | string | Renter display name |
-| `rentAmount` | number | Annual rent in gold |
-| `rentStartYear` | number | Year rental started |
-| `rentEffectiveYear` | number | Year current rent took effect |
-| `rentalStatus` | string | 'owner_occupied', 'rented', 'vacant' |
-| `ownershipHistory` | array | Array of ownership history entries |
-| `rentalHistory` | array | Array of rental history entries |
-| `rentPayments` | array | Array of rent payment entries |
-
-### Ownership History Entry
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ownerType` | string | 'household' or 'character' |
-| `ownerId` | string | Owner ID |
-| `ownerName` | string | Owner display name |
-| `year` | number | Year of change |
-| `action` | string | 'set_owner', 'transferred' |
-| `previousOwnerId` | string | Previous owner ID |
-| `previousOwnerType` | string | Previous owner type |
-| `previousOwnerName` | string | Previous owner name |
-| `timestamp` | number | Timestamp |
-
-### Rental History Entry
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `renterType` | string | 'household' or 'character' |
-| `renterId` | string | Renter ID |
-| `renterName` | string | Renter display name |
-| `rentAmount` | number | Rent amount |
-| `startYear` | number | Year started |
-| `endYear` | number | Year ended (null if current) |
-| `action` | string | 'rent_started', 'rent_adjusted', 'rent_ended' |
-| `reason` | string | Reason for change |
-| `timestamp` | number | Timestamp |
-
-### Rent Payment Entry
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `renterId` | string | Renter ID |
-| `renterName` | string | Renter display name |
-| `amount` | number | Payment amount |
-| `year` | number | Payment year |
-| `paid` | boolean | Payment status |
-| `timestamp` | number | Timestamp |
-
----
-
-## 7. MODAL FUNCTIONS
-
-### Household Modals
-
-| Modal | Description |
-|-------|-------------|
-| `openCreateHouseholdModal(onSuccess)` | Creates a new household |
-| `openEditHouseholdModal(householdId, onSuccess)` | Edits a household |
-| `openDeleteHouseholdModal(householdId, onSuccess)` | Deletes a household |
-| `openHouseholdDetailsModal(householdId, onSuccess)` | Shows household details with enterprise section |
-
-### Residence Modals
-
-| Modal | Description |
-|-------|-------------|
-| `openNewResidenceModal(locationId, locationName, onSuccess)` | Creates a new residence |
-| `openEditResidenceModal(residenceId, onSuccess)` | Edits a residence |
-| `openDeleteResidenceModal(residenceId, onSuccess)` | Deletes a residence |
-| `openResidenceDetailsModal(residenceId, onRefresh)` | Shows residence details |
-| `openRenameResidenceModal(residenceId, onSuccess)` | Renames a residence |
-| `openResidenceNameHistoryModal(residenceId)` | Shows name history |
-| `openAssignResidenceModal(residenceId, onSuccess)` | Assigns household to residence |
-| `openVacateResidenceModal(residenceId, onSuccess)` | Marks residence vacant |
-| `openRehabilitateResidenceModal(residenceId, onSuccess)` | Rehabilitates a residence |
-| `openDemolishResidenceModal(residenceId, onSuccess)` | Demolishes a residence |
-| `openResidenceHeirFinderModal(residenceId)` | Finds heirs for a residence |
-| `openAddUnitModal(residenceId, onSuccess)` | Adds a unit |
-| `openRemoveUnitModal(residenceId, unitNumber, onSuccess)` | Removes a unit |
-| `openAssignUnitModal(residenceId, unitNumber, onSuccess)` | Assigns household to unit |
-| `openMarkUnitVacantModal(residenceId, unitNumber, onSuccess)` | Marks unit vacant |
-| `openUnitDetailsModal(residenceId, unitNumber)` | Shows unit details |
-
-### Rental Modals (NEW)
-
-| Modal | Description |
-|-------|-------------|
-| `openSetResidenceOwnerModal(residenceId, onSuccess)` | Sets the owner of a residence |
-| `openSetResidenceRenterModal(residenceId, onSuccess)` | Sets the renter with rent amount |
-| `openUpdateRentModal(residenceId, onSuccess)` | Updates annual rent amount |
-| `openEndRentalModal(residenceId, onSuccess)` | Ends a rental agreement |
-| `openResidenceRentalHistoryModal(residenceId)` | Shows rental history |
-| `openHouseholdRentalSummaryModal(householdId)` | Shows household rental summary |
-| `openRentPaymentModal(residenceId, onSuccess)` | Records a rent payment |
-| `openResidenceRentalDetailsModal(residenceId)` | Shows detailed rental info |
-
-### Owner Modals (NEW)
-
-| Modal | Description |
-|-------|-------------|
-| `openResidenceOwnerDetailsModal(residenceId, onRefresh)` | Shows owner details and owned properties |
-| `openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess)` | Manages all properties owned by an owner |
-| `openTransferOwnershipModal(residenceId, onSuccess)` | Transfers ownership to another entity |
-| `openOwnerStatsModal(ownerId, ownerType)` | Shows owner statistics |
-
----
-
-## 8. DEPENDENCY MAP
-
-### Household System Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    HOUSEHOLD SYSTEM DEPENDENCIES                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  household-state.js ─────────────────────────────────────────────────────┐ │
-│  ├── accessors.js                                                        │ │
-│  └── storage.js                                                          │ │
-│                                                                             │
-│  household-commands.js ─────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-queries.js                                                │ │
-│  ├── accessors.js                                                        │ │
-│  ├── storage.js                                                          │ │
-│  └── role-system.js                                                      │ │
-│                                                                             │
-│  household-queries.js ──────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── accessors.js                                                        │ │
-│  └── industry-queries.js (optional)                                      │ │
-│                                                                             │
-│  household-economy.js ──────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  ├── residence-system.js (for rent)                                      │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-│  residence-system.js ───────────────────────────────────────────────────┐ │
-│  ├── household-state.js                                                  │ │
-│  ├── household-commands.js                                               │ │
-│  ├── household-queries.js                                                │ │
-│  └── accessors.js                                                        │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Rental System Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    RENTAL SYSTEM DEPENDENCIES                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  residence-system.js ────────────────────────────────────────────────────┐ │
-│  ├── setResidenceOwner()                                                  │ │
-│  ├── getResidenceOwner()                                                  │ │
-│  ├── setResidenceRenter()                                                 │ │
-│  ├── getResidenceRenter()                                                 │ │
-│  ├── endResidenceRental()                                                 │ │
-│  ├── updateResidenceRent()                                                │ │
-│  ├── getResidenceRentalHistory()                                          │ │
-│  ├── getResidencesByOwner()                                               │ │
-│  ├── getResidencesByRenter()                                              │ │
-│  ├── getTotalRentIncome()                                                 │ │
-│  ├── getTotalRentExpenses()                                               │ │
-│  ├── recordRentPayment()                                                  │ │
-│  └── getRentPayments()                                                    │ │
-│                                                                             │
-│  household-economy.js ──────────────────────────────────────────────────┐ │
-│  ├── calculateRentIncome() ──► residence-system.getTotalRentIncome()    │ │
-│  ├── calculateRentExpenses() ──► residence-system.getTotalRentExpenses()│ │
-│  └── calculateAnnualIncome() ──► includes rentIncome                    │ │
-│  └── calculateAnnualExpenses() ──► includes rentExpenses                │ │
-│                                                                             │
-│  modals-residence-rental.js ────────────────────────────────────────────┐ │
-│  ├── openSetResidenceOwnerModal()                                        │ │
-│  ├── openSetResidenceRenterModal()                                       │ │
-│  ├── openUpdateRentModal()                                               │ │
-│  ├── openEndRentalModal()                                                │ │
-│  ├── openResidenceRentalHistoryModal()                                   │ │
-│  ├── openHouseholdRentalSummaryModal()                                   │ │
-│  ├── openRentPaymentModal()                                              │ │
-│  └── openResidenceRentalDetailsModal()                                   │ │
-│                                                                             │
-│  modals-residence-owner.js ─────────────────────────────────────────────┐ │
-│  ├── openResidenceOwnerDetailsModal()                                    │ │
-│  ├── openManageOwnedPropertiesModal()                                    │ │
-│  ├── openTransferOwnershipModal()                                        │ │
-│  └── openOwnerStatsModal()                                               │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 9. RECURSION GUARDS
-
-| Guard Name | Location | Purpose |
-|------------|----------|---------|
-| `_processingCommand` | household-commands.js | Prevent command re-entry |
-| `_processingQuery` | household-queries.js | Prevent query re-entry |
-| `_processingEconomy` | household-economy.js | Prevent economy re-entry |
-| `_processingTrade` | household-economy.js | Prevent trade re-entry |
-| `_processingAssignment` | household-assignment.js | Prevent assignment re-entry |
-| `_recordingHistory` | household-assignment.js | Prevent history re-entry |
-| `_processingService` | household-servant.js | Prevent service re-entry |
-| `_recordingServiceHistory` | household-servant.js | Prevent service history re-entry |
-| `_processingResidence` | residence-system.js | Prevent residence re-entry |
-| `_processingAssignment` | residence-system.js | Prevent assignment re-entry |
-| `_processingRentalModal` | modals-residence-rental.js | Prevent rental modal re-entry |
-| `_processingOwnerModal` | modals-residence-owner.js | Prevent owner modal re-entry |
-| `_processingModal` | modals-household.js | Prevent modal re-entry |
-
----
-
-## 10. ICON POLICY
-
-All icons must come from `icons.js` via the `_getIcon()` function.
-
-| Usage | Icon |
-|-------|------|
-| Household | HOUSEHOLD |
-| Member | PERSON |
-| Head | CROWN |
-| Department | CIRCLE_DOT |
-| Position | PERSON |
-| Staff | PERSON |
-| Residence | HOME |
-| Unit | SQUARE |
-| Vacant | CIRCLE_OUTLINE |
-| Occupied | CIRCLE_DOT |
-| Owner | CROWN |
-| Renter | PERSON |
-| Rent | COIN |
-| Edit | EDIT |
-| Delete | TRASH |
-| Warning | WARNING |
-| Success | CHECK_SIMPLE |
-| Location | LOCATION |
-| Wealth | COIN |
-| Food | CIRCLE_DOT |
-| Trade | ARROW_DOUBLE_H |
-| Enterprise | INDUSTRY |
-
----
-
-## 11. INTEGRATION WITH OTHER SYSTEMS
-
-### Household ↔ Character Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Character → Household | `character.household` / `character.householdId` fields | ✅ Direct |
-| Character → Household | `character.householdHistory` array | ✅ Full history |
-| Household → Character | `household.members[]` array | ✅ Direct |
-| Deceased Characters | Remain in `household.members[]` | ✅ Preserved |
-| Previous Households | Always stay in `character.householdHistory` | ✅ Preserved |
-
-### Household ↔ Government Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Government Salary → Household Wealth | Via `HouseholdEconomy.updateHouseholdWealth()` | ✅ Working |
-| Household Wealth → Government Tax | Via `HouseholdEconomy.updateHouseholdWealth()` | ✅ Working |
-
-### Household ↔ Residence Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Household → Residence | `household.residenceId` field | ✅ Direct |
-| Household → Unit | `household.residenceUnitNumber` field | ✅ Direct |
-| Residence → Household | `residence.householdId` field | ✅ Direct |
-| Residence → Unit | `residence.units[]` array | ✅ Direct |
-
-### Household ↔ Residence Rental Integration (NEW)
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Household → Owner | `residence.ownerId` field | ✅ Direct |
-| Household → Renter | `residence.renterId` field | ✅ Direct |
-| Rent Income → Owner Wealth | `HouseholdEconomy.calculateAnnualIncome()` | ✅ Integrated |
-| Rent Expense → Renter Wealth | `HouseholdEconomy.calculateAnnualExpenses()` | ✅ Integrated |
-| Owner → Properties | `residence-system.getResidencesByOwner()` | ✅ Query |
-| Renter → Properties | `residence-system.getResidencesByRenter()` | ✅ Query |
-| Total Rent Income | `residence-system.getTotalRentIncome()` | ✅ Query |
-| Total Rent Expenses | `residence-system.getTotalRentExpenses()` | ✅ Query |
-
-### Household ↔ Enterprise Integration
-
-| Direction | Mechanism | Status |
-|-----------|-----------|--------|
-| Household → Enterprise | `household.enterprises[]` array | ✅ Direct |
-| Enterprise → Household | `enterprise.ownerId` field | ✅ Direct |
-| Enterprise Profit → Household Wealth | `HouseholdEconomy.calculateAnnualIncome()` | ✅ Integrated |
-| Enterprise Loss → Household Expenses | `HouseholdEconomy.calculateAnnualExpenses()` | ✅ Integrated |
-| Enterprise Transfer on Inheritance | `HouseholdAssignment.transferHouseholdToHeir()` | ✅ Integrated |
-| Enterprise Transfer on Merge | `HouseholdAssignment.mergeHouseholds()` | ✅ Integrated |
-| Enterprise Transfer on Split | `HouseholdAssignment.splitHousehold()` | ✅ Integrated |
-| Enterprise Transfer to Cadet | `HouseholdAssignment.createCadetBranch()` | ✅ Integrated |
-| Enterprise Cleanup on Delete | `HouseholdCommands.deleteHousehold()` | ✅ Integrated |
-| Enterprise Display in UI | `openHouseholdDetailsModal()` | ✅ Integrated |
-
----
-
-## 12. COMPLETE FUNCTION LIST
-
-### household-state.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `getState(options)` | Query | Gets a snapshot of the current state |
-| `getHousehold(id)` | Query | Gets a single household by ID |
-| `getAllHouseholds(options)` | Query | Gets all households |
-| `getCharacterHousehold(id)` | Query | Gets the household a character belongs to |
-| `getHouseholdsByLocation(locationId, options)` | Query | Gets households by location |
-| `getHouseholdsByStatus(status, options)` | Query | Gets households by status |
-| `getHouseholdMembersWithCharacters(id)` | Query | Gets members with full character data |
-| `getHouseholdHead(id)` | Query | Gets the head of a household |
-| `getHouseholdStatus(id)` | Query | Gets the status of a household |
-| `getHouseholdNamePeriods(id)` | Query | Gets all name periods |
-| `getHouseholdNamePeriodForYear(id, year)` | Query | Gets name period for a year |
-| `editHouseholdNamePeriod(id, index, updates)` | Command | Edits a name period |
-| `deleteHouseholdNamePeriod(id, index)` | Command | Deletes a name period |
-| `associateHouseholdWithResidence(id, residenceId, options)` | Command | Associates with residence |
-| `disassociateHouseholdFromResidence(id, residenceId, reason, year)` | Command | Disassociates from residence |
-| `getHouseholdResidence(id)` | Query | Gets the residence of a household |
-| `getHouseholdsByResidence(residenceId)` | Query | Gets all households in a residence |
-| `getHouseholdEnterprises(id)` | Query | Gets enterprise IDs owned |
-| `getHouseholdEnterpriseHistory(id)` | Query | Gets enterprise history |
-| `getHouseholdEnterpriseProfitHistory(id, limit)` | Query | Gets enterprise profit history |
-| `getHouseholdEnterpriseValue(id)` | Query | Gets total enterprise value |
-| `trackEnterpriseProfit(id, enterpriseId, profit, year)` | Command | Tracks enterprise profit |
-| `getHouseholdEnterprisesWithData(id)` | Query | Gets enterprises with full data |
-| `addEnterpriseToHousehold(id, enterpriseId, year)` | Command | Adds enterprise to household |
-| `removeEnterpriseFromHousehold(id, enterpriseId, year)` | Command | Removes enterprise from household |
-| `transferEnterprisesToHousehold(fromId, toId, year)` | Command | Transfers enterprises |
-| `createHouseholdPosition(data)` | Command | Creates a household position |
-| `updateHouseholdPosition(positionId, updates)` | Command | Updates a household position |
-| `deleteHouseholdPosition(positionId, options)` | Command | Deletes a household position |
-| `getHouseholdPosition(positionId)` | Query | Gets a household position |
-| `getHouseholdPositions(options)` | Query | Gets household positions |
-| `assignCharacterToHouseholdPosition(positionId, characterId, options)` | Command | Assigns character to position |
-| `endHouseholdAssignment(assignmentId, endYear, reason)` | Command | Ends a household assignment |
-| `deleteHouseholdAssignment(assignmentId)` | Command | Deletes a household assignment |
-| `getAssignmentsForPosition(positionId, activeOnly)` | Query | Gets assignments for a position |
-| `getAssignmentsForCharacter(characterId, activeOnly)` | Query | Gets assignments for a character |
-| `getAssignmentsForHousehold(householdId, activeOnly)` | Query | Gets assignments for a household |
-| `updateHousehold(id, updates, options)` | Command | Updates a household (NEW) |
-| `getHouseholdWealth(id)` | Query | Gets household wealth (NEW) |
-| `updateHouseholdWealth(id, delta, reason)` | Command | Updates household wealth (NEW) |
-| `getUIState()` | Query | Gets the current UI state |
-| `setUIState(key, value, options)` | Command | Sets a UI state value |
-| `updateUIState(updates, options)` | Command | Updates multiple UI state values |
-| `refresh()` | Command | Refreshes state from masterData |
-| `invalidateCache()` | Command | Invalidates all caches |
-| `subscribe(callback)` | Command | Subscribes to state changes |
-
-### residence-system.js
-
-| Function | Type | Description |
-|----------|------|-------------|
-| `createResidence(name, locationId, typeId, options)` | Command | Creates a new residence |
-| `getResidenceById(residenceId)` | Query | Gets a residence by ID |
-| `getResidences()` | Query | Gets all residences |
-| `getResidencesByLocation(locationId)` | Query | Gets residences by location |
-| `getResidencesByType(typeId)` | Query | Gets residences by type |
-| `getResidencesByStatus(status)` | Query | Gets residences by status |
-| `getResidencesByHousehold(householdId)` | Query | Gets residences by household |
-| `updateResidence(residenceId, updates)` | Command | Updates a residence |
-| `deleteResidence(residenceId, options)` | Command | Deletes a residence |
-| `addResidenceHistory(residenceId, action, details, actorId)` | Command | Adds history entry |
-| `getResidenceHistory(residenceId, limit)` | Query | Gets history entries |
-| `addResidenceTimelineEvent(residenceId, event)` | Command | Adds timeline event |
-| `getResidenceTimeline(residenceId, limit)` | Query | Gets timeline events |
-| `getResidenceAssociationHistory(residenceId)` | Query | Gets association history |
-| `endResidenceAssociation(residenceId, householdId, endedYear, reason)` | Command | Ends association |
-| `getResidenceNameHistory(residenceId)` | Query | Gets name history |
-| `getResidenceCurrentNameInfo(residenceId)` | Query | Gets current name info |
-| `getResidenceOriginalName(residenceId)` | Query | Gets original name |
-| `getResidenceNameChangeCount(residenceId)` | Query | Gets name change count |
-| `updateResidenceNameWithHistory(residenceId, newName, options)` | Command | Updates name with history |
-| `getFormattedResidenceNameHistory(residenceId, limit)` | Query | Gets formatted name history |
-| `addResidenceUnit(residenceId, options)` | Command | Adds a unit |
-| `removeResidenceUnit(residenceId, unitNumber, options)` | Command | Removes a unit |
-| `getResidenceUnits(residenceId)` | Query | Gets all units |
-| `getResidenceUnit(residenceId, unitNumber)` | Query | Gets a specific unit |
-| `getVacantUnits(residenceId)` | Query | Gets vacant units |
-| `getOccupiedUnits(residenceId)` | Query | Gets occupied units |
-| `assignHouseholdToUnit(residenceId, unitNumber, householdId, householdName, year, options)` | Command | Assigns household to unit |
-| `markUnitVacant(residenceId, unitNumber, reason, year)` | Command | Marks unit vacant |
-| `demolishUnit(residenceId, unitNumber, reason, year)` | Command | Demolishes a unit |
-| `getVacantResidences(locationId)` | Query | Gets vacant residences |
-| `markResidenceVacant(residenceId, reason, year)` | Command | Marks residence vacant |
-| `getResidenceVacancyDetails(residenceId)` | Query | Gets vacancy details |
-| `assignHouseholdToVacantResidence(residenceId, householdId, householdName, year, options)` | Command | Assigns household to vacant residence |
-| `calculateRepairCost(residence, targetCondition)` | Query | Calculates repair cost |
-| `rehabilitateResidence(residenceId, targetCondition, year)` | Command | Rehabilitates a residence |
-| `getResidenceRecommendations(residenceId)` | Query | Gets recommendations |
-| `getHouseholdUnits(householdId)` | Query | Gets units occupied by a household |
-| `getHouseholdPrimaryResidence(householdId)` | Query | Gets primary residence |
-| `getHouseholdUnitCount(householdId)` | Query | Gets unit count |
-| `getResidenceHouseholds(residenceId)` | Query | Gets households in residence |
-| `getResidenceCapacity(residenceId)` | Query | Gets capacity |
-| `getAvailableCapacity(residenceId)` | Query | Gets available capacity |
-| `hasAvailableUnits(residenceId)` | Query | Checks if units available |
-| `getRandomAvailableUnit(residenceId)` | Query | Gets random available unit |
-| `getResidenceStatistics(locationId)` | Query | Gets residence statistics |
-| `getUnitStats(residenceId)` | Query | Gets unit statistics |
-| `getLocationUnitStats(locationId)` | Query | Gets location unit statistics |
-| `addResidenceStaffPosition(residenceId, data)` | Command | Adds staff position |
-| `removeResidenceStaffPosition(residenceId, positionId, options)` | Command | Removes staff position |
-| `getResidenceStaffPositions(residenceId, options)` | Query | Gets staff positions |
-| `assignCharacterToResidenceStaffPosition(residenceId, positionId, characterId, options)` | Command | Assigns character to staff position |
-| `endResidenceStaffAssignment(residenceId, assignmentId, endYear, reason)` | Command | Ends staff assignment |
-| `getResidenceStaffAssignments(residenceId, options)` | Query | Gets staff assignments |
-| `demolishResidence(residenceId, reason, year, options)` | Command | Demolishes a residence |
-| `getDemolishedResidences(options)` | Query | Gets demolished residences |
-| `getResidenceDamageHistory(residenceId, limit)` | Query | Gets damage history |
-| `getResidenceDemolitionStats(locationId)` | Query | Gets demolition stats |
-| **RENTAL FUNCTIONS** | | |
-| `setResidenceOwner(residenceId, ownerType, ownerId, options)` | Command | Sets the owner of a residence |
-| `getResidenceOwner(residenceId)` | Query | Gets the owner of a residence |
-| `setResidenceRenter(residenceId, renterType, renterId, rentAmount, options)` | Command | Sets the renter with annual rent |
-| `getResidenceRenter(residenceId)` | Query | Gets the renter of a residence |
-| `endResidenceRental(residenceId, endYear, reason)` | Command | Ends a rental agreement |
-| `updateResidenceRent(residenceId, newRentAmount, effectiveYear, reason)` | Command | Updates annual rent amount |
-| `getResidenceRentalHistory(residenceId, limit)` | Query | Gets rental history |
-| `getResidencesByOwner(ownerId, ownerType)` | Query | Gets residences owned by an owner |
-| `getResidencesByRenter(renterId, renterType)` | Query | Gets residences rented by a renter |
-| `getTotalRentIncome(ownerId, ownerType)` | Query | Gets total annual rent income for an owner |
-| `getTotalRentExpenses(renterId, renterType)` | Query | Gets total annual rent expenses for a renter |
-| `recordRentPayment(residenceId, renterId, amount, year)` | Command | Records a rent payment |
-| `getRentPayments(residenceId, limit)` | Query | Gets rent payment history |
-
----
-
-## 13. HOUSEHOLD DATA SCHEMA
-
-### Household Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Household name |
-| `locationId` | string | Location ID |
-| `locationName` | string | Location display name |
-| `departments` | array | Array of department objects |
-| `members` | array | Array of member objects |
-| `reputation` | number | Reputation score (0-100) |
-| `wealth` | number | Current wealth |
-| `debt` | number | Current debt |
-| `powerScore` | number | Power/influence score |
-| `foundedYear` | number | Year founded |
-| `status` | string | 'active', 'vacant', 'abandoned', 'declining', 'deprecated', 'bankrupt', 'destroyed' |
-| `nameHistory` | array | Array of name change entries |
-| `currentNameSince` | number | Year current name adopted |
-| `eventLog` | array | Array of event entries |
-| `createdAt` | number | Creation timestamp |
-| `updatedAt` | number | Last update timestamp |
-| `notes` | string | Notes |
-| `residenceId` | string | Associated residence ID |
-| `residenceName` | string | Residence name |
-| `residenceType` | string | Residence type ID |
-| `associatedYear` | number | Year of association |
-| `residenceUnitNumber` | number | Unit number |
-| `residenceNotes` | string | Residence association notes |
-| `residenceHistory` | array | Residence association history |
-| `enterprises` | array | Array of enterprise IDs |
-| `enterpriseHistory` | array | Array of { enterpriseId, year, action } |
-| `economy` | object | Economy data |
-| `resources` | object | { food, livestock, goods } |
-
-### Residence Object
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Unique identifier |
-| `name` | string | Residence name |
-| `locationId` | string | Location ID |
-| `locationName` | string | Location display name |
-| `typeId` | string | Residence type ID |
-| `typeName` | string | Type display name |
-| `typeIcon` | string | Type icon |
-| `isMultiUnit` | boolean | Multi-unit flag |
-| `capacity` | number | Total capacity |
-| `units` | array | Array of unit objects |
-| `unitCount` | number | Total units |
-| `occupiedUnits` | number | Occupied units |
-| `vacantUnits` | number | Vacant units |
-| `foundedYear` | number | Year founded |
-| `builtYear` | number | Year built |
-| `status` | string | Status |
-| `notes` | string | Notes |
-| `description` | string | Description |
-| `history` | array | History entries |
-| `timeline` | array | Timeline entries |
-| `nameHistory` | array | Name history entries |
-| `associationHistory` | array | Association history |
-| `vacancyHistory` | array | Vacancy history |
-| `features` | array | Features list |
-| `householdId` | string | Current household ID |
-| `householdName` | string | Current household name |
-| `assignedYear` | number | Assignment year |
-| `isVacant` | boolean | Vacant flag |
-| `isDemolished` | boolean | Demolished flag |
-| `condition` | string | Condition |
-| `estimatedValue` | number | Estimated value |
-| `lastRenovated` | number | Last renovated year |
-| `maxUnits` | number | Maximum units |
-| `staffPositions` | array | Staff position objects |
-| `staffAssignments` | array | Staff assignment objects |
-| `createdAt` | number | Creation timestamp |
-| `lastUpdated` | number | Last update timestamp |
-| **RENTAL FIELDS** | | |
-| `ownerType` | string | 'household' or 'character' |
-| `ownerId` | string | Owner ID |
-| `ownerName` | string | Owner display name |
-| `ownerSince` | number | Year owner acquired |
-| `renterType` | string | 'household' or 'character' |
-| `renterId` | string | Renter ID |
-| `renterName` | string | Renter display name |
-| `rentAmount` | number | Annual rent in gold |
-| `rentStartYear` | number | Year rental started |
-| `rentEffectiveYear` | number | Year current rent took effect |
-| `rentalStatus` | string | 'owner_occupied', 'rented', 'vacant' |
-| `ownershipHistory` | array | Array of ownership history entries |
-| `rentalHistory` | array | Array of rental history entries |
-| `rentPayments` | array | Array of rent payment entries |
-
----
-
-# END OF DOCUMENTATION
-
-**Generated:** 2026-07-17
-**Version:** 4.0
-**File Count:** 8 core modules + 13 modal files
+Version: 6.0 (post-consolidation)
+Date: 2026-10-26
+Supersedes: v5.0 (post-refactor) and v4.0
+================================================================================
