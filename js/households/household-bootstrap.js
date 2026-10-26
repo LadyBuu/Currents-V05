@@ -3,7 +3,7 @@
  * STILL WATERS - HOUSEHOLD BOOTSTRAP (household-bootstrap.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-bootstrap.js
+ * LOCATION: js/households/household-bootstrap.js
  *
  * PURPOSE
  * -------
@@ -37,7 +37,8 @@
  *   - missing global (getCharacterById, generateId, etc.)
  *
  * Warns (does not throw) on:
- *   - integrity issues in canonical data (duplicate IDs, orphan refs)
+ *   - integrity issues in canonical data (duplicate IDs, orphan refs,
+ *     reverse-index drift)
  *   - optional dependency missing (markDataDirty is optional; a warning
  *     is logged if it is absent)
  *
@@ -56,10 +57,43 @@
  * crash subsequent script execution — callers can call init() explicitly
  * to surface the error.
  *
+ * INTEGRITY REPORT (REVISED)
+ * --------------------------
+ *   The diagnostic report from HouseholdState._diagnostics.getIntegrityReport
+ *   and ResidenceSystem._diagnostics.getIntegrityReport is now richer
+ *   than in earlier versions. In particular:
+ *
+ *     - householdsWithMissingResidence:
+ *         household.residenceId points at a residence that no longer
+ *         exists in masterData.data.residences. Non-empty after a
+ *         residence delete/demolish that failed to clear the household
+ *         reverse index.
+ *
+ *     - residencesWithOrphanHouseholdOccupancy:
+ *         a residence unit still names a householdId that no longer
+ *         exists in masterData.data.households. Non-empty after a
+ *         household delete that failed to release its units.
+ *
+ *     - residenceReverseIndexAvailable:
+ *         boolean. False if the household→residence check couldn't run
+ *         because neither ResidenceSystem nor the canonical residences
+ *         array was present at check time. Rare; indicates the
+ *         diagnostics ran before storage-schema populated data.
+ *
+ *   The bootstrap reports these counts in its warn-only integrity log
+ *   and includes them in the result object returned by init(). No
+ *   repair is attempted at bootstrap — repairs are a user-initiated
+ *   action (HouseholdCommands.repairMemberships, or a future
+ *   reverse-index repair command).
+ *
  * LOAD ORDER
  * ----------
  * Load LAST among household scripts:
  *
+ *   household-constants.js
+ *   household-rules.js
+ *   household-view-models.js
+ *   household-orchestration.js
  *   household-state.js
  *   household-queries.js
  *   household-commands.js
@@ -69,7 +103,7 @@
  *   residence-system.js
  *   household-bootstrap.js        ← this file
  *   household-ui-list.js
- *   modals-household*.js
+ *   modals-*.js
  *
  * Also verify (loaded earlier in the page):
  *   character-commands.js, character-queries.js
@@ -87,10 +121,6 @@
     // 1. VERIFICATION HELPERS
     // =========================================================================
 
-    /**
-     * Verifies a module exists on window and exposes a required method.
-     * Throws a descriptive error on failure. Returns the module.
-     */
     function _requireModule(name, methods) {
         var mod = window[name];
         if (typeof mod === 'undefined' || mod === null) {
@@ -114,9 +144,6 @@
         return mod;
     }
 
-    /**
-     * Verifies a global function exists on window.
-     */
     function _requireGlobal(name) {
         if (typeof window[name] !== 'function') {
             throw new Error(
@@ -126,11 +153,6 @@
         return window[name];
     }
 
-    /**
-     * Verifies an optional module is either present-and-shaped or absent.
-     * If present but malformed, throws. If absent, records that fact and
-     * returns null.
-     */
     function _checkOptionalModule(name, methods) {
         var mod = window[name];
         if (typeof mod === 'undefined' || mod === null) {
@@ -156,6 +178,64 @@
     // =========================================================================
 
     function _verifyHouseholdModules() {
+        // Constants (catalogs only — no required functions, just the
+        // frozen tables). Verified by presence of a couple of catalogs
+        // that downstream modules hard-depend on.
+        var constants = _requireModule('HouseholdConstants', []);
+        if (!constants.ECONOMIC_TIERS) {
+            throw new Error(
+                'HouseholdBootstrap: HouseholdConstants.ECONOMIC_TIERS is required.'
+            );
+        }
+        if (!constants.SERVICE_QUALITY_ORDER) {
+            throw new Error(
+                'HouseholdBootstrap: HouseholdConstants.SERVICE_QUALITY_ORDER is required.'
+            );
+        }
+        if (typeof constants.getEconomicEventDelta !== 'function') {
+            throw new Error(
+                'HouseholdBootstrap: HouseholdConstants.getEconomicEventDelta is required.'
+            );
+        }
+
+        // Rules (pure policy)
+        _requireModule('HouseholdRules', [
+            'pickSuccessor',
+            'applyHeadChange',
+            'isHouseholdVacant',
+            'calculateHouseholdStatus',
+            'calculateDemographics',
+            'filterEligibleHeirs',
+            'getEconomicTier',
+            'netAnnualChange',
+            'calculateAnnualDebtInterest',
+            'evaluateBankruptcy',
+            'calculateEnterpriseNet',
+            'calculateServiceQuality',
+            'calculateRecommendation',
+            'calculateRepairCost',
+            'isResidenceVacant',
+            'calculateUnitStats'
+        ]);
+
+        // View models (presentation defaults + option builders)
+        _requireModule('HouseholdViewModels', [
+            'getStatusBadge',
+            'getWealthColor',
+            'getNetChangeColor',
+            'getHouseholdStatusOptions'
+        ]);
+
+        // Orchestration (shared result + dispatch + persist helpers)
+        _requireModule('HouseholdOrchestration', [
+            'ok',
+            'fail',
+            'resolveYear',
+            'dispatch',
+            'finish',
+            'hasId'
+        ]);
+
         // State
         _requireModule('HouseholdState', [
             'hydrateFromMasterData',
@@ -303,6 +383,18 @@
             'getTotalRentIncome',
             'getTotalRentExpenses'
         ]);
+
+        // Modals helper (shared DOM scoping + toast + persist wrappers).
+        // Present only when the modal layer loads. It's verified here
+        // because the bootstrap's integrity report ends up rendered by
+        // the household UI, which depends on modal helpers.
+        _checkOptionalModule('HouseholdModals', [
+            'rootFrom',
+            'persistOrFail',
+            'reportFailure',
+            'esc',
+            'onOpen'
+        ]);
     }
 
     // =========================================================================
@@ -310,7 +402,7 @@
     // =========================================================================
 
     function _verifyCrossDomain() {
-        // Core globals
+        // Core globals.
         _requireGlobal('getCharacterById');
         _requireGlobal('generateId');
         _requireGlobal('getCurrentYearSafe');
@@ -329,11 +421,11 @@
             }
         }
 
-        // Character system — required
+        // Character system — required.
         _requireModule('CharacterCommands', ['updateCharacterFields']);
         _requireModule('CharacterQueries', ['getCharacterById']);
 
-        // Relationship system — required by HouseholdServant
+        // Relationship system — required by HouseholdServant.
         _requireGlobal('createRelationship');
         _requireGlobal('endRelationship');
         _requireGlobal('updateRelationship');
@@ -341,7 +433,7 @@
         _requireGlobal('getRelationshipsForCharacter');
         _requireGlobal('getRelationshipById');
 
-        // Industry — optional but expected in production
+        // Industry — optional but expected in production.
         var industryCommands = _checkOptionalModule('IndustryCommands', [
             'updateEnterprise'
         ]);
@@ -405,7 +497,7 @@
             residence: null
         };
 
-        // HouseholdState hydration
+        // HouseholdState hydration.
         try {
             window.HouseholdState.hydrateFromMasterData();
             reports.household = { success: true };
@@ -416,7 +508,7 @@
             };
         }
 
-        // ResidenceSystem hydration
+        // ResidenceSystem hydration.
         try {
             window.ResidenceSystem.hydrateFromMasterData();
             reports.residence = { success: true };
@@ -436,9 +528,9 @@
     //
     // These are non-fatal diagnostics. They surface data quality issues
     // that repair tooling (HouseholdCommands.repairMemberships) can
-    // address. The bootstrap does not run the repair — that's a deliberate
-    // user-initiated action, not something a load-time hook should do.
-    // =========================================================================
+    // address. The bootstrap does not run the repair — that's a
+    // deliberate user-initiated action, not something a load-time hook
+    // should do.
 
     function _runIntegrityChecks() {
         var report = {
@@ -447,13 +539,28 @@
             orphanEnterpriseRefs: [],
             orphanPositionAssignments: [],
             duplicateHouseholdHeads: [],
+            householdsWithMissingResidence: [],
+            residencesWithOrphanHouseholdOccupancy: [],
+            residenceReverseIndexAvailable: false,
             crossDomainIssues: []
         };
 
-        // Household integrity
+        // Household integrity — the report now carries the
+        // household→residence reverse-index check.
         try {
-            report.householdIntegrity =
-                window.HouseholdState._diagnostics.getIntegrityReport();
+            var hReport = window.HouseholdState._diagnostics.getIntegrityReport();
+            report.householdIntegrity = hReport;
+            if (hReport && Array.isArray(hReport.householdsWithMissingResidence)) {
+                report.householdsWithMissingResidence =
+                    hReport.householdsWithMissingResidence.slice();
+            }
+            if (hReport && Array.isArray(hReport.residencesWithOrphanHouseholdOccupancy)) {
+                report.residencesWithOrphanHouseholdOccupancy =
+                    hReport.residencesWithOrphanHouseholdOccupancy.slice();
+            }
+            if (hReport && hReport.residenceReverseIndexAvailable === true) {
+                report.residenceReverseIndexAvailable = true;
+            }
         } catch (e) {
             report.householdIntegrity = {
                 ok: false,
@@ -461,7 +568,7 @@
             };
         }
 
-        // Residence integrity
+        // Residence integrity.
         try {
             report.residenceIntegrity =
                 window.ResidenceSystem._diagnostics.getIntegrityReport();
@@ -497,11 +604,11 @@
                 }
             }
         } catch (e) {
-            // Non-fatal — IndustryState may not be loaded
+            // Non-fatal — IndustryState may not be loaded.
         }
 
-        // Orphan assignment references — assignments pointing at positions
-        // that no longer exist.
+        // Orphan assignment references — assignments pointing at
+        // positions that no longer exist.
         try {
             var positions = window.masterData.data.householdPositions;
             var assignments = window.masterData.data.householdAssignments;
@@ -518,10 +625,10 @@
                 }
             }
         } catch (e) {
-            // Non-fatal
+            // Non-fatal.
         }
 
-        // Duplicate household heads
+        // Duplicate household heads.
         try {
             var households2 = window.masterData.data.households;
             for (var k = 0; k < households2.length; k++) {
@@ -540,11 +647,11 @@
                 }
             }
         } catch (e) {
-            // Non-fatal
+            // Non-fatal.
         }
 
-        // Cross-domain: characters whose householdId references a
-        // missing household.
+        // Cross-domain: characters whose householdId / household references
+        // a missing household.
         try {
             if (typeof window.getCharacters === 'function') {
                 var characters = window.getCharacters() || [];
@@ -567,7 +674,7 @@
                 }
             }
         } catch (e) {
-            // Non-fatal
+            // Non-fatal.
         }
 
         return report;
@@ -593,9 +700,23 @@
             issues.push(report.duplicateHouseholdHeads.length +
                 ' household(s) with multiple heads');
         }
+        if (report.householdsWithMissingResidence.length > 0) {
+            issues.push(report.householdsWithMissingResidence.length +
+                ' household(s) referencing missing residence');
+        }
+        if (report.residencesWithOrphanHouseholdOccupancy.length > 0) {
+            issues.push(report.residencesWithOrphanHouseholdOccupancy.length +
+                ' residence unit(s) with orphan household occupancy');
+        }
         if (report.crossDomainIssues.length > 0) {
             issues.push(report.crossDomainIssues.length +
                 ' cross-domain reference issue(s)');
+        }
+        if (!report.residenceReverseIndexAvailable
+            && report.householdsWithMissingResidence.length === 0
+            && report.residencesWithOrphanHouseholdOccupancy.length === 0) {
+            // The check couldn't run. Not an error — informational.
+            issues.push('reverse-index check unavailable (ResidenceSystem not loaded)');
         }
 
         if (issues.length > 0) {
@@ -619,6 +740,10 @@
     function _exposeNamespace(deps, hydration) {
         window.Household = {
             // Modules
+            Constants: window.HouseholdConstants,
+            Rules: window.HouseholdRules,
+            ViewModels: window.HouseholdViewModels,
+            Orchestration: window.HouseholdOrchestration,
             State: window.HouseholdState,
             Queries: window.HouseholdQueries,
             Commands: window.HouseholdCommands,
@@ -626,13 +751,15 @@
             Assignment: window.HouseholdAssignment,
             Servant: window.HouseholdServant,
             Residence: window.ResidenceSystem,
+            Modals: window.HouseholdModals || null,
 
             // Boot metadata
             bootstrappedAt: Date.now(),
             dependencies: {
                 industryCommandsPresent: deps.industryCommandsPresent,
                 industryQueriesPresent: deps.industryQueriesPresent,
-                markDataDirtyPresent: typeof window.markDataDirty === 'function'
+                markDataDirtyPresent: typeof window.markDataDirty === 'function',
+                modalsHelperPresent: typeof window.HouseholdModals !== 'undefined'
             },
             hydration: hydration,
 
@@ -676,8 +803,6 @@
         }
 
         if (_initInProgress) {
-            // Reentrancy guard — someone called init() from inside a
-            // verification callback. Return the pending state.
             return {
                 success: false,
                 code: 'INIT_IN_PROGRESS',
@@ -687,16 +812,16 @@
 
         _initInProgress = true;
         try {
-            // 1. Verify modules
+            // 1. Verify modules.
             _verifyHouseholdModules();
 
-            // 2. Verify cross-domain dependencies
+            // 2. Verify cross-domain dependencies.
             var deps = _verifyCrossDomain();
 
-            // 3. Verify canonical data exists and has correct shape
+            // 3. Verify canonical data exists and has correct shape.
             _verifyCanonical();
 
-            // 4. Hydrate
+            // 4. Hydrate.
             var hydration = _hydrate();
 
             if (hydration.household && hydration.household.success === false) {
@@ -712,11 +837,11 @@
                 );
             }
 
-            // 5. Integrity checks (warn-only)
+            // 5. Integrity checks (warn-only).
             var integrity = _runIntegrityChecks();
-            _logIntegrityReport(integrity);
+            var issues = _logIntegrityReport(integrity);
 
-            // 6. Expose namespace
+            // 6. Expose namespace.
             _exposeNamespace(deps, hydration);
             window.Household._lastIntegrityReport = integrity;
 
@@ -730,7 +855,7 @@
                         ' · markDataDirty=' +
                         (typeof window.markDataDirty === 'function'), []);
                 } catch (e) {
-                    // Non-fatal
+                    // Non-fatal.
                 }
             }
 
@@ -738,7 +863,17 @@
                 success: true,
                 dependencies: deps,
                 hydration: hydration,
-                integrityIssues: _logIntegrityReport(integrity)
+                integrityIssues: issues,
+                // Explicit counts so callers can inspect the reverse-index
+                // drift without parsing the integrity report.
+                integritySummary: {
+                    householdsWithMissingResidence:
+                        integrity.householdsWithMissingResidence.length,
+                    residencesWithOrphanHouseholdOccupancy:
+                        integrity.residencesWithOrphanHouseholdOccupancy.length,
+                    residenceReverseIndexAvailable:
+                        integrity.residenceReverseIndexAvailable
+                }
             };
         } finally {
             _initInProgress = false;
@@ -751,7 +886,6 @@
 
     function _onMasterDataUpdated() {
         if (!_initialized) {
-            // Not yet initialized — the initial auto-init will handle it.
             return;
         }
 
@@ -760,7 +894,6 @@
         if (window.Household) {
             window.Household.hydration = hydration;
 
-            // Re-run integrity checks on new data
             try {
                 var integrity = _runIntegrityChecks();
                 window.Household._lastIntegrityReport = integrity;
@@ -788,10 +921,6 @@
         module.exports = window.HouseholdBootstrap;
     }
 
-    // Auto-init if masterData is already present. This is the common case
-    // when scripts load after masterData is populated (e.g. on page load).
-    // If masterData is not present yet, the caller must call init() after
-    // the loader has populated it.
     if (window.masterData && window.masterData.data) {
         try {
             init();
@@ -807,8 +936,6 @@
         }
     }
 
-    // Re-hydrate on masterDataUpdated if already initialized. We do NOT
-    // re-verify on updates — the module set is fixed at load time.
     if (typeof window !== 'undefined' && window.addEventListener) {
         window.addEventListener('masterDataUpdated', _onMasterDataUpdated);
     }
