@@ -9,11 +9,11 @@
  *
  * It exposes the historical `StillWatersState` API and the individual
  * window.xxx getters/setters, but delegates all storage to feature modules
- * under js/core/state/.
+ * under js/core/state/ and js/<domain>/.
  *
  * Each feature module owns its own state:
  *   - CharacterState
- *   - LocationState
+ *   - LocationUIState        (was: core LocationState; see COMPATIBILITY NOTE)
  *   - MatchmakerState
  *   - CensusState
  *   - HouseholdState
@@ -21,6 +21,21 @@
  *   - RankState
  *   - NamesState
  *   - MiscState
+ *
+ * COMPATIBILITY NOTE — LocationState:
+ *   `window.LocationState` is owned by the location DOMAIN
+ *   (js/location/location-state.js) and is NOT a UI-state module. It exposes
+ *   domain indexes, hydration, and mutation primitives.
+ *
+ *   Transient location UI state (selected place, expanded nodes, filters,
+ *   view mode) is owned by `window.LocationUIState`
+ *   (js/location/location-ui-state.js). This facade reads from LocationUIState,
+ *   not LocationState.
+ *
+ *   LocationUIState exposes the historical compatibility names
+ *   (selectedPlaceId, currentPlaceId, collapsedNodes, setSelectedPlace,
+ *   hasSelectedPlace) so the facade's public surface is unchanged by this
+ *   move. The duplicate js/core/location-state.js has been deleted.
  *
  * New code should call the feature module directly:
  *   StillWatersState.selectedCharId    → CharacterState.selectedCharId
@@ -58,7 +73,7 @@
 
     var REQUIRED_MODULES = [
         'CharacterState',
-        'LocationState',
+        'LocationUIState',
         'MatchmakerState',
         'CensusState',
         'HouseholdState',
@@ -100,7 +115,7 @@
      */
     function clearAllRuntimeState() {
         window.CharacterState.reset();
-        window.LocationState.reset();
+        window.LocationUIState.reset();
         window.MatchmakerState.reset();
         window.CensusState.reset();
         window.HouseholdState.reset();
@@ -133,10 +148,12 @@
         get currentSelectedChildId() { return window.CharacterState.currentSelectedChildId; },
 
         // ===== Location =====
-        get currentPlaceId() { return window.LocationState.currentPlaceId; },
-        set currentPlaceId(v) { window.LocationState.currentPlaceId = v; },
-        get collapsedNodes() { return window.LocationState.collapsedNodes; },
-        set collapsedNodes(v) { window.LocationState.collapsedNodes = v; },
+        // Backed by LocationUIState. The names below match the historical
+        // surface; LocationUIState provides them as compatibility aliases.
+        get currentPlaceId() { return window.LocationUIState.currentPlaceId; },
+        set currentPlaceId(v) { window.LocationUIState.currentPlaceId = v; },
+        get collapsedNodes() { return window.LocationUIState.collapsedNodes; },
+        set collapsedNodes(v) { window.LocationUIState.collapsedNodes = v; },
 
         // ===== Rank =====
         get rankCollapsedGroups() { return window.RankState.rankCollapsedGroups; },
@@ -216,11 +233,11 @@
         clearAdoptionCache: function() { window.CharacterState.clearAdoptionCache(); },
 
         setSelectedCharacter: function(id) { window.CharacterState.setSelectedCharacter(id); },
-        setSelectedPlace: function(id) { window.LocationState.setSelectedPlace(id); },
+        setSelectedPlace: function(id) { window.LocationUIState.setSelectedPlace(id); },
         setSelectedHousehold: function(id) { window.HouseholdState.setSelectedHousehold(id); },
 
         hasSelectedCharacter: function() { return window.CharacterState.hasSelectedCharacter(); },
-        hasSelectedPlace: function() { return window.LocationState.hasSelectedPlace(); },
+        hasSelectedPlace: function() { return window.LocationUIState.hasSelectedPlace(); },
         hasSelectedHousehold: function() { return window.HouseholdState.hasSelectedHousehold(); }
     };
 
@@ -321,13 +338,13 @@
             function() { return window.CharacterState.selectedPartnerId; },
             function(v) { window.CharacterState.selectedPartnerId = v; }],
 
-        // --- Location ---
+        // --- Location (UI state, not domain state) ---
         ['currentPlaceId',
-            function() { return window.LocationState.currentPlaceId; },
-            function(v) { window.LocationState.currentPlaceId = v; }],
+            function() { return window.LocationUIState.currentPlaceId; },
+            function(v) { window.LocationUIState.currentPlaceId = v; }],
         ['collapsedNodes',
-            function() { return window.LocationState.collapsedNodes; },
-            function(v) { window.LocationState.collapsedNodes = v; }],
+            function() { return window.LocationUIState.collapsedNodes; },
+            function(v) { window.LocationUIState.collapsedNodes = v; }],
 
         // --- Rank ---
         ['rankCollapsedGroups',
@@ -434,10 +451,10 @@
     window.clearAllRuntimeState = clearAllRuntimeState;
     window.clearAdoptionCache = function() { window.CharacterState.clearAdoptionCache(); };
     window.setSelectedCharacter = function(id) { window.CharacterState.setSelectedCharacter(id); };
-    window.setSelectedPlace = function(id) { window.LocationState.setSelectedPlace(id); };
+    window.setSelectedPlace = function(id) { window.LocationUIState.setSelectedPlace(id); };
     window.setSelectedHousehold = function(id) { window.HouseholdState.setSelectedHousehold(id); };
     window.hasSelectedCharacter = function() { return window.CharacterState.hasSelectedCharacter(); };
-    window.hasSelectedPlace = function() { return window.LocationState.hasSelectedPlace(); };
+    window.hasSelectedPlace = function() { return window.LocationUIState.hasSelectedPlace(); };
     window.hasSelectedHousehold = function() { return window.HouseholdState.hasSelectedHousehold(); };
 
     window.clearRomanceCharacters = function() { window.MatchmakerState.clearRomanceCharacters(); };
