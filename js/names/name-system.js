@@ -41,12 +41,28 @@
  *   - fabricate fake character objects to reach a query
  *   - return hardcoded policies
  *   - return empty results to hide a missing dependency
- *   - cache, persist, or mutate anything itself
- *   - reconstruct domain facts the canonical API no longer provides
+ *   - cache or reconstruct domain facts the canonical API no longer provides
+ *
+ * PERSISTENCE CONTRACT (deliberate divergence from canonical commands):
+ *   NameCommands no longer save. Callers are expected to call
+ *   NameCommands.persist() once per successful command batch.
+ *
+ *   The legacy wrappers preserve the OLD contract: they save immediately
+ *   after a successful command. This keeps existing callers working
+ *   during the migration without requiring them to change their save
+ *   behaviour. When every caller is migrated to the canonical API, this
+ *   wrapper is deleted and the double-save concern goes away with it.
+ *
+ *   A persist failure is reported through the returned
+ *   { success: false, reason } object. This is strictly better than the
+ *   pre-refactor behaviour, where a save failure inside a command was
+ *   invisible to the caller (the command returned success regardless).
  *
  * RETURN SHAPE:
  *   Commands in this wrapper return the canonical `{ success, reason,
- *   ... }` shape, not the old `null`-on-failure shape.
+ *   ... }` shape, not the old `null`-on-failure shape. Additional fields
+ *   (change, history, revertedChange, restoredSurname, etc.) are passed
+ *   through from the canonical command result.
  *
  * DEPENDENCY POLICY:
  *   Required dependencies are checked once at load. A partial load is a
@@ -58,15 +74,24 @@
  *
  * REMOVAL PLAN:
  *   Grep for callers, definitions, and aliases. Migrate to the canonical
- *   API. Delete the wrapper.
+ *   API. Delete the wrapper. When the wrapper is gone, the double-save
+ *   concern (canonical persist + wrapper persist) is gone too.
  *
  * DEPENDENCIES (REQUIRED):
  *   - name-queries.js:  NameQueries
- *   - name-commands.js: NameCommands
+ *   - name-commands.js: NameCommands (including persist)
  *   - name-rules.js:    NameRules
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Original: thin adapters over the canonical modules; no save policy.
+ *   Current:
+ *     - _persistAfter helper added to preserve the old "saves immediately"
+ *       contract on the four legacy command wrappers.
+ *     - Persist failure is reported through the return value.
+ *     - Header documents the deliberate divergence and the removal plan.
  * =============================================================================
  */
 
@@ -90,12 +115,52 @@
                 missing.join(', ')
             );
         }
+
+        if (typeof window.NameCommands.persist !== 'function') {
+            throw new Error(
+                'name-system.js: NameCommands.persist is required. ' +
+                'Legacy wrappers call it to preserve the old save contract.'
+            );
+        }
     }
 
     _requireDependencies();
 
     // =========================================================================
-    // 1. BASE NAME ADAPTER
+    // 1. PERSISTENCE HELPER
+    // =========================================================================
+
+    /**
+     * Calls NameCommands.persist() and folds a persist failure into the
+     * canonical result shape.
+     *
+     * If `result` is already a failure, returns it unchanged — do not
+     * attempt a save after a failed command.
+     *
+     * If `result` is a success and the save fails, returns:
+     *   { success: false, reason: 'Save failed: <reason>', canonical: result }
+     * The `canonical` field carries the original success payload so a
+     * caller that wants to inspect it can.
+     *
+     * If the save succeeds, returns `result` unchanged.
+     */
+    function _persistAfter(result) {
+        if (!result || result.success !== true) return result;
+
+        var saveResult = window.NameCommands.persist();
+        if (saveResult && saveResult.success === false) {
+            return {
+                success: false,
+                reason: 'Save failed: ' + (saveResult.reason || 'unknown error'),
+                canonical: result
+            };
+        }
+
+        return result;
+    }
+
+    // =========================================================================
+    // 2. BASE NAME ADAPTER
     // =========================================================================
 
     /**
@@ -106,7 +171,7 @@
     }
 
     // =========================================================================
-    // 2. RULE APPLICATION ADAPTERS
+    // 3. RULE APPLICATION ADAPTERS
     // =========================================================================
 
     /**
@@ -173,7 +238,7 @@
     }
 
     // =========================================================================
-    // 3. NAME / SURNAME SELECTION ADAPTERS
+    // 4. NAME / SURNAME SELECTION ADAPTERS
     // =========================================================================
 
     /**
@@ -198,7 +263,7 @@
     }
 
     // =========================================================================
-    // 4. ANCESTOR ADAPTERS
+    // 5. ANCESTOR ADAPTERS
     // =========================================================================
 
     /**
@@ -226,7 +291,7 @@
     }
 
     // =========================================================================
-    // 5. SURNAME HISTORY READ ADAPTERS
+    // 6. SURNAME HISTORY READ ADAPTERS
     // =========================================================================
 
     /**
@@ -266,59 +331,69 @@
     }
 
     // =========================================================================
-    // 6. SURNAME MUTATION ADAPTERS
+    // 7. SURNAME MUTATION ADAPTERS (with persist)
     // =========================================================================
     //
-    // The old commands took a character object. The new commands take an
-    // ID and return { success, reason, ... }. These adapters preserve the
-    // old signature and pass through the canonical result shape.
+    // The old commands took a character object and saved immediately.
+    // The new commands take an ID and do not save. These adapters:
+    //   - accept the old character-object signature
+    //   - delegate to the canonical command
+    //   - call NameCommands.persist() on success (preserving the old
+    //     "saves immediately" contract)
+    //   - return the canonical result shape
+    //
+    // When this wrapper is deleted, callers must call
+    // NameCommands.persist() themselves.
 
     /**
      * @deprecated Use NameCommands.recordSurnameChange(characterId,
-     * newSurname, year, reason, options) instead.
+     * newSurname, year, reason, options) + NameCommands.persist() instead.
      * Return shape: { success, reason, change }.
      */
     function recordSurnameChange(character, newSurname, year, reason, options) {
         if (!character || typeof character.id !== 'string') {
             return { success: false, reason: 'Character is required' };
         }
-        return window.NameCommands.recordSurnameChange(
+        var result = window.NameCommands.recordSurnameChange(
             character.id,
             newSurname,
             year,
             reason,
             options
         );
+        return _persistAfter(result);
     }
 
     /**
      * @deprecated Use NameCommands.recordBirthSurname(characterId,
-     * birthSurname) instead.
+     * birthSurname) + NameCommands.persist() instead.
      * Return shape: { success, reason, history }.
      */
     function recordBirthSurname(character, birthSurname) {
         if (!character || typeof character.id !== 'string') {
             return { success: false, reason: 'Character is required' };
         }
-        return window.NameCommands.recordBirthSurname(character.id, birthSurname);
+        var result = window.NameCommands.recordBirthSurname(character.id, birthSurname);
+        return _persistAfter(result);
     }
 
     /**
      * @deprecated Use NameCommands.revertLastSurnameChange(characterId)
-     * instead.
+     * + NameCommands.persist() instead.
      * Return shape: { success, reason, revertedChange, restoredSurname }.
      */
     function revertLastSurnameChange(character) {
         if (!character || typeof character.id !== 'string') {
             return { success: false, reason: 'Character is required' };
         }
-        return window.NameCommands.revertLastSurnameChange(character.id);
+        var result = window.NameCommands.revertLastSurnameChange(character.id);
+        return _persistAfter(result);
     }
 
     /**
      * @deprecated Use NameCommands.applyMarriageSurnames(personId,
-     * spouseId, rule, year, notes) instead. `rule` is required; the
-     * wrapper does not supply a default.
+     * spouseId, rule, year, notes) + NameCommands.persist() instead.
+     * `rule` is required; the wrapper does not supply a default.
      */
     function applyMarriageSurnames(person, spouse, rule, year, notes) {
         if (!person || !spouse) {
@@ -327,25 +402,27 @@
         if (typeof person.id !== 'string' || typeof spouse.id !== 'string') {
             return { success: false, reason: 'Both person and spouse must have valid IDs' };
         }
-        return window.NameCommands.applyMarriageSurnames(
+        var result = window.NameCommands.applyMarriageSurnames(
             person.id,
             spouse.id,
             rule,
             year,
             notes
         );
+        return _persistAfter(result);
     }
 
     /**
      * @deprecated Use NameRules.calculateMarriageSurnames(person, spouse,
-     * rule) instead. This is policy, not orchestration.
+     * rule) instead. This is policy, not orchestration. No persist needed
+     * — this function does not mutate.
      */
     function calculateMarriageSurnames(person, spouse, rule) {
         return window.NameRules.calculateMarriageSurnames(person, spouse, rule);
     }
 
     // =========================================================================
-    // 7. REMOVED FUNCTIONS
+    // 8. REMOVED FUNCTIONS
     // =========================================================================
     //
     // These functions existed in the old wrapper but have no canonical
@@ -442,7 +519,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     // Base name
@@ -470,7 +547,7 @@
     window.getCurrentSurname = getCurrentSurname;
     window.getSurnameChanges = getSurnameChanges;
 
-    // Surname mutations
+    // Surname mutations (preserve the old "saves immediately" contract)
     window.recordSurnameChange = recordSurnameChange;
     window.recordBirthSurname = recordBirthSurname;
     window.revertLastSurnameChange = revertLastSurnameChange;
