@@ -9,7 +9,7 @@
  * lifespan estimation for the character domain.
  *
  * SCOPE:
- *   - Advance simulation time by N years
+ *   - Advance mortality evaluation by N years
  *   - Evaluate mortality per year per character
  *   - Choose a death cause (from a caller-supplied selector, or the
  *     MortalityRules catalogue)
@@ -36,23 +36,36 @@
  *   - Succession / inheritance         -> future succession domain
  *   - Relationship termination logic   -> relationship-integration.js
  *   - Rank deprecation logic           -> rank-issues.js
+ *   - CURRENT YEAR OWNERSHIP           -> time.js (getCurrentYear)
+ *   - CLOCK ADVANCEMENT                -> the caller (see CLOCK below)
  *
- * CONTRACT:
- *   - One year of progression is processed per iteration. A multi-year
- *     advance evaluates each year in sequence, using that year's age
- *     and that year's rate.
- *   - Randomness is injected. Callers supply `options.random` (returns
- *     [0, 1)). When absent, Math.random is used. Rules are deterministic.
- *   - The death mutation goes through CharacterCommands.markDeceased
- *     exactly once per death, with the SIMULATED year passed as
- *     referenceYear. This is required: markDeceased validates
- *     deathYear <= referenceYear, and during a multi-year advance the
- *     simulated year is ahead of wall-clock current year. Passing the
- *     wall-clock year would reject every death after the first
- *     simulated year.
- *   - The death cause is a stable id. Detail text is passed separately.
- *   - Life stage helpers accept either a character projection or a
- *     numeric age. They never reach into state for a missing birth year.
+ * CLOCK CONTRACT
+ * --------------
+ *   This module does NOT advance the simulation clock. It evaluates
+ *   mortality against explicit years. Two functions take an explicit
+ *   "now" year:
+ *
+ *     advanceMortality(yearsAdvanced, options)
+ *       options.startYear   required when deterministic simulation is
+ *                           desired; defaults to getCurrentYear() for
+ *                           convenience.
+ *       result.finalYear    the last simulated year.
+ *
+ *     killCharacter(characterId, deathData)
+ *       deathData.deathYear used as both the death year AND the reference
+ *                           year for validation. Falls back to
+ *                           getCurrentYear() when omitted.
+ *
+ *   After advanceMortality returns, if the caller wants the clock to
+ *   reflect the passage of time, the caller sets
+ *   masterData.data.currentYear = result.finalYear and persists. This
+ *   module deliberately does not touch masterData.data.currentYear —
+ *   time progression is the caller's concern (a UI "Advance Time"
+ *   button, a simulation driver, or a bootstrap). The prior version
+ *   silently simulated mortality against future years without moving
+ *   the clock, so economy processing in the same advance ticked against
+ *   the old year for every iteration. That is fixed by making the
+ *   clock-explicit contract visible here.
  *
  * CROSS-DOMAIN DEATH DISPATCH:
  *   After CharacterCommands.markDeceased succeeds, three subsystems are
@@ -71,27 +84,20 @@
  *   NAMING:
  *     The relationship domain's cross-domain hook is exported by
  *     js/relationships/relationship-integration.js under the namespace
- *     "RelationshipIntegrations" (PLURAL). This is verified at line 505
- *     of that file: `window.RelationshipIntegrations = { ... }`.
- *
- *     Earlier revisions of this file referenced the singular form,
- *     which does not exist in the tree and silently skipped relationship
- *     cleanup on every death. The plural form is correct.
+ *     "RelationshipIntegrations" (PLURAL). Earlier revisions referenced
+ *     the singular form, which does not exist and silently skipped
+ *     relationship cleanup on every death.
  *
  *   The dispatch is centralised in _dispatchDeathEffects, which is
  *   called from both _die (simulation path) and killCharacter (command
- *   path). This ensures the two paths cannot drift. In particular,
- *   children-commands.js routes maternal death through killCharacter,
- *   and therefore through the same dispatch — family edges, rank
- *   assignments, and relationships are all cleaned up consistently
- *   regardless of how the death was triggered.
+ *   path). This ensures the two paths cannot drift.
  *
  * AGE CLASSIFICATION:
- *   LIFE_STAGES comes from constants.js. It maps stage keys to
- *   { min, max, name, group }. AGE_GROUPS is an ordered array of band
- *   keys such as '0-10', '11-20', ..., '91+'. Both are read from the
- *   global scope at call time; if either is missing, the corresponding
- *   helper returns null rather than fabricating a classification.
+ *   LIFE_STAGES comes from constants/age-constants.js. It maps stage
+ *   keys to { min, max, name, group }. AGE_GROUPS is an ordered array
+ *   of band keys such as '0-10', '11-20', ..., '91+'. Both are read
+ *   from global scope at call time; if either is missing, the
+ *   corresponding helper returns null rather than fabricating.
  *
  * LIFESPAN ESTIMATION:
  *   predictLifespan computes a deterministic estimate from the
@@ -100,7 +106,7 @@
  *   the estimate is a policy-light heuristic. If you want a
  *   mortality-model-driven estimate, iterate simulateRemainingYears.
  *
- * DEPENDENCIES (REQUIRED):
+ * DEPENDENCIES (REQUIRED, verified at load):
  *   - character-state.js:        CharacterState
  *   - character-commands.js:     CharacterCommands (markDeceased)
  *   - mortality-rules.js:        MortalityRules
@@ -121,6 +127,10 @@
 (function () {
     'use strict';
 
+    // =========================================================================
+    // 0. HARD DEPENDENCY CHECKS
+    // =========================================================================
+
     if (!window.CharacterState) {
         throw new Error(
             'character-lifecycle.js: character-state.js must load first.'
@@ -139,6 +149,11 @@
     if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
             'character-lifecycle.js: time.js (getCurrentYear) must load first.'
+        );
+    }
+    if (typeof window.isValidYear !== 'function') {
+        throw new Error(
+            'character-lifecycle.js: time.js (isValidYear) must load first.'
         );
     }
 
@@ -167,16 +182,34 @@
     }
 
     function _isValidAge(v) {
-        return typeof v === 'number'
-            && Number.isFinite(v)
-            && v >= 0;
+        return typeof v === 'number' && Number.isFinite(v) && v >= 0;
     }
 
+    function _isValidYear(v) {
+        return window.isValidYear(v) === true;
+    }
+
+    /**
+     * Returns the random function to use.
+     *
+     * Precedence:
+     *   1. options.random (caller-supplied)
+     *   2. window.random (from randomness.js)
+     *
+     * Falling back to Math.random would silently break seeded simulations,
+     * so this function throws if neither source is available.
+     */
     function _getRandomFn(options) {
         if (options && typeof options.random === 'function') {
             return options.random;
         }
-        return Math.random;
+        if (typeof window.random === 'function') {
+            return window.random;
+        }
+        throw new Error(
+            'character-lifecycle.js: no random source available. ' +
+            'Pass options.random, or load randomness.js.'
+        );
     }
 
     function _logEvent(category, type, message, subjects) {
@@ -235,7 +268,7 @@
 
     function _notifyCrossDomainDeath(characterId, year) {
         if (!_hasId(characterId)) return;
-        if (typeof year !== 'number' || !Number.isFinite(year)) {
+        if (typeof year !== 'number' || !isFinite(year)) {
             year = window.getCurrentYear();
         }
 
@@ -244,22 +277,36 @@
         // relationship or rank state.
         if (window.FamilyCommands
             && typeof window.FamilyCommands.handleCharacterDeath === 'function') {
-            window.FamilyCommands.handleCharacterDeath(characterId, year);
+            try {
+                window.FamilyCommands.handleCharacterDeath(characterId, year);
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'character-lifecycle.js: FamilyCommands.handleCharacterDeath threw',
+                        e
+                    );
+                }
+            }
         }
 
         // Relationship: end every active edge. Committed relationships
         // become widowed; others end. Notified before rank because rank
         // inheritance sources may resolve through a spouse who has just
         // died.
-        //
-        // Namespace is RelationshipIntegrations (PLURAL). The module is
-        // js/relationships/relationship-integration.js; its exported
-        // namespace at line 505 is `window.RelationshipIntegrations`.
         if (window.RelationshipIntegrations
             && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
-            window.RelationshipIntegrations.handleCharacterDeath(characterId, {
-                deathYear: year
-            });
+            try {
+                window.RelationshipIntegrations.handleCharacterDeath(characterId, {
+                    deathYear: year
+                });
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'character-lifecycle.js: RelationshipIntegrations.handleCharacterDeath threw',
+                        e
+                    );
+                }
+            }
         }
 
         // Rank: deprecate any rank assignment with deprecateOnDeath, then
@@ -267,24 +314,32 @@
         // freshest relationship state.
         if (window.RankIssues
             && typeof window.RankIssues.handleCharacterDeath === 'function') {
-            window.RankIssues.handleCharacterDeath(characterId, {
-                deathYear: year
-            });
+            try {
+                window.RankIssues.handleCharacterDeath(characterId, {
+                    deathYear: year
+                });
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'character-lifecycle.js: RankIssues.handleCharacterDeath threw',
+                        e
+                    );
+                }
+            }
         }
     }
 
     /**
      * Logs the death event and dispatches cross-domain consequences.
      * Shared by the simulation path (_die) and the command path
-     * (killCharacter). Keeping this in one place is what guarantees the
-     * two paths cannot drift.
+     * (killCharacter).
      *
      * The death itself must already have been written via markDeceased
      * before this is called.
      */
     function _dispatchDeathEffects(character, year, cause, causeDetail) {
         if (!character) return;
-        if (typeof year !== 'number' || !Number.isFinite(year)) {
+        if (typeof year !== 'number' || !isFinite(year)) {
             year = window.getCurrentYear();
         }
 
@@ -332,10 +387,11 @@
             var key = keys[i];
             var stage = stages[key];
             if (!stage || typeof stage !== 'object') continue;
-            if (typeof stage.min !== 'number' || typeof stage.max !== 'number') {
-                continue;
-            }
-            if (age >= stage.min && age <= stage.max) {
+            if (typeof stage.min !== 'number') continue;
+            // ANCIENT has max: null — treat as open-ended.
+            var max = stage.max === null ? Infinity : stage.max;
+            if (typeof max !== 'number') continue;
+            if (age >= stage.min && age <= max) {
                 return {
                     key: key,
                     name: stage.name || key,
@@ -369,13 +425,14 @@
             if (typeof group !== 'string') continue;
             var parts = group.split('-');
             if (parts.length !== 2) continue;
+
             var min = parseInt(parts[0], 10);
             var maxPart = parts[1];
             var max = maxPart === '+' ? Infinity : parseInt(maxPart, 10);
-            if (!Number.isFinite(min) && min !== 0) {
-                if (isNaN(min)) continue;
-            }
+
+            if (isNaN(min)) continue;
             if (maxPart !== '+' && isNaN(max)) continue;
+
             if (age >= min && age <= max) return group;
         }
         return null;
@@ -476,7 +533,7 @@
         if (typeof options.getMortalityRate === 'function') {
             var custom = options.getMortalityRate(character, age, year);
             if (typeof custom === 'number'
-                && Number.isFinite(custom)
+                && isFinite(custom)
                 && custom >= 0
                 && custom <= 1) {
                 return custom;
@@ -569,23 +626,42 @@
     }
 
     // =========================================================================
-    // 9. TIME PROGRESSION
+    // 9. TIME PROGRESSION (MORTALITY EVALUATION)
     // =========================================================================
+    //
+    // This is a MORTALITY evaluator, not a clock. It does not mutate
+    // masterData.data.currentYear. It evaluates N future years, using
+    // those years' ages and rates, and returns the final simulated year.
+    //
+    // The caller decides whether to advance the world clock. See the
+    // CLOCK CONTRACT in the module header for the rationale.
 
     /**
-     * Advances mortality by N years, one year at a time.
+     * Evaluates mortality for N years ahead of startYear.
      *
      * options:
      * {
+     *   startYear:       number (required if deterministic simulation)
+     *                    Defaults to getCurrentYear().
      *   getMortalityRate(character, age, year)  ->  number | null
      *   chooseDeathCause(character, age, year)  ->  { deathCause, deathCauseDetail? }
      *   random()                                ->  number in [0,1)
      *   maxDeaths                               ->  number | undefined
      * }
+     *
+     * @returns {{
+     *   success: boolean,
+     *   reason?: string,
+     *   startYear?: number,
+     *   finalYear?: number,
+     *   yearsAdvanced?: number,
+     *   deaths?: Array,
+     *   deathCount?: number
+     * }}
      */
     function advanceMortality(yearsAdvanced, options) {
         if (typeof yearsAdvanced !== 'number'
-            || !Number.isFinite(yearsAdvanced)
+            || !isFinite(yearsAdvanced)
             || !Number.isInteger(yearsAdvanced)
             || yearsAdvanced < 0) {
             return {
@@ -598,14 +674,32 @@
             return { success: false, reason: 'options must be a plain object.' };
         }
 
-        var currentYear = window.getCurrentYear();
+        // Resolve start year: explicit option first, else current year.
+        var startYear;
+        if (options.startYear !== undefined && options.startYear !== null) {
+            if (!_isValidYear(options.startYear)) {
+                return {
+                    success: false,
+                    reason: 'options.startYear must be a valid world year.'
+                };
+            }
+            startYear = options.startYear;
+        } else {
+            startYear = window.getCurrentYear();
+        }
+
         var deaths = [];
         var maxDeaths = typeof options.maxDeaths === 'number'
             ? options.maxDeaths
             : Infinity;
 
+        var finalYear = startYear;
+
         for (var offset = 1; offset <= yearsAdvanced; offset++) {
-            var year = currentYear + offset;
+            var year = startYear + offset;
+            if (!_isValidYear(year)) break;
+
+            finalYear = year;
 
             var living = CS.getLivingCharacters();
             for (var i = 0; i < living.length; i++) {
@@ -633,6 +727,8 @@
 
         return {
             success: true,
+            startYear: startYear,
+            finalYear: finalYear,
             yearsAdvanced: yearsAdvanced,
             deaths: deaths,
             deathCount: deaths.length
