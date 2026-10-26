@@ -1,16 +1,82 @@
 /**
  * =============================================================================
- * SELECTOR BASE - Shared utilities for selectors (js/selectors/selector-base.js)
+ * STILL WATERS - SELECTOR BASE HELPERS (js/selectors/selector-base.js)
  * =============================================================================
- * 
- * This file provides shared utilities for building selector modals.
- * 
- * DEPENDENCIES:
- *   - formatting.js (core)
- *   - icons.js (core)
- *   - modals-core.js (core)
- *   - QueryHelpers (core)
- * 
+ *
+ * LOCATION: js/selectors/selector-base.js
+ *
+ * PURPOSE
+ * -------
+ * Shared helpers for the character / household / residence selector
+ * modals. Provides:
+ *
+ *   - Filter defaults and normalisation for selector filterConfig
+ *   - Character match predicates (gender, status, age, location)
+ *   - Relationship predicates (isBloodRelativeBasic, isSpouseBasic)
+ *   - Display helpers (displayName, fallback initials)
+ *
+ * WHAT THIS MODULE IS NOT
+ * -----------------------
+ *   - Not the selector modal itself. The modal files
+ *     (modals-char-selector.js, modals-household-selector.js) use these
+ *     helpers to build their own filter UI and match predicates.
+ *   - Not domain policy. Family semantics live in family-rules.js.
+ *     Relationship semantics live in the relationship domain.
+ *   - Not a mutation boundary. Everything here is a read.
+ *
+ * RELATIONSHIP PREDICATES (REVISED)
+ * ---------------------------------
+ *   The on-disk version's `isBloodRelativeBasic` and `isSpouseBasic`
+ *   read `char.motherId`, `char.fatherId`, and `char.relationships` —
+ *   all dead fields. The character record no longer carries any of
+ *   them:
+ *
+ *     - Parentage lives in `parentChildEdges` (FamilyState).
+ *     - Spousal / romantic links live in the relationship domain.
+ *
+ *   So both predicates returned `false` for every pair on any dataset
+ *   created with the current factory. The behaviour was silently wrong:
+ *   selector UIs that filtered out blood relatives or spouses
+ *   (e.g., the matchmaker's "exclude relatives" filter) silently stopped
+ *   filtering.
+ *
+ *   This rewrite delegates:
+ *
+ *     isBloodRelativeBasic(aId, bId)
+ *       → FamilyQueries.isBloodRelated(aId, bId)
+ *       Falls back to `false` when FamilyQueries isn't loaded. Family
+ *       is a required dependency in the current tree; the fallback
+ *       exists so this module can be loaded and tested before
+ *       family-queries.js.
+ *
+ *     isSpouseBasic(aId, bId)
+ *       → RelationshipQueries.getRelationshipBetween(aId, bId)
+ *         filtered to `type === 'marriage' && status === 'ongoing'`.
+ *       Returns `false` when the relationship domain isn't loaded. Also
+ *       returns `false` when the two characters have no relationship
+ *       at all — the common case in selectors.
+ *
+ *   Both predicates keep their "Basic" suffix: they are one-hop checks
+ *   used inside list filters. `isBloodRelativeBasic` is one-hop in the
+ *   sense that it delegates to `FamilyQueries.isBloodRelated`, which
+ *   itself does bounded traversal via `FamilyRules.classifyKinship`.
+ *   Neither predicate is a "deep kinship" check — see
+ *   `FamilyQueries.classifyKinship` for that.
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - None. Every dependency is checked at call time so this module
+ *     can load first in the selector block.
+ *
+ * DEPENDENCIES (checked at call time):
+ *   - accessors.js:        getCharacterById, getPlaceById, getCharacters
+ *   - query-helpers.js:    (not used here — kept out of the dependency graph)
+ *   - family-queries.js:   isBloodRelated (for isBloodRelativeBasic)
+ *   - relationship domain: getRelationshipBetween (for isSpouseBasic)
+ *   - time.js:             getCurrentYearSafe (for age display and filters)
+ *   - formatting.js:       (not used here — display strings are plain)
+ *
+ * ICON POLICY: No emojis. No icons.
+ *
  * =============================================================================
  */
 
@@ -18,281 +84,420 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS - Core only
+    // 0. LOAD-TIME PRECONDITION
     // =========================================================================
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error(
+            'selector-base.js: accessors.js must load first ' +
+            '(getCharacterById missing).'
+        );
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '';
+    // =========================================================================
+    // 1. HELPERS
+    // =========================================================================
+
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
-    function _getIconSafe(name) {
-        var icon = _getIcon(name);
-        return icon || '';
+    function _isMissing(v) {
+        return v === undefined || v === null;
     }
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
+    function _currentYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
         }
         return null;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
+    function _characterAge(character) {
+        if (!character) return null;
+        if (typeof character.birthYear !== 'number') return null;
+
+        if (character.isDeceased === true
+            && typeof character.deathYear === 'number') {
+            return character.deathYear - character.birthYear;
         }
+
+        var year = _currentYear();
+        if (year === null) return null;
+        var age = year - character.birthYear;
+        return age >= 0 ? age : null;
     }
 
-    function _showToast(message, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        }
-    }
+    // =========================================================================
+    // 2. FILTER DEFAULTS AND NORMALISATION
+    // =========================================================================
 
-    function _debounce(fn, delay) {
-        var timeoutId;
-        return function() {
-            var args = arguments;
-            var context = this;
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(function() {
-                fn.apply(context, args);
-            }, delay);
+    /**
+     * Default filterConfig for selector modals. Every selector gets the
+     * same shape; each modal decides which fields to actually render.
+     *
+     *   - gender:    'any' | 'male' | 'female' | 'unknown'
+     *   - status:    'any' | 'living' | 'deceased'
+     *   - minAge:    integer or null
+     *   - maxAge:    integer or null
+     *   - locationId: string id or null (null = any location)
+     *   - relationshipFilter: 'any' | 'exclude_blood_relative'
+     *                         | 'exclude_spouse'
+     *                         | 'exclude_blood_relative_and_spouse'
+     *   - excludeIds: array of ids to omit from results (e.g. the anchor
+     *                 character of a matchmaker, or a currently selected
+     *                 entity)
+     *   - showDeceased: boolean (when true, `status` filter is bypassed
+     *                   for display — the caller wants deceased shown)
+     */
+    function getDefaultFilterConfig() {
+        return {
+            gender: 'any',
+            status: 'any',
+            minAge: null,
+            maxAge: null,
+            locationId: null,
+            relationshipFilter: 'any',
+            excludeIds: [],
+            showDeceased: false
         };
     }
 
-    // =========================================================================
-    // 2. GENDER HELPERS
-    // =========================================================================
-
-    function getGenderSymbol(gender) {
-        if (gender === 'male') return '♂';
-        if (gender === 'female') return '♀';
-        return '⚥';
-    }
-
-    function getGenderLabel(gender) {
-        if (gender === 'male') return 'Male';
-        if (gender === 'female') return 'Female';
-        return 'Unknown';
-    }
-
-    // =========================================================================
-    // 3. RELATIONSHIP HELPERS - Core only (no system dependencies)
-    // =========================================================================
+    var _VALID_GENDERS = ['any', 'male', 'female', 'unknown'];
+    var _VALID_STATUS = ['any', 'living', 'deceased'];
+    var _VALID_RELATIONSHIP_FILTERS = [
+        'any',
+        'exclude_blood_relative',
+        'exclude_spouse',
+        'exclude_blood_relative_and_spouse'
+    ];
 
     /**
-     * Checks if two characters are blood relatives using ONLY character data
-     * This is a core-level query - NO relationship system dependency
+     * Merges a caller-supplied filterConfig over the default config,
+     * validating enum fields. Unknown enum values are treated as the
+     * default (with a console warning). Unknown keys are preserved so
+     * caller-supplied extensions don't get silently dropped.
      */
-    function isBloodRelativeBasic(charId1, charId2) {
-        if (!charId1 || !charId2 || charId1 === charId2) return false;
-
-        var char1 = typeof window.getCharacterById === 'function' ? window.getCharacterById(charId1) : null;
-        var char2 = typeof window.getCharacterById === 'function' ? window.getCharacterById(charId2) : null;
-        if (!char1 || !char2) return false;
-
-        // Direct parent-child
-        if (char1.motherId === charId2 || char1.fatherId === charId2) return true;
-        if (char2.motherId === charId1 || char2.fatherId === charId1) return true;
-
-        // Siblings (share a parent)
-        if (char1.motherId && char2.motherId && char1.motherId === char2.motherId) return true;
-        if (char1.fatherId && char2.fatherId && char1.fatherId === char2.fatherId) return true;
-
-        // Grandparent-grandchild
-        if (char1.motherId) {
-            var mother = typeof window.getCharacterById === 'function' ? window.getCharacterById(char1.motherId) : null;
-            if (mother && (mother.motherId === charId2 || mother.fatherId === charId2)) return true;
-        }
-        if (char1.fatherId) {
-            var father = typeof window.getCharacterById === 'function' ? window.getCharacterById(char1.fatherId) : null;
-            if (father && (father.motherId === charId2 || father.fatherId === charId2)) return true;
+    function normalizeFilterConfig(config) {
+        var defaults = getDefaultFilterConfig();
+        if (_isMissing(config) || typeof config !== 'object' || Array.isArray(config)) {
+            return defaults;
         }
 
-        return false;
-    }
+        var out = {};
+        for (var key in defaults) {
+            if (!Object.prototype.hasOwnProperty.call(defaults, key)) continue;
+            out[key] = defaults[key];
+        }
+        for (var k2 in config) {
+            if (!Object.prototype.hasOwnProperty.call(config, k2)) continue;
+            out[k2] = config[k2];
+        }
 
-    /**
-     * Checks if two characters are spouses using ONLY character data
-     * This is a core-level query - NO relationship system dependency
-     */
-    function isSpouseBasic(charId1, charId2) {
-        if (!charId1 || !charId2 || charId1 === charId2) return false;
-
-        var char1 = typeof window.getCharacterById === 'function' ? window.getCharacterById(charId1) : null;
-        if (!char1 || !char1.relationships) return false;
-
-        for (var i = 0; i < char1.relationships.length; i++) {
-            var rel = char1.relationships[i];
-            var partnerId = rel.partnerId || rel.participantB || (rel.participantA === charId1 ? rel.participantB : rel.participantA);
-            
-            if (partnerId === charId2) {
-                var relType = rel.type || (rel.details && rel.details.type);
-                if (relType === 'committed' || relType === 'marriage' || relType === 'romance') {
-                    return true;
-                }
+        if (_VALID_GENDERS.indexOf(out.gender) === -1) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'selector-base.js: invalid gender filter "' + out.gender +
+                    '"; falling back to "any".'
+                );
             }
+            out.gender = 'any';
         }
-
-        return false;
-    }
-
-    // =========================================================================
-    // 4. SELECTOR BASE CLASS
-    // =========================================================================
-
-    function SelectorBase(options) {
-        this.options = options || {};
-        this.state = {
-            isOpen: false,
-            modalId: null,
-            onSelect: options.onSelect || function() {},
-            onCancel: options.onCancel || function() {},
-            filters: options.filters || {},
-            results: []
-        };
-        this._listenerCleanup = [];
-    }
-
-    /**
-     * Escapes HTML for safe rendering
-     */
-    SelectorBase.prototype.escapeHtml = function(str) {
-        return _escapeHtml(str);
-    };
-
-    /**
-     * Gets an icon
-     */
-    SelectorBase.prototype.getIcon = function(name) {
-        return _getIconSafe(name);
-    };
-
-    /**
-     * Gets gender symbol
-     */
-    SelectorBase.prototype.getGenderSymbol = function(gender) {
-        return getGenderSymbol(gender);
-    };
-
-    /**
-     * Checks if two characters are blood relatives
-     */
-    SelectorBase.prototype.isBloodRelative = function(id1, id2) {
-        return isBloodRelativeBasic(id1, id2);
-    };
-
-    /**
-     * Checks if two characters are spouses
-     */
-    SelectorBase.prototype.isSpouse = function(id1, id2) {
-        return isSpouseBasic(id1, id2);
-    };
-
-    /**
-     * Opens a modal with the given content
-     */
-    SelectorBase.prototype.openModal = function(title, content, confirmText, onConfirm) {
-        var self = this;
-        var modal = _openModal({
-            title: title,
-            content: content,
-            confirmText: confirmText || 'Cancel',
-            cancelText: '',
-            showConfirm: true,
-            onConfirm: function() {
-                self.state.isOpen = false;
-                if (self.state.onCancel) {
-                    self.state.onCancel();
-                }
-                if (onConfirm) onConfirm();
+        if (_VALID_STATUS.indexOf(out.status) === -1) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'selector-base.js: invalid status filter "' + out.status +
+                    '"; falling back to "any".'
+                );
             }
-        });
-        this.state.modalId = modal ? modal.id : null;
-        this.state.isOpen = true;
-        return modal;
-    };
-
-    /**
-     * Closes the selector
-     */
-    SelectorBase.prototype.close = function() {
-        this.state.isOpen = false;
-        this._cleanup();
-        _closeTopModal();
-    };
-
-    /**
-     * Registers a listener for cleanup
-     */
-    SelectorBase.prototype._registerListener = function(element, event, handler) {
-        element.addEventListener(event, handler);
-        this._listenerCleanup.push(function() {
-            element.removeEventListener(event, handler);
-        });
-    };
-
-    /**
-     * Cleans up all registered event listeners
-     */
-    SelectorBase.prototype._cleanup = function() {
-        for (var i = 0; i < this._listenerCleanup.length; i++) {
-            try {
-                this._listenerCleanup[i]();
-            } catch (e) {}
+            out.status = 'any';
         }
-        this._listenerCleanup = [];
-    };
+        if (_VALID_RELATIONSHIP_FILTERS.indexOf(out.relationshipFilter) === -1) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'selector-base.js: invalid relationshipFilter "' +
+                    out.relationshipFilter + '"; falling back to "any".'
+                );
+            }
+            out.relationshipFilter = 'any';
+        }
 
-    /**
-     * Debounce helper
-     */
-    SelectorBase.prototype.debounce = function(fn, delay) {
-        return _debounce(fn, delay || 300);
-    };
+        if (out.minAge !== null && typeof out.minAge !== 'number') out.minAge = null;
+        if (out.maxAge !== null && typeof out.maxAge !== 'number') out.maxAge = null;
 
-    /**
-     * Show toast message
-     */
-    SelectorBase.prototype.showToast = function(message, type) {
-        _showToast(message, type || 'info');
-    };
+        if (!Array.isArray(out.excludeIds)) out.excludeIds = [];
+
+        if (out.locationId !== null && typeof out.locationId !== 'string') {
+            out.locationId = null;
+        }
+
+        return out;
+    }
 
     // =========================================================================
-    // 5. EXPORTS
+    // 3. CHARACTER MATCH PREDICATES
+    // =========================================================================
+    //
+    // Predicates are pure: (character, config) → boolean. They never
+    // mutate and never touch state. The config is the normalized form
+    // from normalizeFilterConfig, not the raw caller input.
+
+    function matchGender(character, config) {
+        if (!character) return false;
+        if (!config || config.gender === 'any') return true;
+        if (config.gender === 'unknown') {
+            return character.gender !== 'male' && character.gender !== 'female';
+        }
+        return character.gender === config.gender;
+    }
+
+    function matchStatus(character, config) {
+        if (!character) return false;
+        if (!config) return true;
+        if (config.showDeceased === true) return true;
+        var isDeceased = character.isDeceased === true;
+        if (config.status === 'living') return !isDeceased;
+        if (config.status === 'deceased') return isDeceased;
+        return true;
+    }
+
+    function matchAge(character, config) {
+        if (!character) return false;
+        if (!config) return true;
+        var hasMin = typeof config.minAge === 'number';
+        var hasMax = typeof config.maxAge === 'number';
+        if (!hasMin && !hasMax) return true;
+        var age = _characterAge(character);
+        if (age === null) return false;
+        if (hasMin && age < config.minAge) return false;
+        if (hasMax && age > config.maxAge) return false;
+        return true;
+    }
+
+    function matchLocation(character, config) {
+        if (!character) return false;
+        if (!config || !_hasId(config.locationId)) return true;
+        if (!_hasId(character.currentLocationId)) return false;
+        return character.currentLocationId === config.locationId;
+    }
+
+    function matchExcludeIds(character, config) {
+        if (!character) return false;
+        if (!config || !Array.isArray(config.excludeIds)) return true;
+        if (config.excludeIds.length === 0) return true;
+        if (!_hasId(character.id)) return true;
+        return config.excludeIds.indexOf(character.id) === -1;
+    }
+
+    // =========================================================================
+    // 4. RELATIONSHIP PREDICATES (REVISED)
     // =========================================================================
 
-    window.SelectorBase = SelectorBase;
-    window._SelectorBaseHelpers = {
-        escapeHtml: _escapeHtml,
-        getIcon: _getIconSafe,
-        getGenderSymbol: getGenderSymbol,
-        getGenderLabel: getGenderLabel,
+    /**
+     * True if the two characters share a biological ancestor at any
+     * bounded depth, or are directly parent/child.
+     *
+     * Delegates to FamilyQueries.isBloodRelated. The predicate is a
+     * filter helper, so it fails closed: if FamilyQueries isn't loaded,
+     * it returns `false` (i.e., "cannot confirm blood relation"). That
+     * means a "exclude blood relatives" filter would fall through and
+     * show the candidate, which is a defensive default (the user sees
+     * more options rather than fewer).
+     *
+     * @param {string} aId
+     * @param {string} bId
+     * @returns {boolean}
+     */
+    function isBloodRelativeBasic(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        if (aId === bId) return false;
+        if (typeof window.FamilyQueries === 'undefined'
+            || typeof window.FamilyQueries.isBloodRelated !== 'function') {
+            return false;
+        }
+        try {
+            return window.FamilyQueries.isBloodRelated(aId, bId) === true;
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'selector-base.js: FamilyQueries.isBloodRelated threw', e
+                );
+            }
+            return false;
+        }
+    }
+
+    /**
+     * True if the two characters have an ongoing marriage relationship.
+     *
+     * Delegates to RelationshipQueries.getRelationshipBetween. The
+     * relationship domain is optional in the current tree (per
+     * character-system.js, the relationship rebuild is partial), so this
+     * fails closed: if the domain isn't loaded, it returns `false`.
+     *
+     * "Spouse" here means specifically `type === 'marriage' &&
+     * status === 'ongoing'`. It does not cover betrothal, engagement,
+     * concubinage, or romance. A caller that needs a broader "romantically
+     * linked" predicate should use the relationship domain directly.
+     *
+     * @param {string} aId
+     * @param {string} bId
+     * @returns {boolean}
+     */
+    function isSpouseBasic(aId, bId) {
+        if (!_hasId(aId) || !_hasId(bId)) return false;
+        if (aId === bId) return false;
+        if (typeof window.getRelationshipBetween !== 'function') return false;
+
+        var rel = null;
+        try {
+            rel = window.getRelationshipBetween(aId, bId);
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'selector-base.js: getRelationshipBetween threw', e
+                );
+            }
+            return false;
+        }
+        if (!rel) return false;
+        return rel.type === 'marriage' && rel.status === 'ongoing';
+    }
+
+    /**
+     * Applies the relationshipFilter from config to a candidate.
+     *
+     *   'any'                                 → true
+     *   'exclude_blood_relative'              → !isBloodRelativeBasic
+     *   'exclude_spouse'                      → !isSpouseBasic
+     *   'exclude_blood_relative_and_spouse'   → both false
+     *
+     * @param {string} anchorId   the "subject" of the filter (e.g., the
+     *                            matchmaker's anchor character)
+     * @param {string} candidateId
+     * @param {Object} config
+     * @returns {boolean}
+     */
+    function matchRelationship(anchorId, candidateId, config) {
+        if (!config || config.relationshipFilter === 'any') return true;
+        if (!_hasId(anchorId) || !_hasId(candidateId)) return true;
+        if (anchorId === candidateId) return false;
+
+        var filter = config.relationshipFilter;
+        if (filter === 'exclude_blood_relative') {
+            return !isBloodRelativeBasic(anchorId, candidateId);
+        }
+        if (filter === 'exclude_spouse') {
+            return !isSpouseBasic(anchorId, candidateId);
+        }
+        if (filter === 'exclude_blood_relative_and_spouse') {
+            return !isBloodRelativeBasic(anchorId, candidateId)
+                && !isSpouseBasic(anchorId, candidateId);
+        }
+        return true;
+    }
+
+    // =========================================================================
+    // 5. COMPOSITE MATCH
+    // =========================================================================
+
+    /**
+     * True if a character passes every configured filter.
+     *
+     * @param {Object} character
+     * @param {Object} config     normalized config
+     * @param {string} [anchorId] the subject of relationship filters
+     *                            (optional; only needed when
+     *                            config.relationshipFilter !== 'any')
+     * @returns {boolean}
+     */
+    function matchesCharacter(character, config, anchorId) {
+        if (!character) return false;
+        if (!matchExcludeIds(character, config)) return false;
+        if (!matchGender(character, config)) return false;
+        if (!matchStatus(character, config)) return false;
+        if (!matchAge(character, config)) return false;
+        if (!matchLocation(character, config)) return false;
+        if (_hasId(anchorId) && !matchRelationship(anchorId, character.id, config)) {
+            return false;
+        }
+        return true;
+    }
+
+    // =========================================================================
+    // 6. DISPLAY HELPERS
+    // =========================================================================
+
+    function getCharacterDisplayName(character) {
+        if (!character) return '';
+        var name = typeof character.name === 'string' ? character.name : '';
+        var surname = typeof character.surname === 'string' ? character.surname : '';
+        var full = (name + ' ' + surname).trim();
+        return full.length > 0 ? full : '';
+    }
+
+    function getCharacterInitials(character) {
+        if (!character) return '';
+        var name = typeof character.name === 'string' ? character.name : '';
+        var surname = typeof character.surname === 'string' ? character.surname : '';
+        var n = name.trim().charAt(0).toUpperCase();
+        var s = surname.trim().charAt(0).toUpperCase();
+        if (n && s) return n + s;
+        if (n) return n;
+        if (s) return s;
+        return '';
+    }
+
+    // =========================================================================
+    // 7. EXPORTS
+    // =========================================================================
+
+    /**
+     * Public namespace used by modals-char-selector.js,
+     * modals-household-selector.js, and locationDropdown.js (indirectly
+     * via the character selector).
+     *
+     * The surface is stable; new helpers should be added here, not as
+     * separate window.* globals, to keep the selector dependency graph
+     * tight.
+     */
+    window.SelectorHelpers = {
+        // Filter config
+        getDefaultFilterConfig: getDefaultFilterConfig,
+        normalizeFilterConfig: normalizeFilterConfig,
+
+        // Predicates
+        matchGender: matchGender,
+        matchStatus: matchStatus,
+        matchAge: matchAge,
+        matchLocation: matchLocation,
+        matchExcludeIds: matchExcludeIds,
+        matchRelationship: matchRelationship,
+        matchesCharacter: matchesCharacter,
+
+        // Relationship predicates
         isBloodRelativeBasic: isBloodRelativeBasic,
         isSpouseBasic: isSpouseBasic,
-        openModal: _openModal,
-        closeTopModal: _closeTopModal,
-        showToast: _showToast,
-        debounce: _debounce
+
+        // Display
+        getCharacterDisplayName: getCharacterDisplayName,
+        getCharacterInitials: getCharacterInitials,
+
+        // Diagnostics
+        version: 2
     };
+
+    // Backward-compat aliases — the on-disk version exposed
+    // `_SelectorBaseHelpers` and a handful of flat globals. Those are
+    // preserved so any caller that hasn't migrated continues to work.
+    window._SelectorBaseHelpers = window.SelectorHelpers;
+    window.getCharacterDisplayName = getCharacterDisplayName;
+    window.getCharacterInitials = getCharacterInitials;
+    window.isBloodRelativeBasic = isBloodRelativeBasic;
+    window.isSpouseBasic = isSpouseBasic;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.SelectorHelpers;
+    }
 
 })();
