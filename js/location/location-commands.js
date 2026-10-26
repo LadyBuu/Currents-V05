@@ -3,6 +3,8 @@
  * LOCATION COMMANDS
  * =============================================================================
  *
+ * LOCATION: js/location/location-commands.js
+ *
  * Single transaction owner for location-domain mutations.
  *
  * Responsibilities per command:
@@ -20,17 +22,15 @@
  *   - CultureQueries      (getCulture, lazy — only required when cultureId used)
  *   - Storage             (markDataDirty, saveMasterData)
  *   - ids                 (generateId)
- *   - time                (getCurrentYearSafe)
+ *   - time                (getCurrentYear)
  *
  * Note on LocationQueries:
- *   This module does NOT depend on LocationQueries. Queries loads after
- *   commands in the HTML order, and commands only needs primitive reads that
- *   are available directly on LocationState.
+ *   This module does NOT depend on LocationQueries. Commands only needs
+ *   primitive reads available directly on LocationState.
  *
- * Note on TimeQueries:
- *   TimeQueries does not exist. Time is accessed through the window-global
- *   helpers defined in js/core/time.js: window.getCurrentYearSafe (alias of
- *   window.getCurrentYear) and window.calculateAge.
+ * Note on time helpers:
+ *   Uses the canonical window.getCurrentYear from js/core/time.js. The
+ *   deprecated window.getCurrentYearSafe alias is NOT used here.
  *
  * Cross-domain mutations go through the owning domain's commands:
  *   - Character movement → CharacterCommands (via LocationCommands orchestration)
@@ -70,9 +70,9 @@
             '(CharacterQueries) first.'
         );
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
+    if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
-            'location-commands.js requires time.js (getCurrentYearSafe).'
+            'location-commands.js requires time.js (getCurrentYear).'
         );
     }
     if (typeof window.generateId !== 'function') {
@@ -676,7 +676,7 @@
         }
 
         var year = (options.year === undefined || options.year === null)
-            ? window.getCurrentYearSafe()
+            ? window.getCurrentYear()
             : options.year;
 
         var moveData = {
@@ -823,7 +823,7 @@
         }
 
         var year = (startYear === undefined || startYear === null)
-            ? window.getCurrentYearSafe()
+            ? window.getCurrentYear()
             : startYear;
 
         for (var i = 0; i < place.leaderAssignments.length; i++) {
@@ -877,7 +877,7 @@
         }
 
         var year = (endYear === undefined || endYear === null)
-            ? window.getCurrentYearSafe()
+            ? window.getCurrentYear()
             : endYear;
 
         var found = false;
