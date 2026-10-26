@@ -6,44 +6,65 @@
  * LOCATION: js/core/crime/crime-state.js
  *
  * PURPOSE:
- *   Single domain authority for crime and vendetta records. This module owns
- *   storage, indexes, lifecycle transitions, and persistence. It does not
- *   decide legal consequences, does not calculate derived statistics, and
- *   does not know how laws work.
+ *   Single domain authority for crime and vendetta records. Owns storage,
+ *   indexes, lifecycle transitions, and persistence boundary. Does not
+ *   decide legal consequences, does not calculate derived statistics, does
+ *   not orchestrate workflows.
+ *
+ * CONTRACT:
+ *   - Canonical arrays live on masterData.data.*. State does not own them.
+ *   - hydrateFromMasterData() rebuilds indexes transactionally.
+ *   - Public reads return clones. _getXCanonical returns live records and is
+ *     reserved for CrimeCommands (and CrimeLawIntegration during a command).
+ *   - Mutation primitives call window.markDataDirty. They never save, never
+ *     publish CustomEvents. Commands own the commit tail.
+ *   - No fabricated fallbacks. No silent swallows. Persistence is a Commands
+ *     concern; State only mutates and marks dirty.
  *
  * OWNERSHIP:
  *   - canonical crime and vendetta records (persisted at masterData.data)
  *   - indexes over those records
  *   - lifecycle transitions (record -> solve; active -> escalated -> resolved)
- *   - persistence boundary
- *   - subscriber notification
+ *   - subscription notification
  *
  * WHAT THIS MODULE DOES NOT DO:
+ *   - It does not save. (CrimeCommands.persist)
  *   - It does not decide punishments or consequences. (CrimeLawIntegration)
  *   - It does not compute statistics or trends. (CrimeQueries)
  *   - It does not orchestrate multi-domain workflows. (CrimeCommands)
- *   - It does not invent fallback values for missing dependencies. If a
- *     required dependency is unavailable, the operation fails loudly.
  *
  * INVARIANTS:
  *   - A crime is either solved or not. solved === true implies solvedAt is
- *     a year; solved === false implies solvedAt is null. A crime cannot be
- *     recorded in a solved state via recordCrime(); solving is a transition.
- *   - A vendetta's bodyCount === deaths.length. status is derived from an
- *     explicit transition; bodyCount and status must agree at all times.
+ *     a year; solved === false implies solvedAt is null. A crime is never
+ *     recorded in a solved state. Solving is a transition performed by
+ *     solveCrime(). Execution crimes also go through recordCrime (unsolved)
+ *     followed immediately by solveCrime.
+ *   - A vendetta's status is a lifecycle transition. It can only reach
+ *     ESCALATED via recordVendettaDeath (automatic at threshold) or via the
+ *     explicit escalateVendetta command (which calls _setVendettaStatus).
+ *     It can only reach RESOLVED via resolveVendetta.
  *   - Records are added to the cache at most once. Re-adding the same id is
  *     a no-op, not a duplicate.
- *   - Persistence failures are returned, never swallowed. A mutation that
- *     cannot be persisted is reported as failed.
  *   - Historical snapshot fields (perpetratorName, victimName, householdAName,
- *     etc.) are snapshots at time of recording. They are never refreshed from
- *     live sources.
+ *     etc.) are snapshots at time of recording. Never refreshed from live
+ *     sources.
  *
- * DEPENDENCIES:
- *   - ids.js:   generateId
- *   - time.js:  getCurrentYearSafe (required; no fallback)
- *   - accessors.js: getCharacterById, getHouseholdById (for name snapshots)
- *   - storage.js:   saveMasterData (required for persistence)
+ * RESULT CONTRACT:
+ *   { success: true, data: {...} }
+ *   { success: false, reason: string, code?: string }
+ *
+ *   Codes are from CrimeConstants.CODES. This is the same contract the
+ *   Command layer uses. State commands and Command commands share it.
+ *
+ * DEPENDENCIES (required, verified at load):
+ *   - CrimeConstants
+ *   - generateId
+ *   - getCurrentYearSafe
+ *   - markDataDirty
+ *   - getCharacterById
+ *   - getHouseholdById
+ *
+ * Missing required dependencies fail loudly at load.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -54,85 +75,81 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD (scoped to primitive mutations only)
+    // 0. LOAD-TIME DEPENDENCY RESOLUTION
     // =========================================================================
-    //
-    // This guard protects the state store from being mutated recursively by
-    // its own primitive operations. It is NOT shared with orchestration code.
-    // Commands compose by calling multiple public state functions; the guard
-    // is released between them.
+
+    var C = window.CrimeConstants;
+
+    if (!C) {
+        throw new Error('crime-state.js requires CrimeConstants');
+    }
+    if (typeof window.generateId !== 'function') {
+        throw new Error('crime-state.js requires generateId');
+    }
+    if (typeof window.getCurrentYearSafe !== 'function') {
+        throw new Error('crime-state.js requires getCurrentYearSafe');
+    }
+    if (typeof window.markDataDirty !== 'function') {
+        throw new Error('crime-state.js requires markDataDirty');
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error('crime-state.js requires getCharacterById');
+    }
+    if (typeof window.getHouseholdById !== 'function') {
+        throw new Error('crime-state.js requires getHouseholdById');
+    }
+
+    // =========================================================================
+    // 1. RECURSION GUARD (scoped to primitive mutations only)
+    // =========================================================================
 
     var _mutatingState = false;
 
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS (required dependencies; no fallbacks)
-    // =========================================================================
-
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error(
-                '[CrimeState] Required dependency getCurrentYearSafe is not available.'
-            );
-        }
-        return window.getCurrentYearSafe();
+    function _beginMutation() {
+        if (_mutatingState) return false;
+        _mutatingState = true;
+        return true;
     }
 
-    function _generateId(prefix) {
-        if (typeof window.generateId !== 'function') {
-            throw new Error(
-                '[CrimeState] Required dependency generateId is not available.'
-            );
-        }
-        return window.generateId(prefix);
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById !== 'function') return null;
-        return window.getCharacterById(id);
-    }
-
-    function _getHouseholdById(id) {
-        if (typeof window.getHouseholdById !== 'function') return null;
-        return window.getHouseholdById(id);
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error(
-                '[CrimeState] Required dependency saveMasterData is not available.'
-            );
-        }
-        window.saveMasterData();
-    }
-
-    function _getVendettaStatusConstants() {
-        if (window.CrimeConstants && window.CrimeConstants.VENDETTA_STATUS) {
-            return window.CrimeConstants.VENDETTA_STATUS;
-        }
-        if (window.VENDETTA_STATUS) {
-            return window.VENDETTA_STATUS;
-        }
-        throw new Error(
-            '[CrimeState] Required dependency CrimeConstants.VENDETTA_STATUS is not available.'
-        );
-    }
-
-    function _getEscalationThreshold() {
-        if (window.CrimeConstants &&
-            typeof window.CrimeConstants.VENDETTA_ESCALATION_THRESHOLD === 'number') {
-            return window.CrimeConstants.VENDETTA_ESCALATION_THRESHOLD;
-        }
-        throw new Error(
-            '[CrimeState] Required dependency CrimeConstants.VENDETTA_ESCALATION_THRESHOLD is not available.'
-        );
+    function _endMutation() {
+        _mutatingState = false;
     }
 
     // =========================================================================
-    // 2. PRIVATE STATE
+    // 2. INTERNAL HELPERS
     // =========================================================================
 
-    var _state = {
-        crimes: {
+    function _now() { return window.getCurrentYearSafe(); }
+    function _ok(data) { return { success: true, data: data }; }
+    function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
+
+    function _clone(obj) {
+        if (obj == null) return obj;
+        if (Array.isArray(obj)) {
+            var arr = new Array(obj.length);
+            for (var i = 0; i < obj.length; i++) arr[i] = _clone(obj[i]);
+            return arr;
+        }
+        if (typeof obj === 'object') {
+            var out = {};
+            for (var k in obj) {
+                if (Object.prototype.hasOwnProperty.call(obj, k)) out[k] = _clone(obj[k]);
+            }
+            return out;
+        }
+        return obj;
+    }
+
+    function _markDirty() {
+        window.markDataDirty();
+    }
+
+    // =========================================================================
+    // 3. PRIVATE STATE
+    // =========================================================================
+
+    function _emptyCrimeIndexes() {
+        return {
             byId: new Map(),
             byPerpetrator: new Map(),
             byVictim: new Map(),
@@ -140,79 +157,27 @@
             byLocation: new Map(),
             unsolved: new Set(),
             all: []
-        },
-        vendettas: {
+        };
+    }
+
+    function _emptyVendettaIndexes() {
+        return {
             byId: new Map(),
             byHousehold: new Map(),
             byCharacter: new Map(),
             all: []
-        },
-        subscribers: [],
-        lastUpdate: 0
-    };
-
-    var _initialized = false;
-
-    // =========================================================================
-    // 3. INITIALIZATION (transactional)
-    // =========================================================================
-    //
-    // Initialization builds a fresh set of indexes and swaps them in atomically
-    // only if the entire dataset loads successfully. On failure, the previously
-    // valid state is preserved and the error is rethrown.
-
-    function _initialize() {
-        if (_initialized) return;
-
-        var masterData = (typeof window.masterData !== 'undefined') ?
-            window.masterData : null;
-
-        if (!masterData || !masterData.data) {
-            // No persisted data yet. This is a valid empty state.
-            _initialized = true;
-            return;
-        }
-
-        var savedCrimes = Array.isArray(masterData.data.crimes) ?
-            masterData.data.crimes : [];
-        var savedVendettas = Array.isArray(masterData.data.vendettas) ?
-            masterData.data.vendettas : [];
-
-        // Build into fresh collections; do not mutate live state until success.
-        var next = {
-            crimes: {
-                byId: new Map(),
-                byPerpetrator: new Map(),
-                byVictim: new Map(),
-                byType: new Map(),
-                byLocation: new Map(),
-                unsolved: new Set(),
-                all: []
-            },
-            vendettas: {
-                byId: new Map(),
-                byHousehold: new Map(),
-                byCharacter: new Map(),
-                all: []
-            }
         };
-
-        for (var i = 0; i < savedCrimes.length; i++) {
-            _indexCrimeInto(next.crimes, savedCrimes[i]);
-        }
-        for (var j = 0; j < savedVendettas.length; j++) {
-            _indexVendettaInto(next.vendettas, savedVendettas[j]);
-        }
-
-        // Atomic swap.
-        _state.crimes = next.crimes;
-        _state.vendettas = next.vendettas;
-        _state.lastUpdate = Date.now();
-        _initialized = true;
     }
 
+    var _state = {
+        crimes: _emptyCrimeIndexes(),
+        vendettas: _emptyVendettaIndexes(),
+        subscribers: [],
+        initialized: false
+    };
+
     // =========================================================================
-    // 4. INDEXING HELPERS (pure; operate on a target container)
+    // 4. INDEXING PRIMITIVES (pure; operate on a target container)
     // =========================================================================
 
     function _indexCrimeInto(crimes, crime) {
@@ -228,28 +193,24 @@
             }
             crimes.byPerpetrator.get(crime.perpetratorId).add(crime.id);
         }
-
         if (crime.victimId) {
             if (!crimes.byVictim.has(crime.victimId)) {
                 crimes.byVictim.set(crime.victimId, new Set());
             }
             crimes.byVictim.get(crime.victimId).add(crime.id);
         }
-
         if (crime.type) {
             if (!crimes.byType.has(crime.type)) {
                 crimes.byType.set(crime.type, new Set());
             }
             crimes.byType.get(crime.type).add(crime.id);
         }
-
         if (crime.locationId) {
             if (!crimes.byLocation.has(crime.locationId)) {
                 crimes.byLocation.set(crime.locationId, new Set());
             }
             crimes.byLocation.get(crime.locationId).add(crime.id);
         }
-
         if (!crime.solved) {
             crimes.unsolved.add(crime.id);
         }
@@ -276,7 +237,6 @@
             }
             vendettas.byHousehold.get(vendetta.householdBId).add(vendetta.id);
         }
-
         if (vendetta.characterAId) {
             if (!vendettas.byCharacter.has(vendetta.characterAId)) {
                 vendettas.byCharacter.set(vendetta.characterAId, new Set());
@@ -372,72 +332,153 @@
     }
 
     // =========================================================================
-    // 5. PERSISTENCE (returns structured result; never swallows failures)
+    // 5. HYDRATION (transactional)
     // =========================================================================
+    //
+    // Builds fresh indexes into a local object and swaps them into place only
+    // after the entire persisted dataset loads successfully. Duplicate ids
+    // throw. Malformed records throw. Nothing is exposed until success.
+    //
+    // Idempotent: if indexes are already built, this is a no-op unless
+    // force===true (used by reload()).
 
-    function _persistCrimes() {
-        var masterData = (typeof window.masterData !== 'undefined') ?
-            window.masterData : null;
+    function hydrateFromMasterData(force) {
+        if (_state.initialized && !force) return;
 
+        var masterData = (typeof window.masterData !== 'undefined') ? window.masterData : null;
         if (!masterData || !masterData.data) {
-            return { success: false, error: 'masterData.data is unavailable' };
+            // No persisted data yet. Valid empty state.
+            _state.crimes = _emptyCrimeIndexes();
+            _state.vendettas = _emptyVendettaIndexes();
+            _state.initialized = true;
+            return;
         }
 
-        try {
-            masterData.data.crimes = _state.crimes.all;
-            _saveMasterData();
-            return { success: true };
-        } catch (e) {
-            return { success: false, error: e.message || String(e) };
+        var d = masterData.data;
+        if (d.crimes !== undefined && !Array.isArray(d.crimes)) {
+            throw new Error('crime-state.js: masterData.data.crimes must be an array');
         }
+        if (d.vendettas !== undefined && !Array.isArray(d.vendettas)) {
+            throw new Error('crime-state.js: masterData.data.vendettas must be an array');
+        }
+
+        var savedCrimes = Array.isArray(d.crimes) ? d.crimes : [];
+        var savedVendettas = Array.isArray(d.vendettas) ? d.vendettas : [];
+
+        var nextCrimes = _emptyCrimeIndexes();
+        var nextVendettas = _emptyVendettas();
+
+        for (var i = 0; i < savedCrimes.length; i++) {
+            var crime = savedCrimes[i];
+            if (!crime || !crime.id) {
+                throw new Error('crime-state.js: crime record missing id at index ' + i);
+            }
+            if (!_indexCrimeInto(nextCrimes, crime)) {
+                throw new Error('crime-state.js: duplicate crime id: ' + crime.id);
+            }
+        }
+
+        for (var j = 0; j < savedVendettas.length; j++) {
+            var vendetta = savedVendettas[j];
+            if (!vendetta || !vendetta.id) {
+                throw new Error('crime-state.js: vendetta record missing id at index ' + j);
+            }
+            if (!_indexVendettaInto(nextVendettas, vendetta)) {
+                throw new Error('crime-state.js: duplicate vendetta id: ' + vendetta.id);
+            }
+        }
+
+        // Atomic swap.
+        _state.crimes = nextCrimes;
+        _state.vendettas = nextVendettas;
+        _state.initialized = true;
+
+        _publish(C.STATE_EVENTS.HYDRATED, null);
     }
 
-    function _persistVendettas() {
-        var masterData = (typeof window.masterData !== 'undefined') ?
-            window.masterData : null;
+    // Legacy alias. Used during migration from the pre-refactor surface.
+    function _initialize() {
+        hydrateFromMasterData(false);
+    }
 
-        if (!masterData || !masterData.data) {
-            return { success: false, error: 'masterData.data is unavailable' };
-        }
-
-        try {
-            masterData.data.vendettas = _state.vendettas.all;
-            _saveMasterData();
-            return { success: true };
-        } catch (e) {
-            return { success: false, error: e.message || String(e) };
-        }
+    function _emptyVendettas() {
+        return _emptyVendettaIndexes();
     }
 
     // =========================================================================
-    // 6. NOTIFICATION
+    // 6. INTEGRITY VALIDATION (warn only)
     // =========================================================================
 
-    function _notify(event, data) {
+    function validateIntegrity() {
+        var warnings = [];
+
+        // Crime invariants.
+        for (var i = 0; i < _state.crimes.all.length; i++) {
+            var c = _state.crimes.all[i];
+            if (c.solved === true && c.solvedAt == null) {
+                warnings.push('crime ' + c.id + ' is solved but has no solvedAt');
+            }
+            if (c.solved === false && c.solvedAt != null) {
+                warnings.push('crime ' + c.id + ' has solvedAt but is not solved');
+            }
+            if (c.year != null && c.solvedAt != null && c.solvedAt < c.year) {
+                warnings.push('crime ' + c.id + ' solved before recorded');
+            }
+        }
+
+        // Vendetta invariants.
+        var statuses = C.VENDETTA_STATUS;
+        var threshold = C.VENDETTA_ESCALATION_THRESHOLD;
+        for (var j = 0; j < _state.vendettas.all.length; j++) {
+            var v = _state.vendettas.all[j];
+            var deaths = Array.isArray(v.deaths) ? v.deaths : [];
+
+            if (v.status === statuses.ESCALATED && deaths.length < threshold) {
+                warnings.push(
+                    'vendetta ' + v.id + ' is escalated with ' + deaths.length +
+                    ' deaths (threshold ' + threshold + ')'
+                );
+            }
+            if (v.status === statuses.RESOLVED && v.resolvedAt == null) {
+                warnings.push('vendetta ' + v.id + ' is resolved but has no resolvedAt');
+            }
+            if (v.householdAId && !window.getHouseholdById(v.householdAId)) {
+                warnings.push('vendetta ' + v.id + ' references missing householdA ' + v.householdAId);
+            }
+            if (v.householdBId && !window.getHouseholdById(v.householdBId)) {
+                warnings.push('vendetta ' + v.id + ' references missing householdB ' + v.householdBId);
+            }
+        }
+
+        if (typeof console !== 'undefined' && console.warn && warnings.length > 0) {
+            console.warn('crime-state.js: integrity warnings', warnings);
+        }
+        return warnings;
+    }
+
+    // =========================================================================
+    // 7. NOTIFICATION
+    // =========================================================================
+
+    function _publish(eventType, data) {
         for (var i = 0; i < _state.subscribers.length; i++) {
             try {
-                _state.subscribers[i]({ type: event, data: data, timestamp: Date.now() });
+                _state.subscribers[i]({ type: eventType, data: data, timestamp: Date.now() });
             } catch (e) {
-                // Subscriber failures must not break the state layer.
                 if (typeof console !== 'undefined' && console.error) {
-                    console.error('[CrimeState] Subscriber threw during "' + event + '":', e);
+                    console.error('[CrimeState] Subscriber threw during "' + eventType + '":', e);
                 }
             }
         }
     }
 
-    // =========================================================================
-    // 7. GUARD HELPERS
-    // =========================================================================
-
-    function _beginMutation() {
-        if (_mutatingState) return false;
-        _mutatingState = true;
-        return true;
-    }
-
-    function _endMutation() {
-        _mutatingState = false;
+    function subscribe(callback) {
+        if (typeof callback !== 'function') return null;
+        _state.subscribers.push(callback);
+        return function unsubscribe() {
+            var idx = _state.subscribers.indexOf(callback);
+            if (idx !== -1) _state.subscribers.splice(idx, 1);
+        };
     }
 
     // =========================================================================
@@ -445,28 +486,18 @@
     // =========================================================================
 
     function _buildCrimeRecord(data) {
-        var currentYear = _getCurrentYear();
+        var currentYear = _now();
 
-        var victim = data.victimId ? _getCharacterById(data.victimId) : null;
-        var perpetrator = data.perpetratorId ? _getCharacterById(data.perpetratorId) : null;
+        var victim = data.victimId ? window.getCharacterById(data.victimId) : null;
+        var perpetrator = data.perpetratorId ? window.getCharacterById(data.perpetratorId) : null;
 
-        // Lifecycle invariant: a crime is never recorded as already solved.
-        // Solving is a transition performed by solveCrime().
-        var solved = false;
-        var solvedAt = null;
-        var solution = null;
-
-        if (data.solved === true) {
-            // Callers occasionally try to record a pre-solved crime (e.g.
-            // public executions). We honor the intent, but require a solution
-            // value and set solvedAt explicitly from data.solvedAt.
-            solved = true;
-            solvedAt = (typeof data.solvedAt === 'number') ? data.solvedAt : currentYear;
-            solution = data.solution || 'Recorded as solved';
-        }
+        // Invariant: a crime is never recorded solved. triggerExecution and
+        // any other caller that wants a pre-solved crime must call solveCrime
+        // immediately after recordCrime. This is enforced by ignoring
+        // data.solved entirely.
 
         return {
-            id: _generateId('crime'),
+            id: window.generateId('crime'),
             type: data.type || 'unknown',
             perpetratorId: data.perpetratorId || null,
             perpetratorName: perpetrator ? (perpetrator.name || 'Unknown') : 'Unknown',
@@ -478,9 +509,9 @@
             locationId: data.locationId || null,
             witnesses: Array.isArray(data.witnesses) ? data.witnesses.slice() : [],
             evidence: Array.isArray(data.evidence) ? data.evidence.slice() : [],
-            solved: solved,
-            solvedAt: solvedAt,
-            solution: solution,
+            solved: false,
+            solvedAt: null,
+            solution: null,
             punishment: data.punishment || null,
             method: data.method || null,
             severity: (typeof data.severity === 'number') ? data.severity : null,
@@ -488,8 +519,8 @@
             notes: data.notes || null,
             metadata: data.metadata || {},
 
-            // Law-derived fields. These are copied verbatim from the command
-            // layer. State does not fabricate or interpret them.
+            // Law-derived fields, copied verbatim from the command layer.
+            // State does not fabricate or interpret them.
             civilViolation: data.civilViolation || null,
             religiousViolation: data.religiousViolation || null,
             religionId: data.religionId || null,
@@ -498,56 +529,50 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC API - CRIME QUERIES
+    // 9. CRIME QUERIES (public reads return clones)
     // =========================================================================
 
     function getCrime(crimeId) {
-        _initialize();
-        return _state.crimes.byId.get(crimeId) || null;
+        hydrateFromMasterData(false);
+        var c = _state.crimes.byId.get(crimeId);
+        return c ? _clone(c) : null;
     }
 
     function getAllCrimes() {
-        _initialize();
-        return _state.crimes.all.slice();
+        hydrateFromMasterData(false);
+        var out = new Array(_state.crimes.all.length);
+        for (var i = 0; i < _state.crimes.all.length; i++) {
+            out[i] = _clone(_state.crimes.all[i]);
+        }
+        return out;
     }
 
-    /**
-     * Returns crimes in which the character is the perpetrator.
-     * Use getCrimesInvolvingCharacter() for either side.
-     */
     function getCrimesByPerpetrator(characterId) {
-        _initialize();
+        hydrateFromMasterData(false);
         var ids = _state.crimes.byPerpetrator.get(characterId);
         if (!ids) return [];
         var out = [];
         for (var id of ids) {
             var c = _state.crimes.byId.get(id);
-            if (c) out.push(c);
+            if (c) out.push(_clone(c));
         }
         return out;
     }
 
-    /**
-     * Returns crimes in which the character is the victim.
-     */
     function getCrimesByVictim(characterId) {
-        _initialize();
+        hydrateFromMasterData(false);
         var ids = _state.crimes.byVictim.get(characterId);
         if (!ids) return [];
         var out = [];
         for (var id of ids) {
             var c = _state.crimes.byId.get(id);
-            if (c) out.push(c);
+            if (c) out.push(_clone(c));
         }
         return out;
     }
 
-    /**
-     * Returns crimes in which the character is either perpetrator or victim.
-     * Result contains each crime once.
-     */
     function getCrimesInvolvingCharacter(characterId) {
-        _initialize();
+        hydrateFromMasterData(false);
         var seen = new Set();
         var out = [];
 
@@ -556,113 +581,119 @@
             for (var id of asPerp) {
                 if (!seen.has(id)) {
                     var c = _state.crimes.byId.get(id);
-                    if (c) { out.push(c); seen.add(id); }
+                    if (c) { out.push(_clone(c)); seen.add(id); }
                 }
             }
         }
-
         var asVictim = _state.crimes.byVictim.get(characterId);
         if (asVictim) {
             for (var id2 of asVictim) {
                 if (!seen.has(id2)) {
                     var c2 = _state.crimes.byId.get(id2);
-                    if (c2) { out.push(c2); seen.add(id2); }
+                    if (c2) { out.push(_clone(c2)); seen.add(id2); }
                 }
             }
         }
-
         return out;
     }
 
-    /**
-     * Legacy alias. Prefer getCrimesByPerpetrator or
-     * getCrimesInvolvingCharacter.
-     */
     function getCrimesByCharacter(characterId) {
         return getCrimesByPerpetrator(characterId);
     }
 
     function getCrimesByType(type) {
-        _initialize();
+        hydrateFromMasterData(false);
         var ids = _state.crimes.byType.get(type);
         if (!ids) return [];
         var out = [];
         for (var id of ids) {
             var c = _state.crimes.byId.get(id);
-            if (c) out.push(c);
+            if (c) out.push(_clone(c));
         }
         return out;
     }
 
     function getCrimesByLocation(locationId) {
-        _initialize();
+        hydrateFromMasterData(false);
         var ids = _state.crimes.byLocation.get(locationId);
         if (!ids) return [];
         var out = [];
         for (var id of ids) {
             var c = _state.crimes.byId.get(id);
-            if (c) out.push(c);
+            if (c) out.push(_clone(c));
         }
         return out;
     }
 
     function getUnsolvedCrimes() {
-        _initialize();
+        hydrateFromMasterData(false);
         var out = [];
         for (var id of _state.crimes.unsolved) {
             var c = _state.crimes.byId.get(id);
-            if (c) out.push(c);
+            if (c) out.push(_clone(c));
         }
         return out;
     }
 
     function getCrimeCount() {
-        _initialize();
+        hydrateFromMasterData(false);
         return _state.crimes.all.length;
     }
 
     // =========================================================================
-    // 10. PUBLIC API - CRIME COMMANDS
+    // 10. CANONICAL ACCESSORS (Commands only)
+    // =========================================================================
+    //
+    // These return live records. Reserved for CrimeCommands and
+    // CrimeLawIntegration during a command. Anything else must use the
+    // public reads above, which return clones.
+
+    function _getCrimeCanonical(crimeId) {
+        hydrateFromMasterData(false);
+        return _state.crimes.byId.get(crimeId) || null;
+    }
+
+    function _getAllCrimesCanonical() {
+        hydrateFromMasterData(false);
+        return _state.crimes.all;
+    }
+
+    function _getVendettaCanonical(vendettaId) {
+        hydrateFromMasterData(false);
+        return _state.vendettas.byId.get(vendettaId) || null;
+    }
+
+    function _getAllVendettasCanonical() {
+        hydrateFromMasterData(false);
+        return _state.vendettas.all;
+    }
+
+    // =========================================================================
+    // 11. CRIME COMMANDS
     // =========================================================================
 
-    /**
-     * Records a new crime. Law-derived fields (civilViolation,
-     * religiousViolation, religionId, violatedLaws) are preserved verbatim.
-     *
-     * @returns {{success: boolean, data?: Object, error?: string}}
-     */
     function recordCrime(data) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
             data = data || {};
 
             var crime = _buildCrimeRecord(data);
 
             if (!_indexCrimeInto(_state.crimes, crime)) {
-                return { success: false, error: 'Crime already indexed: ' + crime.id };
+                return _fail('Crime already indexed: ' + crime.id, C.CODES.VALIDATION);
             }
 
-            var persist = _persistCrimes();
-            if (!persist.success) {
-                // Roll back the in-memory index so state matches persistence.
-                _deindexCrimeFrom(_state.crimes, crime);
-                return {
-                    success: false,
-                    error: 'Failed to persist crime: ' + persist.error
-                };
-            }
+            _markDirty();
+            _publish(C.EVENTS.CRIME_RECORDED, { crime: crime });
 
-            _state.lastUpdate = Date.now();
-            _notify('crimeRecorded', { crime: crime });
-
-            return { success: true, data: crime };
+            return _ok(crime);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
@@ -670,50 +701,34 @@
 
     /**
      * Marks a crime as solved. This is the only path to a solved crime.
-     *
-     * @param {string} crimeId
-     * @param {string} solution
-     * @param {number} [solvedAtYear] - defaults to current year
+     * triggerExecution calls this immediately after recordCrime.
      */
     function solveCrime(crimeId, solution, solvedAtYear) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
 
             var crime = _state.crimes.byId.get(crimeId);
-            if (!crime) return { success: false, error: 'Crime not found' };
-            if (crime.solved) return { success: false, error: 'Crime already solved' };
+            if (!crime) return _fail('Crime not found', C.CODES.NOT_FOUND);
+            if (crime.solved) return _fail('Crime already solved', C.CODES.ALREADY_SOLVED);
 
-            var year = (typeof solvedAtYear === 'number') ? solvedAtYear : _getCurrentYear();
+            var year = (typeof solvedAtYear === 'number') ? solvedAtYear : _now();
 
             crime.solved = true;
             crime.solvedAt = year;
             crime.solution = solution || 'Solved';
             _state.crimes.unsolved.delete(crimeId);
 
-            var persist = _persistCrimes();
-            if (!persist.success) {
-                // Roll back the transition.
-                crime.solved = false;
-                crime.solvedAt = null;
-                crime.solution = null;
-                _state.crimes.unsolved.add(crimeId);
-                return {
-                    success: false,
-                    error: 'Failed to persist solve: ' + persist.error
-                };
-            }
+            _markDirty();
+            _publish(C.EVENTS.CRIME_SOLVED, { crimeId: crimeId, solution: crime.solution });
 
-            _state.lastUpdate = Date.now();
-            _notify('crimeSolved', { crimeId: crimeId, solution: crime.solution });
-
-            return { success: true, data: crime };
+            return _ok(crime);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
@@ -721,182 +736,157 @@
 
     function deleteCrime(crimeId) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
 
             var crime = _state.crimes.byId.get(crimeId);
-            if (!crime) return { success: false, error: 'Crime not found' };
+            if (!crime) return _fail('Crime not found', C.CODES.NOT_FOUND);
 
             _deindexCrimeFrom(_state.crimes, crime);
 
-            var persist = _persistCrimes();
-            if (!persist.success) {
-                // Re-index to keep state and persistence consistent.
-                _indexCrimeInto(_state.crimes, crime);
-                return {
-                    success: false,
-                    error: 'Failed to persist deletion: ' + persist.error
-                };
-            }
+            _markDirty();
+            _publish(C.EVENTS.CRIME_DELETED, { crimeId: crimeId });
 
-            _state.lastUpdate = Date.now();
-            _notify('crimeDeleted', { crimeId: crimeId });
-
-            return { success: true };
+            return _ok(null);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
     }
 
     // =========================================================================
-    // 11. PUBLIC API - VENDETTA QUERIES
+    // 12. VENDETTA QUERIES (public reads return clones)
     // =========================================================================
-    //
-    // includeResolved convention: resolved vendettas are INCLUDED by default.
-    // Pass { includeResolved: false } to exclude them.
-    // Active views should use getActiveVendettas() explicitly.
 
     function _vendettaMatchesOptions(v, options) {
         if (!v) return false;
         if (options && options.includeResolved === false) {
-            var statuses = _getVendettaStatusConstants();
-            if (v.status === statuses.RESOLVED) return false;
+            if (v.status === C.VENDETTA_STATUS.RESOLVED) return false;
         }
         return true;
     }
 
     function getVendetta(vendettaId) {
-        _initialize();
-        return _state.vendettas.byId.get(vendettaId) || null;
+        hydrateFromMasterData(false);
+        var v = _state.vendettas.byId.get(vendettaId);
+        return v ? _clone(v) : null;
     }
 
     function getAllVendettas(options) {
-        _initialize();
+        hydrateFromMasterData(false);
         options = options || {};
         var out = [];
         for (var i = 0; i < _state.vendettas.all.length; i++) {
             var v = _state.vendettas.all[i];
-            if (_vendettaMatchesOptions(v, options)) out.push(v);
+            if (_vendettaMatchesOptions(v, options)) out.push(_clone(v));
         }
         return out;
     }
 
     function getVendettasByHousehold(householdId, options) {
-        _initialize();
+        hydrateFromMasterData(false);
         options = options || {};
         var ids = _state.vendettas.byHousehold.get(householdId);
         if (!ids) return [];
         var out = [];
         for (var id of ids) {
             var v = _state.vendettas.byId.get(id);
-            if (v && _vendettaMatchesOptions(v, options)) out.push(v);
+            if (v && _vendettaMatchesOptions(v, options)) out.push(_clone(v));
         }
         return out;
     }
 
     function getVendettasByCharacter(characterId, options) {
-        _initialize();
+        hydrateFromMasterData(false);
         options = options || {};
         var ids = _state.vendettas.byCharacter.get(characterId);
         if (!ids) return [];
         var out = [];
         for (var id of ids) {
             var v = _state.vendettas.byId.get(id);
-            if (v && _vendettaMatchesOptions(v, options)) out.push(v);
+            if (v && _vendettaMatchesOptions(v, options)) out.push(_clone(v));
         }
         return out;
     }
 
-    /**
-     * Returns unresolved vendettas involving the household.
-     * "Unresolved" means status is ACTIVE or ESCALATED.
-     */
     function getActiveVendettas(householdId) {
         return getVendettasByHousehold(householdId, { includeResolved: false });
     }
 
-    /**
-     * Returns the single unresolved vendetta between two households, or null.
-     * This is the canonical query for the "one active vendetta per pair"
-     * domain invariant.
-     */
     function getActiveVendettaBetween(householdAId, householdBId) {
-        _initialize();
+        hydrateFromMasterData(false);
         if (!householdAId || !householdBId) return null;
         if (householdAId === householdBId) return null;
 
-        var statuses = _getVendettaStatusConstants();
-        var candidates = getVendettasByHousehold(householdAId, { includeResolved: false });
+        var statuses = C.VENDETTA_STATUS;
+        var ids = _state.vendettas.byHousehold.get(householdAId);
+        if (!ids) return null;
 
-        for (var i = 0; i < candidates.length; i++) {
-            var v = candidates[i];
+        for (var id of ids) {
+            var v = _state.vendettas.byId.get(id);
+            if (!v) continue;
             if (v.status === statuses.RESOLVED) continue;
             if (v.householdBId === householdBId || v.householdAId === householdBId) {
-                return v;
+                return _clone(v);
             }
         }
         return null;
     }
 
     function getVendettaCount() {
-        _initialize();
+        hydrateFromMasterData(false);
         return _state.vendettas.all.length;
     }
 
     // =========================================================================
-    // 12. PUBLIC API - VENDETTA COMMANDS
+    // 13. VENDETTA COMMANDS
     // =========================================================================
 
-    /**
-     * Creates a vendetta between two distinct households.
-     * Enforces the invariant that at most one unresolved vendetta may exist
-     * between any two households.
-     */
     function createVendetta(data) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
             data = data || {};
 
             if (!data.householdAId || !data.householdBId) {
-                return { success: false, error: 'Both household IDs are required' };
+                return _fail('Both household IDs are required', C.CODES.VALIDATION);
             }
             if (data.householdAId === data.householdBId) {
-                return { success: false, error: 'A vendetta requires two distinct households' };
+                return _fail('A vendetta requires two distinct households', C.CODES.SAME_HOUSEHOLD);
             }
 
-            var householdA = _getHouseholdById(data.householdAId);
-            var householdB = _getHouseholdById(data.householdBId);
+            var householdA = window.getHouseholdById(data.householdAId);
+            var householdB = window.getHouseholdById(data.householdBId);
             if (!householdA || !householdB) {
-                return { success: false, error: 'One or both households not found' };
+                return _fail('One or both households not found', C.CODES.NOT_FOUND);
             }
 
+            // Existing-vendetta check. Uses the canonical index directly,
+            // not the public getActiveVendettaBetween (which clones).
             var existing = getActiveVendettaBetween(data.householdAId, data.householdBId);
             if (existing) {
-                return {
-                    success: false,
-                    error: 'An unresolved vendetta already exists between these households',
-                    existingVendettaId: existing.id
-                };
+                return _fail(
+                    'An unresolved vendetta already exists between these households',
+                    C.CODES.DUPLICATE_VENDETTA
+                );
             }
 
-            var statuses = _getVendettaStatusConstants();
-            var currentYear = _getCurrentYear();
+            var statuses = C.VENDETTA_STATUS;
+            var currentYear = _now();
 
-            var characterA = data.characterAId ? _getCharacterById(data.characterAId) : null;
-            var characterB = data.characterBId ? _getCharacterById(data.characterBId) : null;
+            var characterA = data.characterAId ? window.getCharacterById(data.characterAId) : null;
+            var characterB = data.characterBId ? window.getCharacterById(data.characterBId) : null;
 
             var vendetta = {
-                id: _generateId('vendetta'),
+                id: window.generateId('vendetta'),
                 householdAId: data.householdAId,
                 householdAName: householdA.name || 'Unknown',
                 householdBId: data.householdBId,
@@ -919,61 +909,47 @@
             };
 
             if (!_indexVendettaInto(_state.vendettas, vendetta)) {
-                return { success: false, error: 'Vendetta already indexed: ' + vendetta.id };
+                return _fail('Vendetta already indexed: ' + vendetta.id, C.CODES.VALIDATION);
             }
 
-            var persist = _persistVendettas();
-            if (!persist.success) {
-                _deindexVendettaFrom(_state.vendettas, vendetta);
-                return {
-                    success: false,
-                    error: 'Failed to persist vendetta: ' + persist.error
-                };
-            }
+            _markDirty();
+            _publish(C.EVENTS.VENDETTA_CREATED, { vendetta: vendetta });
 
-            _state.lastUpdate = Date.now();
-            _notify('vendettaCreated', { vendetta: vendetta });
-
-            return { success: true, data: vendetta };
+            return _ok(vendetta);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
     }
 
-    /**
-     * Records a death in a vendetta. Automatically escalates when the
-     * escalation threshold is reached. Cannot record deaths on resolved
-     * vendettas.
-     */
     function recordVendettaDeath(vendettaId, deathData) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
             deathData = deathData || {};
 
             var vendetta = _state.vendettas.byId.get(vendettaId);
-            if (!vendetta) return { success: false, error: 'Vendetta not found' };
+            if (!vendetta) return _fail('Vendetta not found', C.CODES.NOT_FOUND);
 
-            var statuses = _getVendettaStatusConstants();
+            var statuses = C.VENDETTA_STATUS;
             if (vendetta.status === statuses.RESOLVED) {
-                return { success: false, error: 'Vendetta is resolved' };
+                return _fail('Vendetta is resolved', C.CODES.ALREADY_RESOLVED);
             }
 
-            var victim = deathData.victimId ? _getCharacterById(deathData.victimId) : null;
-            var killer = deathData.killerId ? _getCharacterById(deathData.killerId) : null;
+            var victim = deathData.victimId ? window.getCharacterById(deathData.victimId) : null;
+            var killer = deathData.killerId ? window.getCharacterById(deathData.killerId) : null;
 
             var death = {
                 victimId: deathData.victimId || null,
                 victimName: victim ? (victim.name || 'Unknown') : 'Unknown',
                 killerId: deathData.killerId || null,
                 killerName: killer ? (killer.name || 'Unknown') : 'Unknown',
-                year: (typeof deathData.year === 'number') ? deathData.year : _getCurrentYear(),
+                year: (typeof deathData.year === 'number') ? deathData.year : _now(),
                 reason: deathData.reason || null,
                 crimeId: deathData.crimeId || null,
                 recordedAt: Date.now()
@@ -983,91 +959,70 @@
             vendetta.updatedAt = Date.now();
 
             var escalated = false;
-            var threshold = _getEscalationThreshold();
+            var threshold = C.VENDETTA_ESCALATION_THRESHOLD;
             if (vendetta.deaths.length >= threshold && vendetta.status === statuses.ACTIVE) {
                 vendetta.status = statuses.ESCALATED;
                 vendetta.escalatedAt = death.year;
                 escalated = true;
             }
 
-            var persist = _persistVendettas();
-            if (!persist.success) {
-                vendetta.deaths.pop();
-                vendetta.updatedAt = Date.now();
-                if (escalated) {
-                    vendetta.status = statuses.ACTIVE;
-                    vendetta.escalatedAt = null;
-                }
-                return {
-                    success: false,
-                    error: 'Failed to persist vendetta death: ' + persist.error
-                };
+            _markDirty();
+            _publish(C.EVENTS.VENDETTA_DEATH, {
+                vendettaId: vendettaId,
+                death: death,
+                escalated: escalated
+            });
+            if (escalated) {
+                _publish(C.EVENTS.VENDETTA_ESCALATED, {
+                    vendettaId: vendettaId,
+                    automatic: true
+                });
             }
 
-            _state.lastUpdate = Date.now();
-            _notify('vendettaDeath', { vendettaId: vendettaId, death: death, escalated: escalated });
-
-            return { success: true, data: vendetta };
+            return _ok(vendetta);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
     }
 
-    /**
-     * Resolves a vendetta. Once resolved, no further deaths may be recorded.
-     */
     function resolveVendetta(vendettaId, resolutionData) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
             resolutionData = resolutionData || {};
 
             var vendetta = _state.vendettas.byId.get(vendettaId);
-            if (!vendetta) return { success: false, error: 'Vendetta not found' };
+            if (!vendetta) return _fail('Vendetta not found', C.CODES.NOT_FOUND);
 
-            var statuses = _getVendettaStatusConstants();
+            var statuses = C.VENDETTA_STATUS;
             if (vendetta.status === statuses.RESOLVED) {
-                return { success: false, error: 'Vendetta already resolved' };
+                return _fail('Vendetta already resolved', C.CODES.ALREADY_RESOLVED);
             }
 
-            var previousStatus = vendetta.status;
-            var previousResolvedAt = vendetta.resolvedAt;
-            var previousResolution = vendetta.resolution;
-            var previousNotes = vendetta.notes;
-
             vendetta.status = statuses.RESOLVED;
-            vendetta.resolvedAt = (typeof resolutionData.year === 'number') ?
-                resolutionData.year : _getCurrentYear();
+            vendetta.resolvedAt = (typeof resolutionData.year === 'number')
+                ? resolutionData.year
+                : _now();
             vendetta.resolution = resolutionData.resolution || 'Resolved';
             if (resolutionData.notes) vendetta.notes = resolutionData.notes;
             vendetta.updatedAt = Date.now();
 
-            var persist = _persistVendettas();
-            if (!persist.success) {
-                vendetta.status = previousStatus;
-                vendetta.resolvedAt = previousResolvedAt;
-                vendetta.resolution = previousResolution;
-                vendetta.notes = previousNotes;
-                vendetta.updatedAt = Date.now();
-                return {
-                    success: false,
-                    error: 'Failed to persist resolution: ' + persist.error
-                };
-            }
+            _markDirty();
+            _publish(C.EVENTS.VENDETTA_RESOLVED, {
+                vendettaId: vendettaId,
+                resolution: vendetta.resolution
+            });
 
-            _state.lastUpdate = Date.now();
-            _notify('vendettaResolved', { vendettaId: vendettaId, resolution: vendetta.resolution });
-
-            return { success: true, data: vendetta };
+            return _ok(vendetta);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
@@ -1075,84 +1030,110 @@
 
     function deleteVendetta(vendettaId) {
         if (!_beginMutation()) {
-            return { success: false, error: 'CrimeState is already mutating' };
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
         }
 
         try {
-            _initialize();
+            hydrateFromMasterData(false);
 
             var vendetta = _state.vendettas.byId.get(vendettaId);
-            if (!vendetta) return { success: false, error: 'Vendetta not found' };
+            if (!vendetta) return _fail('Vendetta not found', C.CODES.NOT_FOUND);
 
             _deindexVendettaFrom(_state.vendettas, vendetta);
 
-            var persist = _persistVendettas();
-            if (!persist.success) {
-                _indexVendettaInto(_state.vendettas, vendetta);
-                return {
-                    success: false,
-                    error: 'Failed to persist deletion: ' + persist.error
-                };
-            }
+            _markDirty();
+            _publish(C.EVENTS.VENDETTA_DELETED, { vendettaId: vendettaId });
 
-            _state.lastUpdate = Date.now();
-            _notify('vendettaDeleted', { vendettaId: vendettaId });
-
-            return { success: true };
+            return _ok(null);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         } finally {
             _endMutation();
         }
     }
 
     // =========================================================================
-    // 13. SUBSCRIPTION
-    // =========================================================================
-
-    function subscribe(callback) {
-        if (typeof callback !== 'function') return null;
-        _state.subscribers.push(callback);
-        return function unsubscribe() {
-            var idx = _state.subscribers.indexOf(callback);
-            if (idx !== -1) _state.subscribers.splice(idx, 1);
-        };
-    }
-
-    // =========================================================================
-    // 14. CACHE MANAGEMENT
+    // 14. VENDETTA STATUS TRANSITION (internal; used by CrimeCommands)
     // =========================================================================
 
     /**
-     * Drops all indexes and rebuilds them from masterData. This is a reload,
-     * not a mere invalidation. Callers who need lazy rebuild semantics should
-     * use the module's natural initialize-on-first-access behaviour and not
-     * call this at all.
+     * Sets a vendetta's status explicitly. Reserved for CrimeCommands'
+     * escalateVendetta command. Automatic escalation happens inside
+     * recordVendettaDeath; this primitive is for the explicit override
+     * path where the caller has decided to force escalation or to move
+     * the vendetta through a status transition that isn't driven by a death.
+     *
+     * Does not check invariants about the threshold — that is CrimeCommands'
+     * job. State enforces only structural validity: the vendetta exists and
+     * the new status is a known value.
      */
+    function _setVendettaStatus(vendettaId, newStatus, options) {
+        if (!_beginMutation()) {
+            return _fail('CrimeState is already mutating', C.CODES.STATE_MUTATING);
+        }
+
+        try {
+            hydrateFromMasterData(false);
+            options = options || {};
+
+            var vendetta = _state.vendettas.byId.get(vendettaId);
+            if (!vendetta) return _fail('Vendetta not found', C.CODES.NOT_FOUND);
+
+            var statuses = C.VENDETTA_STATUS;
+            var known = [statuses.ACTIVE, statuses.ESCALATED, statuses.RESOLVED];
+            if (known.indexOf(newStatus) === -1) {
+                return _fail('Unknown vendetta status: ' + newStatus, C.CODES.VALIDATION);
+            }
+
+            if (vendetta.status === newStatus) {
+                return _ok(vendetta);
+            }
+
+            vendetta.status = newStatus;
+            vendetta.updatedAt = Date.now();
+
+            if (newStatus === statuses.ESCALATED) {
+                vendetta.escalatedAt = (typeof options.escalatedAt === 'number')
+                    ? options.escalatedAt
+                    : _now();
+            } else if (newStatus === statuses.RESOLVED) {
+                vendetta.resolvedAt = (typeof options.resolvedAt === 'number')
+                    ? options.resolvedAt
+                    : _now();
+                vendetta.resolution = options.resolution || vendetta.resolution || 'Resolved';
+            }
+
+            _markDirty();
+            _publish(C.EVENTS.VENDETTA_ESCALATED, {
+                vendettaId: vendettaId,
+                automatic: false,
+                reason: options.reason || null
+            });
+
+            return _ok(vendetta);
+
+        } catch (e) {
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
+        } finally {
+            _endMutation();
+        }
+    }
+
+    // =========================================================================
+    // 15. CACHE MANAGEMENT
+    // =========================================================================
+
     function reload() {
         if (_mutatingState) return false;
 
-        _state.crimes = {
-            byId: new Map(),
-            byPerpetrator: new Map(),
-            byVictim: new Map(),
-            byType: new Map(),
-            byLocation: new Map(),
-            unsolved: new Set(),
-            all: []
-        };
-        _state.vendettas = {
-            byId: new Map(),
-            byHousehold: new Map(),
-            byCharacter: new Map(),
-            all: []
-        };
-        _initialized = false;
+        _state.crimes = _emptyCrimeIndexes();
+        _state.vendettas = _emptyVendettas();
+        _state.initialized = false;
 
         try {
-            _initialize();
-            _notify('reloaded', {});
+            hydrateFromMasterData(true);
+            _publish(C.STATE_EVENTS.CACHE_RELOADED, null);
             return true;
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
@@ -1162,18 +1143,22 @@
         }
     }
 
-    // Legacy alias. Preserved so existing callers do not break during migration.
-    // Prefer reload() in new code.
+    // Legacy alias.
     function invalidateCache() {
         return reload();
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 16. EXPORTS
     // =========================================================================
 
     window.CrimeState = {
-        // Crime queries
+        // Lifecycle
+        hydrateFromMasterData: hydrateFromMasterData,
+        _initialize: _initialize,
+        validateIntegrity: validateIntegrity,
+
+        // Crime queries (clones)
         getCrime: getCrime,
         getAllCrimes: getAllCrimes,
         getCrimesByPerpetrator: getCrimesByPerpetrator,
@@ -1190,7 +1175,7 @@
         solveCrime: solveCrime,
         deleteCrime: deleteCrime,
 
-        // Vendetta queries
+        // Vendetta queries (clones)
         getVendetta: getVendetta,
         getAllVendettas: getAllVendettas,
         getVendettasByHousehold: getVendettasByHousehold,
@@ -1205,6 +1190,13 @@
         resolveVendetta: resolveVendetta,
         deleteVendetta: deleteVendetta,
 
+        // Canonical accessors (Commands only)
+        _getCrimeCanonical: _getCrimeCanonical,
+        _getAllCrimesCanonical: _getAllCrimesCanonical,
+        _getVendettaCanonical: _getVendettaCanonical,
+        _getAllVendettasCanonical: _getAllVendettasCanonical,
+        _setVendettaStatus: _setVendettaStatus,
+
         // Subscription
         subscribe: subscribe,
 
@@ -1214,5 +1206,9 @@
     };
 
     window._crimeState = window.CrimeState;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.CrimeState;
+    }
 
 })();
