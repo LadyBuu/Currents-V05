@@ -3,7 +3,7 @@
  * STILL WATERS - HOUSEHOLD SERVANT (household-servant.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-servant.js
+ * LOCATION: js/households/household-servant.js
  *
  * PURPOSE
  * -------
@@ -22,63 +22,122 @@
  * This module ORCHESTRATES between them:
  *
  *   createServiceRelationship()
- *       ↓ validates
- *       ↓ creates canonical relationship (RelationshipSystem)
- *       ↓ adds household membership (HouseholdCommands)
- *       ↓ _finish → persist once
+ *       → validate
+ *       → create canonical relationship (RelationshipSystem)
+ *       → add household membership (HouseholdCommands)
+ *       → persist relationship system
+ *       → persist household system
+ *       → return structured result
  *
  * Everything it does is either:
  *   - a pure projection (query)
  *   - a coordinated sequence of other systems' commands
  *
- * CONVERGED PATTERN NOTES
- * -----------------------
- *   - Every orchestration ends with _finish(eventName, payload), which
- *     dispatches a CustomEvent and calls HouseholdCommands.persist()
- *     exactly once.
- *   - Relationship system writes remain its responsibility. This module
- *     does not persist them. RelationshipSystem owns its own persistence
- *     boundary.
- *   - HouseholdCommands writes are batched: multiple addMember / updateMember
- *     / removeMember calls in one orchestration produce one household save
- *     at the end of the orchestration.
- *   - Partial failures are reported explicitly with partial:true.
+ * CONVERGED PATTERN
+ * -----------------
+ *   - Every orchestration ends with _finish, which:
+ *       1. dispatches a CustomEvent (subscribers observe the domain event),
+ *       2. persists the household system,
+ *       3. persists the relationship system (if it exposes a
+ *          persist() function).
+ *     If EITHER persist fails, _finish returns a structured failure
+ *     with a `partial` field describing which side saved and which did
+ *     not. The caller cannot silently believe both sides are durable.
+ *   - No _processingService guard.
+ *   - Partial failures are explicit (result.partial === true).
+ *   - Constants and rules live in their canonical modules. This file
+ *     imports, does not duplicate.
  *
- * WHAT LIVES HERE
- * ---------------
- *   - SERVICE_TYPES / SERVICE_STATUS / SERVICE_QUALITY catalogs
- *   - createServiceRelationship (orchestration)
- *   - terminateService (orchestration)
- *   - promoteServant (metadata update)
- *   - adjustServantWages (metadata update)
- *   - recordEmployerSatisfaction (metadata update)
- *   - updateServiceQuality (pure calculation + metadata update)
- *   - getServiceBetween / getServants / getEmployer / getActiveService
- *   - getServiceHistory / getServiceQuality / generateServiceReference
- *   - getStaffByDepartment (composition query)
- *   - transferServantToHousehold (orchestration with rollback intent)
+ * CONSTANTS AND RULES
+ * -------------------
+ * SERVICE_TYPES / SERVICE_STATUS / SERVICE_QUALITY /
+ * SERVICE_QUALITY_ORDER / SERVICE_CONTRACT_TERMS live in
+ * household-constants.js.
  *
- * WHAT DOES NOT LIVE HERE
- * -----------------------
- *   - Canonical relationship storage   → RelationshipSystem
- *   - Household membership             → HouseholdCommands
- *   - Trust / loyalty effects          → Trust system / Loyalty system
- *   - Wages                            → HouseholdEconomy (see NOTE below)
- *   - Toasts / presentation            → UI layer
+ * calculateServiceQuality / calculateRecommendation live in
+ * household-rules.js.
  *
- * NOTE ON WAGES
- * -------------
- * SERVICE_TYPES.baseWage is retained here as a *suggested* default only.
- * The actual economic authority for wages belongs to HouseholdEconomy.
- * Callers that care about economics should ask HouseholdEconomy for wage
- * policy, not read baseWage directly.
+ * This file DOES NOT redefine any of them. It DOES NOT assign to
+ * window.SERVICE_TYPES, window.SERVICE_QUALITY, etc. Those globals were
+ * a shadowing hazard: whichever module loaded last won, and this module
+ * (loading late) silently overwrote the constants module's frozen
+ * catalogs with mutable ones.
+ *
+ * CROSS-DOMAIN PERSISTENCE
+ * ------------------------
+ * The relationship system is an independent domain with its own
+ * persistence boundary. When this module creates, terminates, or updates
+ * a service relationship, that change lives in the relationship
+ * system's canonical state. This module must ensure the change is
+ * flushed.
+ *
+ * The relationship system is expected to expose:
+ *
+ *   window.RelationshipCommands.persist()   ->  { success, reason? }
+ *   or
+ *   window.RelationshipSystem.persist()     ->  { success, reason? }
+ *
+ * If neither is present, this module still completes the orchestration
+ * (the household side saves; the relationship side is in-memory only)
+ * but reports `relationshipPersisted: false` in the result so callers
+ * can see the gap.
+ *
+ * SERVICE RELATIONSHIP FIELD CONTRACT
+ * -----------------------------------
+ * Relationships created by this module have:
+ *
+ *   type: 'service'
+ *   status: 'ongoing' | 'ended'
+ *   participantA: employerId
+ *   participantB: servantId
+ *   startYear: number
+ *   endYear: number | null
+ *   metadata: {
+ *     serviceTypeId: string         (lowercase, from HouseholdConstants.SERVICE_TYPES)
+ *     serviceTypeName: string
+ *     wage: number
+ *     contractTerm: string          (id from HouseholdConstants.SERVICE_CONTRACT_TERMS)
+ *     quality: string               (id from HouseholdConstants.SERVICE_QUALITY_ORDER)
+ *     employerSatisfaction: number  (0..100)
+ *     servantSatisfaction: number   (0..100)
+ *     employerSatisfactionHistory: array
+ *     previousServiceTypeId: string|null   (after promotion)
+ *     promotionYear: number|null
+ *     promotionNotes: string
+ *     previousWage: number|null            (after adjustment)
+ *     wageAdjustmentYear: number|null
+ *     wageAdjustmentReason: string|null
+ *     qualityLastUpdated: number|null
+ *     notes: string
+ *   }
  *
  * RESULT SHAPE
  * ------------
- *   { success: true,  data: ... }
+ *   { success: true,  data: { ..., relationshipPersisted, householdPersisted } }
  *   { success: false, code: 'SOME_CODE', reason: 'human message',
  *     partial: true (when partial mutation occurred),
  *     ...extra fields }
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - household-constants.js    (SERVICE_TYPES, SERVICE_QUALITY_ORDER)
+ *   - household-rules.js        (calculateServiceQuality,
+ *                                calculateRecommendation)
+ *   - household-commands.js     (addMember, removeMember, updateMember,
+ *                                persist)
+ *   - household-queries.js      (getCharacterHousehold, getHouseholdStaff)
+ *   - accessors.js              (getCharacterById)
+ *   - time.js                   (getCurrentYearSafe)
+ *   - relationship domain       (createRelationship, endRelationship,
+ *                                updateRelationship, getRelationshipBetween,
+ *                                getRelationshipsForCharacter,
+ *                                getRelationshipById)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - RelationshipCommands / RelationshipSystem persist() for cross-domain
+ *     durability
+ *   - modifyTrust / modifyLoyalty for satisfaction effects
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
@@ -104,7 +163,21 @@
         return fn;
     }
 
-    // Household deps
+    var C = _requireObject('HouseholdConstants', window.HouseholdConstants);
+    if (!C.SERVICE_TYPES || !Array.isArray(C.SERVICE_QUALITY_ORDER)) {
+        throw new Error(
+            'HouseholdServant: HouseholdConstants.SERVICE_TYPES or ' +
+            'SERVICE_QUALITY_ORDER is missing. The loaded ' +
+            'household-constants.js is too old.'
+        );
+    }
+
+    var R = _requireObject('HouseholdRules', window.HouseholdRules);
+    _requireFunction('HouseholdRules.calculateServiceQuality',
+        R.calculateServiceQuality);
+    _requireFunction('HouseholdRules.calculateRecommendation',
+        R.calculateRecommendation);
+
     var _householdCommands = _requireObject('HouseholdCommands',
         window.HouseholdCommands);
     _requireFunction('HouseholdCommands.addMember', _householdCommands.addMember);
@@ -121,13 +194,11 @@
     _requireFunction('HouseholdQueries.getHouseholdStaff',
         _householdQueries.getHouseholdStaff);
 
-    // Character + time
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
     var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
         window.getCurrentYearSafe);
 
-    // Relationship system — required, verified at load
     var _createRelationship = _requireFunction('createRelationship',
         window.createRelationship);
     var _endRelationship = _requireFunction('endRelationship',
@@ -141,62 +212,12 @@
     var _getRelationshipById = _requireFunction('getRelationshipById',
         window.getRelationshipById);
 
-    // Optional — trust/loyalty are effect-only
+    // Optional
     var _trustPresent = typeof window.modifyTrust === 'function';
     var _loyaltyPresent = typeof window.modifyLoyalty === 'function';
 
     // =========================================================================
-    // 1. CONSTANTS
-    // =========================================================================
-
-    var SERVICE_TYPES = {
-        HOUSEHOLD_STAFF:    { id: 'household_staff',    name: 'Household Staff',    isDomestic: true,  baseWage: 5  },
-        RETAINER:           { id: 'retainer',           name: 'Retainer',           isDomestic: false, baseWage: 15 },
-        PERSONAL_ATTENDANT: { id: 'personal_attendant', name: 'Personal Attendant', isDomestic: true,  baseWage: 10 },
-        STEWARD:            { id: 'steward',            name: 'Steward',            isDomestic: true,  baseWage: 20 },
-        MAID:               { id: 'maid',               name: 'Maid',               isDomestic: true,  baseWage: 6  },
-        COOK:               { id: 'cook',               name: 'Cook',               isDomestic: true,  baseWage: 8  },
-        GARDENER:           { id: 'gardener',           name: 'Gardener',           isDomestic: true,  baseWage: 7  },
-        GROOM:              { id: 'groom',              name: 'Groom',              isDomestic: true,  baseWage: 7  },
-        CHAMBERLAIN:        { id: 'chamberlain',        name: 'Chamberlain',        isDomestic: true,  baseWage: 25 },
-        BUTLER:             { id: 'butler',             name: 'Butler',             isDomestic: true,  baseWage: 22 },
-        LADY_MAID:          { id: 'lady_maid',          name: "Lady's Maid",        isDomestic: true,  baseWage: 12 },
-        VALET:              { id: 'valet',              name: 'Valet',              isDomestic: true,  baseWage: 12 }
-    };
-
-    var SERVICE_STATUS = {
-        ACTIVE:     'active',
-        ON_LEAVE:   'on_leave',
-        TERMINATED: 'terminated',
-        RESIGNED:   'resigned'
-    };
-
-    var SERVICE_QUALITY = {
-        EXCELLENT:      { id: 'excellent',      name: 'Excellent',      minSatisfaction: 90 },
-        GOOD:           { id: 'good',           name: 'Good',           minSatisfaction: 70 },
-        AVERAGE:        { id: 'average',        name: 'Average',        minSatisfaction: 50 },
-        POOR:           { id: 'poor',           name: 'Poor',           minSatisfaction: 30 },
-        UNSATISFACTORY: { id: 'unsatisfactory', name: 'Unsatisfactory', minSatisfaction: 0  }
-    };
-
-    var SERVICE_QUALITY_ORDER = [
-        SERVICE_QUALITY.EXCELLENT,
-        SERVICE_QUALITY.GOOD,
-        SERVICE_QUALITY.AVERAGE,
-        SERVICE_QUALITY.POOR,
-        SERVICE_QUALITY.UNSATISFACTORY
-    ];
-
-    var SERVICE_CONTRACT_TERMS = {
-        INDEFINITE: { id: 'indefinite', name: 'Indefinite',   duration: null, noticePeriod: 30 },
-        ANNUAL:     { id: 'annual',     name: 'Annual',       duration: 365,  noticePeriod: 30 },
-        SEASONAL:   { id: 'seasonal',   name: 'Seasonal',     duration: 90,   noticePeriod: 14 },
-        TRIAL:      { id: 'trial',      name: 'Trial Period', duration: 30,   noticePeriod: 7  },
-        DAY_LABOR:  { id: 'day_labor',  name: 'Day Labor',    duration: 1,    noticePeriod: 0  }
-    };
-
-    // =========================================================================
-    // 2. RESULT HELPERS
+    // 1. RESULT HELPERS
     // =========================================================================
 
     function _ok(data) {
@@ -220,8 +241,98 @@
     }
 
     // =========================================================================
+    // 2. CROSS-DOMAIN PERSISTENCE
+    // =========================================================================
+    //
+    // The relationship domain owns its own canonical state and its own
+    // persistence boundary. This module calls into the relationship
+    // domain's commands, so it must ensure those commands' changes are
+    // flushed.
+    //
+    // The relationship system is not required to expose a persist()
+    // function — if it flushes lazily or on another schedule, that's
+    // its design. But when it DOES expose one, we call it so a service
+    // creation is durable immediately.
+    //
+    // Returns:
+    //   { attempted: boolean, persisted: boolean, reason: string|null }
+    //
+    // `attempted` distinguishes "the relationship system has no persist"
+    // (attempted: false) from "the relationship system's persist failed"
+    // (attempted: true, persisted: false). Callers that care about the
+    // difference read this field.
+
+    function _persistRelationshipSystem() {
+        // Try RelationshipCommands first (the usual write boundary).
+        var rc = window.RelationshipCommands;
+        if (rc && typeof rc.persist === 'function') {
+            try {
+                var r = rc.persist();
+                if (r && r.success === false) {
+                    return {
+                        attempted: true,
+                        persisted: false,
+                        reason: r.reason || 'RelationshipCommands.persist failed'
+                    };
+                }
+                return { attempted: true, persisted: true, reason: null };
+            } catch (e) {
+                return {
+                    attempted: true,
+                    persisted: false,
+                    reason: (e && e.message) ? e.message : 'persist threw'
+                };
+            }
+        }
+
+        // Fall back to RelationshipSystem (older surface).
+        var rs = window.RelationshipSystem;
+        if (rs && typeof rs.persist === 'function') {
+            try {
+                var r2 = rs.persist();
+                if (r2 && r2.success === false) {
+                    return {
+                        attempted: true,
+                        persisted: false,
+                        reason: r2.reason || 'RelationshipSystem.persist failed'
+                    };
+                }
+                return { attempted: true, persisted: true, reason: null };
+            } catch (e2) {
+                return {
+                    attempted: true,
+                    persisted: false,
+                    reason: (e2 && e2.message) ? e2.message : 'persist threw'
+                };
+            }
+        }
+
+        // No persist available. The relationship change is in-memory only.
+        return {
+            attempted: false,
+            persisted: false,
+            reason: 'relationship system does not expose persist()'
+        };
+    }
+
+    // =========================================================================
     // 3. ORCHESTRATION FINISHER
     // =========================================================================
+    //
+    // _finish closes an orchestration. It:
+    //   1. dispatches a CustomEvent so cross-domain listeners can react;
+    //   2. persists the household system;
+    //   3. persists the relationship system;
+    //   4. returns a structured result describing BOTH save outcomes.
+    //
+    // The result distinguishes:
+    //   - both saved:                   success: true
+    //   - household saved, rel. missing: success: true, rel. attempted: false
+    //   - household saved, rel. failed:  success: false, partial: true
+    //   - household failed:              success: false
+    //
+    // The last case is the only one where we return false without
+    // partial: true — nothing saved, so nothing is partial.
 
     function _dispatch(eventName, payload) {
         if (typeof window.dispatchEvent !== 'function') return;
@@ -232,56 +343,70 @@
             }));
         } catch (e) {
             if (typeof console !== 'undefined' && console.warn) {
-                console.warn('HouseholdServant: failed to dispatch ' + eventName, e);
+                console.warn('HouseholdServant: failed to dispatch ' +
+                    eventName, e);
             }
         }
     }
 
-    /**
-     * Closes an orchestration: dispatches a CustomEvent and persists
-     * household state once. Relationship system writes are the caller's
-     * responsibility to persist (RelationshipSystem owns its own boundary).
-     *
-     * This is best-effort: if household state has nothing dirty,
-     * persist() is still called (cheap; saveMasterData is idempotent).
-     * If persist fails, the caller sees a structured failure — but any
-     * relationship writes have already happened. That's the cross-domain
-     * atomicity gap the plan documents.
-     */
     function _finish(eventName, payload) {
         _dispatch(eventName, payload || {});
-        var persistResult = _householdCommands.persist();
-        if (!persistResult || persistResult.success === false) {
+
+        var householdPersist = _householdCommands.persist();
+        var householdOk = !!(householdPersist && householdPersist.success !== false);
+
+        var rel = _persistRelationshipSystem();
+
+        if (!householdOk) {
+            // Nothing saved (well, relationship might have saved — that's
+            // the cross-domain atomicity gap. Report it explicitly).
             return _fail(
-                (persistResult && persistResult.code) || 'PERSIST_FAILED',
-                (persistResult && persistResult.reason) || 'Failed to persist'
+                (householdPersist && householdPersist.code) || 'PERSIST_FAILED',
+                (householdPersist && householdPersist.reason) || 'Failed to persist household state',
+                {
+                    householdPersisted: false,
+                    relationshipPersisted: rel.persisted,
+                    relationshipPersistAttempted: rel.attempted,
+                    relationshipPersistReason: rel.reason,
+                    partial: rel.persisted === true
+                }
             );
         }
-        return _ok(null);
+
+        // Household saved. Did the relationship side save too?
+        if (rel.attempted && !rel.persisted) {
+            return _fail(
+                'RELATIONSHIP_PERSIST_FAILED',
+                rel.reason || 'Relationship state failed to persist',
+                {
+                    householdPersisted: true,
+                    relationshipPersisted: false,
+                    relationshipPersistAttempted: true,
+                    relationshipPersistReason: rel.reason,
+                    partial: true
+                }
+            );
+        }
+
+        // Both saved, or relationship has no persist boundary.
+        return _ok({
+            householdPersisted: true,
+            relationshipPersisted: rel.persisted,
+            relationshipPersistAttempted: rel.attempted,
+            relationshipPersistReason: rel.reason
+        });
     }
 
     // =========================================================================
-    // 4. PURE CALCULATIONS
+    // 4. PURE CALCULATIONS (delegates to HouseholdRules)
     // =========================================================================
 
     function calculateServiceQuality(employerSatisfaction, servantSatisfaction) {
-        var e = typeof employerSatisfaction === 'number' ? employerSatisfaction : 70;
-        var s = typeof servantSatisfaction === 'number' ? servantSatisfaction : 70;
-        var avg = (e + s) / 2;
-
-        for (var i = 0; i < SERVICE_QUALITY_ORDER.length; i++) {
-            if (avg >= SERVICE_QUALITY_ORDER[i].minSatisfaction) {
-                return SERVICE_QUALITY_ORDER[i];
-            }
-        }
-        return SERVICE_QUALITY.UNSATISFACTORY;
+        return R.calculateServiceQuality(employerSatisfaction, servantSatisfaction);
     }
 
     function calculateRecommendation(satisfaction) {
-        if (satisfaction >= 90) return 'highly recommended';
-        if (satisfaction >= 70) return 'recommended';
-        if (satisfaction >= 50) return 'recommended with reservations';
-        return 'not recommended';
+        return R.calculateRecommendation(satisfaction);
     }
 
     // =========================================================================
@@ -302,6 +427,12 @@
         };
     }
 
+    function _resolveServiceType(input) {
+        if (!input) return null;
+        // getServiceTypeById accepts either uppercase key or lowercase id.
+        return C.getServiceTypeById(input);
+    }
+
     // =========================================================================
     // 6. SERVICE RELATIONSHIP COMMANDS
     // =========================================================================
@@ -313,15 +444,16 @@
      *   1. Validate
      *   2. Create canonical relationship (RelationshipSystem)
      *   3. Add household membership (HouseholdCommands)
-     *   4. Apply trust / loyalty effects
-     *   5. _finish → persist household once
+     *   4. Apply trust / loyalty effects (best-effort)
+     *   5. _finish → dispatch + persist household + persist relationship
      *
-     * If step 3 fails, we attempt to roll back step 2 (end relationship).
-     * If step 2 fails, nothing to roll back.
+     * If step 3 fails, step 2 is rolled back (endRelationship). If step
+     * 5's persistence fails, both domains' in-memory state has been
+     * modified; the failure is surfaced with partial: true.
      *
      * Returns:
      *   { success: true, data: { relationshipId, householdId, ... } }
-     *   { success: false, code, reason }
+     *   { success: false, code, reason, partial?: true }
      */
     function createServiceRelationship(employerId, servantId, options) {
         options = options || {};
@@ -333,13 +465,15 @@
         if (employerId === servantId) {
             return _fail('SELF_SERVICE', 'Character cannot serve themselves');
         }
-        if (servant.isDeceased) {
+        if (servant.isDeceased === true) {
             return _fail('SERVANT_DECEASED', 'Servant is deceased');
         }
 
-        var serviceTypeId = (options.serviceTypeId || 'household_staff').toUpperCase();
-        var serviceType = SERVICE_TYPES[serviceTypeId];
-        if (!serviceType) return _fail('INVALID_SERVICE_TYPE', 'Unknown service type');
+        var serviceType = _resolveServiceType(options.serviceTypeId || 'household_staff');
+        if (!serviceType) {
+            return _fail('INVALID_SERVICE_TYPE',
+                'Unknown service type "' + String(options.serviceTypeId) + '"');
+        }
 
         var existing = _getRelationshipBetween(employerId, servantId);
         if (existing && existing.type === 'service' && existing.status === 'ongoing') {
@@ -349,12 +483,14 @@
         var startYear = _resolveYear(options.startYear);
         if (startYear === null) return _fail('INVALID_YEAR', 'Invalid start year');
 
-        var wage = options.wage !== undefined ? options.wage : serviceType.baseWage;
+        var wage = (options.wage !== undefined)
+            ? options.wage
+            : serviceType.baseWage;
         if (typeof wage !== 'number' || !isFinite(wage) || wage < 0) {
             return _fail('INVALID_WAGE', 'Wage must be a non-negative number');
         }
 
-        // Step 1: create canonical relationship
+        // Step 1: create canonical relationship.
         var relationship = _createRelationship(employerId, servantId, {
             type: 'service',
             status: 'ongoing',
@@ -364,9 +500,10 @@
                 serviceTypeName: serviceType.name,
                 wage: wage,
                 contractTerm: options.contractTerm || 'indefinite',
-                quality: options.initialQuality || 'average',
+                quality: 'average',
                 employerSatisfaction: 70,
                 servantSatisfaction: 70,
+                employerSatisfactionHistory: [],
                 notes: options.notes || ''
             }
         });
@@ -376,7 +513,7 @@
                 'Failed to create service relationship');
         }
 
-        // Step 2: household membership (unless opted out)
+        // Step 2: household membership.
         var householdId = null;
         if (options.addToHousehold !== false) {
             var employerHousehold = _householdQueries.getCharacterHousehold(employerId);
@@ -394,10 +531,11 @@
                 );
 
                 if (!addResult.success) {
-                    // Roll back relationship
+                    // Roll back relationship creation.
                     try {
                         _endRelationship(relationship.id, startYear,
                             'Rollback: household membership failed');
+                        _persistRelationshipSystem();
                     } catch (e) {
                         if (typeof console !== 'undefined' && console.error) {
                             console.error(
@@ -406,13 +544,14 @@
                         }
                     }
                     return _fail('HOUSEHOLD_ADD_FAILED',
-                        'Failed to add to employer household: ' + addResult.reason);
+                        'Failed to add to employer household: ' +
+                        (addResult.reason || 'unknown'));
                 }
                 householdId = employerHousehold.id;
             }
         }
 
-        // Step 3: domain consequences (best-effort, side-channel)
+        // Step 3: trust/loyalty effects (best-effort, optional).
         if (_trustPresent) {
             try {
                 window.modifyTrust(servantId, employerId, 15,
@@ -434,7 +573,7 @@
             }
         }
 
-        // Step 4: close orchestration (one household persist)
+        // Step 4: close orchestration.
         var finish = _finish('serviceRelationshipCreated', {
             employerId: employerId,
             servantId: servantId,
@@ -448,14 +587,17 @@
             return _fail(finish.code, finish.reason, {
                 relationshipId: relationship.id,
                 householdId: householdId,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
         if (typeof window.logEvent === 'function') {
             window.logEvent('service', 'Service Begun',
-                servant.name + ' began serving ' + employer.name +
-                ' as ' + serviceType.name, [employer, servant]);
+                (servant.name || 'Servant') + ' began serving ' +
+                (employer.name || 'Employer') + ' as ' + serviceType.name,
+                [employer, servant]);
         }
 
         return _ok({
@@ -463,19 +605,15 @@
             householdId: householdId,
             serviceTypeId: serviceType.id,
             wage: wage,
-            startYear: startYear
+            startYear: startYear,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted,
+            relationshipPersistAttempted: finish.data.relationshipPersistAttempted
         });
     }
 
     /**
      * Terminates a service relationship.
-     *
-     * Orchestrates:
-     *   1. Find relationship
-     *   2. End canonical relationship
-     *   3. Remove household membership (unless opted out)
-     *   4. Apply trust consequence
-     *   5. _finish → persist household once
      */
     function terminateService(employerId, servantId, options) {
         options = options || {};
@@ -490,13 +628,11 @@
         if (endYear === null) return _fail('INVALID_YEAR', 'Invalid end year');
         var reason = options.reason || 'Service terminated';
 
-        // End canonical relationship
         var ended = _endRelationship(relationship.id, endYear, reason);
         if (!ended) {
             return _fail('END_FAILED', 'Failed to end service relationship');
         }
 
-        // Remove household membership
         var removed = false;
         if (options.removeFromHousehold !== false) {
             var employerHousehold = _householdQueries.getCharacterHousehold(employerId);
@@ -508,7 +644,7 @@
                         recordHistory: options.recordHistory !== false
                     }
                 );
-                removed = removeResult.success === true;
+                removed = removeResult && removeResult.success === true;
             }
         }
 
@@ -545,7 +681,9 @@
                 relationshipId: relationship.id,
                 endYear: endYear,
                 removedFromHousehold: removed,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
@@ -553,17 +691,14 @@
             relationshipId: relationship.id,
             endYear: endYear,
             reason: reason,
-            removedFromHousehold: removed
+            removedFromHousehold: removed,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted
         });
     }
 
     /**
      * Promotes a servant to a new service type.
-     *
-     * Records promotion as a metadata change + history, not as a
-     * household transfer.
-     *
-     * Batches: one updateRelationship + one updateMember + one _finish.
      */
     function promoteServant(employerId, servantId, newServiceTypeId, options) {
         options = options || {};
@@ -574,15 +709,20 @@
             return _fail('NO_SERVICE', 'No active service relationship found');
         }
 
-        var newType = SERVICE_TYPES[String(newServiceTypeId || '').toUpperCase()];
-        if (!newType) return _fail('INVALID_SERVICE_TYPE', 'Unknown service type');
+        var newType = _resolveServiceType(newServiceTypeId);
+        if (!newType) {
+            return _fail('INVALID_SERVICE_TYPE',
+                'Unknown service type "' + String(newServiceTypeId) + '"');
+        }
 
         var promotionYear = _resolveYear(options.promotionYear);
         if (promotionYear === null) {
             return _fail('INVALID_YEAR', 'Invalid promotion year');
         }
 
-        var newWage = options.newWage !== undefined ? options.newWage : newType.baseWage;
+        var newWage = (options.newWage !== undefined)
+            ? options.newWage
+            : newType.baseWage;
         if (typeof newWage !== 'number' || !isFinite(newWage) || newWage < 0) {
             return _fail('INVALID_WAGE', 'Wage must be a non-negative number');
         }
@@ -603,7 +743,6 @@
             return _fail('UPDATE_FAILED', 'Failed to update service relationship');
         }
 
-        // Household role update (unless opted out)
         var roleUpdated = false;
         if (options.updateHouseholdRole !== false) {
             var employerHousehold = _householdQueries.getCharacterHousehold(employerId);
@@ -611,7 +750,7 @@
                 var updResult = _householdCommands.updateMember(
                     employerHousehold.id, servantId, { role: newType.name }
                 );
-                roleUpdated = updResult.success === true;
+                roleUpdated = updResult && updResult.success === true;
             }
         }
 
@@ -649,7 +788,9 @@
             return _fail(finish.code, finish.reason, {
                 relationshipId: relationship.id,
                 roleUpdated: roleUpdated,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
@@ -665,11 +806,14 @@
             newServiceTypeId: newType.id,
             newWage: newWage,
             year: promotionYear,
-            roleUpdated: roleUpdated
+            roleUpdated: roleUpdated,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted
         });
     }
 
-    function adjustServantWages(employerId, servantId, newWage, reason) {
+    function adjustServantWages(employerId, servantId, newWage, reason, options) {
+        options = options || {};
         if (typeof newWage !== 'number' || !isFinite(newWage) || newWage < 0) {
             return _fail('INVALID_WAGE', 'Wage must be a non-negative number');
         }
@@ -682,11 +826,22 @@
 
         var metadata = relationship.metadata || {};
         var oldWage = typeof metadata.wage === 'number' ? metadata.wage : 0;
+        if (oldWage === newWage) {
+            return _ok({
+                relationshipId: relationship.id,
+                oldWage: oldWage,
+                newWage: newWage,
+                unchanged: true
+            });
+        }
+
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var updatedMetadata = JSON.parse(JSON.stringify(metadata));
         updatedMetadata.wage = newWage;
         updatedMetadata.previousWage = oldWage;
-        updatedMetadata.wageAdjustmentYear = _getCurrentYearSafe();
+        updatedMetadata.wageAdjustmentYear = year;
         updatedMetadata.wageAdjustmentReason = reason || 'Adjustment';
 
         var updated = _updateRelationship(relationship.id, {
@@ -695,19 +850,14 @@
         if (!updated) return _fail('UPDATE_FAILED', 'Failed to update wage');
 
         var delta = newWage - oldWage;
-        if (delta > 0 && _loyaltyPresent) {
+        if (_loyaltyPresent) {
+            var amount = delta > 0 ? 5 : -10;
+            var note = delta > 0
+                ? 'Wage increased by ' + delta
+                : 'Wage decreased by ' + (-delta);
             try {
-                window.modifyLoyalty(servantId, employerId, 'individual', 5,
-                    'Wage increased by ' + delta);
-            } catch (e) {
-                if (typeof console !== 'undefined' && console.warn) {
-                    console.warn('HouseholdServant: modifyLoyalty failed', e);
-                }
-            }
-        } else if (delta < 0 && _loyaltyPresent) {
-            try {
-                window.modifyLoyalty(servantId, employerId, 'individual', -10,
-                    'Wage decreased by ' + (-delta));
+                window.modifyLoyalty(servantId, employerId, 'individual',
+                    amount, note);
             } catch (e) {
                 if (typeof console !== 'undefined' && console.warn) {
                     console.warn('HouseholdServant: modifyLoyalty failed', e);
@@ -720,7 +870,8 @@
             servantId: servantId,
             relationshipId: relationship.id,
             oldWage: oldWage,
-            newWage: newWage
+            newWage: newWage,
+            year: year
         });
 
         if (!finish.success) {
@@ -728,25 +879,27 @@
                 relationshipId: relationship.id,
                 oldWage: oldWage,
                 newWage: newWage,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
         return _ok({
             relationshipId: relationship.id,
             oldWage: oldWage,
-            newWage: newWage
+            newWage: newWage,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted
         });
     }
 
     /**
-     * Records employer satisfaction.
-     *
-     * Does NOT mutate a live relationship metadata object — constructs a
-     * new metadata copy and passes it via the canonical relationship
-     * update API. Recomputes quality in the same batch.
+     * Records employer satisfaction. Recomputes quality in the same
+     * batch.
      */
-    function recordEmployerSatisfaction(relationshipId, satisfaction, reason) {
+    function recordEmployerSatisfaction(relationshipId, satisfaction, reason, options) {
+        options = options || {};
         if (typeof satisfaction !== 'number' || !isFinite(satisfaction)) {
             return _fail('INVALID_SATISFACTION',
                 'Satisfaction must be a finite number');
@@ -757,6 +910,9 @@
             return _fail('NO_SERVICE', 'Service relationship not found');
         }
 
+        var year = _resolveYear(options.year);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
         var bounded = Math.max(0, Math.min(100, satisfaction));
         var metadata = relationship.metadata || {};
         var history = Array.isArray(metadata.employerSatisfactionHistory)
@@ -764,13 +920,13 @@
             : [];
 
         history.push({
-            year: _getCurrentYearSafe(),
+            year: year,
             satisfaction: bounded,
-            reason: reason || null
+            reason: reason || null,
+            timestamp: Date.now()
         });
         if (history.length > 20) history = history.slice(-20);
 
-        // Recompute quality in the same batch (no separate updateRelationship)
         var quality = calculateServiceQuality(
             bounded,
             metadata.servantSatisfaction
@@ -780,7 +936,7 @@
         updatedMetadata.employerSatisfaction = bounded;
         updatedMetadata.employerSatisfactionHistory = history;
         updatedMetadata.quality = quality.id;
-        updatedMetadata.qualityLastUpdated = _getCurrentYearSafe();
+        updatedMetadata.qualityLastUpdated = year;
 
         var updated = _updateRelationship(relationshipId, {
             metadata: updatedMetadata
@@ -792,7 +948,8 @@
         var finish = _finish('serviceSatisfactionRecorded', {
             relationshipId: relationshipId,
             satisfaction: bounded,
-            quality: quality.id
+            quality: quality.id,
+            year: year
         });
 
         if (!finish.success) {
@@ -800,25 +957,24 @@
                 relationshipId: relationshipId,
                 satisfaction: bounded,
                 quality: quality.id,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
         return _ok({
             relationshipId: relationshipId,
             satisfaction: bounded,
-            quality: quality.id
+            quality: quality.id,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted
         });
     }
 
     /**
-     * Recomputes the service quality tier from current satisfaction values.
-     *
-     * Public API preserved. Batches the relationship update with _finish.
-     *
-     * Returns:
-     *   { success: true, data: { relationshipId, qualityId, changed } }
-     *   { success: false, code, reason }
+     * Recomputes the service quality tier from current satisfaction
+     * values.
      */
     function updateServiceQuality(relationshipId) {
         var relationship = _getRelationshipById(relationshipId);
@@ -858,14 +1014,18 @@
             return _fail(finish.code, finish.reason, {
                 relationshipId: relationshipId,
                 qualityId: quality.id,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
         return _ok({
             relationshipId: relationshipId,
             qualityId: quality.id,
-            changed: true
+            changed: true,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted
         });
     }
 
@@ -874,7 +1034,9 @@
     // =========================================================================
 
     function getServiceBetween(employerId, servantId) {
-        return _snapshotRelationship(_getRelationshipBetween(employerId, servantId));
+        return _snapshotRelationship(
+            _getRelationshipBetween(employerId, servantId)
+        );
     }
 
     function getServants(employerId) {
@@ -929,18 +1091,14 @@
         if (!relationship) return null;
         var metadata = relationship.metadata || {};
         var qualityId = metadata.quality || 'average';
-        for (var i = 0; i < SERVICE_QUALITY_ORDER.length; i++) {
-            if (SERVICE_QUALITY_ORDER[i].id === qualityId) {
-                return SERVICE_QUALITY_ORDER[i];
+        for (var i = 0; i < C.SERVICE_QUALITY_ORDER.length; i++) {
+            if (C.SERVICE_QUALITY_ORDER[i].id === qualityId) {
+                return C.SERVICE_QUALITY_ORDER[i];
             }
         }
-        return SERVICE_QUALITY.AVERAGE;
+        return C.SERVICE_QUALITY.AVERAGE;
     }
 
-    /**
-     * Generates a service reference for a servant.
-     * Pure projection.
-     */
     function generateServiceReference(employerId, servantId) {
         var relationship = _getRelationshipBetween(employerId, servantId);
         if (!relationship || relationship.type !== 'service') {
@@ -952,14 +1110,18 @@
         var quality = getServiceQuality(relationship.id);
         var metadata = relationship.metadata || {};
 
-        var employerSat = typeof metadata.employerSatisfaction === 'number'
-            ? metadata.employerSatisfaction : 70;
+        var employerSat = (typeof metadata.employerSatisfaction === 'number')
+            ? metadata.employerSatisfaction
+            : 70;
 
-        var serviceYears = (relationship.startYear && relationship.endYear)
-            ? relationship.endYear - relationship.startYear
-            : (relationship.startYear
-                ? _getCurrentYearSafe() - relationship.startYear
-                : 0);
+        var serviceYears;
+        if (relationship.startYear && relationship.endYear) {
+            serviceYears = relationship.endYear - relationship.startYear;
+        } else if (relationship.startYear) {
+            serviceYears = _getCurrentYearSafe() - relationship.startYear;
+        } else {
+            serviceYears = 0;
+        }
 
         return _ok({
             servantName: servant ? servant.name : 'Unknown',
@@ -974,10 +1136,6 @@
         });
     }
 
-    /**
-     * Returns staff grouped by department for a household.
-     * Composes HouseholdQueries + service query.
-     */
     function getStaffByDepartment(employerId, departmentId) {
         var employerHousehold = _householdQueries.getCharacterHousehold(employerId);
         if (!employerHousehold) return [];
@@ -1007,15 +1165,12 @@
     // 8. HOUSEHOLD INTEGRATION
     // =========================================================================
 
-    /**
-     * Assigns a servant to a department.
-     *
-     * This is fundamentally a household member update. Delegates to
-     * HouseholdCommands.updateMember. Batches a single _finish.
-     */
-    function assignServantToDepartment(employerId, servantId, departmentId) {
+    function assignServantToDepartment(employerId, servantId, departmentId, options) {
+        options = options || {};
+
         var service = _getRelationshipBetween(employerId, servantId);
-        if (!service || service.type !== 'service' || service.status !== 'ongoing') {
+        if (!service || service.type !== 'service' ||
+            service.status !== 'ongoing') {
             return _fail('NO_SERVICE', 'Character is not an active servant');
         }
 
@@ -1025,7 +1180,12 @@
         var result = _householdCommands.updateMember(household.id, servantId, {
             departmentId: departmentId
         });
-        if (!result.success) return result;
+        if (!result || result.success !== true) {
+            return _fail(
+                (result && result.code) || 'UPDATE_FAILED',
+                (result && result.reason) || 'Failed to update member department'
+            );
+        }
 
         var finish = _finish('servantDepartmentChanged', {
             employerId: employerId,
@@ -1039,31 +1199,36 @@
                 householdId: household.id,
                 characterId: servantId,
                 departmentId: departmentId,
-                partial: true
+                householdPersisted: finish.householdPersisted,
+                relationshipPersisted: finish.relationshipPersisted,
+                partial: finish.partial === true
             });
         }
 
         return _ok({
             householdId: household.id,
             characterId: servantId,
-            departmentId: departmentId
+            departmentId: departmentId,
+            householdPersisted: finish.data.householdPersisted,
+            relationshipPersisted: finish.data.relationshipPersisted
         });
     }
 
     /**
      * Transfers a servant to a new employer.
      *
-     * Order (explicitly non-atomic across the two orchestrations):
+     * Sequence (deliberately non-atomic across the two orchestrations):
      *   1. Validate
-     *   2. Create new service FIRST (leaves old intact on failure)
+     *   2. Create new service FIRST
      *   3. Terminate old service
-     *   4. If termination fails, roll back new service
+     *   4. If termination fails, best-effort roll back the new service
      *
      * Each step is its own orchestration with its own _finish. The whole
      * sequence is not atomic; partial failures are reported with
-     * partial:true and a detail field indicating which step failed.
+     * partial: true and a `step` field.
      */
-    function transferServantToHousehold(currentEmployerId, servantId, newEmployerId, options) {
+    function transferServantToHousehold(currentEmployerId, servantId,
+                                        newEmployerId, options) {
         options = options || {};
 
         var servant = _getCharacterById(servantId);
@@ -1083,14 +1248,16 @@
         }
 
         var transferYear = _resolveYear(options.transferYear);
-        if (transferYear === null) return _fail('INVALID_YEAR', 'Invalid transfer year');
+        if (transferYear === null) {
+            return _fail('INVALID_YEAR', 'Invalid transfer year');
+        }
 
         var metadata = oldRelationship.metadata || {};
         var serviceTypeId = metadata.serviceTypeId || 'household_staff';
-        var oldWage = typeof metadata.wage === 'number' ? metadata.wage : 0;
-        var newWage = options.newWage !== undefined ? options.newWage : oldWage;
+        var oldWage = (typeof metadata.wage === 'number') ? metadata.wage : 0;
+        var newWage = (options.newWage !== undefined) ? options.newWage : oldWage;
 
-        // Step 1: create new service (leaves old intact on failure)
+        // Step 1: create new service.
         var newRelationshipResult = createServiceRelationship(
             newEmployerId,
             servantId,
@@ -1106,14 +1273,15 @@
 
         if (!newRelationshipResult.success) {
             return _fail('NEW_SERVICE_FAILED',
-                'Failed to create new service: ' + newRelationshipResult.reason,
+                'Failed to create new service: ' +
+                (newRelationshipResult.reason || 'unknown'),
                 { step: 'createNewService' });
         }
 
         var newRelationshipId = newRelationshipResult.data.relationshipId;
         var newHouseholdId = newRelationshipResult.data.householdId;
 
-        // Step 2: terminate old service
+        // Step 2: terminate old service.
         var terminateResult = terminateService(currentEmployerId, servantId, {
             endYear: transferYear,
             reason: 'Transferred to ' + newEmployer.name + "'s household",
@@ -1122,7 +1290,6 @@
         });
 
         if (!terminateResult.success) {
-            // Best-effort rollback of new service
             var rollbackOk = false;
             try {
                 var rollback = terminateService(newEmployerId, servantId, {
@@ -1150,8 +1317,6 @@
             });
         }
 
-        // Success — dispatch a transfer event (each sub-orchestration
-        // already persisted; this dispatch is for observers only)
         _dispatch('servantTransferred', {
             servantId: servantId,
             fromEmployerId: currentEmployerId,
@@ -1163,8 +1328,9 @@
 
         if (typeof window.logEvent === 'function') {
             window.logEvent('service', 'Servant Transferred',
-                servant.name + ' transferred from ' + currentEmployer.name +
-                ' to ' + newEmployer.name,
+                (servant.name || 'Servant') + ' transferred from ' +
+                (currentEmployer.name || 'employer') + ' to ' +
+                (newEmployer.name || 'employer'),
                 [servant, currentEmployer, newEmployer]);
         }
 
@@ -1174,7 +1340,13 @@
             toEmployerId: newEmployerId,
             newRelationshipId: newRelationshipId,
             year: transferYear,
-            wage: newWage
+            wage: newWage,
+            householdPersisted: terminateResult.data
+                ? terminateResult.data.householdPersisted
+                : null,
+            relationshipPersisted: terminateResult.data
+                ? terminateResult.data.relationshipPersisted
+                : null
         });
     }
 
@@ -1183,14 +1355,15 @@
     // =========================================================================
 
     var api = {
-        // Constants
-        SERVICE_TYPES: SERVICE_TYPES,
-        SERVICE_STATUS: SERVICE_STATUS,
-        SERVICE_QUALITY: SERVICE_QUALITY,
-        SERVICE_QUALITY_ORDER: SERVICE_QUALITY_ORDER,
-        SERVICE_CONTRACT_TERMS: SERVICE_CONTRACT_TERMS,
+        // Constant re-exports (compatibility surface; point at the frozen
+        // HouseholdConstants objects — no shadow copy).
+        SERVICE_TYPES: C.SERVICE_TYPES,
+        SERVICE_STATUS: C.SERVICE_STATUS,
+        SERVICE_QUALITY: C.SERVICE_QUALITY,
+        SERVICE_QUALITY_ORDER: C.SERVICE_QUALITY_ORDER,
+        SERVICE_CONTRACT_TERMS: C.SERVICE_CONTRACT_TERMS,
 
-        // Pure calculations
+        // Pure calculations (delegates)
         calculateServiceQuality: calculateServiceQuality,
         calculateRecommendation: calculateRecommendation,
 
@@ -1219,12 +1392,36 @@
 
     window.HouseholdServant = api;
 
-    // Legacy flat aliases — consumers should migrate to
-    // window.HouseholdServant.*
-    window.SERVICE_TYPES = SERVICE_TYPES;
-    window.SERVICE_STATUS = SERVICE_STATUS;
-    window.SERVICE_QUALITY = SERVICE_QUALITY;
-    window.SERVICE_CONTRACT_TERMS = SERVICE_CONTRACT_TERMS;
+    // =========================================================================
+    // 10. LEGACY FLAT ALIASES
+    // =========================================================================
+    //
+    // Prior to the constants consolidation, this module (loading late)
+    // unconditionally overwrote window.SERVICE_TYPES with a mutable copy
+    // of its own catalog. That silently disabled the frozen guarantee
+    // the constants module establishes.
+    //
+    // The aliases below use the "only if undefined" guard — they will
+    // NOT overwrite the frozen catalog. If a future module ever loads
+    // earlier and (incorrectly) defines window.SERVICE_TYPES first, the
+    // alias here is a no-op and the earlier definition wins. This is the
+    // correct behaviour: constants.js should always be first.
+
+    if (typeof window.SERVICE_TYPES === 'undefined') {
+        window.SERVICE_TYPES = C.SERVICE_TYPES;
+    }
+    if (typeof window.SERVICE_STATUS === 'undefined') {
+        window.SERVICE_STATUS = C.SERVICE_STATUS;
+    }
+    if (typeof window.SERVICE_QUALITY === 'undefined') {
+        window.SERVICE_QUALITY = C.SERVICE_QUALITY;
+    }
+    if (typeof window.SERVICE_QUALITY_ORDER === 'undefined') {
+        window.SERVICE_QUALITY_ORDER = C.SERVICE_QUALITY_ORDER;
+    }
+    if (typeof window.SERVICE_CONTRACT_TERMS === 'undefined') {
+        window.SERVICE_CONTRACT_TERMS = C.SERVICE_CONTRACT_TERMS;
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
