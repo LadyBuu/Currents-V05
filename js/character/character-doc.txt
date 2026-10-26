@@ -1,12 +1,13 @@
 # Still Waters — Character Subsystem Documentation
 
-**Version 2.1**
+Version: 3.0
 
-**Covers:** character, family, children, education, mortality, UI state
+Covers: character, family, children, education, mortality, lifecycle,
+parentage edge model, and integration with household/residence.
 
-**Status:** character subsystem complete. Relationship and apprenticeship
-domains have partial rebuilds (see §9). Succession and inheritance are not
-implemented.
+Status: character subsystem complete through the household-batch
+reconciliation. Relationship and apprenticeship domains have partial
+rebuilds (see §9). Succession and inheritance are not implemented.
 
 ---
 
@@ -24,25 +25,27 @@ The character subsystem manages:
 - Panel UI state persistence
 - UI modals for character CRUD, family view, death, birth, surrogacy,
   adoption, and education
+- Multi-year simulation clock coordination
 
-Six architectural rules govern the whole system:
+Seven architectural rules govern the whole system:
 
 1. **One owner per concept.**
-   Character record → `CharacterState`.
-   Parent edges → `FamilyState`.
-   Pregnancy, surrogacy, adoption records → `ChildrenState`.
-   Education containers → `CharacterCommands` (education API).
-   Death fields → on the character record, written only by
-   `CharacterCommands.markDeceased`.
+   Character record                → `CharacterState`.
+   Parent edges                    → `FamilyState` (parentChildEdges).
+   Pregnancy, surrogacy, adoption  → `ChildrenState`.
+   Education containers            → `CharacterCommands` (education API).
+   Death fields                    → on the character record, written
+                                     only by `CharacterCommands.markDeceased`.
 
-2. **Rules are pure.** `-rules.js` modules contain no I/O, no randomness,
-   no mutation, no state access.
+2. **Rules are pure.** `-rules.js` modules contain no I/O, no
+   randomness, no mutation, no state access.
 
 3. **Reads and writes are separate.** `-queries.js` reads, `-commands.js`
    writes. A query never mutates.
 
-4. **Dependencies fail loudly.** Missing modules throw at load. Missing
-   data returns null or []. Invalid input throws.
+4. **Dependencies fail loudly.** Missing required modules throw at load.
+   Missing optional dependencies either throw at call time or fail
+   closed with a documented empty value. Missing data returns null or [].
 
 5. **Randomness is injected.** No rules module generates random numbers.
    Rolls are passed in by the caller. Where a command genuinely needs a
@@ -52,9 +55,18 @@ Six architectural rules govern the whole system:
 6. **Multi-year simulation passes the simulated year.**
    `CharacterCommands.markDeceased` accepts `options.referenceYear` for
    this purpose. `CharacterLifecycle.advanceMortality` uses it on every
-   simulated death. Any new caller that writes a death year ahead of
-   wall-clock must supply `referenceYear` explicitly or validation will
-   reject the death.
+   simulated death and now also accepts `options.startYear` and returns
+   `result.finalYear`. Any caller that writes a death year ahead of
+   wall-clock must supply the reference year explicitly or validation
+   will reject the death.
+
+7. **No dead-schema reads.** The character record's parentage fields
+   (`motherId`, `fatherId`, `children`, `adoptedParents`,
+   `adoptedChildren`) were removed when parentage moved to
+   `parentChildEdges`. The `relationships` array was removed when
+   romantic links moved to the relationship domain. No module in the
+   character subsystem — or in the household subsystem that reads from
+   it — may read those fields.
 
 ---
 
