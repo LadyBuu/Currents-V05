@@ -3,20 +3,22 @@
  * STILL WATERS - HOUSEHOLD STAFF POSITION MODALS (modals-household-staff.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/modals-household-staff.js
+ * LOCATION: js/households/modals-household-staff.js
  *
  * PURPOSE
  * -------
  * Modal entry points for household staff position management.
  *
- * Reads:  HouseholdQueries, RoleQueries
+ * Reads:  HouseholdQueries, RoleQueries (via window.getRoleById /
+ *         window.getAllRoles — RoleQueries not a hard dependency)
  * Writes: HouseholdCommands + one persist() per batch
- * UI:     modals-core, selectors, icons
+ * UI:     modals-core, selectors, icons, HouseholdModals, HouseholdViewModels
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
  *   - Every mutation batch invokes HouseholdCommands.* then one
- *     HouseholdCommands.persist() at the end.
+ *     HouseholdCommands.persist() at the end (via
+ *     HouseholdModals.persistOrFail).
  *   - Position create / update / delete: one command + one persist.
  *   - Single assignment: one command + one persist.
  *   - Bulk assignment: one bulkAssign command (which internally commits
@@ -24,9 +26,58 @@
  *   - Assignment end / delete: one command + one persist.
  *   - No HouseholdState access.
  *   - No _processingStaffModal guard.
- *   - addRoleIfMissing is now honored by the command (see addendum in
- *     household-commands.js). The modal passes the flag through and
- *     reports the outcome.
+ *
+ * ADD-ROLE-IF-MISSING (WIRED)
+ * ---------------------------
+ *   The single-assignment modal exposes an "Add role if missing"
+ *   checkbox. When checked, it passes `options.addRoleIfMissing: true`
+ *   and `options.defaultSkillLevel` to
+ *   HouseholdCommands.assignCharacterToPosition, which now honors the
+ *   flag (Prompt 33). If the role-add fails, the command returns
+ *   ROLE_ADD_FAILED and the modal reports the failure and keeps open.
+ *
+ *   When unchecked, the assignment proceeds and the result carries
+ *   `roleWarning` (if applicable). The modal surfaces that warning as
+ *   an informational toast, and the assignment still succeeds.
+ *
+ *   The bulk-assign modal does not expose the checkbox — bulkAssign
+ *   defaults to addRoleIfMissing based on the caller's options. The
+ *   modal passes `addRoleIfMissing: true` unconditionally for the bulk
+ *   path because bulk assignment is an administrative action where the
+ *   user expects the roles to be added if required; the warnings array
+ *   in the result captures any per-entry role warning that arises.
+ *
+ *   If bulkAssign's role-add path fails for one entry, that entry is
+ *   reported in result.data.failed with code ROLE_ADD_FAILED, and the
+ *   rest of the batch continues.
+ *
+ * DOM-SCOPE
+ * ---------
+ *   Every DOM lookup is scoped to the modal's own `handle.element` via
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for why the
+ *   prior _resolveModalRoot() fallback (which ended at document.body)
+ *   was wrong.
+ *
+ * DEFAULT_SKILL_LEVEL
+ * -------------------
+ *   The prior version defined `var DEFAULT_SKILL_LEVEL = 10;` locally.
+ *   That value now lives in HouseholdViewModels.DEFAULT_SKILL_LEVEL.
+ *   This module reads from there so there's one canonical number.
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - modals-core.js (openModal, closeTopModal, confirmDialog)
+ *   - accessors.js (getCharacterById, getCharacters)
+ *   - household-queries.js (HouseholdQueries)
+ *   - household-commands.js (HouseholdCommands)
+ *   - household-modals-helper.js (HouseholdModals)
+ *   - household-view-models.js (HouseholdViewModels)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - RoleQueries / RoleState (for role lookup — falls back to
+ *     window.getRoleById / window.getAllRoles if not present)
+ *   - selectors/modals-char-selector.js (openCharacterSelector)
+ *
+ * ICON POLICY: SVG from icons.js. No emojis.
  *
  * =============================================================================
  */
@@ -35,7 +86,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // 0. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
     function _requireFunction(name, fn) {
@@ -58,6 +109,8 @@
         _queries.getHouseholdPosition);
     _requireFunction('HouseholdQueries.getHouseholdPositions',
         _queries.getHouseholdPositions);
+    _requireFunction('HouseholdQueries.getHouseholdDepartments',
+        _queries.getHouseholdDepartments);
     _requireFunction('HouseholdQueries.getHouseholdDetails',
         _queries.getHouseholdDetails);
     _requireFunction('HouseholdQueries.getAssignmentsForPosition',
@@ -70,7 +123,6 @@
         _queries.getHouseholdAssignment);
 
     var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
-    _requireFunction('HouseholdCommands.persist', _commands.persist);
     _requireFunction('HouseholdCommands.createPosition',
         _commands.createPosition);
     _requireFunction('HouseholdCommands.updatePosition',
@@ -94,8 +146,33 @@
             ? window.closeTopModal
             : window._closeTopModal);
 
+    var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
+    _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.persistOrFail', _Modals.persistOrFail);
+    _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
+    _requireFunction('HouseholdModals.esc', _Modals.esc);
+    _requireFunction('HouseholdModals.readValue', _Modals.readValue);
+    _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.readChecked', _Modals.readChecked);
+    _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+
+    var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
+
+    // Local aliases.
+    var _esc = _Modals.esc;
+    var _showSuccess = _Modals.showSuccess;
+    var _showWarning = _Modals.showWarning;
+    var _showInfo = _Modals.showInfo;
+    var _showError = _Modals.showError;
+
+    function _currentYear() {
+        return (typeof window.getCurrentYearSafe === 'function')
+            ? window.getCurrentYearSafe()
+            : null;
+    }
+
     // =========================================================================
-    // 2. HELPERS
+    // 1. CONFIRM DIALOG
     // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
@@ -112,116 +189,42 @@
         }
     }
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === undefined || str === null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            return window._showToast(message, type);
-        }
-        if (typeof window.showToast === 'function') {
-            return window.showToast(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name) || '';
-        }
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
+    // =========================================================================
+    // 2. ROLE / DEPARTMENT / ICON LOOKUPS
+    // =========================================================================
 
     function _getRoleById(id) {
         if (!id) return null;
-        if (typeof window.getRoleById === 'function') return window.getRoleById(id);
-        if (typeof window.RoleQueries !== 'undefined' &&
-            typeof window.RoleQueries.getRoleById === 'function') {
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        if (typeof window.RoleQueries !== 'undefined'
+            && typeof window.RoleQueries.getRoleById === 'function') {
             return window.RoleQueries.getRoleById(id);
         }
         return null;
     }
 
     function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined' &&
-            typeof window.RoleState.getAllRoles === 'function') {
+        if (typeof window.RoleState !== 'undefined'
+            && typeof window.RoleState.getAllRoles === 'function') {
             return window.RoleState.getAllRoles();
         }
-        if (typeof window.RoleQueries !== 'undefined' &&
-            typeof window.RoleQueries.getAllRoles === 'function') {
+        if (typeof window.RoleQueries !== 'undefined'
+            && typeof window.RoleQueries.getAllRoles === 'function') {
             return window.RoleQueries.getAllRoles();
         }
         return [];
     }
 
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        return null;
+    function _getIcon(name) {
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
+        return '';
     }
-
-    function _resolveModalRoot() {
-        if (typeof document === 'undefined') return null;
-        return document.querySelector('[data-modal-root="top"]') ||
-               document.querySelector('.modal-root:last-of-type') ||
-               document.body;
-    }
-
-    function _attachOnOpen(handler) {
-        return function() {
-            var root = _resolveModalRoot();
-            if (root) handler(root);
-        };
-    }
-
-    function _parseIntOrNull(value) {
-        if (value === undefined || value === null) return null;
-        var s = String(value).trim();
-        if (s === '') return null;
-        var n = Number(s);
-        if (!isFinite(n)) return null;
-        return Math.floor(n);
-    }
-
-    function _persistOrFail(messagePrefix) {
-        var result = _commands.persist();
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showToast(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason,
-                'error');
-            return { ok: false, reason: reason };
-        }
-        return { ok: true };
-    }
-
-    function _reportFailure(result, fallbackPrefix) {
-        var reason = (result && result.reason) || 'Unknown error';
-        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
-            'error');
-    }
-
-    // Deferred: presentation default. Move to view-models in a later pass.
-    var DEFAULT_SKILL_LEVEL = 10;
-
-    // =========================================================================
-    // 3. ROLE / DEPARTMENT OPTIONS BUILDERS
-    // =========================================================================
 
     function _buildRoleOptions(selectedId, emptyLabel) {
         emptyLabel = emptyLabel || 'No role required';
-        var html = '<option value="">' + _escapeHtml(emptyLabel) + '</option>';
+        var html = '<option value="">' + _esc(emptyLabel) + '</option>';
         var roles = _getAllRoles();
         if (!Array.isArray(roles)) return html;
 
@@ -232,8 +235,8 @@
             var category = r.category || 'Uncategorized';
             var label = (icon ? icon + ' ' : '') + (r.name || 'Unnamed') +
                 ' (' + category + ')';
-            html += '<option value="' + _escapeHtml(r.id) + '"' + selected + '>' +
-                _escapeHtml(label) + '</option>';
+            html += '<option value="' + _esc(r.id) + '"' + selected + '>' +
+                _esc(label) + '</option>';
         }
         return html;
     }
@@ -246,20 +249,20 @@
         for (var i = 0; i < departments.length; i++) {
             var d = departments[i];
             var selected = (d.id === selectedId) ? ' selected' : '';
-            html += '<option value="' + _escapeHtml(d.id) + '"' + selected + '>' +
-                _escapeHtml(d.name) + '</option>';
+            html += '<option value="' + _esc(d.id) + '"' + selected + '>' +
+                _esc(d.name) + '</option>';
         }
         return html;
     }
 
     // =========================================================================
-    // 4. CREATE POSITION MODAL
+    // 3. CREATE POSITION MODAL
     // =========================================================================
 
     function openCreateHouseholdPositionModal(householdId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -270,7 +273,7 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Creating a position for <strong>' +
-                        _escapeHtml(household.name) + '</strong>' +
+                        _esc(household.name) + '</strong>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
@@ -319,36 +322,38 @@
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Create Household Position',
             content: content,
             confirmText: 'Create Position',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
-                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                var name = _Modals.readValue(root, '[data-field="name"]').trim();
                 if (!name) {
-                    _showToast('Position name is required', 'error');
+                    _showError('Position name is required');
                     return false;
                 }
 
                 var departmentId =
-                    (root.querySelector('[data-field="departmentId"]') || {}).value || null;
+                    _Modals.readValue(root, '[data-field="departmentId"]') || null;
                 var requiredRoleId =
-                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                    _Modals.readValue(root, '[data-field="requiredRoleId"]') || null;
 
-                var minSkillLevel = _parseIntOrNull(
-                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _Modals.readIntOrNull(
+                    root, '[data-field="minSkillLevel"]');
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var priority = _parseIntOrNull(
-                    (root.querySelector('[data-field="priority"]') || {}).value);
+                var priority = _Modals.readIntOrNull(root, '[data-field="priority"]');
                 if (priority === null) priority = 10;
 
                 var description =
-                    ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
+                    _Modals.readValue(root, '[data-field="description"]').trim();
 
                 var result = _commands.createPosition({
                     name: name,
@@ -361,37 +366,39 @@
                 });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to create position');
+                    _Modals.reportFailure(result, 'Failed to create position');
                     return false;
                 }
 
-                var persisted = _persistOrFail('Position created');
+                var persisted = _Modals.persistOrFail('Position created');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    // Keep the modal open so the user can retry.
+                    return false;
                 }
 
-                _showToast('Position "' + name + '" created', 'success');
+                _showSuccess('Position "' + name + '" created');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
-    // 5. EDIT POSITION MODAL
+    // 4. EDIT POSITION MODAL
     // =========================================================================
 
     function openEditHouseholdPositionModal(householdId, positionId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
         var position = _queries.getHouseholdPosition(positionId);
         if (!position) {
-            _showToast('Position not found', 'error');
+            _showError('Position not found');
             return null;
         }
 
@@ -404,13 +411,13 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:var(--bg3);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:0.6rem;color:var(--dim);">' +
                     'Editing position in <strong>' +
-                        _escapeHtml(household.name) + '</strong>' +
+                        _esc(household.name) + '</strong>' +
                 '</div>' +
 
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Position Name *</label>' +
                     '<input type="text" data-field="name" value="' +
-                        _escapeHtml(position.name) +
+                        _esc(position.name) +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
 
@@ -445,41 +452,43 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
                     '<input type="text" data-field="description" value="' +
-                        _escapeHtml(position.description || '') +
+                        _esc(position.description || '') +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.85rem;">' +
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Edit Position: ' + position.name,
             content: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
-                var name = ((root.querySelector('[data-field="name"]') || {}).value || '').trim();
+                var name = _Modals.readValue(root, '[data-field="name"]').trim();
                 if (!name) {
-                    _showToast('Position name is required', 'error');
+                    _showError('Position name is required');
                     return false;
                 }
 
                 var departmentId =
-                    (root.querySelector('[data-field="departmentId"]') || {}).value || null;
+                    _Modals.readValue(root, '[data-field="departmentId"]') || null;
                 var requiredRoleId =
-                    (root.querySelector('[data-field="requiredRoleId"]') || {}).value || null;
+                    _Modals.readValue(root, '[data-field="requiredRoleId"]') || null;
 
-                var minSkillLevel = _parseIntOrNull(
-                    (root.querySelector('[data-field="minSkillLevel"]') || {}).value);
+                var minSkillLevel = _Modals.readIntOrNull(
+                    root, '[data-field="minSkillLevel"]');
                 if (minSkillLevel === null) minSkillLevel = 0;
 
-                var priority = _parseIntOrNull(
-                    (root.querySelector('[data-field="priority"]') || {}).value);
+                var priority = _Modals.readIntOrNull(root, '[data-field="priority"]');
                 if (priority === null) priority = 10;
 
                 var description =
-                    ((root.querySelector('[data-field="description"]') || {}).value || '').trim();
+                    _Modals.readValue(root, '[data-field="description"]').trim();
 
                 var result = _commands.updatePosition(positionId, {
                     name: name,
@@ -491,32 +500,33 @@
                 });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to update position');
+                    _Modals.reportFailure(result, 'Failed to update position');
                     return false;
                 }
 
-                var persisted = _persistOrFail('Position updated');
+                var persisted = _Modals.persistOrFail('Position updated');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Position updated', 'success');
+                _showSuccess('Position updated');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
-    // 6. DELETE POSITION MODAL
+    // 5. DELETE POSITION MODAL
     // =========================================================================
 
     function openDeleteHouseholdPositionModal(householdId, positionId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         var position = _queries.getHouseholdPosition(positionId);
         if (!household || !position) {
-            _showToast('Household or position not found', 'error');
+            _showError('Household or position not found');
             return null;
         }
 
@@ -529,7 +539,7 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(200,68,68,0.15);border:1px solid var(--warn);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                     '<strong>Delete Position: ' +
-                        _escapeHtml(position.name) + '</strong>' +
+                        _esc(position.name) + '</strong>' +
                     '<div style="margin-top:8px;font-size:0.65rem;">' +
                         'This will permanently remove the position from the household.' +
                         (activeAssignments.length > 0
@@ -546,12 +556,12 @@
                     '<div style="display:flex;justify-content:space-between;font-size:0.7rem;">' +
                         '<span>Position:</span>' +
                         '<span><strong>' +
-                            _escapeHtml(position.name) + '</strong></span>' +
+                            _esc(position.name) + '</strong></span>' +
                     '</div>' +
                     (roleName
                         ? '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
                             '<span>Required Role:</span>' +
-                            '<span>' + _escapeHtml(roleName) + '</span>' +
+                            '<span>' + _esc(roleName) + '</span>' +
                           '</div>'
                         : '') +
                     '<div style="display:flex;justify-content:space-between;font-size:0.6rem;margin-top:4px;">' +
@@ -569,51 +579,54 @@
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Delete Position: ' + position.name,
             content: content,
             confirmText: 'Delete Position',
             cancelText: 'Cancel',
             confirmStyle: 'danger',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                var removeAssignments = root
-                    ? (root.querySelector('[data-field="removeAssignments"]') || {}).checked !== false
-                    : true;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
+
+                var removeAssignments = _Modals.readChecked(
+                    root, '[data-field="removeAssignments"]');
 
                 var result = _commands.deletePosition(positionId, {
                     removeAssignments: removeAssignments
                 });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to delete position');
+                    _Modals.reportFailure(result, 'Failed to delete position');
                     return false;
                 }
 
-                var persisted = _persistOrFail('Position deleted');
+                var persisted = _Modals.persistOrFail('Position deleted');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast(
-                    'Position "' + position.name + '" deleted',
-                    'info');
+                _showInfo('Position "' + position.name + '" deleted');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
-    // 7. ASSIGN STAFF MODAL
+    // 6. ASSIGN STAFF MODAL
     // =========================================================================
 
     function openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         var position = _queries.getHouseholdPosition(positionId);
         if (!household || !position) {
-            _showToast('Household or position not found', 'error');
+            _showError('Household or position not found');
             return null;
         }
 
@@ -669,9 +682,9 @@
 
         var content =
             '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
-                '<strong>Household:</strong> ' + _escapeHtml(household.name) + '<br>' +
-                '<strong>Position:</strong> ' + _escapeHtml(position.name) + '<br>' +
-                '<strong>Required Role:</strong> ' + _escapeHtml(roleDisplay) +
+                '<strong>Household:</strong> ' + _esc(household.name) + '<br>' +
+                '<strong>Position:</strong> ' + _esc(position.name) + '<br>' +
+                '<strong>Required Role:</strong> ' + _esc(roleDisplay) +
                 (position.minSkillLevel > 0
                     ? ' · <strong>Min Skill:</strong> ' + position.minSkillLevel
                     : '') +
@@ -682,7 +695,7 @@
                 candidatesHtml +
             '</div>' +
 
-            '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">' +
+            '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">' +
                 '<button data-action="select-other-character" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Select Other Character</button>' +
                 '<label style="display:flex;align-items:center;gap:6px;font-size:0.55rem;cursor:pointer;">' +
                     '<input type="checkbox" data-field="addRoleIfMissing" checked>' +
@@ -693,7 +706,7 @@
             '<div style="margin-bottom:12px;">' +
                 '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Custom Title</label>' +
                 '<input type="text" data-field="title" value="' +
-                    _escapeHtml(position.name) +
+                    _esc(position.name) +
                     '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
             '</div>' +
 
@@ -723,49 +736,50 @@
                 'Assignments track who holds this position over time. Setting an end year records it as historical.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Assign Staff to ' + position.name,
             content: content,
             confirmText: 'Assign Staff',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
                 var selected = root.querySelector('.staff-candidate.selected');
                 var characterId = selected ? selected.dataset.characterId : null;
                 if (!characterId) {
-                    _showToast('Please select a staff member', 'error');
+                    _showError('Please select a staff member');
                     return false;
                 }
 
-                var startYear = _parseIntOrNull(
-                    (root.querySelector('[data-field="startYear"]') || {}).value);
+                var startYear = _Modals.readIntOrNull(root, '[data-field="startYear"]');
                 if (startYear === null) {
-                    _showToast('Start year is required', 'error');
+                    _showError('Start year is required');
                     return false;
                 }
 
-                var endYearRaw = (root.querySelector('[data-field="endYear"]') || {}).value;
-                var endYear = endYearRaw === '' || endYearRaw === undefined
-                    ? null
-                    : _parseIntOrNull(endYearRaw);
-                if (endYearRaw !== '' && endYear === null) {
-                    _showToast('End year must be a valid year', 'error');
-                    return false;
+                var endYearRaw = _Modals.readValue(root, '[data-field="endYear"]');
+                var endYear = null;
+                if (endYearRaw !== '') {
+                    endYear = _Modals.readIntOrNull(root, '[data-field="endYear"]');
+                    if (endYear === null) {
+                        _showError('End year must be a valid year');
+                        return false;
+                    }
                 }
                 if (endYear !== null && endYear <= startYear) {
-                    _showToast('End year must be after start year', 'error');
+                    _showError('End year must be after start year');
                     return false;
                 }
 
-                var title =
-                    ((root.querySelector('[data-field="title"]') || {}).value || '').trim() ||
+                var title = _Modals.readValue(root, '[data-field="title"]').trim() ||
                     position.name;
-                var notes =
-                    (root.querySelector('[data-field="notes"]') || {}).value || '';
-                var addRoleIfMissing =
-                    (root.querySelector('[data-field="addRoleIfMissing"]') || {}).checked !== false;
+                var notes = _Modals.readValue(root, '[data-field="notes"]');
+                var addRoleIfMissing = _Modals.readChecked(
+                    root, '[data-field="addRoleIfMissing"]');
 
                 var result = _commands.assignCharacterToPosition(
                     positionId, characterId, {
@@ -774,31 +788,41 @@
                         title: title,
                         notes: notes,
                         addRoleIfMissing: addRoleIfMissing,
-                        defaultSkillLevel: DEFAULT_SKILL_LEVEL
+                        defaultSkillLevel: _VM.DEFAULT_SKILL_LEVEL
                     });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to assign staff');
+                    _Modals.reportFailure(result, 'Failed to assign staff');
                     return false;
                 }
 
-                var persisted = _persistOrFail('Staff assigned');
+                var persisted = _Modals.persistOrFail('Staff assigned');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Staff assigned to ' + position.name, 'success');
+                // Surface a role warning if the command reported one
+                // (only happens when addRoleIfMissing was false and the
+                // character lacks the required role).
+                if (result.data && result.data.roleWarning) {
+                    _showWarning(
+                        'Staff assigned, but the character lacks the ' +
+                        'required role. Check "Add role if missing" to ' +
+                        'grant it automatically.');
+                } else {
+                    _showSuccess('Staff assigned to ' + position.name);
+                }
+
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireCandidateSelection(root, householdId, positionId, position, onSuccess);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _buildCandidateList(candidates, position) {
@@ -824,18 +848,18 @@
                 ? c.age + 'y' : '—';
 
             html += '<div class="staff-candidate" data-character-id="' +
-                _escapeHtml(c.characterId) +
+                _esc(c.characterId) +
                 '" style="padding:8px 10px;margin-bottom:4px;background:var(--bg2);border:1px solid var(--border);' +
                 'border-left:3px solid ' +
                     (position.requiredRoleId && !c.hasRole ? 'var(--warn)' : 'var(--success)') +
                 ';border-radius:4px;cursor:pointer;transition:background 0.1s;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
                     '<div>' +
-                        '<strong>' + _escapeHtml(c.characterName) + '</strong>' +
+                        '<strong>' + _esc(c.characterName) + '</strong>' +
                         ' <span style="font-size:0.5rem;color:var(--dim);">' +
                             ageText +
                             (c.currentRole
-                                ? ' · ' + _escapeHtml(c.currentRole) : '') +
+                                ? ' · ' + _esc(c.currentRole) : '') +
                         '</span>' +
                         ' ' + skillText + ' ' + skillLevelText +
                     '</div>' +
@@ -868,10 +892,10 @@
 
             html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
                 'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
-                '<span>' + _escapeHtml(h.title || 'Unknown') +
+                '<span>' + _esc(h.title || 'Unknown') +
                     (roleName
                         ? ' <span style="color:var(--accent);">(' +
-                            _escapeHtml(roleName) + ')</span>'
+                            _esc(roleName) + ')</span>'
                         : '') +
                 '</span>' +
                 '<span style="color:' + color + ';">' +
@@ -915,7 +939,7 @@
         if (otherBtn) {
             otherBtn.onclick = function() {
                 if (typeof window.openCharacterSelector !== 'function') {
-                    _showToast('Character selector not available', 'warning');
+                    _showWarning('Character selector not available');
                     return;
                 }
                 window.openCharacterSelector({
@@ -935,19 +959,19 @@
     }
 
     // =========================================================================
-    // 8. REMOVE / END ASSIGNMENT MODAL
+    // 7. REMOVE / END ASSIGNMENT MODAL
     // =========================================================================
 
     function openRemoveHouseholdAssignmentModal(householdId, assignmentId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
         var assignment = _queries.getHouseholdAssignment(assignmentId);
         if (!assignment) {
-            _showToast('Assignment not found', 'error');
+            _showError('Assignment not found');
             return null;
         }
 
@@ -965,17 +989,17 @@
                 '<div style="margin-bottom:16px;">' +
                     '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;">' +
                         '<strong>Character:</strong> ' +
-                            _escapeHtml(assignment.title || assignment.positionId) + '<br>' +
+                            _esc(assignment.title || assignment.positionId) + '<br>' +
                         (position
                             ? '<strong>Position:</strong> ' +
-                                _escapeHtml(position.name) + '<br>'
+                                _esc(position.name) + '<br>'
                             : '') +
                         '<strong>Started:</strong> ' +
                             assignment.startYear + '<br>' +
                         '<strong>Ended:</strong> ' + assignment.endYear +
                         (assignment.endReason
                             ? '<br><strong>End Reason:</strong> ' +
-                                _escapeHtml(assignment.endReason)
+                                _esc(assignment.endReason)
                             : '') +
                     '</div>' +
                     '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;margin-bottom:12px;">' +
@@ -988,10 +1012,10 @@
                 '<div style="margin-bottom:16px;">' +
                     '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;">' +
                         '<strong>Position:</strong> ' +
-                            _escapeHtml(assignment.title || 'Unknown') +
-                        (position ? ' (' + _escapeHtml(position.name) + ')' : '') +
+                            _esc(assignment.title || 'Unknown') +
+                        (position ? ' (' + _esc(position.name) + ')' : '') +
                         '<br><strong>Role at Assignment:</strong> ' +
-                            _escapeHtml(roleName) +
+                            _esc(roleName) +
                         (assignment.skillLevelAtAssignment
                             ? ' (Skill: ' + assignment.skillLevelAtAssignment + ')'
                             : '') + '<br>' +
@@ -1018,68 +1042,69 @@
                 '</div>';
         }
 
-        return _openModal({
+        var modal = _openModal({
             title: isAlreadyEnded ? 'Delete Assignment' : 'End Assignment',
             content: content,
             confirmText: isAlreadyEnded ? 'Delete' : 'End Assignment',
             cancelText: 'Cancel',
             confirmStyle: isAlreadyEnded ? 'danger' : '',
             onConfirm: function() {
-                var root = _resolveModalRoot();
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
                 if (isAlreadyEnded) {
                     var delResult = _commands.deleteAssignment(assignmentId);
                     if (!delResult.success) {
-                        _reportFailure(delResult, 'Failed to delete assignment');
+                        _Modals.reportFailure(delResult, 'Failed to delete assignment');
                         return false;
                     }
 
-                    var delPersisted = _persistOrFail('Assignment deleted');
+                    var delPersisted = _Modals.persistOrFail('Assignment deleted');
                     if (!delPersisted.ok) {
-                        if (typeof onSuccess === 'function') onSuccess(delResult.data);
-                        return true;
+                        return false;
                     }
 
-                    _showToast('Assignment deleted', 'info');
+                    _showInfo('Assignment deleted');
                     if (typeof onSuccess === 'function') onSuccess(delResult.data);
                     return true;
                 }
 
-                var endYear = _parseIntOrNull(
-                    (root.querySelector('[data-field="endYear"]') || {}).value);
+                var endYear = _Modals.readIntOrNull(root, '[data-field="endYear"]');
                 if (endYear === null || endYear < assignment.startYear) {
-                    _showToast('End year must be at or after start year', 'error');
+                    _showError('End year must be at or after start year');
                     return false;
                 }
 
-                var reason =
-                    ((root.querySelector('[data-field="reason"]') || {}).value || '').trim() ||
+                var reason = _Modals.readValue(root, '[data-field="reason"]').trim() ||
                     'Term ended';
 
                 var endResult = _commands.endAssignment(
                     assignmentId, endYear, reason);
                 if (!endResult.success) {
-                    _reportFailure(endResult, 'Failed to end assignment');
+                    _Modals.reportFailure(endResult, 'Failed to end assignment');
                     return false;
                 }
 
-                var endPersisted = _persistOrFail('Assignment ended');
+                var endPersisted = _Modals.persistOrFail('Assignment ended');
                 if (!endPersisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(endResult.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast(
-                    'Assignment ended in ' + endYear + ' (' + reason + ')',
-                    'success');
+                _showSuccess(
+                    'Assignment ended in ' + endYear + ' (' + reason + ')');
                 if (typeof onSuccess === 'function') onSuccess(endResult.data);
                 return true;
             }
         });
+
+        return modal;
     }
 
     // =========================================================================
-    // 9. ASSIGNMENT HISTORY MODAL (pure projection)
+    // 8. ASSIGNMENT HISTORY MODAL (pure projection)
     // =========================================================================
 
     function openHouseholdAssignmentHistoryModal(householdId, positionId, characterId) {
@@ -1092,16 +1117,16 @@
             } else if (householdId) {
                 history = _queries.getAssignmentsForHousehold(householdId, false);
             } else {
-                _showToast('No filter provided', 'error');
+                _showError('No filter provided');
                 return null;
             }
         } catch (e) {
-            _showToast('Failed to load assignment history', 'error');
+            _showError('Failed to load assignment history');
             return null;
         }
 
         if (!history || history.length === 0) {
-            _showToast('No assignment history found', 'info');
+            _showInfo('No assignment history found');
             return null;
         }
 
@@ -1169,10 +1194,10 @@
             html += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border-light);">' +
                 '<div>' +
                     '<span style="font-size:0.7rem;">' +
-                        _escapeHtml(h.title || 'Unknown') + '</span>' +
+                        _esc(h.title || 'Unknown') + '</span>' +
                     (roleName
                         ? ' <span style="font-size:0.45rem;color:var(--accent);">(Role: ' +
-                            _escapeHtml(roleName) + ')</span>'
+                            _esc(roleName) + ')</span>'
                         : '') +
                     (h.skillLevelAtAssignment
                         ? ' <span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
@@ -1181,7 +1206,7 @@
                 '</div>' +
                 '<div style="font-size:0.55rem;color:' + color + ';">' +
                     h.startYear + ' - ' + endDisplay +
-                    (h.endReason ? ' - ' + _escapeHtml(h.endReason) : '') +
+                    (h.endReason ? ' - ' + _esc(h.endReason) : '') +
                 '</div>' +
             '</div>';
         }
@@ -1192,14 +1217,14 @@
     }
 
     // =========================================================================
-    // 10. BULK ASSIGN MODAL
+    // 9. BULK ASSIGN MODAL
     // =========================================================================
 
     function openBulkHouseholdAssignModal(householdId, positionId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         var position = _queries.getHouseholdPosition(positionId);
         if (!household || !position) {
-            _showToast('Household or position not found', 'error');
+            _showError('Household or position not found');
             return null;
         }
 
@@ -1241,9 +1266,9 @@
         }
 
         if (candidates.length === 0) {
-            _showToast('No available staff to assign', 'info');
+            _showInfo('No available staff to assign');
             if (typeof onSuccess === 'function') {
-                onSuccess({ succeeded: [], failed: [] });
+                onSuccess({ succeeded: [], failed: [], warnings: [] });
             }
             return null;
         }
@@ -1260,13 +1285,13 @@
             var ageText = c.age !== null ? c.age + 'y' : '—';
 
             rows += '<div class="bulk-candidate" data-character-id="' +
-                _escapeHtml(c.characterId) +
+                _esc(c.characterId) +
                 '" style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;transition:background 0.1s;">' +
                 '<div style="display:flex;align-items:center;gap:8px;">' +
                     '<input type="checkbox" data-role="bulk-checkbox" data-character-id="' +
-                        _escapeHtml(c.characterId) + '" style="cursor:pointer;">' +
+                        _esc(c.characterId) + '" style="cursor:pointer;">' +
                     '<span style="font-size:0.65rem;">' +
-                        _escapeHtml(c.characterName) + ' (' + ageText + ')' +
+                        _esc(c.characterName) + ' (' + ageText + ')' +
                     '</span>' +
                     roleIcon +
                     (c.skillLevel > 0
@@ -1279,11 +1304,11 @@
 
         var content =
             '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;">' +
-                '<strong>Household:</strong> ' + _escapeHtml(household.name) + '<br>' +
-                '<strong>Position:</strong> ' + _escapeHtml(position.name) +
+                '<strong>Household:</strong> ' + _esc(household.name) + '<br>' +
+                '<strong>Position:</strong> ' + _esc(position.name) +
                 (position.requiredRoleId
                     ? '<br><strong>Required Role:</strong> ' +
-                        _escapeHtml((_getRoleById(position.requiredRoleId) || {}).name || 'Unknown')
+                        _esc((_getRoleById(position.requiredRoleId) || {}).name || 'Unknown')
                     : '') +
             '</div>' +
 
@@ -1311,28 +1336,31 @@
 
             '<div style="padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
                 'All selected staff will be assigned to this position with the same start year. ' +
-                'Failures will be reported per-character.' +
+                'Missing roles will be added automatically. Failures will be reported per-character.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Bulk Assign Staff: ' + position.name,
             content: content,
             confirmText: 'Assign Selected',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
-
-                var checked = root.querySelectorAll('[data-role="bulk-checkbox"]:checked');
-                if (checked.length === 0) {
-                    _showToast('No staff members selected', 'warning');
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
                     return false;
                 }
 
-                var startYear = _parseIntOrNull(
-                    (root.querySelector('[data-field="startYear"]') || {}).value);
+                var checked = root.querySelectorAll(
+                    '[data-role="bulk-checkbox"]:checked');
+                if (checked.length === 0) {
+                    _showWarning('No staff members selected');
+                    return false;
+                }
+
+                var startYear = _Modals.readIntOrNull(root, '[data-field="startYear"]');
                 if (startYear === null) {
-                    _showToast('Start year is required', 'error');
+                    _showError('Start year is required');
                     return false;
                 }
 
@@ -1348,26 +1376,26 @@
 
                 var result = _commands.bulkAssign(assignments, {
                     addRoleIfMissing: true,
-                    defaultSkillLevel: DEFAULT_SKILL_LEVEL
+                    defaultSkillLevel: _VM.DEFAULT_SKILL_LEVEL
                 });
 
                 if (!result.success) {
-                    _reportFailure(result, 'Bulk assignment failed');
+                    _Modals.reportFailure(result, 'Bulk assignment failed');
                     return false;
                 }
 
-                // bulkAssign commits once internally. Persist once here.
-                var persisted = _persistOrFail('Bulk assignment saved');
+                var persisted = _Modals.persistOrFail('Bulk assignment saved');
 
-                var succeeded = result.data.succeeded.length;
-                var failed = result.data.failed.length;
+                var succeeded = (result.data.succeeded || []).length;
+                var failed = (result.data.failed || []).length;
                 var msg = 'Assigned ' + succeeded + ' staff';
                 if (failed > 0) msg += ', ' + failed + ' failed';
                 if (!persisted.ok) {
-                    _showToast(msg + ' (not saved: ' + persisted.reason + ')',
-                        'warning');
+                    _showWarning(msg + ' (not saved: ' + persisted.reason + ')');
+                } else if (failed > 0) {
+                    _showWarning(msg);
                 } else {
-                    _showToast(msg, failed > 0 ? 'warning' : 'success');
+                    _showSuccess(msg);
                 }
 
                 if (typeof onSuccess === 'function') onSuccess(result.data);
@@ -1375,11 +1403,11 @@
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireBulkSelection(root);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _wireBulkSelection(root) {
@@ -1393,6 +1421,7 @@
         for (var i = 0; i < rows.length; i++) {
             (function(el) {
                 var checkbox = el.querySelector('[data-role="bulk-checkbox"]');
+                if (!checkbox) return;
                 el.onclick = function(e) {
                     if (e.target !== checkbox) {
                         checkbox.checked = !checkbox.checked;
@@ -1445,13 +1474,13 @@
     }
 
     // =========================================================================
-    // 11. VIEW POSITIONS MODAL (pure projection)
+    // 10. VIEW POSITIONS MODAL (pure projection)
     // =========================================================================
 
     function openViewHouseholdPositionsModal(householdId, onSelect) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -1483,13 +1512,13 @@
                     : 'None';
 
                 rows += '<div class="position-item" data-position-id="' +
-                    _escapeHtml(pos.id) +
+                    _esc(pos.id) +
                     '" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;cursor:pointer;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
                         '<div>' +
-                            '<strong>' + _escapeHtml(pos.name) + '</strong>' +
+                            '<strong>' + _esc(pos.name) + '</strong>' +
                             '<span style="font-size:0.55rem;color:var(--accent);margin-left:8px;">Role: ' +
-                                _escapeHtml(roleName) + '</span>' +
+                                _esc(roleName) + '</span>' +
                             (pos.minSkillLevel > 0
                                 ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:4px;">(Min: ' +
                                     pos.minSkillLevel + ')</span>'
@@ -1501,7 +1530,7 @@
                     '</div>' +
                     (pos.description
                         ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:2px;">' +
-                            _escapeHtml(pos.description) + '</div>'
+                            _esc(pos.description) + '</div>'
                         : '') +
                 '</div>';
             }
@@ -1510,7 +1539,7 @@
 
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
-                '<strong>Household:</strong> ' + _escapeHtml(household.name) +
+                '<strong>Household:</strong> ' + _esc(household.name) +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                     positions.length + ' positions · ' +
                     assignments.length + ' active assignments' +
@@ -1521,7 +1550,7 @@
                 'Click on a position to manage it.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Household Positions: ' + household.name,
             content: content,
             confirmText: 'Close',
@@ -1529,14 +1558,16 @@
             onConfirm: function() {}
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             var items = root.querySelectorAll('.position-item');
             for (var j = 0; j < items.length; j++) {
                 (function(el) {
                     el.onclick = function() {
                         var posId = el.dataset.positionId;
                         _closeTopModal();
-                        if (typeof onSelect === 'function') onSelect(posId);
+                        setTimeout(function() {
+                            if (typeof onSelect === 'function') onSelect(posId);
+                        }, 0);
                     };
                     el.onmouseenter = function() {
                         el.style.background = 'var(--bg2)';
@@ -1548,19 +1579,19 @@
                     };
                 })(items[j]);
             }
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     // =========================================================================
-    // 12. VIEW STAFF ASSIGNMENTS MODAL
+    // 11. VIEW STAFF ASSIGNMENTS MODAL
     // =========================================================================
 
     function openViewStaffAssignmentsModal(householdId) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -1586,20 +1617,20 @@
 
                 rows += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:4px;border-left:3px solid var(--accent);">' +
                     '<div>' +
-                        '<strong>' + _escapeHtml(asg.title || 'Unknown') + '</strong>' +
+                        '<strong>' + _esc(asg.title || 'Unknown') + '</strong>' +
                         (pos
                             ? '<span style="font-size:0.55rem;color:var(--dim);margin-left:6px;">' +
-                                _escapeHtml(pos.name) + '</span>'
+                                _esc(pos.name) + '</span>'
                             : '') +
                         (roleName !== 'None'
                             ? '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' +
-                                _escapeHtml(roleName) + '</span>'
+                                _esc(roleName) + '</span>'
                             : '') +
                     '</div>' +
                     '<div style="font-size:0.5rem;color:var(--dim);">' +
                         'Since ' + asg.startYear +
                         '<button data-action="end-assignment" data-assignment-id="' +
-                            _escapeHtml(asg.id) +
+                            _esc(asg.id) +
                             '" style="margin-left:8px;padding:2px 6px;font-size:0.45rem;background:#8a5a20;border:none;color:white;border-radius:3px;cursor:pointer;">End</button>' +
                     '</div>' +
                 '</div>';
@@ -1610,7 +1641,7 @@
         var content =
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<strong>Staff Assignments: ' +
-                    _escapeHtml(household.name) + '</strong>' +
+                    _esc(household.name) + '</strong>' +
                 '<div style="font-size:0.6rem;color:var(--dim);margin-top:4px;">' +
                     assignments.length + ' active staff members' +
                 '</div>' +
@@ -1620,7 +1651,7 @@
                 'Click "End" to terminate a staff assignment.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Staff Assignments',
             content: content,
             confirmText: 'Close',
@@ -1628,7 +1659,7 @@
             onConfirm: function() {}
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             var btns = root.querySelectorAll('[data-action="end-assignment"]');
             for (var b = 0; b < btns.length; b++) {
                 (function(btn) {
@@ -1644,18 +1675,17 @@
                                 var result = _commands.endAssignment(
                                     assignmentId, currentYear, 'Ended by user');
                                 if (!result.success) {
-                                    _reportFailure(result,
+                                    _Modals.reportFailure(result,
                                         'Failed to end assignment');
                                     return;
                                 }
 
-                                var persisted = _persistOrFail('Assignment ended');
+                                var persisted = _Modals.persistOrFail('Assignment ended');
                                 if (!persisted.ok) {
-                                    // Leave modal open so user sees the error toast
                                     return;
                                 }
 
-                                _showToast('Assignment ended', 'success');
+                                _showSuccess('Assignment ended');
                                 _closeTopModal();
                                 setTimeout(function() {
                                     openViewStaffAssignmentsModal(householdId);
@@ -1666,19 +1696,19 @@
                     };
                 })(btns[b]);
             }
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     // =========================================================================
-    // 13. COMBINED STAFF MANAGEMENT MODAL
+    // 12. COMBINED STAFF MANAGEMENT MODAL
     // =========================================================================
 
     function openStaffManagementModal(householdId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -1712,9 +1742,9 @@
                 rows += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:var(--bg2);border-radius:4px;border-left:3px solid ' +
                     (activeCount > 0 ? 'var(--accent)' : 'var(--border)') + ';">' +
                     '<div>' +
-                        '<strong>' + _escapeHtml(pos.name) + '</strong>' +
+                        '<strong>' + _esc(pos.name) + '</strong>' +
                         '<span style="font-size:0.5rem;color:var(--accent);margin-left:6px;">Role: ' +
-                            _escapeHtml(roleName) + '</span>' +
+                            _esc(roleName) + '</span>' +
                         (pos.minSkillLevel > 0
                             ? '<span style="font-size:0.5rem;color:var(--dim);margin-left:4px;">(Min: ' +
                                 pos.minSkillLevel + ')</span>'
@@ -1724,13 +1754,13 @@
                         '<span style="font-size:0.5rem;color:var(--accent);">' +
                             activeCount + ' assigned</span>' +
                         '<button data-action="pos-assign" data-position-id="' +
-                            _escapeHtml(pos.id) +
+                            _esc(pos.id) +
                             '" style="padding:2px 6px;font-size:0.45rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Assign</button>' +
                         '<button data-action="pos-edit" data-position-id="' +
-                            _escapeHtml(pos.id) +
+                            _esc(pos.id) +
                             '" style="padding:2px 6px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Edit</button>' +
                         '<button data-action="pos-delete" data-position-id="' +
-                            _escapeHtml(pos.id) +
+                            _esc(pos.id) +
                             '" style="padding:2px 6px;font-size:0.45rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Delete</button>' +
                     '</div>' +
                 '</div>';
@@ -1742,7 +1772,7 @@
             '<div style="margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
                     '<div><strong>Staff Management: ' +
-                        _escapeHtml(household.name) + '</strong></div>' +
+                        _esc(household.name) + '</strong></div>' +
                     '<div style="font-size:0.6rem;color:var(--dim);">' +
                         positions.length + ' positions · ' +
                         assignments.length + ' active' +
@@ -1761,7 +1791,7 @@
                 'Manage staff positions and assignments. Click "Assign" to add staff, "Edit" to modify a position, "Delete" to remove it.' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Staff Management',
             content: content,
             confirmText: 'Close',
@@ -1772,14 +1802,19 @@
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireStaffManagement(root, householdId, onSuccess);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _wireStaffManagement(root, householdId, onSuccess) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
         function _reopen() {
             setTimeout(function() {
                 openStaffManagementModal(householdId, onSuccess);
@@ -1789,16 +1824,18 @@
         var createBtn = root.querySelector('[data-action="create-position"]');
         if (createBtn) {
             createBtn.onclick = function() {
-                _closeTopModal();
-                openCreateHouseholdPositionModal(householdId, _reopen);
+                _closeThen(function() {
+                    openCreateHouseholdPositionModal(householdId, _reopen);
+                });
             };
         }
 
         var viewAssignBtn = root.querySelector('[data-action="view-assignments"]');
         if (viewAssignBtn) {
             viewAssignBtn.onclick = function() {
-                _closeTopModal();
-                openViewStaffAssignmentsModal(householdId);
+                _closeThen(function() {
+                    openViewStaffAssignmentsModal(householdId);
+                });
             };
         }
 
@@ -1807,9 +1844,10 @@
             (function(btn) {
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
-                    _closeTopModal();
-                    openAssignStaffToHouseholdPositionModal(
-                        householdId, posId, _reopen);
+                    _closeThen(function() {
+                        openAssignStaffToHouseholdPositionModal(
+                            householdId, posId, _reopen);
+                    });
                 };
             })(assignBtns[i]);
         }
@@ -1819,9 +1857,10 @@
             (function(btn) {
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
-                    _closeTopModal();
-                    openEditHouseholdPositionModal(
-                        householdId, posId, _reopen);
+                    _closeThen(function() {
+                        openEditHouseholdPositionModal(
+                            householdId, posId, _reopen);
+                    });
                 };
             })(editBtns[j]);
         }
@@ -1831,16 +1870,17 @@
             (function(btn) {
                 btn.onclick = function() {
                     var posId = btn.dataset.positionId;
-                    _closeTopModal();
-                    openDeleteHouseholdPositionModal(
-                        householdId, posId, _reopen);
+                    _closeThen(function() {
+                        openDeleteHouseholdPositionModal(
+                            householdId, posId, _reopen);
+                    });
                 };
             })(deleteBtns[k]);
         }
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.openCreateHouseholdPositionModal = openCreateHouseholdPositionModal;
