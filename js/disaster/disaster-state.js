@@ -7,9 +7,7 @@
  *
  * PURPOSE:
  *   Single domain authority for disaster records. Owns storage, indexes,
- *   lifecycle transitions, and the mutation surface. Does not compute
- *   statistics, does not orchestrate effects, does not decide anything
- *   about what a disaster means.
+ *   lifecycle transitions, and the mutation surface.
  *
  * CONTRACT:
  *   - The canonical array lives on masterData.data.disasters. State does
@@ -17,45 +15,32 @@
  *   - hydrateFromMasterData() rebuilds indexes transactionally. Duplicate
  *     ids throw.
  *   - Public reads return clones. _getXCanonical returns live records and
- *     is reserved for DisasterCommands and DisasterDamage (during a
+ *     is reserved for DisasterCommands (and DisasterDamage during a
  *     command's call stack).
  *   - Mutation primitives call window.markDataDirty(). They never save,
  *     never dispatch CustomEvents. Commands own the commit tail.
  *   - No fabricated fallbacks. No silent swallows. Persistence is a
  *     Commands concern.
  *
- * OWNERSHIP:
- *   - canonical disaster records (persisted at masterData.data.disasters)
- *   - indexes over those records
- *   - lifecycle transitions (add / update / delete)
- *   - subscription notification
- *
- * WHAT THIS MODULE DOES NOT DO:
- *   - It does not save. (DisasterCommands.persist)
- *   - It does not compute statistics. (DisasterQueries)
- *   - It does not orchestrate effects. (DisasterCommands)
- *   - It does not apply structural damage. (DisasterDamage)
- *
  * INVARIANTS:
- *   - Every disaster record has an `id` and a `year`. `hydrateFromMasterData`
- *     throws if either is missing on a loaded record.
+ *   - Every disaster record has an `id` and a numeric `year`.
  *   - Records are added to the index at most once. Re-adding the same id
  *     is a no-op, not a duplicate.
- *   - Records are never removed from the canonical array except by
- *     deleteDisaster, which is the single removal path.
  *   - Every record has a `structuralDamage` object with all five arrays
- *     present (features/schools/enterprises/residences/households). Missing
- *     sub-objects are healed during hydration, not returned as undefined.
+ *     present (features/schools/enterprises/residences/households).
+ *     Missing sub-objects are healed during hydration.
+ *   - The five top-level convenience fields (featuresDestroyed etc.) are
+ *     kept in sync with structuralDamage on every mutation. Callers can
+ *     read either.
  *
  * RESULT CONTRACT:
  *   { success: true, data: {...} }
  *   { success: false, reason: string, code?: string }
  *
- *   Codes are from DisasterConstants.CODES. This is the same contract the
- *   Command layer uses.
+ *   Codes come from DisasterConstants.CODES.
  *
  * DEPENDENCIES (required, verified at load):
- *   - DisasterConstants
+ *   - DisasterConstants (with CODES, EVENTS, STATE_EVENTS)
  *   - generateId
  *   - markDataDirty
  *   - getCurrentYearSafe
@@ -78,6 +63,15 @@
     if (!C) {
         throw new Error('disaster-state.js requires DisasterConstants');
     }
+    if (!C.CODES) {
+        throw new Error('disaster-state.js requires DisasterConstants.CODES');
+    }
+    if (!C.EVENTS) {
+        throw new Error('disaster-state.js requires DisasterConstants.EVENTS');
+    }
+    if (!C.STATE_EVENTS) {
+        throw new Error('disaster-state.js requires DisasterConstants.STATE_EVENTS');
+    }
     if (typeof window.generateId !== 'function') {
         throw new Error('disaster-state.js requires generateId');
     }
@@ -91,9 +85,6 @@
     // =========================================================================
     // 1. RECURSION GUARD (scoped to primitive mutations only)
     // =========================================================================
-    //
-    // Protects the state store from being mutated recursively by its own
-    // primitive operations. Not shared with orchestration code.
 
     var _mutatingState = false;
 
@@ -176,23 +167,22 @@
     };
 
     // =========================================================================
-    // 4. RECORD NORMALISATION (during hydration)
+    // 4. RECORD NORMALISATION
     // =========================================================================
 
     function _normaliseRecord(record) {
         if (!record || typeof record !== 'object') return record;
 
-        // Structural damage must be present with all sub-arrays.
         if (!record.structuralDamage || typeof record.structuralDamage !== 'object') {
             record.structuralDamage = _emptyStructuralDamage();
         } else {
             var sd = record.structuralDamage;
-            if (typeof sd.featuresDestroyed !== 'number') sd.featuresDestroyed = 0;
-            if (typeof sd.schoolsDestroyed !== 'number') sd.schoolsDestroyed = 0;
-            if (typeof sd.enterprisesDestroyed !== 'number') sd.enterprisesDestroyed = 0;
-            if (typeof sd.residencesDemolished !== 'number') sd.residencesDemolished = 0;
-            if (typeof sd.householdsDestroyed !== 'number') sd.householdsDestroyed = 0;
-            if (typeof sd.totalLoss !== 'number') sd.totalLoss = 0;
+            if (typeof sd.featuresDestroyed !== 'number')     sd.featuresDestroyed = 0;
+            if (typeof sd.schoolsDestroyed !== 'number')      sd.schoolsDestroyed = 0;
+            if (typeof sd.enterprisesDestroyed !== 'number')  sd.enterprisesDestroyed = 0;
+            if (typeof sd.residencesDemolished !== 'number')  sd.residencesDemolished = 0;
+            if (typeof sd.householdsDestroyed !== 'number')   sd.householdsDestroyed = 0;
+            if (typeof sd.totalLoss !== 'number')             sd.totalLoss = 0;
             if (!sd.destructionList || typeof sd.destructionList !== 'object') {
                 sd.destructionList = _emptyStructuralDamage().destructionList;
             } else {
@@ -204,25 +194,13 @@
             }
         }
 
-        // Convenience mirrors at the top level.
-        if (typeof record.featuresDestroyed !== 'number') {
-            record.featuresDestroyed = record.structuralDamage.featuresDestroyed;
-        }
-        if (typeof record.schoolsDestroyed !== 'number') {
-            record.schoolsDestroyed = record.structuralDamage.schoolsDestroyed;
-        }
-        if (typeof record.enterprisesDestroyed !== 'number') {
-            record.enterprisesDestroyed = record.structuralDamage.enterprisesDestroyed;
-        }
-        if (typeof record.residencesDemolished !== 'number') {
-            record.residencesDemolished = record.structuralDamage.residencesDemolished;
-        }
-        if (typeof record.householdsDestroyed !== 'number') {
-            record.householdsDestroyed = record.structuralDamage.householdsDestroyed;
-        }
-        if (typeof record.totalLoss !== 'number') {
-            record.totalLoss = record.structuralDamage.totalLoss;
-        }
+        // Keep convenience mirrors aligned with structuralDamage.
+        record.featuresDestroyed    = record.structuralDamage.featuresDestroyed;
+        record.schoolsDestroyed     = record.structuralDamage.schoolsDestroyed;
+        record.enterprisesDestroyed = record.structuralDamage.enterprisesDestroyed;
+        record.residencesDemolished = record.structuralDamage.residencesDemolished;
+        record.householdsDestroyed  = record.structuralDamage.householdsDestroyed;
+        record.totalLoss            = record.structuralDamage.totalLoss;
 
         return record;
     }
@@ -314,7 +292,7 @@
             }
         }
 
-        // Sort each bucket by year then createdAt for stable reads.
+        // Stable ordering inside each bucket so reads are deterministic.
         next.byLocation.forEach(function(list) {
             list.sort(function(a, b) {
                 var ay = (typeof a.year === 'number') ? a.year : 0;
@@ -333,14 +311,13 @@
             });
         });
 
-        // Atomic swap.
         _state.disasters = next;
         _state.initialized = true;
 
         _publish(C.STATE_EVENTS.HYDRATED, null);
     }
 
-    // Legacy alias. Used during migration from the pre-refactor surface.
+    // Legacy alias used by callers that predate the refactor.
     function _initialize() {
         hydrateFromMasterData(false);
     }
@@ -369,40 +346,40 @@
             if (d.structuralDamage) {
                 var sd = d.structuralDamage;
                 var lists = sd.destructionList || {};
-                var countedFeatures = lists.features ? lists.features.length : 0;
-                var countedSchools = lists.schools ? lists.schools.length : 0;
-                var countedEnterprises = lists.enterprises ? lists.enterprises.length : 0;
-                var countedResidences = lists.residences ? lists.residences.length : 0;
-                var countedHouseholds = lists.households ? lists.households.length : 0;
+                var cf = lists.features    ? lists.features.length    : 0;
+                var cs = lists.schools     ? lists.schools.length     : 0;
+                var ce = lists.enterprises ? lists.enterprises.length : 0;
+                var cr = lists.residences  ? lists.residences.length  : 0;
+                var ch = lists.households  ? lists.households.length  : 0;
 
-                if (sd.featuresDestroyed !== countedFeatures) {
+                if (sd.featuresDestroyed !== cf) {
                     warnings.push(
                         'disaster ' + d.id + ' featuresDestroyed (' + sd.featuresDestroyed +
-                        ') disagrees with destructionList (' + countedFeatures + ')'
+                        ') disagrees with destructionList (' + cf + ')'
                     );
                 }
-                if (sd.schoolsDestroyed !== countedSchools) {
+                if (sd.schoolsDestroyed !== cs) {
                     warnings.push(
                         'disaster ' + d.id + ' schoolsDestroyed (' + sd.schoolsDestroyed +
-                        ') disagrees with destructionList (' + countedSchools + ')'
+                        ') disagrees with destructionList (' + cs + ')'
                     );
                 }
-                if (sd.enterprisesDestroyed !== countedEnterprises) {
+                if (sd.enterprisesDestroyed !== ce) {
                     warnings.push(
                         'disaster ' + d.id + ' enterprisesDestroyed (' + sd.enterprisesDestroyed +
-                        ') disagrees with destructionList (' + countedEnterprises + ')'
+                        ') disagrees with destructionList (' + ce + ')'
                     );
                 }
-                if (sd.residencesDemolished !== countedResidences) {
+                if (sd.residencesDemolished !== cr) {
                     warnings.push(
                         'disaster ' + d.id + ' residencesDemolished (' + sd.residencesDemolished +
-                        ') disagrees with destructionList (' + countedResidences + ')'
+                        ') disagrees with destructionList (' + cr + ')'
                     );
                 }
-                if (sd.householdsDestroyed !== countedHouseholds) {
+                if (sd.householdsDestroyed !== ch) {
                     warnings.push(
                         'disaster ' + d.id + ' householdsDestroyed (' + sd.householdsDestroyed +
-                        ') disagrees with destructionList (' + countedHouseholds + ')'
+                        ') disagrees with destructionList (' + ch + ')'
                     );
                 }
             }
@@ -566,7 +543,6 @@
                 return _fail('Disaster already indexed: ' + newRecord.id, C.CODES.VALIDATION);
             }
 
-            // Push into the canonical array.
             if (window.masterData && window.masterData.data) {
                 if (!Array.isArray(window.masterData.data.disasters)) {
                     window.masterData.data.disasters = [];
@@ -603,20 +579,20 @@
             var oldLocationId = record.locationId;
             var oldYear = record.year;
 
-            // Structural damage requires field-level merge so callers do
-            // not have to supply the entire sub-object.
+            // Structural damage requires field-level merge.
             if (updates.structuralDamage) {
                 if (!record.structuralDamage) {
                     record.structuralDamage = _emptyStructuralDamage();
                 }
                 var sd = record.structuralDamage;
                 var incoming = updates.structuralDamage;
-                if (typeof incoming.featuresDestroyed === 'number')   sd.featuresDestroyed = incoming.featuresDestroyed;
-                if (typeof incoming.schoolsDestroyed === 'number')    sd.schoolsDestroyed = incoming.schoolsDestroyed;
-                if (typeof incoming.enterprisesDestroyed === 'number') sd.enterprisesDestroyed = incoming.enterprisesDestroyed;
-                if (typeof incoming.residencesDemolished === 'number') sd.residencesDemolished = incoming.residencesDemolished;
-                if (typeof incoming.householdsDestroyed === 'number')  sd.householdsDestroyed = incoming.householdsDestroyed;
-                if (typeof incoming.totalLoss === 'number')            sd.totalLoss = incoming.totalLoss;
+
+                if (typeof incoming.featuresDestroyed === 'number')     sd.featuresDestroyed = incoming.featuresDestroyed;
+                if (typeof incoming.schoolsDestroyed === 'number')      sd.schoolsDestroyed = incoming.schoolsDestroyed;
+                if (typeof incoming.enterprisesDestroyed === 'number')  sd.enterprisesDestroyed = incoming.enterprisesDestroyed;
+                if (typeof incoming.residencesDemolished === 'number')  sd.residencesDemolished = incoming.residencesDemolished;
+                if (typeof incoming.householdsDestroyed === 'number')   sd.householdsDestroyed = incoming.householdsDestroyed;
+                if (typeof incoming.totalLoss === 'number')             sd.totalLoss = incoming.totalLoss;
 
                 if (incoming.destructionList) {
                     if (!sd.destructionList) sd.destructionList = _emptyStructuralDamage().destructionList;
@@ -628,24 +604,22 @@
                     if (Array.isArray(dl.households))  sd.destructionList.households = dl.households.slice();
                 }
 
-                // Keep convenience fields in sync with the structuralDamage view.
-                record.featuresDestroyed = sd.featuresDestroyed;
-                record.schoolsDestroyed = sd.schoolsDestroyed;
+                record.featuresDestroyed    = sd.featuresDestroyed;
+                record.schoolsDestroyed     = sd.schoolsDestroyed;
                 record.enterprisesDestroyed = sd.enterprisesDestroyed;
                 record.residencesDemolished = sd.residencesDemolished;
-                record.householdsDestroyed = sd.householdsDestroyed;
-                record.totalLoss = sd.totalLoss;
+                record.householdsDestroyed  = sd.householdsDestroyed;
+                record.totalLoss            = sd.totalLoss;
 
                 delete updates.structuralDamage;
             }
 
-            // Apply the rest of the updates verbatim.
             for (var key in updates) {
                 if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
                 record[key] = updates[key];
             }
 
-            // Maintain indexes if the location or year changed.
+            // Maintain location / year indexes on change.
             if (oldLocationId !== record.locationId) {
                 if (oldLocationId) {
                     var oldLocList = _state.disasters.byLocation.get(oldLocationId);
@@ -709,7 +683,6 @@
 
             _deindexFrom(_state.disasters, record);
 
-            // Remove from the canonical array.
             if (window.masterData && window.masterData.data && Array.isArray(window.masterData.data.disasters)) {
                 var canonical = window.masterData.data.disasters;
                 for (var i = 0; i < canonical.length; i++) {
@@ -735,6 +708,11 @@
     // =========================================================================
     // 12. CACHE MANAGEMENT
     // =========================================================================
+    //
+    // reload() emits both CACHE_RELOADED and the legacy CACHE_INVALIDATED
+    // event so subscribers keyed on the old name keep firing. The two
+    // events carry the same payload shape (empty for reload); consumers
+    // that read either see the reload.
 
     function reload() {
         if (_mutatingState) return false;
@@ -745,6 +723,9 @@
         try {
             hydrateFromMasterData(true);
             _publish(C.STATE_EVENTS.CACHE_RELOADED, null);
+            if (C.STATE_EVENTS.CACHE_INVALIDATED) {
+                _publish(C.STATE_EVENTS.CACHE_INVALIDATED, {});
+            }
             return true;
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
