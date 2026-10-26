@@ -32,6 +32,24 @@
  *   - No Unicode arrows in buttons. Icons come from icons.js.
  *   - Canonical strings in innerHTML are escaped.
  *
+ * PERSISTENCE:
+ *   NameCommands no longer save. Every successful command path in this
+ *   module calls NameCommands.persist() exactly once, then refreshes
+ *   the modal content. A failed persist is a toast, not a thrown
+ *   error — the canonical data is already updated and in-memory state
+ *   is consistent. The user can retry by triggering the action again.
+ *
+ *   The name generator modal does not call any command and does not
+ *   persist. It only reads (NameQueries.getRandomName). Selecting a
+ *   name is a caller concern: the caller decides whether to persist
+ *   the selection (and to what).
+ *
+ * DEFERRALS:
+ *   - _renderError auto-clears after 5 seconds. This is deliberate: it
+ *     prevents stacking stale error messages. A future improvement is a
+ *     dismissable error, but that requires a CSS class and a click
+ *     handler; out of scope here.
+ *
  * CHARACTER NAMES:
  *   Character display names come from
  *   NameQueries.getCharacterDisplayName(characterId). This module does
@@ -79,7 +97,7 @@
  *   - icons.js:         Icons
  *   - modals-core.js:   openModal, confirmDialog
  *   - name-queries.js:  NameQueries
- *   - name-commands.js: NameCommands
+ *   - name-commands.js: NameCommands (including persist)
  *   - world.js:         getCountryPlaces
  *
  * DEPENDENCIES (OPTIONAL):
@@ -87,6 +105,16 @@
  *
  * ICON POLICY: Uses icons.js. No emojis. No Unicode arrows.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Original: pure UI with commands that saved themselves.
+ *   Current:
+ *     - NameCommands.persist() called after every successful command
+ *       path in the surname management modal. Persist failure is a
+ *       toast, not a throw.
+ *     - _renderError auto-clear documented as deliberate deferral.
+ *     - Load-time dependency verification requires NameCommands.persist.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -113,6 +141,10 @@
         if (typeof window.Icons === 'undefined') missing.push('Icons');
         if (typeof window.NameQueries === 'undefined') missing.push('NameQueries');
         if (typeof window.NameCommands === 'undefined') missing.push('NameCommands');
+        if (typeof window.NameCommands !== 'undefined'
+            && typeof window.NameCommands.persist !== 'function') {
+            missing.push('NameCommands.persist');
+        }
 
         if (missing.length > 0) {
             throw new Error(
@@ -179,6 +211,9 @@
      * Renders an error line inside the modal. Auto-clears after 5
      * seconds. Calling this again while an error is visible removes the
      * previous one and starts a fresh timer.
+     *
+     * DEFERRAL: 5-second auto-clear is deliberate. A dismissable error
+     * would need a CSS class and a click handler; out of scope here.
      */
     function _renderError(root, message) {
         if (!root) return;
@@ -199,6 +234,19 @@
         return window.NameQueries.getCharacterDisplayName(characterId);
     }
 
+    /**
+     * Calls NameCommands.persist() and reports a failure via _renderError.
+     * Returns true on success, false on failure.
+     */
+    function _persistOrReport(root) {
+        var saveResult = window.NameCommands.persist();
+        if (saveResult && saveResult.success === false) {
+            _renderError(root, 'Save failed: ' + (saveResult.reason || 'unknown error'));
+            return false;
+        }
+        return true;
+    }
+
     // =========================================================================
     // 3. NAME GENERATOR MODAL
     // =========================================================================
@@ -214,6 +262,9 @@
      *                 confirms. Not called if the user cancels or if no
      *                 name has been generated. "Open then close without
      *                 generating" is not signaled separately.
+     *
+     * This modal does not persist. It only reads (NameQueries.getRandomName).
+     * Selecting a name is a caller concern.
      *
      * @param {Object} [options]
      * @returns {Object} the modal handle from openModal
@@ -517,6 +568,10 @@
                     _renderError(root, result.reason || 'Failed to revert surname change.');
                     return;
                 }
+                // Persist. A save failure is reported but does not block
+                // the UI refresh — the canonical data is updated, and the
+                // next successful persist will catch up.
+                _persistOrReport(root);
                 _refreshSurnameModalContent(root, characterId);
                 if (onChange) onChange();
                 return;
@@ -532,6 +587,7 @@
                             _renderError(root, clearResult.reason || 'Failed to clear surname history.');
                             return;
                         }
+                        _persistOrReport(root);
                         _refreshSurnameModalContent(root, characterId);
                         if (onChange) onChange();
                     }
