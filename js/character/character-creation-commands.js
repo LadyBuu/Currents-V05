@@ -4,6 +4,8 @@
  * (js/character/character-creation-commands.js)
  * =============================================================================
  *
+ * LOCATION: js/character/character-creation-commands.js
+ *
  * Creation boundary for the character domain.
  *
  * SCOPE:
@@ -26,9 +28,13 @@
  *       3. FamilyCommands.setParent for each parent in options
  *       4. ReligionCommands.assignReligionToCharacter if applicable
  *
+ *   createCharacterFromData is the EXCEPTION: it skips buildCharacter
+ *   and inserts a pre-built record directly. It therefore validates the
+ *   record's shape first (see PRE-BUILT VALIDATION below).
+ *
  * FAMILY EDGES:
  *   The character record no longer stores motherId / fatherId. Parent
- *   edges are created through FamilyCommands.setParent using the new
+ *   edges are created through FamilyCommands.setParent using the
  *   options-based signature:
  *
  *       FamilyCommands.setParent(childId, parentId, {
@@ -42,6 +48,25 @@
  *   { parentId, parentRole, parentType } entries. This replaces the
  *   deprecated data.motherId / data.fatherId fields.
  *
+ * PRE-BUILT VALIDATION:
+ *   createCharacterFromData does NOT regenerate the character id (the
+ *   caller owns it) and does NOT call buildCharacter. Instead it calls
+ *   window.validateBuiltCharacter (from character-factory.js), which
+ *   checks:
+ *     - the object is a plain object
+ *     - id is a non-empty string
+ *     - name is a non-empty string
+ *     - every domain-owned embedded container is present and has the
+ *       correct shape (arrays for professions / rankAssignments /
+ *       relationships / friends / apprentices)
+ *     - createdAt and updatedAt are present and numeric
+ *
+ *   If validation fails, this command refuses the insert. The caller
+ *   gets a structured failure and can retry with a properly-shaped
+ *   record. The old behaviour — inserting whatever the caller supplied
+ *   and letting downstream projections observe undefined fields — is
+ *   deliberately removed.
+ *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?, ... }.
  *   - All validation happens before any mutation.
@@ -49,8 +74,9 @@
  *   - No fallbacks. Missing dependencies throw at load.
  *
  * DEPENDENCIES (REQUIRED):
- *   - character-state.js      (CharacterState.addCharacter)
- *   - character-factory.js    (buildCharacter)
+ *   - character-state.js      (CharacterState.addCharacter,
+ *                              CharacterState.addCharacters)
+ *   - character-factory.js    (buildCharacter, validateBuiltCharacter)
  *   - time.js                 (getCurrentYear)
  *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
@@ -76,6 +102,12 @@
             'character-creation-commands.js requires character-factory.js (buildCharacter).'
         );
     }
+    if (typeof window.validateBuiltCharacter !== 'function') {
+        throw new Error(
+            'character-creation-commands.js requires character-factory.js ' +
+            '(validateBuiltCharacter).'
+        );
+    }
     if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
             'character-creation-commands.js requires time.js (getCurrentYear).'
@@ -92,6 +124,11 @@
     if (typeof CS.addCharacters !== 'function') {
         throw new Error(
             'character-creation-commands.js: CharacterState.addCharacters is required.'
+        );
+    }
+    if (typeof CS.removeCharacter !== 'function') {
+        throw new Error(
+            'character-creation-commands.js: CharacterState.removeCharacter is required.'
         );
     }
 
@@ -288,16 +325,19 @@
         return _createCharacterInternal(data, options);
     }
 
+    /**
+     * Inserts a character that the caller has already built via
+     * buildCharacter (or an equivalent factory). Skips buildCharacter
+     * but validates the record shape first.
+     *
+     * Idempotency: if a character with the same id already exists,
+     * CharacterState.addCharacter refuses the insert and this command
+     * surfaces that failure unchanged.
+     */
     function createCharacterFromData(builtCharacter) {
-        if (!_isPlainObject(builtCharacter)) {
-            return _fail('Character must be a plain object.');
-        }
-        if (!_hasId(builtCharacter.id)) {
-            return _fail('Character id is required.');
-        }
-        if (typeof builtCharacter.name !== 'string'
-            || builtCharacter.name.trim() === '') {
-            return _fail('Character name is required.');
+        var validation = window.validateBuiltCharacter(builtCharacter);
+        if (!validation.ok) {
+            return _fail(validation.reason);
         }
 
         var inserted = CS.addCharacter(builtCharacter);
