@@ -3,7 +3,7 @@
  * STILL WATERS - HOUSEHOLD MODALS (modals-household.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/modals-household.js
+ * LOCATION: js/households/modals-household.js
  *
  * PURPOSE
  * -------
@@ -18,12 +18,14 @@
  * ---------
  *   Reads:  HouseholdQueries, HouseholdEconomy (pure calcs)
  *   Writes: HouseholdCommands + one persist() call per batch
- *   UI:     modals-core, selectors, icons
+ *   UI:     modals-core, selectors, icons, HouseholdModals,
+ *           HouseholdViewModels
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
  *   - Every mutation invokes HouseholdCommands.* then a single
- *     HouseholdCommands.persist() at the end of the batch.
+ *     HouseholdCommands.persist() at the end of the batch (via
+ *     HouseholdModals.persistOrFail).
  *   - A persist failure after a successful command is reported as a
  *     partial failure (the mutation is in memory but not on disk).
  *   - No HouseholdState access.
@@ -31,15 +33,37 @@
  *   - No _processingModal guard.
  *   - Command return shapes are read via { success, data } / { success,
  *     code, reason } — no raw boolean checks.
- *   - processAnnualEconomy reads .data.* (was .oldWealth etc. before the
- *     economy refactor).
+ *   - processAnnualEconomy reads .data.* (economy already returns
+ *     structured results).
  *
- * CONTRACT
- * --------
- * Each modal returns via:
- *   onSuccess(resultData)
- *   onCancel()               (implicit — the modal is dismissed)
- *   onError(code, reason)    (not used currently; failures surface as toasts)
+ * DOM-SCOPE
+ * ---------
+ *   Every DOM lookup is scoped to the modal's own `handle.element`.
+ *   The prior version used a `_resolveModalRoot()` fallback chain that
+ *   ended at `document.body` and, because `modals-core.js` does not
+ *   emit the selectors it looked for, always fell through to
+ *   `document.body`. That meant field reads scanned the entire document
+ *   and could match a field belonging to a stacked modal.
+ *
+ *   See modals-helper.js for the full explanation.
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - formatting.js (escapeHtml)
+ *   - icons.js (Icons)
+ *   - modals-core.js (openModal, closeTopModal, confirmDialog)
+ *   - ui.js (showToast) — used by HouseholdModals
+ *   - household-queries.js (HouseholdQueries)
+ *   - household-commands.js (HouseholdCommands)
+ *   - household-modals-helper.js (HouseholdModals)
+ *   - household-view-models.js (HouseholdViewModels)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - household-economy.js (processAnnualEconomy)
+ *   - industry-* (enterprise list/detail modals — reached via window
+ *     function checks)
+ *   - selectors/modals-char-selector.js (openCharacterSelector)
+ *
+ * ICON POLICY: SVG from icons.js. No emojis.
  *
  * =============================================================================
  */
@@ -48,7 +72,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // 0. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
     function _requireFunction(name, fn) {
@@ -69,9 +93,10 @@
     _requireFunction('HouseholdQueries.getHousehold', _queries.getHousehold);
     _requireFunction('HouseholdQueries.getHouseholdDetails',
         _queries.getHouseholdDetails);
+    _requireFunction('HouseholdQueries.getHouseholdEnterprises',
+        _queries.getHouseholdEnterprises);
 
     var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
-    _requireFunction('HouseholdCommands.persist', _commands.persist);
     _requireFunction('HouseholdCommands.createHousehold',
         _commands.createHousehold);
     _requireFunction('HouseholdCommands.updateHousehold',
@@ -89,8 +114,25 @@
             ? window.closeTopModal
             : window._closeTopModal);
 
+    var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
+    _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.persistOrFail', _Modals.persistOrFail);
+    _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
+    _requireFunction('HouseholdModals.esc', _Modals.esc);
+    _requireFunction('HouseholdModals.readValue', _Modals.readValue);
+    _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+
+    var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
+
+    // Local aliases — keeps call sites unchanged and short.
+    var _esc = _Modals.esc;
+    var _showSuccess = _Modals.showSuccess;
+    var _showWarning = _Modals.showWarning;
+    var _showInfo = _Modals.showInfo;
+    var _showError = _Modals.showError;
+
     // =========================================================================
-    // 2. HELPERS
+    // 1. CONFIRM DIALOG
     // =========================================================================
 
     function _confirmDialog(message, title, onConfirm, onCancel) {
@@ -100,6 +142,7 @@
         if (typeof window._confirmDialog === 'function') {
             return window._confirmDialog(message, title, onConfirm, onCancel);
         }
+        // Fallback if modals-core.js's confirmDialog is unavailable.
         if (window.confirm(message)) {
             if (onConfirm) onConfirm();
         } else if (onCancel) {
@@ -107,78 +150,19 @@
         }
     }
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === undefined || str === null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            return window._showToast(message, type);
-        }
-        if (typeof window.showToast === 'function') {
-            return window.showToast(message, type);
-        }
-    }
-
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name) || '';
-        }
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
-    function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        return null;
-    }
-
-    function _parseIntOrNull(value) {
-        if (value === undefined || value === null) return null;
-        var s = String(value).trim();
-        if (s === '') return null;
-        var n = Number(s);
-        if (!isFinite(n)) return null;
-        return Math.floor(n);
-    }
-
-    /**
-     * After a batch of commands, persist once. Returns {ok, reason}.
-     * Every mutation caller uses this — the modal does not call
-     * saveMasterData directly.
-     */
-    function _persistOrFail(messagePrefix) {
-        var result = _commands.persist();
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showToast(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason,
-                'error');
-            return { ok: false, reason: reason };
-        }
-        return { ok: true };
-    }
+    // =========================================================================
+    // 2. LOCATION OPTIONS
+    // =========================================================================
 
     function _buildLocationOptions(selectedId, placeholder) {
         if (typeof window.buildLocationDropdown === 'function') {
             return window.buildLocationDropdown(selectedId, placeholder, false);
         }
         if (typeof window.getPlaces !== 'function') {
-            return '<option value="">' + _escapeHtml(placeholder || '') + '</option>';
+            return '<option value="">' + _esc(placeholder || '') + '</option>';
         }
         var places = window.getPlaces() || [];
-        var html = '<option value="">' + _escapeHtml(placeholder || '') + '</option>';
+        var html = '<option value="">' + _esc(placeholder || '') + '</option>';
         var sorted = places.slice().sort(function(a, b) {
             return (a.displayName || '').localeCompare(b.displayName || '');
         });
@@ -186,24 +170,10 @@
             var p = sorted[i];
             var label = p.displayName || p.name || 'Unknown';
             var selected = (selectedId === p.id) ? ' selected' : '';
-            html += '<option value="' + _escapeHtml(p.id) + '"' + selected + '>' +
-                _escapeHtml(label) + '</option>';
+            html += '<option value="' + _esc(p.id) + '"' + selected + '>' +
+                _esc(label) + '</option>';
         }
         return html;
-    }
-
-    function _resolveModalRoot() {
-        if (typeof document === 'undefined') return null;
-        return document.querySelector('[data-modal-root="top"]') ||
-               document.querySelector('.modal-root:last-of-type') ||
-               document.body;
-    }
-
-    function _attachOnOpen(handler) {
-        return function() {
-            var root = _resolveModalRoot();
-            if (root) handler(root);
-        };
     }
 
     // =========================================================================
@@ -214,7 +184,9 @@
         options = options || {};
 
         var locationOptions = _buildLocationOptions(null, '-- Select location --');
-        var currentYear = _currentYear();
+        var currentYear = (typeof window.getCurrentYearSafe === 'function')
+            ? window.getCurrentYearSafe()
+            : null;
 
         var content =
             '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
@@ -232,13 +204,15 @@
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">' +
                     '<div>' +
                         '<label style="display:block;font-size:0.6rem;color:var(--dim);margin-bottom:4px;">Initial Wealth</label>' +
-                        '<input type="number" data-field="wealth" value="0" ' +
-                            'style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.7rem;">' +
+                        '<input type="number" data-field="wealth" value="' +
+                            _VM.DEFAULT_INITIAL_WEALTH +
+                            '" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.7rem;">' +
                     '</div>' +
                     '<div>' +
                         '<label style="display:block;font-size:0.6rem;color:var(--dim);margin-bottom:4px;">Initial Reputation</label>' +
-                        '<input type="number" data-field="reputation" value="10" min="0" max="100" ' +
-                            'style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.7rem;">' +
+                        '<input type="number" data-field="reputation" value="' +
+                            _VM.DEFAULT_INITIAL_REPUTATION +
+                            '" min="0" max="100" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.7rem;">' +
                     '</div>' +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
@@ -258,59 +232,54 @@
                 '</div>' +
             '</div>';
 
-        var modalHandle = _openModal({
+        var modal = _openModal({
             title: 'Create Household',
             content: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
-
-                var name = (root.querySelector('[data-field="name"]') || {}).value;
-                if (!name || name.trim() === '') {
-                    _showToast('Household name is required', 'error');
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
                     return false;
                 }
 
-                var wealthRaw = (root.querySelector('[data-field="wealth"]') || {}).value;
-                var repRaw = (root.querySelector('[data-field="reputation"]') || {}).value;
-                var wealth = _parseIntOrNull(wealthRaw);
-                var reputation = _parseIntOrNull(repRaw);
-                if (wealth === null) wealth = 0;
-                if (reputation === null) reputation = 10;
+                var name = _Modals.readValue(root, '[data-field="name"]');
+                if (!name || name.trim() === '') {
+                    _showError('Household name is required');
+                    return false;
+                }
+
+                var wealth = _Modals.readIntOrNull(root, '[data-field="wealth"]');
+                if (wealth === null) wealth = _VM.DEFAULT_INITIAL_WEALTH;
+
+                var reputation = _Modals.readIntOrNull(
+                    root, '[data-field="reputation"]');
+                if (reputation === null) reputation = _VM.DEFAULT_INITIAL_REPUTATION;
 
                 var data = {
                     name: name.trim(),
-                    locationId: (root.querySelector('[data-field="locationId"]') || {}).value || null,
+                    locationId: _Modals.readValue(root, '[data-field="locationId"]') || null,
                     wealth: wealth,
                     reputation: reputation,
                     foundedYear: currentYear,
-                    notes: (root.querySelector('[data-field="notes"]') || {}).value || ''
+                    notes: _Modals.readValue(root, '[data-field="notes"]')
                 };
-                var headId = (root.querySelector('[data-field="headId"]') || {}).value;
+                var headId = _Modals.readValue(root, '[data-field="headId"]');
                 if (headId) data.headId = headId;
 
-                // Command
                 var result = _commands.createHousehold(data);
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to create household', 'error');
+                    _Modals.reportFailure(result, 'Failed to create household');
                     return false;
                 }
 
-                // Persist once
-                var persisted = _persistOrFail('Household created');
-                if (!persisted.ok) {
-                    // Creation is in memory but not saved. Report success
-                    // anyway because the modal's job is done — the persist
-                    // failure is surfaced as an error toast above.
-                    if (typeof onSuccess === 'function') {
-                        onSuccess(result.data);
-                    }
-                    return true;
-                }
+                var persisted = _Modals.persistOrFail('Household created');
+                // Whether or not the persist succeeded, the mutation is in
+                // memory. Report success to the caller (the persist failure
+                // was toasted) so the modal closes.
+                _showSuccess('Household created: ' + data.name);
 
-                _showToast('Household created: ' + data.name, 'success');
                 if (typeof onSuccess === 'function') {
                     onSuccess(result.data);
                 }
@@ -318,8 +287,8 @@
             }
         });
 
-        // Post-open wiring (select head / clear head)
-        setTimeout(_attachOnOpen(function(root) {
+        // Post-open wiring: character selector for head.
+        _Modals.onOpen(modal, function(root) {
             var selectBtn = root.querySelector('[data-action="select-head"]');
             var clearBtn = root.querySelector('[data-action="clear-head"]');
             var display = root.querySelector('[data-field="headDisplay"]');
@@ -328,7 +297,7 @@
             if (selectBtn) {
                 selectBtn.onclick = function() {
                     if (typeof window.openCharacterSelector !== 'function') {
-                        _showToast('Character selector not available', 'warning');
+                        _showWarning('Character selector not available');
                         return;
                     }
                     window.openCharacterSelector({
@@ -351,9 +320,9 @@
                     if (hidden) hidden.value = '';
                 };
             }
-        }), 0);
+        });
 
-        return modalHandle;
+        return modal;
     }
 
     // =========================================================================
@@ -363,7 +332,7 @@
     function openEditHouseholdModal(householdId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -375,7 +344,7 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Household Name *</label>' +
                     '<input type="text" data-field="name" value="' +
-                        _escapeHtml(household.name) +
+                        _esc(household.name) +
                         '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
@@ -401,13 +370,13 @@
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Status</label>' +
                     '<select data-field="status" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
-                        _statusOptions(household.status) +
+                        _VM.getHouseholdStatusOptions(household.status) +
                     '</select>' +
                 '</div>' +
                 '<div style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
                     '<textarea data-field="notes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">' +
-                        _escapeHtml(household.notes || '') +
+                        _esc(household.notes || '') +
                     '</textarea>' +
                 '</div>' +
                 '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
@@ -415,78 +384,71 @@
                 '</div>' +
             '</div>';
 
-        return _openModal({
+        var modal = _openModal({
             title: 'Edit Household: ' + household.name,
             content: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
+                    return false;
+                }
 
-                var name = (root.querySelector('[data-field="name"]') || {}).value;
+                var name = _Modals.readValue(root, '[data-field="name"]');
                 if (!name || name.trim() === '') {
-                    _showToast('Household name is required', 'error');
+                    _showError('Household name is required');
                     return false;
                 }
 
                 var updates = {
                     name: name.trim(),
-                    locationId: (root.querySelector('[data-field="locationId"]') || {}).value || null
+                    locationId: _Modals.readValue(root, '[data-field="locationId"]') || null
                 };
 
-                var wealth = _parseIntOrNull(
-                    (root.querySelector('[data-field="wealth"]') || {}).value);
+                var wealth = _Modals.readIntOrNull(root, '[data-field="wealth"]');
                 if (wealth !== null) updates.wealth = wealth;
 
-                var reputation = _parseIntOrNull(
-                    (root.querySelector('[data-field="reputation"]') || {}).value);
+                var reputation = _Modals.readIntOrNull(root, '[data-field="reputation"]');
                 if (reputation !== null) updates.reputation = reputation;
 
-                var notes = (root.querySelector('[data-field="notes"]') || {}).value;
+                var notes = _Modals.readValue(root, '[data-field="notes"]');
                 if (notes !== undefined) updates.notes = notes;
 
-                var status = (root.querySelector('[data-field="status"]') || {}).value;
+                var status = _Modals.readValue(root, '[data-field="status"]');
 
-                // Command 1: field updates
+                // Command 1: field updates.
                 var result = _commands.updateHousehold(householdId, updates);
                 if (!result.success) {
-                    _showToast(result.reason || 'Failed to update household', 'error');
+                    _Modals.reportFailure(result, 'Failed to update household');
                     return false;
                 }
 
-                // Command 2 (optional): status change
-                var statusChanged = false;
+                // Command 2 (optional): status change.
                 var statusChangeFailed = null;
                 if (status && status !== household.status) {
                     var statusResult = _commands.setStatus(householdId, status, {
-                        year: _currentYear(),
+                        year: (typeof window.getCurrentYearSafe === 'function')
+                            ? window.getCurrentYearSafe()
+                            : null,
                         reason: 'Edited via modal',
                         recordEvent: true
                     });
-                    if (statusResult.success) {
-                        statusChanged = true;
-                    } else {
+                    if (statusResult.success !== true) {
                         statusChangeFailed = statusResult.reason;
                     }
                 }
 
-                // Persist once for the batch
-                var persisted = _persistOrFail('Household updated');
-                if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') {
-                        onSuccess(result.data);
-                    }
-                    return true;
-                }
+                // Persist once for the batch.
+                _Modals.persistOrFail('Household updated');
 
                 if (statusChangeFailed) {
-                    _showToast(
+                    _showWarning(
                         'Household updated but status change failed: ' +
-                        statusChangeFailed,
-                        'warning');
+                        statusChangeFailed);
                 } else {
-                    _showToast('Household updated', 'success');
+                    _showSuccess('Household updated');
                 }
 
                 if (typeof onSuccess === 'function') {
@@ -495,24 +457,8 @@
                 return true;
             }
         });
-    }
 
-    function _statusOptions(current) {
-        var statuses = [
-            { id: 'active', label: 'Active' },
-            { id: 'vacant', label: 'Vacant' },
-            { id: 'abandoned', label: 'Abandoned' },
-            { id: 'declining', label: 'Declining' },
-            { id: 'deprecated', label: 'Deprecated' }
-        ];
-        var html = '';
-        for (var i = 0; i < statuses.length; i++) {
-            var s = statuses[i];
-            html += '<option value="' + s.id + '"' +
-                (current === s.id ? ' selected' : '') + '>' +
-                _escapeHtml(s.label) + '</option>';
-        }
-        return html;
+        return modal;
     }
 
     // =========================================================================
@@ -522,7 +468,7 @@
     function openDeleteHouseholdModal(householdId, onSuccess) {
         var household = _queries.getHousehold(householdId);
         if (!household) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
@@ -547,23 +493,13 @@
                 removeFromCharacters: true
             });
             if (!result.success) {
-                _showToast(result.reason || 'Failed to delete household', 'error');
+                _Modals.reportFailure(result, 'Failed to delete household');
                 return;
             }
 
-            // Persist once
-            var persisted = _persistOrFail('Household deleted');
-            if (!persisted.ok) {
-                // Deletion happened in memory. Surface to onSuccess anyway
-                // so the caller can refresh; the error toast above already
-                // told the user.
-                if (typeof onSuccess === 'function') {
-                    onSuccess(result.data);
-                }
-                return;
-            }
+            _Modals.persistOrFail('Household deleted');
+            _showInfo('Household deleted: ' + household.name);
 
-            _showToast('Household deleted: ' + household.name, 'info');
             if (typeof onSuccess === 'function') {
                 onSuccess(result.data);
             }
@@ -584,13 +520,13 @@
             details = null;
         }
         if (!details) {
-            _showToast('Household not found', 'error');
+            _showError('Household not found');
             return null;
         }
 
         var content = _buildDetailsContent(details);
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Household Details',
             content: content,
             confirmText: 'Close',
@@ -598,11 +534,11 @@
             onConfirm: function() { /* close only */ }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireDetailsActions(root, householdId, details, onSuccess);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _buildDetailsContent(details) {
@@ -633,7 +569,7 @@
 
         if (household.notes) {
             html += '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-top:12px;font-size:0.6rem;color:var(--dim);">' +
-                _escapeHtml(household.notes) + '</div>';
+                _esc(household.notes) + '</div>';
         }
 
         html += _buildActionsRow();
@@ -642,25 +578,28 @@
     }
 
     function _buildHeader(household, status) {
-        var statusLabel = _statusLabel(status.status);
-        var statusColor = _statusColor(status.status);
-        var statusIcon = _getIcon(_statusIconName(status.status));
+        var badge = _VM.getStatusBadge(status.status);
+        var statusIcon = '';
+        if (window.Icons && window.Icons[badge.icon]) {
+            statusIcon = window.Icons[badge.icon];
+        }
+        var statusColor = badge.color;
 
         return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
             '<div>' +
                 '<h3 style="margin:0;font-size:1rem;">' +
-                    _escapeHtml(household.name) + '</h3>' +
+                    _esc(household.name) + '</h3>' +
                 '<div style="font-size:0.6rem;color:var(--dim);">' +
                     'Founded ' + (household.foundedYear !== null
                         ? household.foundedYear : 'Unknown') +
                     (household.locationName
-                        ? ' · ' + _escapeHtml(household.locationName) : '') +
+                        ? ' · ' + _esc(household.locationName) : '') +
                 '</div>' +
             '</div>' +
             '<div style="text-align:right;">' +
                 '<div style="font-size:0.65rem;color:' + statusColor +
                     ';display:flex;align-items:center;gap:4px;justify-content:flex-end;">' +
-                    statusIcon + ' ' + _escapeHtml(statusLabel) +
+                    statusIcon + ' ' + _esc(badge.label) +
                 '</div>' +
                 '<div style="font-size:0.55rem;color:var(--dim);">' +
                     status.livingCount + ' living · ' +
@@ -673,12 +612,9 @@
     }
 
     function _buildStatsGrid(household, members, head) {
-        var wealthDisplay = household.wealth !== null
-            ? household.wealth : '—';
-        var repDisplay = household.reputation !== null
-            ? household.reputation : '—';
-        var wealthColor = (household.wealth !== null && household.wealth >= 0)
-            ? 'var(--success)' : 'var(--danger)';
+        var wealthDisplay = household.wealth !== null ? household.wealth : '—';
+        var repDisplay = household.reputation !== null ? household.reputation : '—';
+        var wealthColor = _VM.getWealthColor(household.wealth);
 
         return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:12px;">' +
             _statCell('Members', members.length) +
@@ -691,10 +627,10 @@
     function _statCell(label, value, color) {
         return '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;">' +
             '<div style="font-size:0.5rem;color:var(--dim);">' +
-                _escapeHtml(label) + '</div>' +
+                _esc(label) + '</div>' +
             '<div style="font-size:0.9rem;font-weight:bold;' +
                 (color ? 'color:' + color + ';' : '') + '">' +
-                _escapeHtml(String(value)) +
+                _esc(String(value)) +
             '</div>' +
         '</div>';
     }
@@ -710,7 +646,7 @@
 
     function _demoCell(label, value) {
         return '<div style="background:var(--bg2);padding:6px 8px;border-radius:4px;text-align:center;font-size:0.55rem;">' +
-            '<span style="color:var(--dim);">' + _escapeHtml(label) + '</span> ' +
+            '<span style="color:var(--dim);">' + _esc(label) + '</span> ' +
             (value !== undefined ? value : 0) +
         '</div>';
     }
@@ -718,7 +654,7 @@
     function _buildResidenceRow(residence) {
         return '<div style="background:var(--bg2);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.65rem;">' +
             '<span style="color:var(--dim);">Residence:</span> ' +
-            _escapeHtml(residence.residenceName || 'Unknown') +
+            _esc(residence.residenceName || 'Unknown') +
             (residence.unitNumber
                 ? ' (Unit ' + residence.unitNumber + ')' : '') +
             (residence.associatedYear
@@ -738,18 +674,20 @@
         } else {
             for (var i = 0; i < members.length; i++) {
                 var m = members[i];
-                var headIcon = m.isHead ? _getIcon('CROWN') : '';
-                var personIcon = _getIcon('PERSON');
-                var deceasedIcon = m.isDeceased ? ' (deceased)' : '';
+                var headIcon = m.isHead && window.Icons
+                    ? (window.Icons.CROWN || '') : '';
+                var personIcon = window.Icons
+                    ? (window.Icons.PERSON || '') : '';
+                var deceasedSuffix = m.isDeceased ? ' (deceased)' : '';
                 var ageStr = (m.age !== null && m.age !== undefined)
                     ? m.age + ' years' : '—';
 
                 html += '<div style="display:flex;justify-content:space-between;padding:3px 8px;background:var(--bg2);border-radius:4px;margin-bottom:2px;font-size:0.65rem;">' +
                     '<span>' + headIcon + ' ' + personIcon + ' ' +
-                        _escapeHtml(m.characterName) + deceasedIcon +
+                        _esc(m.characterName) + deceasedSuffix +
                     '</span>' +
                     '<span style="color:var(--dim);">' +
-                        _escapeHtml(m.role || m.type || 'Member') +
+                        _esc(m.role || m.type || 'Member') +
                         ' · ' + ageStr +
                     '</span>' +
                 '</div>';
@@ -766,14 +704,14 @@
                 '<div style="font-size:0.7rem;color:var(--dim);">No enterprises owned</div>' +
                 '<div style="margin-top:6px;">' +
                     '<button data-action="create-enterprise" data-household-id="' +
-                        _escapeHtml(householdId) +
+                        _esc(householdId) +
                         '" class="btn primary" style="font-size:0.55rem;padding:2px 10px;">Create Enterprise</button>' +
                 '</div>' +
             '</div>';
         }
 
         var totalProfit = stats ? (stats.totalProfit || 0) : 0;
-        var profitColor = totalProfit >= 0 ? 'var(--success)' : 'var(--danger)';
+        var profitColor = _VM.getProfitColor(totalProfit);
 
         var summary = '';
         if (stats) {
@@ -793,7 +731,7 @@
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
         html += '<div style="font-size:0.7rem;color:var(--accent);">' +
             'Owned Enterprises (' + enterprises.length + ')' +
-            _escapeHtml(summary) + '</div>';
+            _esc(summary) + '</div>';
         html += '<div style="font-size:0.6rem;color:var(--dim);">';
         html += 'Total Profit: <span style="color:' + profitColor +
             ';font-weight:bold;">' +
@@ -809,19 +747,19 @@
         for (var i = 0; i < limit; i++) {
             var e = enterprises[i];
             var profit = e.annualProfit || 0;
-            var pc = profit >= 0 ? 'var(--success)' : 'var(--danger)';
+            var pc = _VM.getProfitColor(profit);
             var ownership = e.ownershipType === 'public'
                 ? ' <span style="font-size:0.45rem;color:var(--accent);">(Public)</span>'
                 : ' <span style="font-size:0.45rem;color:var(--dim);">(Private)</span>';
             var statusText = e.status && e.status !== 'active'
                 ? ' <span style="font-size:0.5rem;color:var(--warn);">(' +
-                    _escapeHtml(e.status) + ')</span>'
+                    _esc(e.status) + ')</span>'
                 : '';
 
             html += '<div class="enterprise-item" data-enterprise-id="' +
-                _escapeHtml(e.id) +
+                _esc(e.id) +
                 '" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg);border-radius:4px;margin-bottom:2px;font-size:0.65rem;cursor:pointer;">' +
-                '<span>' + _escapeHtml(e.name) + ownership + statusText + '</span>' +
+                '<span>' + _esc(e.name) + ownership + statusText + '</span>' +
                 '<span style="color:' + pc + ';">' +
                     (profit >= 0 ? '+' : '') + profit + '</span>' +
             '</div>';
@@ -836,7 +774,7 @@
         html += '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">';
         html += '<button data-action="view-enterprises" class="btn" style="font-size:0.55rem;padding:2px 10px;">View All</button>';
         html += '<button data-action="create-enterprise" data-household-id="' +
-            _escapeHtml(householdId) +
+            _esc(householdId) +
             '" class="btn primary" style="font-size:0.55rem;padding:2px 10px;">Create Enterprise</button>';
         html += '</div>';
 
@@ -855,43 +793,52 @@
     }
 
     function _wireDetailsActions(root, householdId, details, onSuccess) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
         var editBtn = root.querySelector('[data-action="edit"]');
         if (editBtn) {
             editBtn.onclick = function() {
-                _closeTopModal();
-                openEditHouseholdModal(householdId, onSuccess);
+                _closeThen(function() {
+                    openEditHouseholdModal(householdId, onSuccess);
+                });
             };
         }
 
         var deleteBtn = root.querySelector('[data-action="delete"]');
         if (deleteBtn) {
             deleteBtn.onclick = function() {
-                _closeTopModal();
-                openDeleteHouseholdModal(householdId, onSuccess);
+                _closeThen(function() {
+                    openDeleteHouseholdModal(householdId, onSuccess);
+                });
             };
         }
 
         var membersBtn = root.querySelector('[data-action="manage-members"]');
         if (membersBtn) {
             membersBtn.onclick = function() {
-                _closeTopModal();
-                if (typeof window.openHouseholdMemberManagerModal === 'function') {
-                    window.openHouseholdMemberManagerModal(householdId, onSuccess);
-                } else {
-                    _showToast('Member manager not available', 'warning');
-                }
+                _closeThen(function() {
+                    if (typeof window.openHouseholdMemberManagerModal === 'function') {
+                        window.openHouseholdMemberManagerModal(householdId, onSuccess);
+                    } else {
+                        _showWarning('Member manager not available');
+                    }
+                });
             };
         }
 
         var deptBtn = root.querySelector('[data-action="manage-departments"]');
         if (deptBtn) {
             deptBtn.onclick = function() {
-                _closeTopModal();
-                if (typeof window.openHouseholdDepartmentManagerModal === 'function') {
-                    window.openHouseholdDepartmentManagerModal(householdId, onSuccess);
-                } else {
-                    _showToast('Department manager not available', 'warning');
-                }
+                _closeThen(function() {
+                    if (typeof window.openHouseholdDepartmentManagerModal === 'function') {
+                        window.openHouseholdDepartmentManagerModal(householdId, onSuccess);
+                    } else {
+                        _showWarning('Department manager not available');
+                    }
+                });
             };
         }
 
@@ -900,16 +847,15 @@
             processBtn.onclick = function() {
                 if (typeof window.HouseholdEconomy === 'undefined' ||
                     typeof window.HouseholdEconomy.processAnnualEconomy !== 'function') {
-                    _showToast('Household economy not available', 'error');
+                    _showError('Household economy not available');
                     return;
                 }
-                // processAnnualEconomy returns { success, data } after the
-                // economy refactor. It also persists via HouseholdCommands.
+
+                // processAnnualEconomy returns { success, data } and
+                // persists internally via HouseholdCommands.
                 var result = window.HouseholdEconomy.processAnnualEconomy(householdId);
                 if (!result || result.success === false) {
-                    _showToast(
-                        (result && result.reason) || 'Failed to process year',
-                        'error');
+                    _Modals.reportFailure(result, 'Failed to process year');
                     return;
                 }
                 var data = result.data || {};
@@ -917,28 +863,30 @@
                 var netStr = (typeof net === 'number')
                     ? ((net >= 0 ? '+' : '') + net)
                     : '?';
-                _showToast(
+                _showSuccess(
                     'Processed year for ' +
                     (data.householdName || details.household.name) + ': ' +
-                    netStr,
-                    'success');
-                _closeTopModal();
-                if (typeof onSuccess === 'function') onSuccess();
+                    netStr);
+
+                _closeThen(function() {
+                    if (typeof onSuccess === 'function') onSuccess();
+                });
             };
         }
 
-        // Enterprise row clicks
+        // Enterprise row clicks.
         var eItems = root.querySelectorAll('.enterprise-item');
         for (var i = 0; i < eItems.length; i++) {
             (function(item) {
                 item.onclick = function() {
                     var id = item.dataset.enterpriseId;
-                    _closeTopModal();
-                    if (typeof window.openEnterpriseDetailsModal === 'function') {
-                        window.openEnterpriseDetailsModal(id, function() {
-                            openHouseholdDetailsModal(householdId, onSuccess);
-                        });
-                    }
+                    _closeThen(function() {
+                        if (typeof window.openEnterpriseDetailsModal === 'function') {
+                            window.openEnterpriseDetailsModal(id, function() {
+                                openHouseholdDetailsModal(householdId, onSuccess);
+                            });
+                        }
+                    });
                 };
             })(eItems[i]);
         }
@@ -946,15 +894,16 @@
         var viewEntBtn = root.querySelector('[data-action="view-enterprises"]');
         if (viewEntBtn) {
             viewEntBtn.onclick = function() {
-                _closeTopModal();
-                if (typeof window.openEnterpriseListModal === 'function') {
-                    window.openEnterpriseListModal(function(enterprise) {
-                        if (enterprise &&
-                            typeof window.openEnterpriseDetailsModal === 'function') {
-                            window.openEnterpriseDetailsModal(enterprise.id);
-                        }
-                    });
-                }
+                _closeThen(function() {
+                    if (typeof window.openEnterpriseListModal === 'function') {
+                        window.openEnterpriseListModal(function(enterprise) {
+                            if (enterprise &&
+                                typeof window.openEnterpriseDetailsModal === 'function') {
+                                window.openEnterpriseDetailsModal(enterprise.id);
+                            }
+                        });
+                    }
+                });
             };
         }
 
@@ -962,70 +911,29 @@
         if (createEntBtn) {
             createEntBtn.onclick = function() {
                 var hid = createEntBtn.dataset.householdId || householdId;
-                _closeTopModal();
-                if (typeof window.openCreateEnterpriseModal === 'function') {
-                    window.openCreateEnterpriseModal(function(enterprise) {
-                        if (enterprise) {
-                            _showToast(
-                                'Enterprise created: ' + enterprise.name,
-                                'success');
-                            if (typeof onSuccess === 'function') onSuccess();
-                        }
-                    }, {
-                        ownerType: 'household',
-                        ownerId: hid,
-                        ownerName: details.household.name,
-                        locationId: details.household.locationId || null
-                    });
-                } else {
-                    _showToast('Enterprise creation not available', 'warning');
-                }
+                _closeThen(function() {
+                    if (typeof window.openCreateEnterpriseModal === 'function') {
+                        window.openCreateEnterpriseModal(function(enterprise) {
+                            if (enterprise) {
+                                _showSuccess('Enterprise created: ' + enterprise.name);
+                                if (typeof onSuccess === 'function') onSuccess();
+                            }
+                        }, {
+                            ownerType: 'household',
+                            ownerId: hid,
+                            ownerName: details.household.name,
+                            locationId: details.household.locationId || null
+                        });
+                    } else {
+                        _showWarning('Enterprise creation not available');
+                    }
+                });
             };
         }
     }
 
     // =========================================================================
-    // 7. PRESENTATION MAPPINGS
-    // =========================================================================
-
-    function _statusLabel(status) {
-        switch (status) {
-            case 'active': return 'Active';
-            case 'vacant': return 'Vacant';
-            case 'empty': return 'Empty';
-            case 'declining': return 'Declining';
-            case 'deprecated': return 'Deprecated';
-            case 'destroyed': return 'Destroyed';
-            default: return 'Unknown';
-        }
-    }
-
-    function _statusColor(status) {
-        switch (status) {
-            case 'active': return 'var(--success)';
-            case 'vacant': return 'var(--warn)';
-            case 'empty': return 'var(--dim)';
-            case 'declining': return 'var(--warn)';
-            case 'deprecated': return 'var(--dim)';
-            case 'destroyed': return 'var(--danger)';
-            default: return 'var(--dim)';
-        }
-    }
-
-    function _statusIconName(status) {
-        switch (status) {
-            case 'active': return 'CIRCLE_DOT';
-            case 'vacant': return 'CIRCLE_HALF_LEFT';
-            case 'empty': return 'CIRCLE_OUTLINE';
-            case 'declining': return 'CIRCLE_HALF_LEFT';
-            case 'deprecated': return 'X_HEAVY';
-            case 'destroyed': return 'X_HEAVY';
-            default: return 'CIRCLE_OUTLINE';
-        }
-    }
-
-    // =========================================================================
-    // 8. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
     window.openCreateHouseholdModal = openCreateHouseholdModal;
