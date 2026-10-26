@@ -3,6 +3,8 @@
  * LOCATION STATE
  * =============================================================================
  *
+ * LOCATION: js/location/location-state.js
+ *
  * Owns:
  *   - Derived indexes over masterData.data.places / .locationTypes
  *   - Subscriptions (change notification)
@@ -16,7 +18,7 @@
  *   - Mutations (Commands mutate through primitives)
  *   - Queries (LocationQueries interprets)
  *   - Cross-domain reads (LocationQueries composes)
- *   - UI state (LocationUIState owns that)
+ *   - UI state (LocationUIState owns that — see js/location/location-ui-state.js)
  *   - Notifications after mutation (Commands publish)
  *
  * Canonical sources:
@@ -36,6 +38,19 @@
  *   LocationCommands owns the batch persist boundary (LocationCommands.persist).
  *   State does not call saveMasterData.
  *
+ * COMPATIBILITY (core layer):
+ *   - window.LocationState is owned by THIS file. It is the domain index layer.
+ *   - Transient UI state (selection, expansion, filters) is owned by
+ *     window.LocationUIState (js/location/location-ui-state.js). If a prior
+ *     module already bound window.LocationState without the domain surface
+ *     below, that is a load-order collision; see the guard in section 2.
+ *   - Cloning delegates to window.deepClone from core/collections.js when
+ *     present, and falls back to a local shallow-deep clone otherwise.
+ *     The fallback preserves the current caller-observable surface without
+ *     making collections.js a hard dependency of this file.
+ *   - window.markDataDirty (core/storage.js) is required. A missing module is
+ *     a load-order bug, not a recoverable condition.
+ *
  * =============================================================================
  */
 
@@ -43,11 +58,8 @@
     'use strict';
 
     // -------------------------------------------------------------------------
-    // 1. HARD DEPENDENCIES
+    // 1. HARD DEPENDENCIES (load time)
     // -------------------------------------------------------------------------
-    //
-    // markDataDirty is required. A missing module is a load-order bug, not a
-    // recoverable condition. Checked at load, not at call time.
 
     if (typeof window.markDataDirty !== 'function') {
         throw new Error(
@@ -56,7 +68,82 @@
     }
 
     // -------------------------------------------------------------------------
-    // 2. INDEXES (all rebuildable from canonical data)
+    // 2. COLLISION GUARD (load time)
+    // -------------------------------------------------------------------------
+    //
+    // Two modules must not silently overwrite window.LocationState. If a prior
+    // module already installed a LocationState without the domain surface this
+    // file provides, that is a load-order or naming collision, not a
+    // recoverable condition.
+    //
+    // If this file is being re-loaded (e.g. after a hot reload) and the
+    // existing LocationState already exposes hydrateFromMasterData, the
+    // existing instance is a compatible domain instance. We replace it: the
+    // indexes rebuild from canonical data on hydrate, and subscribers from
+    // the prior instance are dropped, which is the only safe semantic under
+    // reload.
+
+    if (typeof window.LocationState !== 'undefined'
+        && window.LocationState !== null
+        && typeof window.LocationState.hydrateFromMasterData !== 'function') {
+        throw new Error(
+            'location-state.js: window.LocationState is already defined by a ' +
+            'different module (no hydrateFromMasterData). This module must own ' +
+            'window.LocationState; the existing binding belongs to a UI-state ' +
+            'module and must be renamed before this file loads. See ' +
+            'js/core/state.js facade and js/location/location-ui-state.js.'
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. CLONE STRATEGY
+    // -------------------------------------------------------------------------
+    //
+    // Prefer core deepClone. Fall back to a local shallow-deep clone so this
+    // file does not hard-require collections.js. The fallback is intentionally
+    // one-level shallow for nested objects so behavior matches the previous
+    // implementation in the absence of collections.js. It is not a substitute
+    // for deepClone; it is a load-safety net.
+
+    function _cloneValue(value) {
+        if (typeof window.deepClone === 'function') {
+            return window.deepClone(value);
+        }
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) return value.slice();
+        var copy = {};
+        for (var k in value) {
+            if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
+            var v = value[k];
+            if (Array.isArray(v)) {
+                copy[k] = v.slice();
+            } else if (v && typeof v === 'object') {
+                var nested = {};
+                for (var nk in v) {
+                    if (Object.prototype.hasOwnProperty.call(v, nk)) {
+                        nested[nk] = v[nk];
+                    }
+                }
+                copy[k] = nested;
+            } else {
+                copy[k] = v;
+            }
+        }
+        return copy;
+    }
+
+    function _clonePlace(place) {
+        if (!place) return null;
+        return _cloneValue(place);
+    }
+
+    function _cloneLocationType(type) {
+        if (!type) return null;
+        return _cloneValue(type);
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. INDEXES (all rebuildable from canonical data)
     // -------------------------------------------------------------------------
 
     var _placeById = new Map();
@@ -65,13 +152,13 @@
     var _typeById = new Map();
 
     // -------------------------------------------------------------------------
-    // 3. SUBSCRIPTIONS
+    // 5. SUBSCRIPTIONS
     // -------------------------------------------------------------------------
 
     var _subscribers = [];
 
     // -------------------------------------------------------------------------
-    // 4. CANONICAL ACCESS
+    // 6. CANONICAL ACCESS
     // -------------------------------------------------------------------------
 
     function _canonicalPlaces() {
@@ -97,7 +184,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 5. HYDRATION
+    // 7. HYDRATION
     // -------------------------------------------------------------------------
 
     /**
@@ -171,7 +258,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 6. INTERNAL LIVE-REFERENCE ACCESSORS
+    // 8. INTERNAL LIVE-REFERENCE ACCESSORS
     // -------------------------------------------------------------------------
     //
     // Reserved for LocationCommands and LocationHierarchy, which operate on
@@ -203,63 +290,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 7. CLONING
-    // -------------------------------------------------------------------------
-
-    /**
-     * Deep-enough clone for a place record. Container arrays and one-level
-     * nested objects are copied. Deeper nesting is shared by reference —
-     * mutating a nested value through a returned clone is a caller bug, not a
-     * state bug.
-     */
-    function _clonePlace(place) {
-        if (!place) return null;
-        var copy = {};
-        for (var k in place) {
-            if (!Object.prototype.hasOwnProperty.call(place, k)) continue;
-            var v = place[k];
-            if (Array.isArray(v)) {
-                copy[k] = v.slice();
-            } else if (v && typeof v === 'object') {
-                var nested = {};
-                for (var nk in v) {
-                    if (Object.prototype.hasOwnProperty.call(v, nk)) {
-                        nested[nk] = v[nk];
-                    }
-                }
-                copy[k] = nested;
-            } else {
-                copy[k] = v;
-            }
-        }
-        return copy;
-    }
-
-    function _cloneLocationType(type) {
-        if (!type) return null;
-        var copy = {};
-        for (var k in type) {
-            if (!Object.prototype.hasOwnProperty.call(type, k)) continue;
-            var v = type[k];
-            if (Array.isArray(v)) {
-                copy[k] = v.slice();
-            } else if (v && typeof v === 'object') {
-                var nested = {};
-                for (var nk in v) {
-                    if (Object.prototype.hasOwnProperty.call(v, nk)) {
-                        nested[nk] = v[nk];
-                    }
-                }
-                copy[k] = nested;
-            } else {
-                copy[k] = v;
-            }
-        }
-        return copy;
-    }
-
-    // -------------------------------------------------------------------------
-    // 8. PUBLIC READ ACCESSORS (clones)
+    // 9. PUBLIC READ ACCESSORS (clones)
     // -------------------------------------------------------------------------
 
     function getPlaceById(placeId) {
@@ -297,7 +328,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 9. MUTATION PRIMITIVES (reserved for LocationCommands)
+    // 10. MUTATION PRIMITIVES (reserved for LocationCommands)
     // -------------------------------------------------------------------------
     //
     // Operate on the canonical arrays. They do NOT hydrate, persist, or
@@ -363,7 +394,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 10. SUBSCRIPTIONS
+    // 11. SUBSCRIPTIONS
     // -------------------------------------------------------------------------
 
     /**
@@ -417,7 +448,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 11. EXPORTS
+    // 12. EXPORTS
     // -------------------------------------------------------------------------
 
     window.LocationState = {
