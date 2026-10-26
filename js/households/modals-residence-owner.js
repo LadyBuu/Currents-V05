@@ -3,7 +3,7 @@
  * STILL WATERS - RESIDENCE OWNER MODALS (modals-residence-owner.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/modals-residence-owner.js
+ * LOCATION: js/households/modals-residence-owner.js
  *
  * PURPOSE
  * -------
@@ -19,10 +19,11 @@
  *   Reads:  ResidenceSystem.getResidence / getResidenceOwner /
  *           getResidencesByOwner / getTotalRentIncome
  *           HouseholdQueries.getHousehold
- *           getCharacterById
+ *           accessors.js getCharacterById
  *   Writes: ResidenceSystem.setResidenceOwner (canonical ownership
  *           mutation) + one persist() per batch
- *   UI:     modals-core, selectors, icons
+ *   UI:     modals-core, selectors, icons, HouseholdModals,
+ *           HouseholdViewModels
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
@@ -36,6 +37,38 @@
  *   - Result shape: setResidenceOwner returns { success, data } |
  *     { success: false, code, reason }. The modal reads .success.
  *
+ * DOM-SCOPE
+ * ---------
+ *   Every DOM lookup is scoped to the modal's own `handle.element` via
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
+ *   rationale on why the prior _resolveModalRoot() fallback (which
+ *   ended at document.body) was wrong.
+ *
+ * PERSIST CONTRACT
+ * ----------------
+ *   This modal persists via ResidenceSystem.persist(), which returns
+ *   { success, data } | { success: false, code, reason }. The local
+ *   `_persistOrFail` adapts the shape to { ok, reason } for the modal
+ *   flows.
+ *
+ *   HouseholdModals.persistOrFail is not used here because it calls
+ *   HouseholdCommands.persist specifically. Same reasoning as
+ *   modals-residence.js.
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - modals-core.js (openModal, closeTopModal)
+ *   - accessors.js (getCharacterById)
+ *   - household-queries.js (HouseholdQueries)
+ *   - household-modals-helper.js (HouseholdModals)
+ *   - household-view-models.js (HouseholdViewModels)
+ *   - residence-system.js (ResidenceSystem)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - selectors/modals-household-selector.js (openHouseholdSelector)
+ *   - selectors/modals-char-selector.js (openCharacterSelector)
+ *
+ * ICON POLICY: SVG from icons.js. No emojis.
+ *
  * =============================================================================
  */
 
@@ -43,7 +76,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // 0. LOAD-TIME DEPENDENCY VERIFICATION
     // =========================================================================
 
     function _requireFunction(name, fn) {
@@ -92,95 +125,63 @@
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
 
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
+    var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
+    _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
+    _requireFunction('HouseholdModals.esc', _Modals.esc);
+    _requireFunction('HouseholdModals.readValue', _Modals.readValue);
+    _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
 
-    function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === undefined || str === null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
+    var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            return window._showToast(message, type);
-        }
-        if (typeof window.showToast === 'function') {
-            return window.showToast(message, type);
-        }
-    }
+    // Local aliases.
+    var _esc = _Modals.esc;
+    var _showSuccess = _Modals.showSuccess;
+    var _showWarning = _Modals.showWarning;
+    var _showInfo = _Modals.showInfo;
+    var _showError = _Modals.showError;
 
     function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
-        }
-        return null;
+        return (typeof window.getCurrentYearSafe === 'function')
+            ? window.getCurrentYearSafe()
+            : null;
     }
 
-    function _openHouseholdSelector(options) {
-        if (typeof window.openHouseholdSelector === 'function') {
-            return window.openHouseholdSelector(options);
-        }
-        _showToast('Household selector not available', 'error');
-        return null;
-    }
-
-    function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        _showToast('Character selector not available', 'error');
-        return null;
-    }
-
-    function _resolveModalRoot() {
-        if (typeof document === 'undefined') return null;
-        return document.querySelector('[data-modal-root="top"]') ||
-               document.querySelector('.modal-root:last-of-type') ||
-               document.body;
-    }
-
-    function _attachOnOpen(handler) {
-        return function() {
-            var root = _resolveModalRoot();
-            if (root) handler(root);
-        };
-    }
-
-    function _parseIntOrNull(value) {
-        if (value === undefined || value === null) return null;
-        var s = String(value).trim();
-        if (s === '') return null;
-        var n = Number(s);
-        if (!isFinite(n)) return null;
-        return Math.floor(n);
-    }
+    // =========================================================================
+    // 1. LOCAL PERSIST (ResidenceSystem shape)
+    // =========================================================================
+    //
+    // ResidenceSystem.persist returns { success, data } | { success: false,
+    // code, reason } — not a boolean. This wrapper adapts to the
+    // { ok, reason } shape the modal flows expect.
 
     function _persistOrFail(messagePrefix) {
-        var result = _residence.persist();
+        var result;
+        try {
+            result = _residence.persist();
+        } catch (e) {
+            var threwReason = (e && e.message) ? e.message : 'persist threw';
+            _showError(
+                (messagePrefix || 'Changes made') +
+                ' but could not save: ' + threwReason);
+            return { ok: false, reason: threwReason };
+        }
+
         if (!result || result.success === false) {
             var reason = (result && result.reason) || 'Unknown persist error';
-            _showToast(
+            _showError(
                 (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason,
-                'error');
+                ' but could not save: ' + reason);
             return { ok: false, reason: reason };
         }
+
         return { ok: true };
     }
 
-    function _reportFailure(result, fallbackPrefix) {
-        var reason = (result && result.reason) || 'Unknown error';
-        _showToast((fallbackPrefix || 'Operation failed') + ': ' + reason,
-            'error');
-    }
+    // =========================================================================
+    // 2. OWNER / PORTFOLIO LOOKUPS
+    // =========================================================================
 
     function _resolveOwnerDisplay(ownerType, ownerId, fallbackName) {
         if (!ownerId) return 'None';
@@ -199,6 +200,22 @@
         return 'Unknown';
     }
 
+    function _openHouseholdSelector(options) {
+        if (typeof window.openHouseholdSelector === 'function') {
+            return window.openHouseholdSelector(options);
+        }
+        _showError('Household selector not available');
+        return null;
+    }
+
+    function _openCharacterSelector(options) {
+        if (typeof window.openCharacterSelector === 'function') {
+            return window.openCharacterSelector(options);
+        }
+        _showError('Character selector not available');
+        return null;
+    }
+
     // =========================================================================
     // 3. RESIDENCE OWNER DETAILS MODAL (pure projection)
     // =========================================================================
@@ -206,7 +223,7 @@
     function openResidenceOwnerDetailsModal(residenceId, onRefresh) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -227,7 +244,7 @@
             residence, owner, renter, ownedProperties, totalRentIncome
         );
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Owner Details: ' + residence.name,
             content: content,
             confirmText: 'Close',
@@ -237,11 +254,11 @@
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireOwnerDetailsActions(root, residenceId, residence, onRefresh);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _buildOwnerDetailsContent(residence, owner, renter,
@@ -260,35 +277,35 @@
 
         var html = '<div style="margin-bottom:16px;">';
 
-        // Header
+        // Header.
         html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">';
         html += '<div style="font-size:0.8rem;font-weight:bold;">' +
-            _escapeHtml(residence.name) + '</div>';
+            _esc(residence.name) + '</div>';
         html += '<span style="font-size:0.55rem;padding:2px 10px;border-radius:12px;background:var(--accent);color:white;">Owner: ' +
-            _escapeHtml(ownerDisplay) + '</span>';
+            _esc(ownerDisplay) + '</span>';
         html += '</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px;font-size:0.65rem;">';
         html += '<div><span style="color:var(--dim);">Owner Type:</span> ' +
-            _escapeHtml(ownerType) + '</div>';
+            _esc(ownerType) + '</div>';
         html += '<div><span style="color:var(--dim);">Owner Since:</span> ' +
-            _escapeHtml(String(ownerSince)) + '</div>';
+            _esc(String(ownerSince)) + '</div>';
         html += '<div><span style="color:var(--dim);">Total Properties:</span> ' +
             ownedProperties.length + '</div>';
         html += '<div><span style="color:var(--dim);">Total Rent Income:</span> ' +
             '<span style="color:var(--success);">+' + totalRentIncome +
             'g/year</span></div>';
         html += '<div><span style="color:var(--dim);">Current Renter:</span> ' +
-            _escapeHtml(renterDisplay) + '</div>';
+            _esc(renterDisplay) + '</div>';
         html += '<div><span style="color:var(--dim);">Current Rent:</span> ' +
             rentAmount + 'g/year</div>';
         html += '</div>';
         html += '</div>';
 
-        // Owned properties list
+        // Owned properties list.
         html += '<div style="margin-bottom:12px;">';
         html += '<div style="font-size:0.7rem;color:var(--accent);margin-bottom:6px;">' +
-            'Properties Owned by ' + _escapeHtml(ownerDisplay) +
+            'Properties Owned by ' + _esc(ownerDisplay) +
             ' (' + ownedProperties.length + ')' +
         '</div>';
 
@@ -305,7 +322,7 @@
                 var statusText = p.renterId ? 'Rented' : 'Vacant';
 
                 html += '<div class="owned-property-item" data-residence-id="' +
-                    _escapeHtml(p.id) +
+                    _esc(p.id) +
                     '" style="display:flex;justify-content:space-between;padding:6px 8px;' +
                     'border-bottom:1px solid var(--border-light);' +
                     'border-left:3px solid ' +
@@ -313,7 +330,7 @@
                     'cursor:pointer;' +
                     (isCurrent ? 'background:rgba(106,158,207,0.08);' : '') + '">';
                 html += '<div style="font-size:0.65rem;">' +
-                    _escapeHtml(p.name) +
+                    _esc(p.name) +
                     (isCurrent
                         ? ' <span style="color:var(--accent);font-size:0.5rem;">(Current)</span>'
                         : '') +
@@ -321,7 +338,7 @@
                 html += '<div style="font-size:0.55rem;color:var(--dim);">' +
                     statusText + ' · ' + propRent + 'g/year' +
                     (p.renterId
-                        ? ' · ' + _escapeHtml(propRenter) : '') +
+                        ? ' · ' + _esc(propRenter) : '') +
                 '</div>';
                 html += '</div>';
             }
@@ -329,7 +346,7 @@
         }
         html += '</div>';
 
-        // Actions
+        // Actions.
         html += '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;border-top:1px solid var(--border);padding-top:12px;">';
         html += '<button data-action="change-owner" style="font-size:0.6rem;padding:4px 12px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Change Owner</button>';
         html += '<button data-action="transfer-ownership" style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Transfer Ownership</button>';
@@ -343,6 +360,11 @@
     }
 
     function _wireOwnerDetailsActions(root, residenceId, residence, onRefresh) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
         function _reopen() {
             if (typeof onRefresh === 'function') onRefresh();
             setTimeout(function() {
@@ -350,12 +372,7 @@
             }, 0);
         }
 
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
-        // Click property → open that residence's details
+        // Click property → open that residence's details.
         var propertyItems = root.querySelectorAll('.owned-property-item');
         for (var i = 0; i < propertyItems.length; i++) {
             (function(el) {
@@ -371,7 +388,7 @@
                                 }, 0);
                             });
                         } else {
-                            _showToast('Residence details not available', 'info');
+                            _showInfo('Residence details not available');
                         }
                     });
                 };
@@ -385,7 +402,7 @@
                     if (typeof window.openSetResidenceOwnerModal === 'function') {
                         window.openSetResidenceOwnerModal(residenceId, _reopen);
                     } else {
-                        _showToast('Set owner modal not available', 'error');
+                        _showError('Set owner modal not available');
                     }
                 });
             };
@@ -405,7 +422,7 @@
             manageBtn.onclick = function() {
                 var owner = _residence.getResidenceOwner(residenceId);
                 if (!owner || !owner.ownerId) {
-                    _showToast('Residence has no owner', 'warning');
+                    _showWarning('Residence has no owner');
                     return;
                 }
                 _closeThen(function() {
@@ -419,7 +436,7 @@
             statsBtn.onclick = function() {
                 var owner = _residence.getResidenceOwner(residenceId);
                 if (!owner || !owner.ownerId) {
-                    _showToast('Residence has no owner', 'warning');
+                    _showWarning('Residence has no owner');
                     return;
                 }
                 _closeThen(function() {
@@ -432,7 +449,9 @@
         if (closeBtn) {
             closeBtn.onclick = function() {
                 _closeTopModal();
-                if (typeof onRefresh === 'function') onRefresh();
+                setTimeout(function() {
+                    if (typeof onRefresh === 'function') onRefresh();
+                }, 0);
             };
         }
     }
@@ -447,7 +466,7 @@
         var totalRentIncome = _residence.getTotalRentIncome(ownerId, ownerType);
 
         if (ownedProperties.length === 0) {
-            _showToast(ownerDisplay + ' owns no properties', 'info');
+            _showInfo(ownerDisplay + ' owns no properties');
             if (typeof onSuccess === 'function') onSuccess();
             return null;
         }
@@ -456,7 +475,7 @@
             ownerDisplay, ownerId, ownerType, ownedProperties, totalRentIncome
         );
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Properties Owned by ' + ownerDisplay,
             content: content,
             confirmText: 'Close',
@@ -466,11 +485,11 @@
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireManagePropertiesActions(root, ownerId, ownerType, onSuccess);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _buildManageOwnedPropertiesContent(ownerDisplay, ownerId, ownerType,
@@ -479,7 +498,7 @@
 
         html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         html += '<div style="font-size:0.8rem;font-weight:bold;">' +
-            _escapeHtml(ownerDisplay) + '</div>';
+            _esc(ownerDisplay) + '</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;font-size:0.65rem;">';
         html += '<div><span style="color:var(--dim);">Total Properties:</span> ' +
             properties.length + '</div>';
@@ -499,23 +518,23 @@
             var locationName = p.locationName || 'Unknown';
 
             html += '<div class="owned-property-item" data-residence-id="' +
-                _escapeHtml(p.id) +
+                _esc(p.id) +
                 '" style="display:flex;justify-content:space-between;align-items:center;' +
                 'padding:8px 10px;border-bottom:1px solid var(--border-light);' +
                 'border-left:3px solid ' + statusColor + ';cursor:pointer;">';
             html += '<div>';
             html += '<div style="font-size:0.7rem;font-weight:bold;">' +
-                _escapeHtml(p.name) + '</div>';
+                _esc(p.name) + '</div>';
             html += '<div style="font-size:0.55rem;color:var(--dim);">' +
-                _escapeHtml(locationName) + ' · ' +
-                _escapeHtml(p.typeName || 'Unknown') + '</div>';
+                _esc(locationName) + ' · ' +
+                _esc(p.typeName || 'Unknown') + '</div>';
             html += '</div>';
             html += '<div style="text-align:right;">';
             html += '<div style="font-size:0.6rem;color:' + statusColor + ';">' +
                 statusText + '</div>';
             html += '<div style="font-size:0.55rem;color:var(--dim);">' +
                 rentAmount + 'g/year' +
-                (p.renterId ? ' · ' + _escapeHtml(renterName) : '') +
+                (p.renterId ? ' · ' + _esc(renterName) : '') +
             '</div>';
             html += '</div>';
             html += '</div>';
@@ -532,6 +551,11 @@
     }
 
     function _wireManagePropertiesActions(root, ownerId, ownerType, onSuccess) {
+        function _closeThen(fn) {
+            _closeTopModal();
+            setTimeout(fn, 0);
+        }
+
         function _reopen() {
             setTimeout(function() {
                 openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess);
@@ -544,14 +568,13 @@
                 el.onclick = function() {
                     var id = el.dataset.residenceId;
                     if (!id) return;
-                    _closeTopModal();
-                    setTimeout(function() {
+                    _closeThen(function() {
                         if (typeof window.openResidenceDetailsModal === 'function') {
                             window.openResidenceDetailsModal(id, _reopen);
                         } else {
-                            _showToast('Residence details not available', 'info');
+                            _showInfo('Residence details not available');
                         }
-                    }, 0);
+                    });
                 };
             })(items[i]);
         }
@@ -559,10 +582,9 @@
         var statsBtn = root.querySelector('[data-action="view-stats"]');
         if (statsBtn) {
             statsBtn.onclick = function() {
-                _closeTopModal();
-                setTimeout(function() {
+                _closeThen(function() {
                     openOwnerStatsModal(ownerId, ownerType);
-                }, 0);
+                });
             };
         }
 
@@ -570,7 +592,9 @@
         if (closeBtn) {
             closeBtn.onclick = function() {
                 _closeTopModal();
-                if (typeof onSuccess === 'function') onSuccess();
+                setTimeout(function() {
+                    if (typeof onSuccess === 'function') onSuccess();
+                }, 0);
             };
         }
     }
@@ -584,16 +608,15 @@
     //   - validation
     //   - owner field mutation
     //   - ownership history append
-    //   - persistence
+    //   - persistence (via the modal's _persistOrFail)
     //
     // This modal does NOT touch the residence record. It collects input,
     // calls the command, then persists once.
-    // =========================================================================
 
     function openTransferOwnershipModal(residenceId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
         if (!residence) {
-            _showToast('Residence not found', 'error');
+            _showError('Residence not found');
             return null;
         }
 
@@ -609,11 +632,11 @@
             '<div style="margin-bottom:16px;">' +
                 '<div style="background:rgba(200,168,68,0.1);border:1px solid var(--accent);border-radius:8px;padding:12px;margin-bottom:16px;">' +
                     '<div style="font-size:0.7rem;"><strong>Transfer Ownership: ' +
-                        _escapeHtml(residence.name) + '</strong></div>' +
+                        _esc(residence.name) + '</strong></div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">Current Owner: ' +
-                        _escapeHtml(currentOwnerDisplay) + '</div>' +
+                        _esc(currentOwnerDisplay) + '</div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);">Current Renter: ' +
-                        _escapeHtml(residence.renterName || 'None') + '</div>' +
+                        _esc(residence.renterName || 'None') + '</div>' +
                     '<div style="font-size:0.55rem;color:var(--dim);">Current Rent: ' +
                         (residence.rentAmount || 0) + 'g/year</div>' +
                 '</div>' +
@@ -660,40 +683,41 @@
                 '</div>' +
             '</div>';
 
-        var handle = _openModal({
+        var modal = _openModal({
             title: 'Transfer Ownership: ' + residence.name,
             content: content,
             confirmText: 'Transfer Ownership',
             cancelText: 'Cancel',
             onConfirm: function() {
-                var root = _resolveModalRoot();
-                if (!root) return false;
-
-                var newOwnerId = (root.querySelector('[data-field="ownerId"]') || {}).value;
-                if (!newOwnerId) {
-                    _showToast('Please select a new owner', 'error');
+                var root = _Modals.rootFrom(modal);
+                if (!root) {
+                    _showError('Modal root unavailable');
                     return false;
                 }
-                var newOwnerType = (root.querySelector('[data-field="ownerType"]') || {}).value;
+
+                var newOwnerId = _Modals.readValue(root, '[data-field="ownerId"]');
+                if (!newOwnerId) {
+                    _showError('Please select a new owner');
+                    return false;
+                }
+                var newOwnerType = _Modals.readValue(root, '[data-field="ownerType"]');
 
                 if (newOwnerType === currentOwnerType &&
                     currentOwner && newOwnerId === currentOwner.ownerId) {
-                    _showToast('New owner is the same as current owner', 'info');
+                    _showInfo('New owner is the same as current owner');
                     if (typeof onSuccess === 'function') onSuccess();
                     return true;
                 }
 
-                var transferYear = _parseIntOrNull(
-                    (root.querySelector('[data-field="year"]') || {}).value);
+                var transferYear = _Modals.readIntOrNull(root, '[data-field="year"]');
                 if (transferYear === null || transferYear < 1) {
-                    _showToast('Please enter a valid year', 'error');
+                    _showError('Please enter a valid year');
                     return false;
                 }
 
-                var reason =
-                    ((root.querySelector('[data-field="reason"]') || {}).value || '').trim();
+                var reason = _Modals.readValue(root, '[data-field="reason"]').trim();
 
-                // Single command. It owns history, timeline, persistence.
+                // Single command. It owns history, timeline.
                 var result = _residence.setResidenceOwner(
                     residenceId,
                     newOwnerType,
@@ -705,27 +729,26 @@
                 );
 
                 if (!result.success) {
-                    _reportFailure(result, 'Failed to transfer ownership');
+                    _Modals.reportFailure(result, 'Failed to transfer ownership');
                     return false;
                 }
 
                 var persisted = _persistOrFail('Ownership transferred');
                 if (!persisted.ok) {
-                    if (typeof onSuccess === 'function') onSuccess(result.data);
-                    return true;
+                    return false;
                 }
 
-                _showToast('Ownership transferred', 'success');
+                _showSuccess('Ownership transferred');
                 if (typeof onSuccess === 'function') onSuccess(result.data);
                 return true;
             }
         });
 
-        setTimeout(_attachOnOpen(function(root) {
+        _Modals.onOpen(modal, function(root) {
             _wireTransferOwnerActions(root);
-        }), 0);
+        });
 
-        return handle;
+        return modal;
     }
 
     function _wireTransferOwnerActions(root) {
@@ -735,7 +758,7 @@
         var selectBtn = root.querySelector('[data-action="select-owner"]');
         var clearBtn = root.querySelector('[data-action="clear-owner"]');
 
-        // Clear selection when type changes to prevent stale id/type mismatch
+        // Clear selection when type changes to prevent stale id/type mismatch.
         if (typeSelect) {
             typeSelect.onchange = function() {
                 if (display) display.value = '';
@@ -787,7 +810,7 @@
         var properties = _residence.getResidencesByOwner(ownerId, ownerType);
 
         if (properties.length === 0) {
-            _showToast(ownerDisplay + ' owns no properties', 'info');
+            _showInfo(ownerDisplay + ' owns no properties');
             return null;
         }
 
@@ -847,9 +870,9 @@
 
         html += '<div style="padding:12px;background:var(--bg2);border-radius:8px;margin-bottom:12px;">';
         html += '<div style="font-size:0.8rem;font-weight:bold;">' +
-            _escapeHtml(ownerDisplay) + '</div>';
+            _esc(ownerDisplay) + '</div>';
         html += '<div style="font-size:0.6rem;color:var(--dim);">' +
-            _escapeHtml(ownerType) + '</div>';
+            _esc(ownerType) + '</div>';
         html += '</div>';
 
         html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;">';
@@ -888,10 +911,10 @@
     function _statCell(label, value, color) {
         return '<div style="background:var(--bg3);padding:8px;border-radius:6px;text-align:center;">' +
             '<div style="font-size:0.55rem;color:var(--dim);">' +
-                _escapeHtml(label) + '</div>' +
+                _esc(label) + '</div>' +
             '<div style="font-size:1rem;font-weight:bold;' +
                 (color ? 'color:' + color + ';' : '') + '">' +
-                _escapeHtml(String(value)) +
+                _esc(String(value)) +
             '</div>' +
         '</div>';
     }
@@ -899,9 +922,9 @@
     function _kvRow(key, value, color) {
         return '<div style="display:flex;justify-content:space-between;padding:2px 0;font-size:0.6rem;' +
             'border-bottom:1px solid var(--border-light);">' +
-            '<span style="color:var(--dim);">' + _escapeHtml(key) + '</span>' +
+            '<span style="color:var(--dim);">' + _esc(key) + '</span>' +
             '<span' + (color ? ' style="color:' + color + ';"' : '') + '>' +
-                _escapeHtml(String(value)) +
+                _esc(String(value)) +
             '</span>' +
         '</div>';
     }
@@ -909,7 +932,7 @@
     function _breakdownCell(title, breakdown) {
         var html = '<div style="background:var(--bg3);padding:8px;border-radius:6px;">';
         html += '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">' +
-            _escapeHtml(title) + '</div>';
+            _esc(title) + '</div>';
         var keys = Object.keys(breakdown).sort();
         if (keys.length === 0) {
             html += '<div style="font-size:0.55rem;color:var(--dim);">No data</div>';
