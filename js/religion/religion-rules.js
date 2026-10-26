@@ -2,12 +2,12 @@
  * =============================================================================
  * STILL WATERS - RELIGION RULES (religion-rules.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/religion/religion-rules.js
- * 
+ *
  * Domain rules for religion operations. Answers "is this allowed?" without
  * performing the operation.
- * 
+ *
  * Scope:
  *   - Conversion eligibility
  *   - Leadership eligibility
@@ -16,34 +16,56 @@
  *   - Deletion eligibility
  *   - Character religion assignment eligibility
  *   - Inheritance resolution (pure rule engine)
- * 
+ *
  * Out of scope (belongs in ReligionValidation):
  *   - Enum membership
  *   - Required fields
  *   - Type checks
- * 
+ *
  * Out of scope (belongs in Commands):
  *   - Performing the mutation
  *   - Persisting
  *   - Notifying subscribers
- * 
- * Rules are pure: state in, verdict out. They never mutate anything.
- * 
+ *
+ * Rules are pure: facts in, verdict out. They never mutate anything.
+ *
+ * TWO ENTRY POINTS FOR INHERITANCE
+ * --------------------------------
+ *   resolveInheritance(facts)                    ← pure, no reads
+ *   resolveInheritanceForChild(childId, ...)     ← convenience, reads
+ *
+ * The pure engine takes resolved facts (motherReligion, fatherReligion,
+ * dominantReligion) and returns a verdict. No Queries, no State, no
+ * accessors. Deterministic. This is what unit tests use.
+ *
+ * The convenience wrapper fetches the facts from Queries + accessors and
+ * delegates to the engine. It is provided so callers do not have to know
+ * the exact shape of the facts object. It reads; it does not mutate.
+ * Callers who want provable purity call the engine directly.
+ *
+ * VERDICT SHAPES
+ * --------------
+ *   can* functions: { allowed: boolean, reason: string | null }
+ *   resolveInheritance / resolveInheritanceForChild:
+ *       { religionId: string | null, source: ..., rule: ... }
+ *
  * DEPENDENCIES:
- *   - religion-queries.js: ReligionQueries
+ *   - religion-queries.js:  ReligionQueries
  *   - religion-constants.js: ReligionConstants
- * 
+ *   - accessors.js:          getCharacterById
+ *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
- * 
+ *
  * =============================================================================
- * PHASE 5 DOMAIN RULES AND VALIDATION EXTRACTION (2026):
- *   - New module. Extracted rule logic from religion-commands.js
- *     (conversion allowed, deprecated checks) and religion-inheritance.js
- *     (the inheritance algorithm).
- *   - resolveInheritance is the pure rule engine described in ADR
- *     Decision 12. Takes facts, returns verdict + provenance.
- *   - All can* functions return { allowed, reason } or { allowed: true }.
- * 
+ * REFACTOR HISTORY:
+ *   Phase 5: new module. Extracted rule logic from religion-commands.js and
+ *            religion-inheritance.js. Pure engine + convenience wrapper
+ *            split.
+ *   Phase 7 (current): converge to the reference pattern.
+ *     - Header documents the read path in resolveInheritanceForChild.
+ *     - Load-time verification.
+ *     - Removed unused RULES local in resolveInheritance.
+ *     - No behavioural change.
  * =============================================================================
  */
 
@@ -89,13 +111,13 @@
 
     /**
      * Can this character convert to this religion?
-     * 
+     *
      * Checks:
      *   - target religion exists and is not deprecated
      *   - current religion (if any) allows conversion out
      *   - target religion allows conversion in
      *   - not already a member (converting to same religion is a no-op)
-     * 
+     *
      * Returns { allowed, reason }.
      */
     function canConvert(characterId, targetReligionId, options) {
@@ -134,7 +156,7 @@
 
     /**
      * Can this character be assigned a religion at all?
-     * 
+     *
      * Distinct from canConvert because assignment to a first religion has
      * different semantics: no "current religion" check applies.
      */
@@ -176,12 +198,12 @@
 
     /**
      * Can this character become the leader of this religion at this year?
-     * 
+     *
      * Checks:
      *   - religion exists
      *   - character exists and is living
      *   - startYear is not before the current leader's startYear
-     * 
+     *
      * Returns { allowed, reason }.
      */
     function canSetLeader(religionId, characterId, options) {
@@ -282,25 +304,27 @@
     }
 
     // =========================================================================
-    // 5. INHERITANCE RULE ENGINE
+    // 5. INHERITANCE RULE ENGINE (pure)
     // =========================================================================
     // Per ADR Decision 12. Pure. Takes facts. Returns verdict + provenance.
-    // 
+    //
     // Input: { motherReligion, fatherReligion, dominantReligion }
     //   motherReligion   — religion object or null
     //   fatherReligion   — religion object or null
     //   dominantReligion — religion object or null (resolved by caller
     //                      from a location)
-    // 
+    //
     // Output: { religionId, source, rule }
     //   religionId — religion id to inherit, or null
     //   source     — 'mother' | 'father' | 'both' | 'location' | null
     //   rule       — the inheritance rule that was applied:
     //                'mother' | 'father' | 'both' | 'dominant' | 'none'
+    //
+    // This function does not read anything. It uses only its facts argument.
+    // Callers who want to fetch facts use resolveInheritanceForChild.
 
     function resolveInheritance(facts) {
         facts = facts || {};
-        var RULES = _constants().INHERITANCE_RULES;
 
         var motherReligion = facts.motherReligion || null;
         var fatherReligion = facts.fatherReligion || null;
@@ -361,16 +385,10 @@
                 return { religionId: null, source: null, rule: 'dominant' };
 
             case RULES.MOTHER:
-                // If this parent is the father, and their rule says mother,
-                // but the mother has no religion — the rule cannot resolve.
-                // Fall back to the parent who actually has a religion.
-                return {
-                    religionId: parentReligion.id,
-                    source: parentSource,
-                    rule: ruleType
-                };
-
             case RULES.FATHER:
+                // The other parent has no religion. The rule's target
+                // (mother/father) refers to a parent who is not available;
+                // the parent who actually has a religion governs.
                 return {
                     religionId: parentReligion.id,
                     source: parentSource,
@@ -426,11 +444,8 @@
         }
 
         // Same non-NONE rule type: apply directly.
-        if (motherType === fatherType) {
-            return _applySharedRule(motherType, motherReligion, fatherReligion, dominantReligion);
-        }
-
-        // Different non-NONE rules: mother's rule governs (per ADR Decision 12).
+        // Different non-NONE rules: mother's rule governs (ADR Decision 12).
+        // Both branches call _applySharedRule with motherType.
         return _applySharedRule(motherType, motherReligion, fatherReligion, dominantReligion);
     }
 
@@ -474,15 +489,19 @@
     }
 
     // =========================================================================
-    // 6. CONVENIENCE RULE HELPERS (used by commands)
+    // 6. CONVENIENCE WRAPPER (reads, then delegates)
     // =========================================================================
 
     /**
      * Fetch facts and run resolveInheritance. This is the practical entry
      * point for callers who have character IDs, not facts.
-     * 
-     * Note: this still calls Queries (reads), never Commands. It does not
-     * perform assignment. Assignment is the caller's job.
+     *
+     * Reads from Queries and accessors. Does not mutate. Does not assign.
+     * Assignment is the caller's job (see ReligionInheritance.inheritReligionForChild
+     * for the standard assignment path).
+     *
+     * Callers who want provable purity (unit tests, replay) call
+     * resolveInheritance directly with facts they build themselves.
      */
     function resolveInheritanceForChild(childId, motherId, fatherId, locationId) {
         var mother = motherId ? _getCharacterById(motherId) : null;
@@ -510,7 +529,32 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 7. LOAD-TIME VERIFICATION
+    // =========================================================================
+
+    (function _verifyLoadTimeDependencies() {
+        if (!window.ReligionQueries) {
+            throw new Error(
+                'religion-rules.js loaded but window.ReligionQueries is missing. ' +
+                'Check script tag order (religion-queries.js must load first).'
+            );
+        }
+        if (!window.ReligionConstants) {
+            throw new Error(
+                'religion-rules.js loaded but window.ReligionConstants is missing. ' +
+                'Check script tag order (religion-constants.js must load first).'
+            );
+        }
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error(
+                'religion-rules.js loaded but window.getCharacterById is missing. ' +
+                'Check script tag order (accessors.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 8. EXPORTS
     // =========================================================================
 
     window.ReligionRules = {
