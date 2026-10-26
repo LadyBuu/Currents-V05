@@ -18,12 +18,14 @@
  *   - trends over time
  *   - distributions (type, severity, location)
  *   - clearance metrics
- *   - presentation-ready category names for crime types and vendetta status
  *
  * WHAT THIS MODULE DOES NOT DO:
  *   - It does not own or mutate crime records. (CrimeState)
  *   - It does not decide legal consequences. (CrimeLawIntegration)
  *   - It does not orchestrate workflows. (CrimeCommands)
+ *   - It does not classify severity. (CrimeConstants.classifySeverity)
+ *   - It does not own severity bands, window defaults, or any other
+ *     domain vocabulary. (CrimeConstants)
  *
  * CONTRACTS:
  *
@@ -35,32 +37,27 @@
  *     window explicitly, and their results include a `period` object:
  *         { startYear, endYear, windowYears }
  *
- *   Crime rate semantics:
+ *   Crime burden semantics:
  *     The metric formerly called `crimeRatePerCapita` was crimes divided by
  *     current population across all history. That is not a rate. This
  *     module exposes it as `crimeBurden` (historical recorded crimes per
  *     current resident) and documents it as such. A separate
  *     `recentCrimeBurden` is provided for the recent window.
  *
- *   Severity bands:
- *     Severity is numeric (1-10). Bands are:
- *         low:      1-3
- *         medium:   4-6
- *         high:     7-8
- *         critical: 9-10
- *     A single private helper classifies severity. No public function
- *     re-derives the thresholds.
- *
  *   includeResolved:
  *     Resolved vendettas are INCLUDED by default. Callers pass
  *     { includeResolved: false } to exclude them. This matches CrimeState.
  *
- * DEPENDENCIES:
- *   - crime-state.js: CrimeState
- *   - accessors.js: getCharacterById, getPlaceById, getPlaces
- *   - time.js: getCurrentYearSafe
- *   - population: getLocationPopulationCount
- *   - crime-constants.js: CrimeConstants (CRIME_TYPES, severity bands)
+ * DEPENDENCIES (required, verified at load):
+ *   - CrimeConstants
+ *   - CrimeState
+ *   - getCurrentYearSafe
+ *   - getPlaceById (optional; used only for location labels in aggregated
+ *     stats — absence degrades the label to 'Unknown', not the metric)
+ *   - getLocationPopulationCount (optional; used for burden metrics —
+ *     absence returns null burden, as documented)
+ *
+ * Missing required dependencies fail loudly at load, not at call time.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -71,21 +68,28 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 0. LOAD-TIME DEPENDENCY RESOLUTION
+    // =========================================================================
+
+    var C = window.CrimeConstants;
+    var State = window.CrimeState;
+
+    if (!C) {
+        throw new Error('crime-queries.js requires CrimeConstants');
+    }
+    if (!State) {
+        throw new Error('crime-queries.js requires CrimeState');
+    }
+    if (typeof window.getCurrentYearSafe !== 'function') {
+        throw new Error('crime-queries.js requires getCurrentYearSafe');
+    }
+
+    // =========================================================================
+    // 1. INTERNAL HELPERS
     // =========================================================================
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('[CrimeQueries] Required dependency getCurrentYearSafe is not available.');
-        }
         return window.getCurrentYearSafe();
-    }
-
-    function _getCrimeState() {
-        if (typeof window.CrimeState === 'undefined') {
-            throw new Error('[CrimeQueries] Required dependency CrimeState is not available.');
-        }
-        return window.CrimeState;
     }
 
     function _getPlaceById(id) {
@@ -97,42 +101,17 @@
         if (typeof window.getLocationPopulationCount === 'function') {
             return window.getLocationPopulationCount(locationId);
         }
-        // Population is a required input for burden calculations.
-        // Missing population means the caller cannot compute a burden;
-        // returning a fabricated 1000 would silently distort the metric.
+        // Population is optional input for burden calculations. If the
+        // accessor is unavailable, burden cannot be computed and is
+        // reported as null. A fabricated population would silently distort
+        // the metric.
         return null;
     }
 
-    function _getCrimeConstants() {
-        if (typeof window.CrimeConstants === 'undefined') {
-            throw new Error('[CrimeQueries] Required dependency CrimeConstants is not available.');
-        }
-        return window.CrimeConstants;
-    }
-
-    // =========================================================================
-    // 2. SEVERITY BANDS (single source of truth)
-    // =========================================================================
-
-    var SEVERITY_BANDS = {
-        LOW: 'low',
-        MEDIUM: 'medium',
-        HIGH: 'high',
-        CRITICAL: 'critical'
-    };
-
-    /**
-     * Classifies a numeric severity (1-10) into a band.
-     * Returns null for non-numeric input. This is the ONLY place the
-     * thresholds live.
-     */
-    function _classifySeverity(severity) {
-        if (typeof severity !== 'number' || isNaN(severity)) return null;
-        if (severity <= 3) return SEVERITY_BANDS.LOW;
-        if (severity <= 6) return SEVERITY_BANDS.MEDIUM;
-        if (severity <= 8) return SEVERITY_BANDS.HIGH;
-        return SEVERITY_BANDS.CRITICAL;
-    }
+    // Severity classification and band values live in CrimeConstants.
+    // Re-exported below for callers that still read from CrimeQueries.
+    var _classifySeverity = C.classifySeverity;
+    var SEVERITY_BANDS = C.SEVERITY_BANDS;
 
     function _emptySeverityBreakdown() {
         var breakdown = {};
@@ -144,7 +123,7 @@
     }
 
     // =========================================================================
-    // 3. AGGREGATION PRIMITIVES (compose these instead of re-scanning)
+    // 2. AGGREGATION PRIMITIVES (compose these instead of re-scanning)
     // =========================================================================
 
     function _groupByYear(crimes) {
@@ -214,27 +193,27 @@
     }
 
     // =========================================================================
-    // 4. CRIME QUERIES (delegated to CrimeState)
+    // 3. CRIME QUERIES (delegated to CrimeState)
     // =========================================================================
 
     function getCrime(crimeId) {
-        return _getCrimeState().getCrime(crimeId);
+        return State.getCrime(crimeId);
     }
 
     function getAllCrimes() {
-        return _getCrimeState().getAllCrimes();
+        return State.getAllCrimes();
     }
 
     function getCrimesByPerpetrator(characterId) {
-        return _getCrimeState().getCrimesByPerpetrator(characterId);
+        return State.getCrimesByPerpetrator(characterId);
     }
 
     function getCrimesByVictim(characterId) {
-        return _getCrimeState().getCrimesByVictim(characterId);
+        return State.getCrimesByVictim(characterId);
     }
 
     function getCrimesInvolvingCharacter(characterId) {
-        return _getCrimeState().getCrimesInvolvingCharacter(characterId);
+        return State.getCrimesInvolvingCharacter(characterId);
     }
 
     /**
@@ -243,59 +222,59 @@
      * getCrimesInvolvingCharacter in new code.
      */
     function getCrimesByCharacter(characterId) {
-        return _getCrimeState().getCrimesByPerpetrator(characterId);
+        return State.getCrimesByPerpetrator(characterId);
     }
 
     function getCrimesByType(type) {
-        return _getCrimeState().getCrimesByType(type);
+        return State.getCrimesByType(type);
     }
 
     function getCrimesByLocation(locationId) {
-        return _getCrimeState().getCrimesByLocation(locationId);
+        return State.getCrimesByLocation(locationId);
     }
 
     function getUnsolvedCrimes() {
-        return _getCrimeState().getUnsolvedCrimes();
+        return State.getUnsolvedCrimes();
     }
 
     function getCrimeCount() {
-        return _getCrimeState().getCrimeCount();
+        return State.getCrimeCount();
     }
 
     // =========================================================================
-    // 5. VENDETTA QUERIES (delegated to CrimeState)
+    // 4. VENDETTA QUERIES (delegated to CrimeState)
     // =========================================================================
 
     function getVendetta(vendettaId) {
-        return _getCrimeState().getVendetta(vendettaId);
+        return State.getVendetta(vendettaId);
     }
 
     function getAllVendettas(options) {
-        return _getCrimeState().getAllVendettas(options);
+        return State.getAllVendettas(options);
     }
 
     function getVendettasByHousehold(householdId, options) {
-        return _getCrimeState().getVendettasByHousehold(householdId, options);
+        return State.getVendettasByHousehold(householdId, options);
     }
 
     function getVendettasByCharacter(characterId, options) {
-        return _getCrimeState().getVendettasByCharacter(characterId, options);
+        return State.getVendettasByCharacter(characterId, options);
     }
 
     function getActiveVendettas(householdId) {
-        return _getCrimeState().getActiveVendettas(householdId);
+        return State.getActiveVendettas(householdId);
     }
 
     function getActiveVendettaBetween(householdAId, householdBId) {
-        return _getCrimeState().getActiveVendettaBetween(householdAId, householdBId);
+        return State.getActiveVendettaBetween(householdAId, householdBId);
     }
 
     function getVendettaCount() {
-        return _getCrimeState().getVendettaCount();
+        return State.getVendettaCount();
     }
 
     // =========================================================================
-    // 6. LOCATION CRIME STATISTICS
+    // 5. LOCATION CRIME STATISTICS
     // =========================================================================
 
     /**
@@ -309,12 +288,14 @@
      *
      * @param {string} locationId
      * @param {number} [year]  Defaults to current year.
-     * @param {number} [windowYears]  Defaults to 5.
+     * @param {number} [windowYears]  Defaults to C.DEFAULT_STATS_WINDOW_YEARS.
      * @returns {Object}
      */
     function getLocationCrimeStats(locationId, year, windowYears) {
         var targetYear = (typeof year === 'number') ? year : _getCurrentYear();
-        var window = (typeof windowYears === 'number' && windowYears > 0) ? windowYears : 5;
+        var window = (typeof windowYears === 'number' && windowYears > 0)
+            ? windowYears
+            : C.DEFAULT_STATS_WINDOW_YEARS;
 
         var allLocationCrimes = getCrimesByLocation(locationId);
 
@@ -378,7 +359,7 @@
     }
 
     // =========================================================================
-    // 7. TRENDS
+    // 6. TRENDS
     // =========================================================================
 
     /**
@@ -386,11 +367,13 @@
      * is emitted in ascending year order.
      *
      * @param {string} locationId
-     * @param {number} [years]  Number of years to look back. Defaults to 10.
+     * @param {number} [years]  Defaults to C.DEFAULT_TREND_YEARS.
      * @param {number} [endYear]  Reference year. Defaults to current year.
      */
     function getCrimeTrends(locationId, years, endYear) {
-        var span = (typeof years === 'number' && years > 0) ? years : 10;
+        var span = (typeof years === 'number' && years > 0)
+            ? years
+            : C.DEFAULT_TREND_YEARS;
         var last = (typeof endYear === 'number') ? endYear : _getCurrentYear();
 
         var all = getCrimesByLocation(locationId);
@@ -411,7 +394,7 @@
     }
 
     // =========================================================================
-    // 8. DISTRIBUTIONS
+    // 7. DISTRIBUTIONS
     // =========================================================================
 
     function getCrimeTypeDistribution(locationId) {
@@ -419,7 +402,7 @@
     }
 
     // =========================================================================
-    // 9. OVERALL STATISTICS
+    // 8. OVERALL STATISTICS
     // =========================================================================
 
     /**
@@ -429,11 +412,13 @@
      * All-time aggregates are always all-time.
      *
      * @param {number} [year]
-     * @param {number} [windowYears]  Defaults to 5.
+     * @param {number} [windowYears]  Defaults to C.DEFAULT_STATS_WINDOW_YEARS.
      */
     function getOverallCrimeStats(year, windowYears) {
         var targetYear = (typeof year === 'number') ? year : _getCurrentYear();
-        var window = (typeof windowYears === 'number' && windowYears > 0) ? windowYears : 5;
+        var window = (typeof windowYears === 'number' && windowYears > 0)
+            ? windowYears
+            : C.DEFAULT_STATS_WINDOW_YEARS;
 
         var allCrimes = getAllCrimes();
         var recentCrimes = _filterByYearWindow(
@@ -530,7 +515,7 @@
     }
 
     // =========================================================================
-    // 10. CLEARANCE
+    // 9. CLEARANCE
     // =========================================================================
 
     /**
@@ -542,7 +527,6 @@
      * module does not.
      */
     function getCrimeClearanceRate() {
-        var constants = _getCrimeConstants();
         var allCrimes = getAllCrimes();
         var solvedCount = _countSolved(allCrimes);
 
@@ -551,7 +535,7 @@
             : 0;
 
         var byType = {};
-        var typeValues = constants.getAllCrimeTypes();
+        var typeValues = C.getAllCrimeTypes();
         for (var i = 0; i < typeValues.length; i++) {
             var type = typeValues[i];
             var typeCrimes = getCrimesByType(type);
@@ -571,7 +555,7 @@
     }
 
     // =========================================================================
-    // 11. VENDETTA STATISTICS
+    // 10. VENDETTA STATISTICS
     // =========================================================================
 
     /**
@@ -582,15 +566,15 @@
      * of every vendetta returned — the queried household and its opponents.
      * This is deliberate: it exposes the network around a household.
      *
-     * `bodyCount` in the output is derived from `deaths.length`, not read
-     * from a stored counter.
+     * `bodyCount` is not read from a stored counter; the death count is
+     * derived from `deaths.length` in each record.
      */
     function getVendettaStats(householdId) {
         var vendettas = householdId
             ? getVendettasByHousehold(householdId, { includeResolved: true })
             : getAllVendettas({ includeResolved: true });
 
-        var statuses = _getCrimeConstants().VENDETTA_STATUS;
+        var statuses = C.VENDETTA_STATUS;
 
         var stats = {
             total: vendettas.length,
@@ -639,7 +623,7 @@
     }
 
     // =========================================================================
-    // 12. LEGACY / PRESENTATION-ADJACENT HELPERS
+    // 11. LEGACY / PRESENTATION-ADJACENT HELPERS
     // =========================================================================
 
     /**
@@ -662,7 +646,7 @@
     }
 
     // =========================================================================
-    // 13. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.CrimeQueries = {
@@ -700,7 +684,7 @@
         getNormalizedCrimeBurden: getNormalizedCrimeBurden,
         getCrimeRateByLocation: getCrimeRateByLocation, // legacy alias
 
-        // Severity band constants (read-only view)
+        // Severity band constants (read-only view; owned by CrimeConstants)
         SEVERITY_BANDS: SEVERITY_BANDS
     };
 
