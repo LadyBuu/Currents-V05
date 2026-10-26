@@ -3,89 +3,109 @@
  * STILL WATERS - FAMILY STATISTICS (js/character/family-statistics.js)
  * =============================================================================
  *
+ * LOCATION: js/character/family-statistics.js
+ *
  * Aggregate family measurements for a character.
  *
  * SCOPE:
- *   - Counting parents, children, siblings, grandchildren, and spouses
- *   - Classifying children (biological/adopted) and siblings
- *     (full/half/adopted)
+ *   - Counting parents, children, siblings, grandchildren
+ *   - Classifying children (biological / adopted)
+ *   - Classifying siblings (full / half / adoptive via FamilyRules.deriveSiblingship)
  *   - Determining orphan status
  *   - Producing a single statistics object suitable for UI and succession
  *
  * OUT OF SCOPE:
- *   - Reading the family graph → FamilyAccessors
- *   - Deciding what a "spouse" is → relationship-queries.js
- *   - Determining heirs → succession-queries.js
- *   - Presentation → CharacterUI / modals
- *
- * SEMANTIC RULES:
- *   - Missing character → null (singular) or the documented empty result.
- *   - Existing character with no family → statistics object with zero
- *     counts and null members.
- *   - This module does NOT mutate.
- *   - This module does NOT decide succession. It reports counts.
- *   - This module does NOT decide relationship type (partner vs. spouse).
- *     It consumes whatever the relationship layer reports.
- *
- * SPOUSE HANDLING:
- *   This module reports what the relationship layer says. If the
- *   relationship layer reports multiple active partners, the statistics
- *   object reflects that. It does NOT pick "the" spouse. Callers who need
- *   a single spouse must decide which one and ask the relationship layer
- *   for it.
- *
- *   If `RelationshipQueries` is not loaded, spouse-related fields are
- *   reported as empty (count 0, list []). This is not a failure; spouse
- *   data is a separate domain and its absence is a legitimate state.
+ *   - Reading the family graph            -> family-queries.js
+ *   - Deciding what a "spouse" is         -> future relationship domain
+ *   - Determining heirs                   -> future succession domain
+ *   - Presentation                        -> modals / character-ui-list.js
  *
  * DEPENDENCIES (REQUIRED):
- *   - FamilyAccessors: getAllParents, getAllChildren, getSiblings,
- *                      getGrandchildren, isOrphan
+ *   - family-queries.js:    FamilyQueries (parents, children, siblings,
+ *                                          grandparents, grandchildren,
+ *                                          orphan)
+ *   - family-rules.js:      FamilyRules   (sibling classification
+ *                                          via deriveSiblingship)
+ *   - character-queries.js: CharacterQueries
+ *                                       (character summary projections
+ *                                        used to enrich ids with names,
+ *                                        ages, life status)
  *
- * DEPENDENCIES (OPTIONAL):
- *   - relationship-queries.js (RelationshipQueries): getActivePartners
- *     — used only for spouse counts. Absent → spouse fields empty.
+ * SPOUSE / PARTNER SEMANTICS:
+ *   This module no longer produces partner or spouse counts.
+ *
+ *   The pre-refactor version did, by consulting window.RelationshipQueries,
+ *   which no longer exists in the tree (per character-doc.txt §9, the
+ *   relationship domain was deleted during the character refactor).
+ *   Keeping a reference to a deleted module's API only produced a
+ *   silent "partners: []" for every character.
+ *
+ *   When the relationship domain is reintroduced, it should add a
+ *   dedicated relationship-statistics module. It should NOT bolt
+ *   spouse counts back onto family-statistics, because spouse and
+ *   family are different concerns with different ownership.
+ *
+ * RETURN SHAPE:
+ *   Every returned object uses plain field names, not wrapper records.
+ *   The wrappers produced by FamilyQueries are unwrapped here — the
+ *   caller is a UI or a succession rule, and neither should have to
+ *   know about edge ids or shared-biological-parent arrays unless
+ *   they ask for them.
+ *
+ *   The one exception is the child and sibling "all" arrays: those
+ *   preserve the classification flags (biological / adopted / full /
+ *   half / adoptive) because callers reasonably need them.
+ *
+ * RELATIONSHIP TO CHARACTERQUERIES.getCharacterSummary:
+ *   The summary projection embeds a small "family" block (father,
+ *   mother, childCount, hasChildren). That block answers "what does
+ *   this character look like on a card". This module answers "what is
+ *   the full family count and classification". They overlap by design:
+ *   the summary is for display; this module is for aggregation. Do
+ *   not consolidate them — the summary is called on every render of
+ *   every character, and this module is called when a caller actually
+ *   needs the aggregate picture.
+ *
+ * DEPENDENCIES (REQUIRED at load):
+ *   - FamilyQueries
+ *   - FamilyRules
+ *   - CharacterQueries
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
     // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _requireFamilyAccessors() {
-        if (typeof window.FamilyAccessors === 'undefined') {
+    function _requireDependencies() {
+        if (typeof window.FamilyQueries === 'undefined') {
             throw new Error(
-                'family-statistics.js: family-accessors.js must load first.'
+                'family-statistics.js: family-queries.js must load first.'
             );
         }
-        var required = [
-            'getAllParents',
-            'getAllChildren',
-            'getSiblings',
-            'getGrandchildren',
-            'isOrphan'
-        ];
-        var missing = [];
-        for (var i = 0; i < required.length; i++) {
-            if (typeof window.FamilyAccessors[required[i]] !== 'function') {
-                missing.push(required[i]);
-            }
-        }
-        if (missing.length > 0) {
+        if (typeof window.FamilyRules === 'undefined') {
             throw new Error(
-                'family-statistics.js: FamilyAccessors is missing: ' +
-                missing.join(', ')
+                'family-statistics.js: family-rules.js must load first.'
+            );
+        }
+        if (typeof window.CharacterQueries === 'undefined') {
+            throw new Error(
+                'family-statistics.js: character-queries.js must load first.'
             );
         }
     }
 
-    _requireFamilyAccessors();
+    _requireDependencies();
+
+    var FQ = window.FamilyQueries;
+    var FR = window.FamilyRules;
+    var CQ = window.CharacterQueries;
 
     // =========================================================================
     // 1. INTERNAL HELPERS
@@ -99,74 +119,339 @@
         return v === undefined || v === null;
     }
 
-    function _isLiving(character) {
-        return character && character.isDeceased !== true;
+    /**
+     * Returns a projection for a character id, or null.
+     * Does not throw for missing characters; the caller handles absence.
+     */
+    function _project(id) {
+        if (!_hasId(id)) return null;
+        return CQ.getCharacterSummary(id);
     }
 
-    function _countLiving(characters) {
-        if (!Array.isArray(characters)) return 0;
-        var count = 0;
-        for (var i = 0; i < characters.length; i++) {
-            if (_isLiving(characters[i])) count++;
-        }
-        return count;
+    function _isLiving(projection) {
+        return !!projection && projection.isDeceased !== true;
+    }
+
+    function _isLivingId(id) {
+        return _isLiving(_project(id));
     }
 
     /**
-     * Resolves the character object from the family accessor's return
-     * shape. FamilyAccessors returns either bare character objects or
-     * { character, ... } wrapper objects depending on the function.
+     * Sorts ids by birth year ascending, using projection.birthYear.
+     * Ids whose projection cannot be resolved, or whose birthYear is
+     * missing/invalid, sort to the end in their input order.
+     *
+     * Non-mutating. Returns a new array.
      */
-    function _unwrap(entry) {
-        if (!entry) return null;
-        if (entry.character) return entry.character;
-        return entry;
+    function _sortIdsByBirthYear(ids) {
+        if (!Array.isArray(ids) || ids.length === 0) return [];
+
+        var entries = [];
+        for (var i = 0; i < ids.length; i++) {
+            var id = ids[i];
+            var projection = _project(id);
+            var birthYear = projection && typeof projection.birthYear === 'number'
+                && Number.isFinite(projection.birthYear)
+                ? projection.birthYear
+                : null;
+            entries.push({
+                id: id,
+                projection: projection,
+                birthYear: birthYear,
+                originalIndex: i
+            });
+        }
+
+        entries.sort(function (a, b) {
+            var aMissing = a.birthYear === null;
+            var bMissing = b.birthYear === null;
+            if (aMissing && bMissing) return a.originalIndex - b.originalIndex;
+            if (aMissing) return 1;
+            if (bMissing) return -1;
+            if (a.birthYear !== b.birthYear) return a.birthYear - b.birthYear;
+            return a.originalIndex - b.originalIndex;
+        });
+
+        var out = [];
+        for (var j = 0; j < entries.length; j++) {
+            out.push(entries[j].id);
+        }
+        return out;
     }
 
     /**
-     * Extracts the living-aware eldest and youngest from a sorted list
-     * of unwrapped characters.
+     * Extracts the first father edge and first mother edge from a
+     * FamilyQueries.getParents edge list. The edge wrappers carry
+     * parentRole; if multiple edges share a role, the first biological
+     * one wins, then the first legal, then the first social.
      */
-    function _firstAndLast(characters) {
-        if (!Array.isArray(characters) || characters.length === 0) {
-            return { eldest: null, youngest: null };
+    function _pickParentEdgeByRole(edges, role) {
+        if (!Array.isArray(edges) || edges.length === 0) return null;
+
+        var bio = null;
+        var legal = null;
+        var social = null;
+        var any = null;
+
+        for (var i = 0; i < edges.length; i++) {
+            var e = edges[i];
+            if (!e || e.parentRole !== role) continue;
+            if (!any) any = e;
+            if (e.parentType === 'biological' && !bio) bio = e;
+            else if (e.parentType === 'legal' && !legal) legal = e;
+            else if (e.parentType === 'social' && !social) social = e;
         }
+
+        return bio || legal || social || any;
+    }
+
+    // =========================================================================
+    // 2. PARENTS
+    // =========================================================================
+
+    function _collectParents(characterId) {
+        var edges = FQ.getParents(characterId);
+        if (!Array.isArray(edges)) edges = [];
+
+        var biological = 0;
+        var legal = 0;
+        var social = 0;
+        var seenIds = {};
+
+        var distinctParentIds = [];
+        for (var i = 0; i < edges.length; i++) {
+            var e = edges[i];
+            if (!e || !_hasId(e.parentId)) continue;
+            if (e.parentType === 'biological') biological++;
+            else if (e.parentType === 'legal') legal++;
+            else if (e.parentType === 'social') social++;
+
+            if (!seenIds[e.parentId]) {
+                seenIds[e.parentId] = true;
+                distinctParentIds.push(e.parentId);
+            }
+        }
+
+        var fatherEdge = _pickParentEdgeByRole(edges, 'father');
+        var motherEdge = _pickParentEdgeByRole(edges, 'mother');
+
         return {
-            eldest: characters[0],
-            youngest: characters[characters.length - 1]
+            total: distinctParentIds.length,
+            fatherId: fatherEdge ? fatherEdge.parentId : null,
+            motherId: motherEdge ? motherEdge.parentId : null,
+            biological: biological,
+            legal: legal,
+            social: social,
+            ids: distinctParentIds,
+            hasParents: distinctParentIds.length > 0
         };
     }
 
     // =========================================================================
-    // 2. SPOUSE QUERIES (OPTIONAL DEPENDENCY)
+    // 3. CHILDREN
     // =========================================================================
 
-    /**
-     * Returns active partners as an array of character objects.
-     * If RelationshipQueries is not loaded, returns [].
-     *
-     * This module does not define what a "partner" is. It asks the
-     * relationship layer.
-     */
-    function _getActivePartners(characterId) {
-        if (typeof window.RelationshipQueries === 'undefined') return [];
-        if (typeof window.RelationshipQueries.getActivePartners !== 'function') return [];
+    function _collectChildren(characterId) {
+        // getChildIds returns a deduplicated list of ongoing children.
+        var childIds = FQ.getChildIds(characterId);
+        if (!Array.isArray(childIds)) childIds = [];
 
-        var partners = window.RelationshipQueries.getActivePartners(characterId);
-        if (!Array.isArray(partners)) return [];
+        // Biological vs legal distinction: getBiologicalChildIds returns
+        // a list of child ids for biological edges only. Anything in
+        // childIds but NOT in biologicalChildIds is a child of this
+        // character by a non-biological edge (legal adoption, foster,
+        // etc.). We do not try to split legal vs social here because
+        // FamilyQueries does not expose getSocialChildIds; the sum
+        // biological + adopted = total is enough for the statistics
+        // object, and callers who need legal-vs-social granularity can
+        // call FamilyQueries directly.
+        var biologicalChildIds = FQ.getBiologicalChildIds(characterId);
+        if (!Array.isArray(biologicalChildIds)) biologicalChildIds = [];
 
-        // Partners may be returned as character objects or as wrapper
-        // records. Normalize.
-        var result = [];
-        for (var i = 0; i < partners.length; i++) {
-            var p = _unwrap(partners[i]);
-            if (p && _hasId(p.id)) result.push(p);
+        var biologicalSet = {};
+        for (var b = 0; b < biologicalChildIds.length; b++) {
+            if (_hasId(biologicalChildIds[b])) biologicalSet[biologicalChildIds[b]] = true;
         }
-        return result;
+
+        var living = 0;
+        var biological = 0;
+        var adopted = 0;
+        var normalized = [];
+
+        for (var i = 0; i < childIds.length; i++) {
+            var cid = childIds[i];
+            if (!_hasId(cid)) continue;
+            var projection = _project(cid);
+            if (!projection) continue;
+
+            var isBio = biologicalSet[cid] === true;
+            var isAdopt = !isBio;
+            if (isBio) biological++;
+            if (isAdopt) adopted++;
+            if (_isLiving(projection)) living++;
+
+            normalized.push({
+                id: cid,
+                character: projection,
+                biological: isBio,
+                adopted: isAdopt,
+                birthYear: typeof projection.birthYear === 'number'
+                    ? projection.birthYear
+                    : null
+            });
+        }
+
+        var orderedIds = _sortIdsByBirthYear(childIds);
+
+        // Re-order the normalized array to match the sorted order.
+        var byId = {};
+        for (var n = 0; n < normalized.length; n++) {
+            byId[normalized[n].id] = normalized[n];
+        }
+        var orderedNormalized = [];
+        for (var o = 0; o < orderedIds.length; o++) {
+            var entry = byId[orderedIds[o]];
+            if (entry) orderedNormalized.push(entry);
+        }
+
+        var eldestId = orderedNormalized.length > 0 ? orderedNormalized[0].id : null;
+        var youngestId = orderedNormalized.length > 0
+            ? orderedNormalized[orderedNormalized.length - 1].id
+            : null;
+
+        return {
+            total: normalized.length,
+            living: living,
+            biological: biological,
+            adopted: adopted,
+            eldestId: eldestId,
+            youngestId: youngestId,
+            all: orderedNormalized
+        };
     }
 
     // =========================================================================
-    // 3. PUBLIC API
+    // 4. SIBLINGS
+    // =========================================================================
+
+    function _collectSiblings(characterId) {
+        // getSiblings returns wrapper records:
+        //   { siblingId, primaryType, sharedBiologicalParents,
+        //     sharedLegalParents, sharedSocialParents }
+        // primaryType is 'full' | 'half' | 'step' | 'adoptive'.
+        var wrappers = FQ.getSiblings(characterId);
+        if (!Array.isArray(wrappers)) wrappers = [];
+
+        var living = 0;
+        var full = 0;
+        var half = 0;
+        var adoptive = 0;
+        var step = 0;
+        var normalized = [];
+
+        for (var i = 0; i < wrappers.length; i++) {
+            var w = wrappers[i];
+            if (!w || !_hasId(w.siblingId)) continue;
+            var projection = _project(w.siblingId);
+            if (!projection) continue;
+
+            var type = w.primaryType;
+            if (type === 'full') full++;
+            else if (type === 'half') half++;
+            else if (type === 'adoptive') adoptive++;
+            else if (type === 'step') step++;
+            if (_isLiving(projection)) living++;
+
+            normalized.push({
+                id: w.siblingId,
+                character: projection,
+                primaryType: type,
+                full: type === 'full',
+                half: type === 'half',
+                adoptive: type === 'adoptive',
+                step: type === 'step',
+                birthYear: typeof projection.birthYear === 'number'
+                    ? projection.birthYear
+                    : null
+            });
+        }
+
+        // Sort by birth year (ascending), same rule as children.
+        var orderedIds = _sortIdsByBirthYear(
+            normalized.map(function (n) { return n.id; })
+        );
+        var byId = {};
+        for (var n = 0; n < normalized.length; n++) {
+            byId[normalized[n].id] = normalized[n];
+        }
+        var orderedNormalized = [];
+        for (var o = 0; o < orderedIds.length; o++) {
+            var entry = byId[orderedIds[o]];
+            if (entry) orderedNormalized.push(entry);
+        }
+
+        var eldestId = orderedNormalized.length > 0 ? orderedNormalized[0].id : null;
+        var youngestId = orderedNormalized.length > 0
+            ? orderedNormalized[orderedNormalized.length - 1].id
+            : null;
+
+        return {
+            total: normalized.length,
+            living: living,
+            full: full,
+            half: half,
+            adoptive: adoptive,
+            step: step,
+            eldestId: eldestId,
+            youngestId: youngestId,
+            all: orderedNormalized
+        };
+    }
+
+    // =========================================================================
+    // 5. GRANDCHILDREN
+    // =========================================================================
+
+    function _collectGrandchildren(characterId) {
+        var ids = FQ.getGrandchildIds(characterId, 1);
+        if (!Array.isArray(ids)) ids = [];
+
+        var living = 0;
+        var normalized = [];
+        for (var i = 0; i < ids.length; i++) {
+            var id = ids[i];
+            if (!_hasId(id)) continue;
+            var projection = _project(id);
+            if (!projection) continue;
+            if (_isLiving(projection)) living++;
+            normalized.push({
+                id: id,
+                character: projection
+            });
+        }
+
+        return {
+            total: normalized.length,
+            living: living,
+            all: normalized
+        };
+    }
+
+    // =========================================================================
+    // 6. ORPHAN STATUS
+    // =========================================================================
+
+    function _computeIsOrphan(characterId) {
+        // FamilyQueries.isOrphan expects (childId, isLivingFn) and
+        // returns true / false / null (null when the child doesn't
+        // exist, which we've already ruled out by this point).
+        if (typeof FQ.isOrphan !== 'function') return false;
+        var result = FQ.isOrphan(characterId, _isLivingId);
+        return result === true;
+    }
+
+    // =========================================================================
+    // 7. PUBLIC API
     // =========================================================================
 
     /**
@@ -175,19 +460,25 @@
      * @param {string} characterId
      * @returns {{
      *   characterId: string,
-     *   parents: { father, mother, all, hasParents },
+     *   parents: {
+     *     total, hasParents, fatherId, motherId,
+     *     biological, legal, social, ids
+     *   },
      *   children: {
      *     total, living, biological, adopted,
-     *     eldest, youngest,
-     *     all: Array<{ character, biological, adopted, birthYear }>
+     *     eldestId, youngestId,
+     *     all: Array<{ id, character, biological, adopted, birthYear }>
      *   },
      *   siblings: {
-     *     total, living, full, half, adoptive,
-     *     eldest, youngest,
-     *     all: Array<{ character, full, half, adoptive, sameFather, sameMother }>
+     *     total, living, full, half, adoptive, step,
+     *     eldestId, youngestId,
+     *     all: Array<{ id, character, primaryType,
+     *                  full, half, adoptive, step, birthYear }>
      *   },
-     *   grandchildren: { total, living, all: Array<Object> },
-     *   partners: { total, all: Array<Object> },
+     *   grandchildren: {
+     *     total, living,
+     *     all: Array<{ id, character }>
+     *   },
      *   isOrphan: boolean,
      *   hasParents: boolean,
      *   hasChildren: boolean,
@@ -198,180 +489,46 @@
     function getFamilyStatistics(characterId) {
         if (!_hasId(characterId)) return null;
 
-        var fa = window.FamilyAccessors;
+        var summary = _project(characterId);
+        if (!summary) return null;
 
-        // Parents
-        var allParents = fa.getAllParents(characterId, false);
-        if (!Array.isArray(allParents)) allParents = [];
+        var parents       = _collectParents(characterId);
+        var children      = _collectChildren(characterId);
+        var siblings      = _collectSiblings(characterId);
+        var grandchildren = _collectGrandchildren(characterId);
+        var isOrphan      = _computeIsOrphan(characterId);
 
-        var father = null;
-        var mother = null;
-        for (var i = 0; i < allParents.length; i++) {
-            var entry = allParents[i];
-            var parentChar = _unwrap(entry);
-            if (!parentChar) continue;
-            if (entry && entry.type === 'father' && !father) father = parentChar;
-            else if (entry && entry.type === 'mother' && !mother) mother = parentChar;
-        }
-        var hasParents = allParents.length > 0;
-
-        // Children (all, including deceased)
-        var allChildren = fa.getAllChildren(characterId, true);
-        if (!Array.isArray(allChildren)) allChildren = [];
-
-        // Normalize each child entry to a common shape.
-        var normalizedChildren = [];
-        var biologicalCount = 0;
-        var adoptedCount = 0;
-        for (var ci = 0; ci < allChildren.length; ci++) {
-            var ce = allChildren[ci];
-            var childChar = _unwrap(ce);
-            if (!childChar) continue;
-            var isBio = ce && ce.biological === true;
-            var isAdopt = ce && ce.adopted === true;
-            if (isBio) biologicalCount++;
-            if (isAdopt) adoptedCount++;
-            normalizedChildren.push({
-                character: childChar,
-                biological: isBio,
-                adopted: isAdopt,
-                birthYear: childChar.birthYear
-            });
-        }
-
-        var livingChildren = [];
-        for (var lc = 0; lc < normalizedChildren.length; lc++) {
-            if (_isLiving(normalizedChildren[lc].character)) {
-                livingChildren.push(normalizedChildren[lc].character);
-            }
-        }
-
-        var allChildChars = normalizedChildren.map(function(e) { return e.character; });
-        var childExtremes = _firstAndLast(allChildChars);
-
-        // Siblings (including half, including deceased)
-        var allSiblings = fa.getSiblings(characterId, true, true, true);
-        if (!Array.isArray(allSiblings)) allSiblings = [];
-
-        var fullCount = 0;
-        var halfCount = 0;
-        var adoptiveCount = 0;
-        var normalizedSiblings = [];
-        for (var si = 0; si < allSiblings.length; si++) {
-            var se = allSiblings[si];
-            var sibChar = _unwrap(se);
-            if (!sibChar) continue;
-            var isFull = se && se.full === true;
-            var isHalf = se && se.half === true && !isFull;
-            var isAdoptive = se && se.adoptive === true;
-            if (isFull) fullCount++;
-            else if (isHalf) halfCount++;
-            if (isAdoptive) adoptiveCount++;
-            normalizedSiblings.push({
-                character: sibChar,
-                full: isFull,
-                half: isHalf,
-                adoptive: isAdoptive,
-                sameFather: se ? se.sameFather === true : false,
-                sameMother: se ? se.sameMother === true : false
-            });
-        }
-
-        var livingSiblings = [];
-        for (var ls = 0; ls < normalizedSiblings.length; ls++) {
-            if (_isLiving(normalizedSiblings[ls].character)) {
-                livingSiblings.push(normalizedSiblings[ls].character);
-            }
-        }
-
-        var allSibChars = normalizedSiblings.map(function(e) { return e.character; });
-        var siblingExtremes = _firstAndLast(allSibChars);
-
-        // Grandchildren (including deceased)
-        var allGrandchildren = fa.getGrandchildren(characterId, true, true);
-        if (!Array.isArray(allGrandchildren)) allGrandchildren = [];
-
-        var normalizedGrandchildren = [];
-        for (var gi = 0; gi < allGrandchildren.length; gi++) {
-            var gChar = _unwrap(allGrandchildren[gi]);
-            if (gChar && _hasId(gChar.id)) normalizedGrandchildren.push(gChar);
-        }
-        var livingGrandchildren = _countLiving(normalizedGrandchildren);
-
-        // Partners (optional dependency)
-        var partners = _getActivePartners(characterId);
-
-        // Orphan status
-        var orphan = fa.isOrphan(characterId, false);
-        // isOrphan returns null for missing character; since we reached
-        // this point, character exists; null should not occur.
-        if (orphan === null) orphan = false;
-
-        // Total unique family members (deduplicated by ID, excluding self)
+        // Deduplicated total, excluding self. Built from ids only; the
+        // projections are not re-fetched here.
         var seen = new Set();
-        function addAll(list) {
+        function addIds(list) {
             for (var i = 0; i < list.length; i++) {
-                var c = _unwrap(list[i]);
-                if (c && _hasId(c.id)) seen.add(c.id);
+                if (_hasId(list[i])) seen.add(list[i]);
             }
         }
-        addAll(allParents);
-        addAll(allChildren);
-        addAll(allSiblings);
-        addAll(normalizedGrandchildren);
-        for (var pi = 0; pi < partners.length; pi++) {
-            if (_hasId(partners[pi].id)) seen.add(partners[pi].id);
-        }
-        // The queried character is not counted as their own family member.
+        addIds(parents.ids);
+        addIds(children.all.map(function (c) { return c.id; }));
+        addIds(siblings.all.map(function (s) { return s.id; }));
+        addIds(grandchildren.all.map(function (g) { return g.id; }));
         seen.delete(characterId);
 
         return {
             characterId: characterId,
-            parents: {
-                father: father,
-                mother: mother,
-                all: allParents,
-                hasParents: hasParents
-            },
-            children: {
-                total: normalizedChildren.length,
-                living: livingChildren.length,
-                biological: biologicalCount,
-                adopted: adoptedCount,
-                eldest: childExtremes.eldest,
-                youngest: childExtremes.youngest,
-                all: normalizedChildren
-            },
-            siblings: {
-                total: normalizedSiblings.length,
-                living: livingSiblings.length,
-                full: fullCount,
-                half: halfCount,
-                adoptive: adoptiveCount,
-                eldest: siblingExtremes.eldest,
-                youngest: siblingExtremes.youngest,
-                all: normalizedSiblings
-            },
-            grandchildren: {
-                total: normalizedGrandchildren.length,
-                living: livingGrandchildren,
-                all: normalizedGrandchildren
-            },
-            partners: {
-                total: partners.length,
-                all: partners
-            },
-            isOrphan: orphan,
-            hasParents: hasParents,
-            hasChildren: normalizedChildren.length > 0,
-            hasSiblings: normalizedSiblings.length > 0,
+            parents: parents,
+            children: children,
+            siblings: siblings,
+            grandchildren: grandchildren,
+            isOrphan: isOrphan,
+            hasParents: parents.hasParents,
+            hasChildren: children.total > 0,
+            hasSiblings: siblings.total > 0,
             totalFamilyMembers: seen.size
         };
     }
 
     /**
-     * Returns a lightweight summary suitable for UI rendering. Avoids the
-     * full statistics object when only counts are needed.
+     * Lightweight summary suitable for UI rendering. Avoids the full
+     * statistics object when only counts are needed.
      *
      * @param {string} characterId
      * @returns {{
@@ -379,47 +536,40 @@
      *   livingChildCount: number,
      *   siblingCount: number,
      *   grandchildCount: number,
-     *   partnerCount: number,
      *   isOrphan: boolean
      * }|null}
      */
     function getFamilySummary(characterId) {
         if (!_hasId(characterId)) return null;
 
-        var fa = window.FamilyAccessors;
+        var summary = _project(characterId);
+        if (!summary) return null;
 
-        var children = fa.getAllChildren(characterId, true);
-        if (!Array.isArray(children)) children = [];
+        var childIds = FQ.getChildIds(characterId);
+        if (!Array.isArray(childIds)) childIds = [];
 
         var livingChildCount = 0;
-        for (var i = 0; i < children.length; i++) {
-            var c = _unwrap(children[i]);
-            if (_isLiving(c)) livingChildCount++;
+        for (var i = 0; i < childIds.length; i++) {
+            if (_isLivingId(childIds[i])) livingChildCount++;
         }
 
-        var siblings = fa.getSiblings(characterId, true, true, true);
-        if (!Array.isArray(siblings)) siblings = [];
+        var siblingWrappers = FQ.getSiblings(characterId);
+        if (!Array.isArray(siblingWrappers)) siblingWrappers = [];
 
-        var grandchildren = fa.getGrandchildren(characterId, true, true);
-        if (!Array.isArray(grandchildren)) grandchildren = [];
-
-        var partners = _getActivePartners(characterId);
-
-        var orphan = fa.isOrphan(characterId, false);
-        if (orphan === null) orphan = false;
+        var grandchildIds = FQ.getGrandchildIds(characterId, 1);
+        if (!Array.isArray(grandchildIds)) grandchildIds = [];
 
         return {
-            childCount: children.length,
+            childCount: childIds.length,
             livingChildCount: livingChildCount,
-            siblingCount: siblings.length,
-            grandchildCount: grandchildren.length,
-            partnerCount: partners.length,
-            isOrphan: orphan
+            siblingCount: siblingWrappers.length,
+            grandchildCount: grandchildIds.length,
+            isOrphan: _computeIsOrphan(characterId)
         };
     }
 
     // =========================================================================
-    // 4. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.FamilyStatistics = {
@@ -428,8 +578,12 @@
     };
 
     // Convenience global. CharacterLifecycle and modals both expect this
-    // to exist on the module namespace; keeping it on window as a top-level
-    // function matches the existing call pattern in the fixed callers.
+    // to exist on the module namespace; keeping it on window as a
+    // top-level function matches the existing call pattern in the
+    // fixed callers.
     window.getFamilyStatistics = getFamilyStatistics;
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.FamilyStatistics;
+    }
 })();
