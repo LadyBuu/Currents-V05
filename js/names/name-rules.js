@@ -34,6 +34,14 @@
  *     preserved as given. Patronymic morphology is the only deliberate
  *     transformation.
  *
+ * TRANSITIVE DEPENDENCY ON world.js:
+ *   This module reads country facts through NameQueries:
+ *     - NameQueries.getCharacterCountryId → world.getCharacterCountryId
+ *     - NameQueries.getCountrySurnameRules → accessors.getNameLists
+ *   The world dependency is not visible in this file's import list
+ *   because NameQueries owns it. When load order is reshuffled, the edge
+ *   to watch is name-queries → world. NameRules → name-queries is stable.
+ *
  * CHAIN MODEL:
  *   A CHAIN rule's `order` is the COMPLETE, ORDERED list of absolute
  *   ancestor slots to resolve. `order.length` is the depth. There is no
@@ -78,6 +86,16 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Original: rule vocabulary + validation + application + policy.
+ *   Current:
+ *     - Header documents transitive dependency on world.js through
+ *       NameQueries.
+ *     - Inline comments added for the parent-role parameter in
+ *       _tryParentCountryRules, the freeze/clone combination on presets,
+ *       and the narrow scope of _applyPatronymicMorphology.
+ *     - No behavioural change.
  * =============================================================================
  */
 
@@ -242,7 +260,9 @@
      *   - Prefix and suffix are appended/prepended as configured.
      *
      * NOT a generic capitalize() pass. Assumes the base name is a given
-     * name in normal orthography and the affixes are morphology.
+     * name in normal orthography and the affixes are morphology. If the
+     * source name is already capitalized, the first-character uppercase
+     * is a no-op; if it isn't, the transformation corrects it.
      */
     function _applyPatronymicMorphology(baseName, prefix, suffix) {
         if (!_isNonEmptyString(baseName)) return '';
@@ -612,6 +632,26 @@
         return null;
     }
 
+    /**
+     * Tries to apply the parent's country rules to the newborn.
+     *
+     * The `parentRole` parameter ('mother' or 'father') determines which
+     * of the two positional arguments to `generateSurnameFromRules` is
+     * populated. The other is null. This matters for rules that consult
+     * a specific parent (e.g. a patronymic rule with source='father'
+     * returns null when only the mother is provided, which is correct —
+     * we don't fall back to a matronymic form silently).
+     *
+     * Returns null when:
+     *   - parent is null/undefined
+     *   - parent has no country
+     *   - parent's country has no rules
+     *   - the rules apply but produce no surname
+     *
+     * Throws (via generateSurnameFromRules) if the rules validate but
+     * cannot be applied — that is a rule-shape problem, not a "no
+     * surname to inherit" state.
+     */
     function _tryParentCountryRules(parent, parentRole) {
         if (!parent || !_isNonEmptyString(parent.id)) return null;
 
@@ -644,6 +684,18 @@
      * orchestrate the application; the calculation is policy and lives
      * here. Returns null for an unknown rule; it does not silently
      * default.
+     *
+     * Result shape:
+     *   { newSurname: string, spouseNewSurname: string }
+     *
+     * Both fields are always present. They are equal when the rule
+     * combines the two surnames (hyphenate) or when one partner takes
+     * the other's (wife_takes_husband, husband_takes_wife). They are
+     * the originals when the rule keeps them (keep).
+     *
+     * Gender-checked rules ('wife_takes_husband', 'husband_takes_wife')
+     * return the originals when the pair's genders do not match the
+     * rule's expectation. They do NOT silently invert.
      *
      * @param {Object} person
      * @param {Object} spouse
@@ -700,6 +752,16 @@
     // =========================================================================
     // 8. RULE PRESETS
     // =========================================================================
+    //
+    // Presets are deep-frozen at module load. This prevents internal code
+    // from accidentally mutating a preset definition. getRulePreset
+    // returns a deep clone on read, so callers can mutate their copy
+    // freely without affecting the frozen source.
+    //
+    // Both directions matter:
+    //   - freeze prevents *this module* from mutating presets
+    //   - clone prevents *callers* from mutating presets
+    //
 
     var RULE_PRESETS = _deepFreeze({
         patrilineal: {
