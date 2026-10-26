@@ -3,6 +3,8 @@
  * STILL WATERS - CHARACTER LIFECYCLE (js/character/character-lifecycle.js)
  * =============================================================================
  *
+ * LOCATION: js/character/character-lifecycle.js
+ *
  * Time progression, mortality orchestration, age classification, and
  * lifespan estimation for the character domain.
  *
@@ -15,7 +17,7 @@
  *   - Delegate the mutation to CharacterCommands.markDeceased
  *   - Dispatch cross-domain consequences:
  *       - family consequences via FamilyCommands.handleCharacterDeath
- *       - relationship consequences via RelationshipIntegrations.handleCharacterDeath
+ *       - relationship consequences via RelationshipIntegration.handleCharacterDeath
  *       - rank consequences via RankIssues.handleCharacterDeath
  *   - Life stage classification
  *   - Age group classification
@@ -31,7 +33,7 @@
  *   - Aggregate statistics             -> mortality-statistics.js
  *   - Childbirth orchestration         -> children-commands.js
  *   - Succession / inheritance         -> future succession domain
- *   - Relationship termination logic   -> relationship-integrations.js
+ *   - Relationship termination logic   -> relationship-integration.js
  *   - Rank deprecation logic           -> rank-issues.js
  *
  * CONTRACT:
@@ -41,7 +43,12 @@
  *   - Randomness is injected. Callers supply `options.random` (returns
  *     [0, 1)). When absent, Math.random is used. Rules are deterministic.
  *   - The death mutation goes through CharacterCommands.markDeceased
- *     exactly once per death.
+ *     exactly once per death, with the SIMULATED year passed as
+ *     referenceYear. This is required: markDeceased validates
+ *     deathYear <= referenceYear, and during a multi-year advance the
+ *     simulated year is ahead of wall-clock current year. Passing the
+ *     wall-clock year would reject every death after the first
+ *     simulated year.
  *   - The death cause is a stable id. Detail text is passed separately.
  *   - Life stage helpers accept either a character projection or a
  *     numeric age. They never reach into state for a missing birth year.
@@ -51,7 +58,7 @@
  *   notified, in this order:
  *
  *     1. FamilyCommands.handleCharacterDeath
- *     2. RelationshipIntegrations.handleCharacterDeath
+ *     2. RelationshipIntegration.handleCharacterDeath
  *     3. RankIssues.handleCharacterDeath
  *
  *   Each is called if and only if the module and method are present.
@@ -60,9 +67,13 @@
  *   domains. This is deliberate: each domain owns its own state, and a
  *   failure in one subsystem's cleanup must not prevent another's.
  *
- *   If a registerLifecycleHook API exists in a future revision, the
- *   direct dispatches here become redundant. They are harmless while
- *   the API remains absent, and can be removed once the API is wired.
+ *   The dispatch is centralised in _dispatchDeathEffects, which is
+ *   called from both _die (simulation path) and killCharacter (command
+ *   path). This ensures the two paths cannot drift. In particular,
+ *   children-commands.js routes maternal death through killCharacter,
+ *   and therefore through the same dispatch — family edges, rank
+ *   assignments, and relationships are all cleaned up consistently
+ *   regardless of how the death was triggered.
  *
  * AGE CLASSIFICATION:
  *   LIFE_STAGES comes from constants.js. It maps stage keys to
@@ -86,8 +97,9 @@
  *
  * DEPENDENCIES (OPTIONAL, called only if loaded):
  *   - family-commands.js:              FamilyCommands.handleCharacterDeath
- *   - relationship-integrations.js:    RelationshipIntegrations.handleCharacterDeath
- *   - rank-issues.js:                  RankIssues.handleCharacterDeath
+ *   - relationships/relationship-integration.js:
+ *                                       RelationshipIntegration.handleCharacterDeath
+ *   - ranks/rank-issues.js:            RankIssues.handleCharacterDeath
  *   - event-log.js:                    logEvent
  *
  * ICON POLICY: No emojis. No icons.
@@ -201,12 +213,14 @@
     // 2. CROSS-DOMAIN DEATH DISPATCH
     // =========================================================================
     //
-    // Called exactly once per successful death, from _die and killCharacter.
-    // Family is notified first, then relationship, then rank. Each call is
-    // guarded: if the module or method is absent, that subsystem is skipped.
+    // Called exactly once per successful death, from _die and
+    // killCharacter. Family is notified first, then relationship, then
+    // rank. Each call is guarded: if the module or method is absent, that
+    // subsystem is skipped.
     //
-    // Failures inside a sub-dispatch are swallowed. Each subsystem owns its
-    // own state; a failure in one must not prevent the others from running.
+    // Failures inside a sub-dispatch are swallowed. Each subsystem owns
+    // its own state; a failure in one must not prevent the others from
+    // running.
 
     function _notifyCrossDomainDeath(characterId, year) {
         if (!_hasId(characterId)) return;
@@ -226,9 +240,14 @@
         // become widowed; others end. Notified before rank because rank
         // inheritance sources may resolve through a spouse who has just
         // died.
-        if (window.RelationshipIntegrations
-            && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
-            window.RelationshipIntegrations.handleCharacterDeath(characterId, {
+        //
+        // Module name is RelationshipIntegration (singular), matching
+        // the exported namespace of relationships/relationship-integration.js.
+        // Earlier revisions referenced the plural form; that module never
+        // existed. The singular form is the correct name.
+        if (window.RelationshipIntegration
+            && typeof window.RelationshipIntegration.handleCharacterDeath === 'function') {
+            window.RelationshipIntegration.handleCharacterDeath(characterId, {
                 deathYear: year
             });
         }
@@ -244,15 +263,53 @@
         }
     }
 
+    /**
+     * Logs the death event and dispatches cross-domain consequences.
+     * Shared by the simulation path (_die) and the command path
+     * (killCharacter). Keeping this in one place is what guarantees the
+     * two paths cannot drift.
+     *
+     * The death itself must already have been written via markDeceased
+     * before this is called.
+     */
+    function _dispatchDeathEffects(character, year, cause, causeDetail) {
+        if (!character) return;
+        if (typeof year !== 'number' || !Number.isFinite(year)) {
+            year = window.getCurrentYear();
+        }
+
+        var name = typeof character.name === 'string' ? character.name : '';
+        var causeStr = typeof cause === 'string' && cause.length > 0
+            ? cause
+            : 'unknown';
+        var detailStr = typeof causeDetail === 'string' && causeDetail.length > 0
+            ? ' (' + causeDetail + ')'
+            : '';
+
+        _logEvent('death', 'Death',
+            name + ' died of ' + causeStr + detailStr + ' in ' + year,
+            [character]);
+
+        _notifyCrossDomainDeath(character.id, year);
+    }
+
+    /**
+     * Calls CharacterCommands.markDeceased with the referenceYear option
+     * set to the simulated (or explicit) death year. This is the ONLY
+     * path from this module to markDeceased; it exists so we cannot
+     * accidentally omit referenceYear and re-introduce the multi-year
+     * validation bug.
+     */
+    function _markDeceasedWithReferenceYear(characterId, deathData, referenceYear) {
+        return CC.markDeceased(characterId, deathData, {
+            referenceYear: referenceYear
+        });
+    }
+
     // =========================================================================
     // 3. LIFE STAGE CLASSIFICATION
     // =========================================================================
 
-    /**
-     * Returns the life stage for a character or an age.
-     *
-     * @returns {{ key, name, min, max, group } | null}
-     */
     function getLifeStage(charOrAge) {
         var age = _resolveAge(charOrAge);
         if (age === null) return null;
@@ -290,12 +347,6 @@
     // 4. AGE GROUP CLASSIFICATION
     // =========================================================================
 
-    /**
-     * Returns the age group key for a character or age.
-     * Age groups are strings like '0-10', '91+'.
-     *
-     * @returns {string | null}
-     */
     function getAgeGroup(charOrAge) {
         var age = _resolveAge(charOrAge);
         if (age === null) return null;
@@ -331,24 +382,12 @@
         return window.AGE_GROUPS.indexOf(group);
     }
 
-    /**
-     * True if the character or age is elderly (60 or above).
-     *
-     * @returns {boolean | null}
-     */
     function isElderly(charOrAge) {
         var age = _resolveAge(charOrAge);
         if (age === null) return null;
         return age >= 60;
     }
 
-    /**
-     * Groups an array of character projections by age group.
-     *
-     * @param {Array} characters
-     * @param {boolean} [excludeDeceased] default true
-     * @returns {Object<string, Array>}
-     */
     function groupCharactersByAgeGroup(characters, excludeDeceased) {
         if (!Array.isArray(characters)) return {};
         if (excludeDeceased === undefined) excludeDeceased = true;
@@ -375,7 +414,6 @@
             groups[group].push(character);
         }
 
-        // Sort each group by age ascending.
         var keys = Object.keys(groups);
         for (var k = 0; k < keys.length; k++) {
             groups[keys[k]].sort(function (a, b) {
@@ -395,15 +433,6 @@
     // 5. DEATH CAUSE SELECTION
     // =========================================================================
 
-    /**
-     * Chooses a death cause for a character.
-     *
-     * If options.chooseDeathCause is supplied, it is called and must
-     * return { deathCause, deathCauseDetail? }.
-     *
-     * Otherwise, MortalityRules.pickRandomCause is used with the
-     * caller's random function.
-     */
     function _chooseDeathCause(character, age, year, options) {
         if (typeof options.chooseDeathCause === 'function') {
             var custom = options.chooseDeathCause(character, age, year);
@@ -415,8 +444,6 @@
                         : ''
                 };
             }
-            // Fall through if the caller's selector returned something
-            // invalid; the deterministic picker is more forgiving.
         }
 
         var random = _getRandomFn(options);
@@ -488,10 +515,10 @@
     }
 
     // =========================================================================
-    // 8. DEATH TRANSITION
+    // 8. DEATH TRANSITION (SIMULATION PATH)
     // =========================================================================
 
-    function _die(character, year, evaluation, options) {
+    function _die(character, year, evaluation) {
         var deathData = {
             deathYear: year,
             deathCause: evaluation.cause,
@@ -507,7 +534,11 @@
             executionLocation: null
         };
 
-        var deathResult = CC.markDeceased(character.id, deathData);
+        var deathResult = _markDeceasedWithReferenceYear(
+            character.id,
+            deathData,
+            year
+        );
         if (!deathResult || deathResult.success !== true) {
             throw new Error(
                 'character-lifecycle.js: markDeceased failed for '
@@ -517,14 +548,12 @@
             );
         }
 
-        _logEvent('death', 'Death',
-            character.name + ' died of '
-            + evaluation.cause
-            + (evaluation.causeDetail ? ' (' + evaluation.causeDetail + ')' : '')
-            + ' in ' + year,
-            [character]);
-
-        _notifyCrossDomainDeath(character.id, year);
+        _dispatchDeathEffects(
+            character,
+            year,
+            evaluation.cause,
+            evaluation.causeDetail
+        );
 
         return deathResult;
     }
@@ -579,7 +608,7 @@
                 var evaluation = _evaluateCharacterForYear(live, year, options);
                 if (!evaluation.died) continue;
 
-                _die(live, year, evaluation, options);
+                _die(live, year, evaluation);
                 deaths.push({
                     characterId: live.id,
                     name: live.name,
@@ -606,9 +635,13 @@
 
     /**
      * Kills a specific character with explicit death data.
-     * Thin wrapper around CharacterCommands.markDeceased that adds
-     * lifecycle-level dispatch (family + relationship + rank consequences)
-     * and event logging.
+     *
+     * Thin wrapper around CharacterCommands.markDeceased that:
+     *   - passes the death year as referenceYear (so simulation-driven
+     *     deaths from children-commands work correctly),
+     *   - dispatches cross-domain consequences (family + relationship
+     *     + rank),
+     *   - logs the death event.
      */
     function killCharacter(characterId, deathData) {
         if (!_hasId(characterId)) {
@@ -626,7 +659,11 @@
             return { success: false, reason: 'Character is already deceased.' };
         }
 
-        var result = CC.markDeceased(characterId, deathData);
+        var year = typeof deathData.deathYear === 'number'
+            ? deathData.deathYear
+            : window.getCurrentYear();
+
+        var result = _markDeceasedWithReferenceYear(characterId, deathData, year);
         if (!result || result.success !== true) {
             return {
                 success: false,
@@ -634,34 +671,16 @@
             };
         }
 
-        var year = typeof deathData.deathYear === 'number'
-            ? deathData.deathYear
-            : window.getCurrentYear();
-
-        _logEvent('death', 'Death',
-            character.name + ' died of '
-            + (deathData.deathCause || 'unknown')
-            + (deathData.deathCauseDetail ? ' (' + deathData.deathCauseDetail + ')' : '')
-            + ' in ' + year,
-            [character]);
-
-        _notifyCrossDomainDeath(characterId, year);
+        _dispatchDeathEffects(
+            character,
+            year,
+            deathData.deathCause,
+            deathData.deathCauseDetail
+        );
 
         return result;
     }
 
-    /**
-     * Kills a character with a randomly chosen cause from the
-     * MortalityRules catalogue. The roll is drawn from options.random.
-     *
-     * options:
-     * {
-     *   year,             default current year
-     *   random()          optional
-     *   catalogue         optional cause catalogue
-     *   notes             optional death notes
-     * }
-     */
     function killCharacterRandomCause(characterId, options) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'characterId is required.' };
@@ -706,9 +725,6 @@
         });
     }
 
-    /**
-     * Kills a character from natural causes appropriate to their age.
-     */
     function triggerNaturalDeath(characterId, options) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'characterId is required.' };
@@ -739,10 +755,6 @@
         });
     }
 
-    /**
-     * Kills a character by accident. If no accidentType is supplied, one
-     * is chosen from options.random.
-     */
     function triggerAccidentalDeath(characterId, options) {
         if (!_hasId(characterId)) {
             return { success: false, reason: 'characterId is required.' };
@@ -789,20 +801,12 @@
     // =========================================================================
     // 11. LIFESPAN ESTIMATION (DETERMINISTIC)
     // =========================================================================
-    //
-    // predictLifespan is a DETERMINISTIC query. It does not consume RNG.
-    // Two calls for the same character return the same number. This makes
-    // it safe to call from UI rendering paths.
-    //
-    // getExpectedRemainingYears derives from predictLifespan and the
-    // character's current age.
 
     function predictLifespan(character) {
         if (!character || typeof character !== 'object') return null;
 
         var base = character.gender === 'female' ? 45 : 40;
 
-        // Rank modifier.
         if (_hasId(character.activeRankId)
             && typeof window.getRankById === 'function') {
             var rank = window.getRankById(character.activeRankId);
@@ -812,7 +816,6 @@
             }
         }
 
-        // Deterministic identity-hash adjustment.
         if (_hasId(character.id)) {
             var hash = 0;
             for (var i = 0; i < character.id.length; i++) {
@@ -841,7 +844,6 @@
     // =========================================================================
 
     window.CharacterLifecycle = {
-        // Age classification
         getLifeStage: getLifeStage,
         getLifeStageName: getLifeStageName,
         getAgeGroup: getAgeGroup,
@@ -850,16 +852,13 @@
         isElderly: isElderly,
         groupCharactersByAgeGroup: groupCharactersByAgeGroup,
 
-        // Time progression
         advanceMortality: advanceMortality,
 
-        // Death commands
         killCharacter: killCharacter,
         killCharacterRandomCause: killCharacterRandomCause,
         triggerNaturalDeath: triggerNaturalDeath,
         triggerAccidentalDeath: triggerAccidentalDeath,
 
-        // Lifespan estimation (deterministic)
         predictLifespan: predictLifespan,
         getExpectedRemainingYears: getExpectedRemainingYears
     };
