@@ -3,6 +3,8 @@
  * LOCATION VIEW MODELS
  * =============================================================================
  *
+ * LOCATION: js/location/location-view-models.js
+ *
  * Translates domain query results into render-ready structures.
  * This is where presentation defaults live.
  *
@@ -11,13 +13,16 @@
  *   - LocationHierarchy
  *   - LocationMovement
  *   - CharacterQueries
- *   - time.js (window.getCurrentYearSafe)
+ *   - time.js (window.getCurrentYear)
  *
  * Does NOT mutate. Does NOT touch DOM. Does NOT call Commands.
  *
- * Note on TimeQueries:
- *   TimeQueries does not exist. Time is accessed through the window-global
- *   helper window.getCurrentYearSafe, defined in js/core/time.js.
+ * Note on time helpers:
+ *   Time is accessed through the canonical window-global helper in
+ *   js/core/time.js:
+ *     - window.getCurrentYear()
+ *
+ *   The deprecated window.getCurrentYearSafe alias is NOT used here.
  *
  * =============================================================================
  */
@@ -50,9 +55,9 @@
             '(CharacterQueries) first.'
         );
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
+    if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
-            'location-view-models.js requires time.js (getCurrentYearSafe).'
+            'location-view-models.js requires time.js (getCurrentYear).'
         );
     }
 
@@ -359,7 +364,7 @@
             currentLocationName: currentLocation
                 ? displayName(currentLocation.displayName, '(unnamed)')
                 : null,
-            currentYear: window.getCurrentYearSafe(),
+            currentYear: window.getCurrentYear(),
             destinationOptions: _buildDestinationOptions(currentLocationId)
         };
     }
@@ -422,7 +427,7 @@
             fromPlaceName: displayName(fromPlace.displayName, '(unnamed)'),
             characterRows: characterRows,
             destinationOptions: _buildDestinationOptions(fromPlaceId),
-            currentYear: window.getCurrentYearSafe()
+            currentYear: window.getCurrentYear()
         };
     }
 
