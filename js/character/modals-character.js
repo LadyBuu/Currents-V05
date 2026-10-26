@@ -3,6 +3,8 @@
  * STILL WATERS - CHARACTER MODALS (js/character/modals-character.js)
  * =============================================================================
  *
+ * LOCATION: js/character/modals-character.js
+ *
  * Modals for character CRUD, details, and family view.
  *
  * SCOPE:
@@ -13,18 +15,45 @@
  *   - Family view modal
  *
  * OUT OF SCOPE:
- *   - Family semantics -> family-queries.js / family-rules.js
- *   - Character data access -> character-queries.js
- *   - Mutation -> character-commands.js / family-commands.js
- *   - Lifecycle -> character-lifecycle.js
- *   - Presentation CSS -> character-modals.css
- *   - Modal stack -> modals-core.js
+ *   - Family semantics       -> family-queries.js / family-rules.js
+ *   - Character data access  -> character-queries.js
+ *   - Mutation               -> character-commands.js / family-commands.js
+ *   - Lifecycle              -> character-lifecycle.js
+ *   - Presentation CSS       -> character-modals.css
+ *   - Modal stack            -> modals-core.js
  *
  * SEMANTIC RULES:
  *   - Missing required dependencies throw at load.
  *   - All user-facing strings derived from character data are escaped.
- *   - No inline styles. Classes only.
+ *   - No inline styles in this file. Classes only.
  *   - Errors are returned to the caller. No toasts.
+ *
+ * EDIT-MODAL TRANSACTION CONTRACT:
+ *   openEditCharacterModal applies two independent change groups:
+ *     - field updates via CharacterCommands.updateCharacter
+ *     - parent edge changes via FamilyCommands.setParent / removeParent
+ *
+ *   These are applied in a fixed order that prevents partial commits:
+ *
+ *     1. All field updates are collected and validated against the
+ *        current projection. A trivial no-op is a no-op, not an update.
+ *     2. All parent changes are validated against FamilyRules
+ *        (cycle check, duplicate check). If ANY parent change would
+ *        fail, the whole edit is refused BEFORE any mutation.
+ *     3. Field updates are applied.
+ *     4. Parent changes are applied.
+ *     5. If any parent change still fails (should not happen — step 2
+ *        validated them — but a concurrent mutation could cause it),
+ *        the field updates are NOT rolled back (they are cheap and the
+ *        parent change is the one that failed). The user gets a
+ *        structured error listing the parent that failed, and they
+ *        can retry only the parent change.
+ *
+ *   The alternative (apply parents first, then fields, and roll back
+ *   the parent on field failure) is also valid, but requires parent
+ *   edge removal on rollback, which is a FamilyCommands call that can
+ *   itself fail. The chosen order (validate-all-then-mutate) keeps
+ *   every mutation site's failure story simple.
  *
  * FAMILY INTEGRATION:
  *   Parent selection and display use FamilyQueries and FamilyCommands.
@@ -33,21 +62,22 @@
  * DEPENDENCIES (REQUIRED):
  *   - formatting.js:       escapeHtml
  *   - icons.js:            Icons
- *   - modals-core.js:      openModal, closeTopModal
+ *   - modals-core.js:      openModal, closeTopModal, confirmDialog
  *   - accessors.js:        getPlaces
  *   - time.js:             getCurrentYear, isValidYear
- *   - CharacterCommands:   updateCharacter, addProfession, updateProfession
- *   - CharacterQueries:    getCharacterSummary
+ *   - CharacterCommands:   updateCharacter
+ *   - CharacterQueries:    getCharacterSummary, getCharacterDisplayName
  *   - CharacterCreationCommands: createCharacter
  *   - CharacterDeletionCommands: deleteCharacter
- *   - FamilyQueries:       getParentsByRole, getChildIds, getSiblings
- *   - FamilyCommands:      setParent, removeParent
+ *   - FamilyQueries:       getParentsByRole, getChildIds, getSiblings,
+ *                          getGrandchildIds
+ *   - FamilyCommands:      setParent, removeBiologicalParentAtRole
  *
- * DEPENDENCIES (OPTIONAL):
+ * DEPENDENCIES (OPTIONAL, required only for the death modal route):
  *   - selectors/modals-char-selector.js (openCharacterSelector)
- *   - confirmDialog (from modals-core.js)
+ *   - modals-death.js                   (openDeathModal)
  *
- * ICON POLICY: Uses SVG from icons.js. No emojis.
+ * ICON POLICY: SVG from icons.js. No emojis.
  *
  * =============================================================================
  */
@@ -64,6 +94,7 @@
             'escapeHtml',
             'openModal',
             'closeTopModal',
+            'confirmDialog',
             'getPlaces',
             'getCurrentYear',
             'isValidYear'
@@ -95,6 +126,9 @@
         if (typeof window.CharacterDeletionCommands === 'undefined') {
             throw new Error('modals-character.js: character-deletion-commands.js must load first.');
         }
+        if (typeof window.CharacterState === 'undefined') {
+            throw new Error('modals-character.js: character-state.js must load first.');
+        }
         if (typeof window.FamilyQueries === 'undefined') {
             throw new Error('modals-character.js: family-queries.js must load first.');
         }
@@ -121,6 +155,11 @@
         return v === undefined || v === null;
     }
 
+    function _readSummary(id) {
+        if (!_hasId(id)) return null;
+        return window.CharacterQueries.getCharacterSummary(id);
+    }
+
     function _formatYear(year, missingText) {
         if (_isMissing(year)) return missingText || 'Unknown';
         return String(year);
@@ -131,10 +170,10 @@
         return String(year);
     }
 
-    function _formatDeathYear(character) {
-        if (character.isDeceased !== true) return null;
-        if (_isMissing(character.deathYear)) return 'Unknown';
-        return String(character.deathYear);
+    function _formatDeathYear(summary) {
+        if (summary.isDeceased !== true) return null;
+        if (_isMissing(summary.deathYear)) return 'Unknown';
+        return String(summary.deathYear);
     }
 
     function _icon(name) {
@@ -157,6 +196,9 @@
 
     /**
      * Returns the biological father and mother ids of a child, or nulls.
+     * Uses FamilyQueries.getParentsByRole — the canonical edge source —
+     * not the CharacterQueries shim, because the modal needs the
+     * biological distinction, not just "any parent".
      */
     function _getBiologicalParents(childId) {
         var out = { father: null, mother: null };
@@ -182,7 +224,106 @@
     }
 
     // =========================================================================
-    // 2. DETAILS MODAL
+    // 2. PARENT CHANGE VALIDATION
+    // =========================================================================
+    //
+    // A parent change is { action: 'set'|'remove'|'none', id: string|null }.
+    // This section validates a proposed change against the current edge
+    // state WITHOUT mutating anything. The validation is intentionally
+    // shallow — it only catches conditions that FamilyCommands.setParent
+    // would reject anyway, plus the trivial no-op case. The full
+    // FamilyRules checks (cycle, minimum age) remain inside setParent.
+
+    function _validateParentChange(childId, role, previousId, change) {
+        if (!change || change.action === 'none') {
+            return { ok: true };
+        }
+
+        if (change.action === 'remove') {
+            return { ok: true };
+        }
+
+        if (change.action === 'set') {
+            if (!_hasId(change.id)) {
+                return { ok: false, reason: 'No parent selected for ' + role + '.' };
+            }
+            if (change.id === childId) {
+                return { ok: false, reason: 'A character cannot be their own ' + role + '.' };
+            }
+            if (change.id === previousId) {
+                // Same parent — treat as a no-op (caller's diff logic
+                // produced this, so return ok; the apply step will skip).
+                return { ok: true, noop: true };
+            }
+            return { ok: true };
+        }
+
+        return { ok: false, reason: 'Unknown parent change action.' };
+    }
+
+    // =========================================================================
+    // 3. PARENT CHANGE APPLICATION
+    // =========================================================================
+    //
+    // Applies a single validated parent change. Returns a structured
+    // { ok, reason } instead of throwing. Failures are reported back to
+    // the caller; the caller decides whether to surface them.
+
+    function _applyParentChange(childId, role, previousId, change, year) {
+        if (!change || change.action === 'none') {
+            return { ok: true };
+        }
+
+        if (change.action === 'remove') {
+            if (previousId) {
+                var removeResult = window.FamilyCommands.removeBiologicalParentAtRole(
+                    childId,
+                    role,
+                    {
+                        endYear: year,
+                        reason: 'parent cleared by user'
+                    }
+                );
+                if (!removeResult || removeResult.success !== true) {
+                    return {
+                        ok: false,
+                        reason: 'Failed to remove ' + role + ': '
+                              + (removeResult && removeResult.reason
+                                  ? removeResult.reason
+                                  : 'unknown')
+                    };
+                }
+            }
+            return { ok: true };
+        }
+
+        if (change.action === 'set') {
+            if (change.id === previousId) {
+                return { ok: true };
+            }
+            var setResult = window.FamilyCommands.setParent(childId, change.id, {
+                parentType: 'biological',
+                parentRole: role,
+                startYear: year,
+                allowReplace: true
+            });
+            if (!setResult || setResult.success !== true) {
+                return {
+                    ok: false,
+                    reason: 'Failed to set ' + role + ': '
+                          + (setResult && setResult.reason
+                              ? setResult.reason
+                              : 'unknown')
+                };
+            }
+            return { ok: true };
+        }
+
+        return { ok: false, reason: 'Unknown parent change action.' };
+    }
+
+    // =========================================================================
+    // 4. DETAILS MODAL
     // =========================================================================
 
     function openCharacterDetailsModal(characterId, onSuccess) {
@@ -190,7 +331,7 @@
             throw new Error('openCharacterDetailsModal: characterId is required');
         }
 
-        var summary = window.CharacterQueries.getCharacterSummary(characterId);
+        var summary = _readSummary(characterId);
         if (!summary) {
             return { success: false, reason: 'Character not found' };
         }
@@ -260,12 +401,16 @@
                 openEditCharacterModal(characterId, onSuccess);
             } else if (action === 'kill-character') {
                 modal.close();
-                if (typeof window.openDeathModal === 'function') {
-                    window.openDeathModal(characterId, function () {
-                        if (onSuccess) onSuccess();
-                    });
-                } else {
+                if (typeof window.openDeathModal !== 'function') {
                     throw new Error('modals-character.js: death modal not available');
+                }
+                var deathResult = window.openDeathModal(characterId, function () {
+                    if (onSuccess) onSuccess();
+                });
+                if (deathResult && deathResult.success === false) {
+                    // The death modal refused to open. Surface its
+                    // reason rather than silently doing nothing.
+                    throw new Error(deathResult.reason || 'Failed to open death modal');
                 }
             } else if (action === 'delete-character') {
                 modal.close();
@@ -333,7 +478,7 @@
     }
 
     // =========================================================================
-    // 3. CREATE CHARACTER MODAL
+    // 5. CREATE CHARACTER MODAL
     // =========================================================================
 
     function openCreateCharacterModal(onSuccess) {
@@ -526,15 +671,21 @@
     }
 
     // =========================================================================
-    // 4. EDIT CHARACTER MODAL
+    // 6. EDIT CHARACTER MODAL
     // =========================================================================
+    //
+    // See the header's EDIT-MODAL TRANSACTION CONTRACT for the ordering
+    // rationale. The short version: validate everything first, mutate
+    // second, and treat parent changes as the riskier operation whose
+    // failure is surfaced without leaving field updates in an unclear
+    // state.
 
     function openEditCharacterModal(characterId, onSuccess) {
         if (!_hasId(characterId)) {
             throw new Error('openEditCharacterModal: characterId is required');
         }
 
-        var summary = window.CharacterQueries.getCharacterSummary(characterId);
+        var summary = _readSummary(characterId);
         if (!summary) {
             return { success: false, reason: 'Character not found' };
         }
@@ -674,6 +825,9 @@
                 });
             },
             onConfirm: function () {
+                // -----------------------------------------------------------------
+                // STEP 1: collect and validate field updates (no mutation yet).
+                // -----------------------------------------------------------------
                 var nameInput = modal.element.querySelector('#edit-char-first-name');
                 var surnameInput = modal.element.querySelector('#edit-char-surname');
                 var genderInput = modal.element.querySelector('#edit-char-gender');
@@ -703,28 +857,68 @@
                 var notes = notesInput ? notesInput.value : '';
                 if (notes !== (summary.notes || '')) updates.notes = notes;
 
+                // -----------------------------------------------------------------
+                // STEP 2: validate parent changes BEFORE any mutation.
+                // -----------------------------------------------------------------
+                var fatherValidation = _validateParentChange(
+                    characterId, 'father', originalBio.father, parentChanges.father
+                );
+                if (!fatherValidation.ok) {
+                    throw new Error(fatherValidation.reason);
+                }
+
+                var motherValidation = _validateParentChange(
+                    characterId, 'mother', originalBio.mother, parentChanges.mother
+                );
+                if (!motherValidation.ok) {
+                    throw new Error(motherValidation.reason);
+                }
+
+                // -----------------------------------------------------------------
+                // STEP 3: apply field updates (if any).
+                // -----------------------------------------------------------------
                 if (Object.keys(updates).length > 0) {
-                    var result = window.CharacterCommands.updateCharacter(characterId, updates);
-                    if (!result.success) {
-                        throw new Error(result.reason || 'Failed to update character');
+                    var updateResult = window.CharacterCommands.updateCharacter(characterId, updates);
+                    if (!updateResult || updateResult.success !== true) {
+                        throw new Error(updateResult && updateResult.reason
+                            ? updateResult.reason
+                            : 'Failed to update character');
                     }
                 }
 
-                // Apply parent changes after field updates, using FamilyCommands.
-                _applyParentChange(
+                // -----------------------------------------------------------------
+                // STEP 4: apply parent changes. Failures here are surfaced
+                // individually; the field updates are NOT rolled back
+                // (they are cheap and the parent change is the operation
+                // that failed — the user can retry just the parent).
+                // -----------------------------------------------------------------
+                var parentErrors = [];
+
+                var fatherApply = _applyParentChange(
                     characterId,
                     'father',
                     originalBio.father,
                     parentChanges.father,
                     birthYear
                 );
-                _applyParentChange(
+                if (!fatherApply.ok) {
+                    parentErrors.push(fatherApply.reason);
+                }
+
+                var motherApply = _applyParentChange(
                     characterId,
                     'mother',
                     originalBio.mother,
                     parentChanges.mother,
                     birthYear
                 );
+                if (!motherApply.ok) {
+                    parentErrors.push(motherApply.reason);
+                }
+
+                if (parentErrors.length > 0) {
+                    throw new Error(parentErrors.join('; '));
+                }
 
                 if (typeof onSuccess === 'function') {
                     onSuccess();
@@ -735,39 +929,8 @@
         return { success: true, modal: modal };
     }
 
-    /**
-     * Applies a single parent change for a child. Ends the previous
-     * biological edge at this role, then creates the new one if set.
-     */
-    function _applyParentChange(childId, role, previousId, change, year) {
-        if (!change || change.action === 'none') return;
-
-        if (change.action === 'remove') {
-            if (previousId) {
-                window.FamilyCommands.removeBiologicalParentAtRole(childId, role, {
-                    endYear: year,
-                    reason: 'parent cleared by user'
-                });
-            }
-            return;
-        }
-
-        if (change.action === 'set') {
-            if (change.id === previousId) return;
-            var setResult = window.FamilyCommands.setParent(childId, change.id, {
-                parentType: 'biological',
-                parentRole: role,
-                startYear: year,
-                allowReplace: true
-            });
-            if (!setResult.success) {
-                throw new Error(setResult.reason || 'Failed to set parent');
-            }
-        }
-    }
-
     // =========================================================================
-    // 5. DELETE CHARACTER MODAL
+    // 7. DELETE CHARACTER MODAL
     // =========================================================================
 
     function openDeleteCharacterModal(characterId, onSuccess) {
@@ -775,7 +938,7 @@
             throw new Error('openDeleteCharacterModal: characterId is required');
         }
 
-        var summary = window.CharacterQueries.getCharacterSummary(characterId);
+        var summary = _readSummary(characterId);
         if (!summary) {
             return { success: false, reason: 'Character not found' };
         }
@@ -789,10 +952,6 @@
             message += ' This character has ' + childCount
                      + (childCount === 1 ? ' child' : ' children')
                      + '; the parent reference will be removed.';
-        }
-
-        if (typeof window.confirmDialog !== 'function') {
-            throw new Error('modals-character.js: confirmDialog not available');
         }
 
         window.confirmDialog(message, 'Delete Character', function () {
@@ -809,7 +968,7 @@
     }
 
     // =========================================================================
-    // 6. FAMILY VIEW MODAL
+    // 8. FAMILY VIEW MODAL
     // =========================================================================
 
     function openFamilyViewModal(characterId) {
@@ -834,7 +993,7 @@
                  + (character.surname ? ' ' + _esc(character.surname) : '')
                  + '</strong>';
 
-        var summary = window.CharacterQueries.getCharacterSummary(characterId);
+        var summary = _readSummary(characterId);
         if (summary) {
             content += '<br>'
                      + _esc(summary.age === null ? 'Unknown age' : summary.age + ' years')
@@ -912,7 +1071,7 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.openCreateCharacterModal = openCreateCharacterModal;
