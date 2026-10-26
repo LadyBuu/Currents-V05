@@ -2,31 +2,56 @@
  * =============================================================================
  * STILL WATERS - RELIGION RENDER (religion-render.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/religion/religion-render.js
- * 
+ *
  * Pure renderer for religion lists, cards, and tables.
- * 
- * Consumes prepared view models from ReligionViewModels. Does NOT call
- * ReligionQueries, ReligionState, accessors, or any domain module. Does NOT
- * format enums. Does NOT emit inline CSS.
- * 
+ *
+ * This module is deliberately stupid.
+ *
+ * It receives prepared view models from ReligionViewModels, escapes strings,
+ * and writes HTML. It does not:
+ *   - call ReligionQueries
+ *   - call ReligionState
+ *   - call ReligionCommands
+ *   - call accessors
+ *   - inspect law or god structure
+ *   - resolve location or leader names     (view models do)
+ *   - decide fallback labels                (view models do)
+ *   - format enums                          (ReligionFormat does; view models
+ *                                            call it and pass through)
+ *   - emit inline CSS                       (CSS classes only)
+ *   - attach per-row listeners              (one delegated listener per
+ *                                            container via bindReligionListEvents)
+ *
+ * ICON POLICY
+ * -----------
+ * Religion-record icons (row.icon) are data and are rendered verbatim.
+ * Chrome icons (chevrons, markers, close buttons) must route through
+ * window._getIcon(name). This file currently renders no chrome icons.
+ *
+ * EVENT BINDING
+ * -------------
+ * Event binding is opt-in and separate from rendering. Callers call
+ * renderReligionList(container, rows, options) to paint, then optionally
+ * bindReligionListEvents(container, handlers) to attach the delegated click
+ * handler. Binding is guarded by a WeakSet so a container is bound only
+ * once, even across re-renders.
+ *
  * DEPENDENCIES:
- *   - formatting.js: escapeHtml
- * 
- * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
- * 
+ *   - formatting.js: escapeHtml (or _escapeHtml — both accepted)
+ *
  * =============================================================================
- * PHASE 4 UI BOUNDARY (2026):
- *   - Renamed from religion-ui-list.js. Pure renderer. Event delegation.
- *     Per-container refresh. No inline styles.
- * 
- * PHASE 6 CLEANUP (2026):
- *   - Deleted ReligionRender.getTraitName alias. Consumers call
- *     ReligionFormat.getReligiousTraitName directly.
- *   - Kept window.ReligionUI alias. Marked for removal once external
- *     consumers are migrated.
- * 
+ * REFACTOR HISTORY:
+ *   Phase 4: renamed from religion-ui-list.js. Pure renderer. Event
+ *            delegation. Per-container refresh. No inline styles.
+ *   Phase 6: deleted ReligionRender.getTraitName alias. Kept window.ReligionUI
+ *            alias marked for removal.
+ *   Phase 7 (current): converge to the reference pattern.
+ *     - e.target.closest null guard in all three event branches.
+ *     - Refresh timer fallback keyed per container (not container.id).
+ *     - Load-time verification.
+ *     - Header documents the pure-renderer contract.
  * =============================================================================
  */
 
@@ -44,6 +69,10 @@
         if (typeof window._escapeHtml === 'function') {
             return window._escapeHtml(str);
         }
+        // This branch should never be reached; load-time verification below
+        // catches the missing dependency at page load. Kept as a last-resort
+        // local implementation so a broken load order produces escaped output
+        // rather than a crash.
         if (!str) return '';
         return String(str)
             .replace(/&/g, '&amp;')
@@ -124,6 +153,8 @@
         html += '<div class="religion-item__main">';
 
         if (row.icon) {
+            // Religion-record icon. Rendered verbatim. Do not route through
+            // _getIcon — that is for chrome.
             html += '<span class="religion-item__icon">' + _escapeHtml(row.icon) + '</span>';
         }
 
@@ -256,6 +287,9 @@
     // 5. RENDER RELIGION TABLE
     // =========================================================================
 
+    // Column header labels. These are NOT display-name resolution — display
+    // names for values (trait, law type, etc.) come from ReligionFormat via
+    // view models. These are just the English column headers.
     var _COLUMN_LABELS = {
         name: 'Name',
         trait: 'Trait',
@@ -385,7 +419,10 @@
         }
 
         container.addEventListener('click', function(e) {
-            var viewBtn = e.target.closest('.view-religion-btn');
+            var target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
+
+            var viewBtn = target.closest('.view-religion-btn');
             if (viewBtn && container.contains(viewBtn)) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -395,7 +432,7 @@
                 return;
             }
 
-            var editBtn = e.target.closest('.edit-religion-btn');
+            var editBtn = target.closest('.edit-religion-btn');
             if (editBtn && container.contains(editBtn)) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -405,7 +442,7 @@
                 return;
             }
 
-            var item = e.target.closest('.religion-item');
+            var item = target.closest('.religion-item');
             if (item && container.contains(item)) {
                 if (handlers.onSelect) {
                     handlers.onSelect(item.dataset.religionId);
@@ -420,41 +457,78 @@
 
     var _refreshTimers = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
     var _refreshTimersFallback = {};
+    var _fallbackKeyCounter = 0;
 
-    function _getTimerStore(container) {
-        if (_refreshTimers) return _refreshTimers;
-        return _refreshTimersFallback;
+    /**
+     * Resolve a stable per-container key for the WeakMap fallback path.
+     *
+     * The previous version keyed by `container.id || 'default'`, which
+     * collided for every id-less container. Now each container gets a
+     * lazily-assigned unique property.
+     */
+    function _getContainerKey(container) {
+        if (container.__religionRefreshKey) return container.__religionRefreshKey;
+        _fallbackKeyCounter++;
+        var key = '__religionRefreshKey_' + _fallbackKeyCounter;
+        try {
+            container.__religionRefreshKey = key;
+        } catch (e) {
+            // Container is not extensible. Fall back to a non-unique key —
+            // refresh will still work, just with possible collision. This
+            // is a pathological case (frozen DOM node) and preferable to
+            // throwing.
+            return 'default';
+        }
+        return key;
     }
 
     function refreshReligionList(container, rows, options) {
         if (!container) return;
-        var store = _getTimerStore(container);
 
-        var existing = (store instanceof WeakMap)
-            ? store.get(container)
-            : store[container.id || 'default'];
+        var existing;
+        if (_refreshTimers) {
+            existing = _refreshTimers.get(container);
+        } else {
+            existing = _refreshTimersFallback[_getContainerKey(container)];
+        }
 
         if (existing) clearTimeout(existing);
 
         var timer = setTimeout(function() {
             renderReligionList(container, rows, options);
 
-            if (store instanceof WeakMap) {
-                store.delete(container);
+            if (_refreshTimers) {
+                _refreshTimers.delete(container);
             } else {
-                delete store[container.id || 'default'];
+                delete _refreshTimersFallback[_getContainerKey(container)];
             }
         }, 50);
 
-        if (store instanceof WeakMap) {
-            store.set(container, timer);
+        if (_refreshTimers) {
+            _refreshTimers.set(container, timer);
         } else {
-            store[container.id || 'default'] = timer;
+            _refreshTimersFallback[_getContainerKey(container)] = timer;
         }
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 9. LOAD-TIME VERIFICATION
+    // =========================================================================
+
+    (function _verifyLoadTimeDependencies() {
+        var hasEscape =
+            (typeof window.escapeHtml === 'function') ||
+            (typeof window._escapeHtml === 'function');
+        if (!hasEscape) {
+            throw new Error(
+                'religion-render.js loaded but no escapeHtml/_escapeHtml is available. ' +
+                'Check script tag order (formatting.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 10. EXPORTS
     // =========================================================================
 
     window.ReligionRender = {
