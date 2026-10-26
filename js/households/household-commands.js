@@ -54,10 +54,6 @@
  *   - Enterprise ownership     → IndustryCommands.updateEnterprise
  *   - Residence occupancy      → ResidenceSystem.assignHouseholdToUnit
  *
- * The character reverse index is character-owned; this module is one of
- * several callers of CharacterCommands.updateCharacterFields. It never
- * writes character fields directly.
- *
  * CHARCOMMANDS INTERACTION
  * ------------------------
  *   Every membership change (add, remove, transfer, update role) makes
@@ -69,15 +65,57 @@
  *   notifies subscribers and dispatches CustomEvents). persist() is called
  *   once at the end of the batch.
  *
- *   If CharacterCommands.updateCharacterFields fails, the household-side
- *   mutation is rolled back by re-adding/removing the member in memory
- *   and returning a structured failure. Partial-failure scenarios are
- *   surfaced, not swallowed.
+ * SET HEAD CONTRACT (REVISED)
+ * ---------------------------
+ *   setHead(householdId, characterId, options):
+ *     - If characterId is null: clears the head.
+ *     - If characterId is not a member: creates the member record directly
+ *       (via _addMemberRecord, which does NOT commit) and then commits
+ *       once. This makes setHead a single-commit command regardless of
+ *       whether the character was already a member.
+ *     - If characterId is already a member: applies the head change and
+ *       commits once.
+ *
+ *   Prior revisions called addMember() from setHead() when the character
+ *   wasn't a member, which committed twice (once for addMember's commit,
+ *   once for the head change). This produced two events and two state
+ *   notifications for what is one logical operation. The current version
+ *   makes setHead always one commit.
+ *
+ * ASSIGN ROLE IF MISSING (NEW)
+ * ----------------------------
+ *   assignCharacterToPosition and bulkAssign accept
+ *   options.addRoleIfMissing. When true and the position requires a role
+ *   the character lacks, the command adds the profession to the character
+ *   via CharacterCommands.addProfession before assignment.
+ *
+ *   If the character already has the role, no profession change is made.
+ *   The assignment record stores roleIdAtAssignment from the position.
+ *
+ *   If options.addRoleIfMissing is false or absent, the assignment
+ *   proceeds without adding the role. The result indicates the missing
+ *   role via a warning field, but the assignment is not refused — the
+ *   role-adding is best-effort and the caller decides whether to accept.
+ *
+ * DELETE HOUSEHOLD CONTRACT
+ * -------------------------
+ *   deleteHousehold(householdId, options):
+ *     - Disassociates any residence occupancy via ResidenceSystem.
+ *     - If options.removeFromCharacters !== false (default true), clears
+ *       the household reverse index on every member character.
+ *     - Removes the household record.
+ *     - One commit, one persist (by caller).
+ *
+ *   This command is used by HouseholdAssignment.createCadetBranch and
+ *   splitHousehold rollback paths. It must remain safe to call from
+ *   inside an orchestration — it does not call persist(), so the caller
+ *   controls the batch boundary.
  *
  * DEPENDENCIES (REQUIRED):
  *   - household-state.js: HouseholdState
  *   - household-rules.js: HouseholdRules
  *   - character-commands.js: CharacterCommands.updateCharacterFields
+ *   - character-state.js: CharacterState (for live-record reads only)
  *   - ids.js: generateId
  *   - time.js: getCurrentYear
  *   - storage.js: saveMasterData, markDataDirty
@@ -85,6 +123,8 @@
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
  *   - industry-commands.js: IndustryCommands
  *   - residence-system.js: ResidenceSystem
+ *   - character-commands.js: CharacterCommands.addProfession
+ *     (required for addRoleIfMissing)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -215,8 +255,7 @@
     // object still fires _commit. That is the intended behaviour: an
     // empty update is a valid "touch" operation that some callers
     // (notably household-economy.js) use to signal "the record changed
-    // out-of-band, notify subscribers." The prior implementation treated
-    // an empty update as a no-op, breaking that contract.
+    // out-of-band, notify subscribers."
 
     function _hydrateState() {
         if (typeof _state.hydrateFromMasterData === 'function') {
@@ -344,20 +383,12 @@
     //   - is the sole write boundary for character-owned fields
     //   - fires characterChanged
     //   - refuses fields that are domain-owned elsewhere
-    //
-    // The character projection returned by CharacterState is a snapshot;
-    // the live record is accessed via CharacterCommands. We build the
-    // householdHistory entry from the current projection's history (if
-    // present) plus the new entry.
 
     function _getCharacterHistory(id) {
         if (typeof window.CharacterState === 'undefined'
             || typeof window.CharacterState.getCharacter !== 'function') {
             return [];
         }
-        var projection = window.CharacterState.getCharacter(id);
-        if (!projection) return [];
-        // Projections do not carry householdHistory; read the live record.
         if (typeof window.CharacterState._getLiveCharacterForMutation
             !== 'function') {
             return [];
@@ -371,7 +402,6 @@
 
     /**
      * Writes the character reverse index for a member addition.
-     * Returns { success, reason? }.
      */
     function _writeCharacterMembership(characterId, householdId, householdName,
                                         year, role, isHead) {
@@ -436,7 +466,6 @@
 
     /**
      * Updates only the role of the open householdHistory entry.
-     * Does not change household or householdId.
      */
     function _updateCharacterMembershipRole(characterId, householdId, role) {
         var history = _getCharacterHistory(characterId);
@@ -559,14 +588,6 @@
         _addHouseholdRecord(household);
 
         if (data.headId) {
-            var head = null;
-            try { head = _cc.updateCharacterFields && null; } catch (e) { head = null; }
-            // Add the head using the canonical addMember logic so the
-            // character reverse index is written through CharacterCommands.
-            // But we can't call addMember here because it commits separately
-            // and we want one commit for the whole creation.
-            // Instead we replicate the minimum: add the member record on
-            // the household and write the reverse index via the helper.
             var addResult = _addMemberRecord(household, data.headId, 'family', {
                 role: 'Head of Household',
                 joinedYear: year,
@@ -575,7 +596,6 @@
                 recordHistory: true
             });
             if (!addResult.success) {
-                // Roll back the household record if the head can't be set.
                 _removeHouseholdRecord(householdId);
                 return _fail(addResult.code, addResult.reason);
             }
@@ -636,7 +656,7 @@
         }
 
         // Step 2: clear character reverse index via CharacterCommands.
-        if (options.removeFromCharacters === true
+        if (options.removeFromCharacters !== false
             && Array.isArray(household.members)) {
             for (var i = 0; i < household.members.length; i++) {
                 var memberId = household.members[i].characterId;
@@ -701,9 +721,7 @@
      * It commits (which fires the event and marks dirty) but does not
      * change any field. This is used by household-economy.js to signal
      * that the record was mutated out-of-band and subscribers should
-     * re-read. The prior implementation treated an empty update as a
-     * no-op and returned success without committing, which broke that
-     * contract.
+     * re-read.
      */
     function updateHousehold(householdId, updates, options) {
         options = options || {};
@@ -761,9 +779,7 @@
 
         household.updatedAt = Date.now();
 
-        // ALWAYS commit, even when changed is empty. An empty update is
-        // a valid "notify subscribers that the record was mutated
-        // out-of-band" operation. See the function docblock.
+        // ALWAYS commit, even when changed is empty.
         _commit('householdUpdated', {
             householdId: householdId,
             changed: changed,
@@ -852,16 +868,6 @@
     // =========================================================================
     // 11. MEMBER MUTATIONS
     // =========================================================================
-    //
-    // Every member mutation makes TWO writes:
-    //   1. Update the household record (members array).
-    //   2. Update the character reverse index (via CharacterCommands).
-    //
-    // Both happen in one logical operation. _commit notifies subscribers
-    // and dispatches CustomEvent for the household-side change;
-    // CharacterCommands.updateCharacterFields handles the character-side
-    // notification. Rollback on character-side failure is by re-applying
-    // the inverse mutation to the household record.
 
     function _findMember(household, characterId) {
         if (!Array.isArray(household.members)) return -1;
@@ -1205,8 +1211,6 @@
             year,
             reason
         );
-        // _clearCharacterMembership tolerates a null fromHouseholdId
-        // (no open entry to close) — it just writes household: ''.
         if (!clearResult.success) {
             // Roll back.
             if (current && fromHouseholdId) {
@@ -1264,9 +1268,31 @@
     }
 
     // =========================================================================
-    // 12. HEAD MANAGEMENT
+    // 12. HEAD MANAGEMENT (SINGLE-COMMIT CONTRACT)
     // =========================================================================
 
+    /**
+     * Sets or clears the head of a household.
+     *
+     * CONTRACT: one commit, one event, regardless of whether the new head
+     * was already a member.
+     *
+     *   - characterId null: clears the head. One commit.
+     *   - characterId not a member: creates the member record inline
+     *     (via _addMemberRecord, no commit), applies the head, commits
+     *     once with event 'householdHeadSet'.
+     *   - characterId already a member: applies the head, commits once
+     *     with event 'householdHeadSet'.
+     *
+     * If the character not being a member previously triggered a separate
+     * addMember command, that produced TWO commits (one from addMember,
+     * one from the head change) for one logical operation. That is fixed.
+     *
+     * @param {string} householdId
+     * @param {string|null} characterId
+     * @param {Object} [options] - { year, reason, recordHistory }
+     * @returns {{success, data?, code?, reason?}}
+     */
     function setHead(householdId, characterId, options) {
         options = options || {};
         var household = _internal.getHouseholdRecord(householdId);
@@ -1276,6 +1302,7 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
         var reason = options.reason || 'Succession';
 
+        // ---- Clear head path ----
         if (characterId === null) {
             var oldHeadId = null;
             if (Array.isArray(household.members)) {
@@ -1302,19 +1329,39 @@
             });
         }
 
-        if (_findMember(household, characterId) === -1) {
-            // Delegate to addMember, which itself commits.
-            return addMember(householdId, characterId, 'family', {
-                role: 'Head of Household',
-                joinedYear: year,
-                isHead: true,
-                notes: 'Appointed as head of household',
-                recordHistory: options.recordHistory
-            });
+        // ---- Set head path ----
+        if (!_hasId(characterId)) {
+            return _fail('INVALID_INPUT', 'characterId must be a non-empty string or null');
         }
 
-        var ok = _rules.applyHeadChange(household, characterId, year, reason);
-        if (!ok) return _fail('MEMBER_NOT_FOUND', 'Character is not a member');
+        var memberIdx = _findMember(household, characterId);
+        var addedInline = false;
+
+        if (memberIdx === -1) {
+            // Not a member: add the member record inline (no commit).
+            var addResult = _addMemberRecord(household, characterId, 'family', {
+                role: 'Head of Household',
+                joinedYear: year,
+                isHead: false,      // set below via applyHeadChange
+                notes: 'Appointed as head of household',
+                recordHistory: options.recordHistory !== false
+            });
+            if (!addResult.success) {
+                return _fail(addResult.code, addResult.reason);
+            }
+            addedInline = true;
+        }
+
+        // Apply the head change (clears previous heads, sets the new one,
+        // appends eventLog).
+        var applied = _rules.applyHeadChange(household, characterId, year, reason);
+        if (!applied) {
+            // Should be unreachable after the add or the pre-existing
+            // member lookup. If we added inline and applyHeadChange still
+            // failed, that's a bug — fail loudly.
+            return _fail('HEAD_APPLY_FAILED',
+                'Head change could not be applied to the household record');
+        }
 
         household.updatedAt = Date.now();
 
@@ -1322,13 +1369,15 @@
             householdId: householdId,
             characterId: characterId,
             reason: reason,
-            year: year
+            year: year,
+            addedInline: addedInline
         });
 
         return _ok({
             householdId: householdId,
             characterId: characterId,
-            year: year
+            year: year,
+            addedInline: addedInline
         });
     }
 
@@ -1671,12 +1720,6 @@
     // Canonical enterprise ownership lives in Industry. The household's
     // enterprises[] array is a REVERSE INDEX. These commands own the
     // index mutation only; they do not call IndustryCommands.
-    // Cross-domain orchestrators (HouseholdAssignment) should call both:
-    //
-    //     IndustryCommands.updateEnterprise(eId, { ownerId, ownerType, ... })
-    //     HouseholdCommands.setHouseholdEnterprises(householdId, [ids])
-    //
-    // ...inside one batch, then call HouseholdCommands.persist().
 
     function setHouseholdEnterprises(householdId, enterpriseIds, options) {
         options = options || {};
@@ -1926,6 +1969,80 @@
     // =========================================================================
     // 18. ASSIGNMENT CRUD
     // =========================================================================
+    //
+    // ADD-ROLE-IF-MISSING CONTRACT
+    // ----------------------------
+    // When options.addRoleIfMissing is true and the position requires a
+    // role the character lacks, the profession is added via
+    // CharacterCommands.addProfession before assignment. If the profession
+    // can't be added, the assignment is REFUSED — the caller asked for the
+    // role to be added, so silently skipping it would produce an
+    // assignment whose precondition was not met.
+    //
+    // If options.addRoleIfMissing is false or absent, the assignment
+    // proceeds. The result carries `roleWarning` when a required role is
+    // missing but the caller opted out of auto-adding.
+
+    var _DEFAULT_SKILL_LEVEL = 10;
+
+    function _characterHasRole(character, roleId) {
+        if (!character || !Array.isArray(character.professions)) return false;
+        if (!_hasId(roleId)) return false;
+        for (var i = 0; i < character.professions.length; i++) {
+            if (character.professions[i]
+                && character.professions[i].id === roleId) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Attempts to add a missing role to the character via
+     * CharacterCommands.addProfession. Returns { ok, reason }.
+     *
+     * If CharacterCommands.addProfession is not available, returns
+     * { ok: false, reason: 'addProfession unavailable' }.
+     */
+    function _addMissingRole(characterId, roleId, skillLevel, year) {
+        if (typeof _cc.addProfession !== 'function') {
+            return {
+                ok: false,
+                reason: 'CharacterCommands.addProfession is not available'
+            };
+        }
+
+        // Resolve the role's display name if RoleQueries is loaded.
+        var roleName = 'Role';
+        if (typeof window.getRoleById === 'function') {
+            var role = null;
+            try { role = window.getRoleById(roleId); } catch (e) { role = null; }
+            if (role && typeof role.name === 'string' && role.name.length > 0) {
+                roleName = role.name;
+            }
+        }
+
+        var result = _cc.addProfession(characterId, {
+            id: roleId,
+            name: roleName,
+            skillLevel: skillLevel !== undefined ? skillLevel : _DEFAULT_SKILL_LEVEL,
+            startYear: year,
+            primary: false,
+            notes: 'Granted for household position',
+            specs: [],
+            baseSalary: 0,
+            customSalary: null,
+            salaryHistory: [],
+            salaryLastCalculated: null,
+            paysSalary: false
+        });
+
+        if (!result || result.success !== true) {
+            return {
+                ok: false,
+                reason: (result && result.reason) || 'addProfession failed'
+            };
+        }
+        return { ok: true };
+    }
 
     function assignCharacterToPosition(positionId, characterId, options) {
         options = options || {};
@@ -1960,6 +2077,36 @@
                 'End year must be after start year');
         }
 
+        // ---- Role check + optional add ----
+        var roleWarning = null;
+        if (_hasId(position.requiredRoleId)
+            && !_characterHasRole(character, position.requiredRoleId)) {
+
+            if (options.addRoleIfMissing === true) {
+                var addResult = _addMissingRole(
+                    characterId,
+                    position.requiredRoleId,
+                    options.defaultSkillLevel !== undefined
+                        ? options.defaultSkillLevel
+                        : _DEFAULT_SKILL_LEVEL,
+                    year
+                );
+                if (!addResult.ok) {
+                    return _fail('ROLE_ADD_FAILED',
+                        'Position requires role "' + position.requiredRoleId +
+                        '" and addRoleIfMissing was requested but failed: ' +
+                        addResult.reason);
+                }
+            } else {
+                roleWarning = {
+                    code: 'MISSING_REQUIRED_ROLE',
+                    roleId: position.requiredRoleId,
+                    message: 'Character lacks required role; assignment ' +
+                        'proceeds without it (addRoleIfMissing was not set)'
+                };
+            }
+        }
+
         var assignment = {
             id: _generateId('hass'),
             positionId: positionId,
@@ -1969,7 +2116,7 @@
             endYear: endYear,
             title: options.title || position.name,
             notes: options.notes || '',
-            roleIdAtAssignment: options.roleIdAtAssignment || null,
+            roleIdAtAssignment: position.requiredRoleId || null,
             skillLevelAtAssignment: options.skillLevelAtAssignment !== undefined
                 ? options.skillLevelAtAssignment : 0,
             createdAt: Date.now(),
@@ -1985,7 +2132,10 @@
             householdId: position.householdId
         });
 
-        return _ok({ assignmentId: assignment.id });
+        return _ok({
+            assignmentId: assignment.id,
+            roleWarning: roleWarning
+        });
     }
 
     function endAssignment(assignmentId, endYear, reason) {
@@ -2039,8 +2189,13 @@
 
     function bulkAssign(assignments, options) {
         options = options || {};
+        if (!Array.isArray(assignments)) {
+            return _fail('INVALID_INPUT', 'assignments must be an array');
+        }
+
         var succeeded = [];
         var failed = [];
+        var warnings = [];
 
         var prepared = [];
         for (var i = 0; i < assignments.length; i++) {
@@ -2082,25 +2237,63 @@
                 index: i,
                 position: position,
                 character: character,
+                characterId: a.characterId,
                 startYear: year,
                 endYear: endYear,
                 title: a.title || position.name,
                 notes: a.notes || '',
-                roleIdAtAssignment: a.roleIdAtAssignment || null,
+                roleIdAtAssignment: position.requiredRoleId || null,
                 skillLevelAtAssignment: a.skillLevelAtAssignment !== undefined
-                    ? a.skillLevelAtAssignment : 0
+                    ? a.skillLevelAtAssignment : 0,
+                roleNeedsAdd: _hasId(position.requiredRoleId)
+                    && !_characterHasRole(character, position.requiredRoleId)
             });
+        }
+
+        // Apply addRoleIfMissing BEFORE checking duplicates — the role
+        // addition is a prerequisite for the assignment, and doing it per
+        // entry keeps the failure attribution local.
+        var preparedAfterRoles = [];
+        for (var p2 = 0; p2 < prepared.length; p2++) {
+            var prep2 = prepared[p2];
+            if (prep2.roleNeedsAdd) {
+                if (options.addRoleIfMissing === true) {
+                    var addResult = _addMissingRole(
+                        prep2.characterId,
+                        prep2.position.requiredRoleId,
+                        options.defaultSkillLevel !== undefined
+                            ? options.defaultSkillLevel
+                            : _DEFAULT_SKILL_LEVEL,
+                        prep2.startYear
+                    );
+                    if (!addResult.ok) {
+                        failed.push({
+                            index: prep2.index,
+                            code: 'ROLE_ADD_FAILED',
+                            reason: 'addRoleIfMissing failed: ' + addResult.reason
+                        });
+                        continue;
+                    }
+                } else {
+                    warnings.push({
+                        index: prep2.index,
+                        code: 'MISSING_REQUIRED_ROLE',
+                        roleId: prep2.position.requiredRoleId
+                    });
+                }
+            }
+            preparedAfterRoles.push(prep2);
         }
 
         var allAssignments = _internal.getAllAssignmentRecords();
         var added = [];
-        for (var p = 0; p < prepared.length; p++) {
-            var prep = prepared[p];
+        for (var p = 0; p < preparedAfterRoles.length; p++) {
+            var prep = preparedAfterRoles[p];
             var dup = false;
             for (var q = 0; q < allAssignments.length; q++) {
                 var existing = allAssignments[q];
                 if (existing.positionId === prep.position.id &&
-                    existing.characterId === prep.character.id &&
+                    existing.characterId === prep.characterId &&
                     (existing.endYear === null
                         || existing.endYear === undefined)) {
                     dup = true;
@@ -2116,7 +2309,7 @@
             var assignment = {
                 id: _generateId('hass'),
                 positionId: prep.position.id,
-                characterId: prep.character.id,
+                characterId: prep.characterId,
                 householdId: prep.position.householdId,
                 startYear: prep.startYear,
                 endYear: prep.endYear,
@@ -2140,7 +2333,11 @@
             });
         }
 
-        return _ok({ succeeded: succeeded, failed: failed });
+        return _ok({
+            succeeded: succeeded,
+            failed: failed,
+            warnings: warnings
+        });
     }
 
     // =========================================================================
@@ -2225,12 +2422,6 @@
     // =========================================================================
     // 21. INTERNAL CHARACTER LOOKUP
     // =========================================================================
-    //
-    // Used as the callback into HouseholdRules functions. Prefers
-    // CharacterState's live record for isDeceased freshness, but the
-    // projection is sufficient for the rules' needs (birthYear and
-    // isDeceased). Falls back to getCharacterById if CharacterState is
-    // missing.
 
     function _getCharacterById(id) {
         if (typeof window.CharacterState !== 'undefined'
@@ -2241,6 +2432,10 @@
             return window.getCharacterById(id);
         }
         return null;
+    }
+
+    function _hasId(v) {
+        return typeof v === 'string' && v.length > 0;
     }
 
     // =========================================================================
@@ -2266,7 +2461,7 @@
         updateMember: updateMember,
         transferMember: transferMember,
 
-        // Head
+        // Head (single-commit contract)
         setHead: setHead,
         autoAssignHead: autoAssignHead,
 
@@ -2293,7 +2488,7 @@
         updatePosition: updatePosition,
         deletePosition: deletePosition,
 
-        // Assignments
+        // Assignments (support addRoleIfMissing)
         assignCharacterToPosition: assignCharacterToPosition,
         endAssignment: endAssignment,
         deleteAssignment: deleteAssignment,
