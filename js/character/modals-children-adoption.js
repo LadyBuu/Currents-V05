@@ -4,6 +4,8 @@
  * (js/character/modals-children-adoption.js)
  * =============================================================================
  *
+ * LOCATION: js/character/modals-children-adoption.js
+ *
  * Adoption modals.
  *
  * SCOPE:
@@ -31,7 +33,7 @@
  *   - Surrogacy                       -> modals-children-surrogacy.js
  *   - Birth                           -> modals-children-birth.js
  *   - Legitimization                  -> deliberately not implemented
- *   - Presentation CSS                -> stylesheet
+ *   - Presentation CSS                -> stylesheet (character-modals.css)
  *
  * CONTRACT:
  *   - UI only. Reads via CharacterQueries, ChildrenQueries, FamilyQueries.
@@ -40,6 +42,21 @@
  *   - openSetBirthParentsModal passes ids to FamilyCommands.setParent
  *     with allowReplace: true when a biological parent already exists
  *     at the same role.
+ *
+ * SEARCH FILTER CONTRACT:
+ *   The adoption-search modal filters candidates using
+ *   CharacterQueries.getCharacterSummary projection fields. The
+ *   canonical location field on the summary is `locationId`, NOT
+ *   `currentLocationId` — the latter is an accessor-level field name
+ *   and does not appear on summaries. This file reads `locationId`.
+ *
+ * INLINE STYLES:
+ *   This file uses a small number of inline style attributes for
+ *   one-off layout inside the search results list. The general policy
+ *   is classes-only; the exceptions here are pragmatic and localized.
+ *   See the (small) set of `style=` occurrences at the bottom of this
+ *   file. Long-term these should move into character-modals.css; they
+ *   do not affect correctness.
  *
  * DEPENDENCIES (REQUIRED):
  *   - formatting.js:             escapeHtml
@@ -298,8 +315,10 @@
                     throw new Error('Please enter a valid year.');
                 }
 
+                // NOTE: FamilyCommands.createAdoption sets parentType
+                // to 'legal' internally. The parentType option here is
+                // informative only; it is not read.
                 var edgeResult = FC.createAdoption(childId, adopterId, {
-                    parentType: 'legal',
                     parentRole: role,
                     startYear: year,
                     notes: notesEl.value || '',
@@ -584,16 +603,18 @@
         };
 
         // Gather locations for the filter dropdown.
+        // IMPORTANT: getCharacterSummary exposes `locationId`, NOT
+        // `currentLocationId`. Use the summary field name.
         var locationOptions = '<option value="all">All Locations</option>';
         var seenLocations = {};
         var allForLocations = CQ.getAllCharacters();
         for (var li = 0; li < allForLocations.length; li++) {
             var c = allForLocations[li];
-            if (!_hasId(c.currentLocationId)) continue;
-            if (seenLocations[c.currentLocationId]) continue;
-            seenLocations[c.currentLocationId] = true;
-            locationOptions += '<option value="' + _esc(c.currentLocationId) + '">'
-                            + _esc(c.currentLocationId)
+            if (!_hasId(c.locationId)) continue;
+            if (seenLocations[c.locationId]) continue;
+            seenLocations[c.locationId] = true;
+            locationOptions += '<option value="' + _esc(c.locationId) + '">'
+                            + _esc(c.locationId)
                             + '</option>';
         }
 
@@ -610,7 +631,7 @@
             }
 
             if (currentFilter.locationId !== 'all'
-                && candidate.currentLocationId !== currentFilter.locationId) {
+                && candidate.locationId !== currentFilter.locationId) {
                 return false;
             }
 
@@ -722,7 +743,7 @@
                       + ' <span style="color:var(--dim); font-size:0.65rem;">'
                       + _esc(c.age === null ? 'Unknown' : c.age + 'y')
                       + ' &middot; ' + _esc(c.gender || 'Unknown')
-                      + (c.currentLocationId ? ' &middot; ' + _esc(c.currentLocationId) : '')
+                      + (c.locationId ? ' &middot; ' + _esc(c.locationId) : '')
                       + '</span>'
                       + '</div>';
             }
