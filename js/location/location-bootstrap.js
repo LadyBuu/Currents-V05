@@ -3,6 +3,8 @@
  * LOCATION BOOTSTRAP
  * =============================================================================
  *
+ * LOCATION: js/location/location-bootstrap.js
+ *
  * Load-time verification for the location domain.
  *
  * Responsibilities:
@@ -23,18 +25,31 @@
  *
  * Loads LAST in the location script group, after:
  *   location-state.js
- *   location-commands.js
  *   location-queries.js
  *   location-hierarchy.js
+ *   location-commands.js
  *   location-movement.js
  *   location-ui-list.js
  *
  * Requires, from outside the domain, in load order:
  *   js/core/storage.js         (markDataDirty, saveMasterData)
  *   js/core/ids.js             (generateId)
- *   js/core/time.js            (getCurrentYearSafe, calculateAge)
+ *   js/core/time.js            (getCurrentYear, calculateAge)
  *   js/character/character-commands.js  (CharacterCommands)
  *   js/character/character-queries.js   (CharacterQueries)
+ *
+ * COMPATIBILITY NOTES (core layer):
+ *   - Requires window.getCurrentYear (canonical), not the deprecated
+ *     window.getCurrentYearSafe alias. time.js documents the alias as
+ *     "for migration only"; the location domain no longer depends on it.
+ *   - Requires window.LocationState to be the domain index layer owned by
+ *     js/location/location-state.js. If another module bound
+ *     window.LocationState first without the domain surface, that module's
+ *     load-time collision guard has already thrown by the time this file
+ *     runs; bootstrap does not duplicate that check.
+ *   - LocationUIState (js/location/location-ui-state.js) is not required by
+ *     this file; the domain works without transient UI state, and
+ *     js/core/state.js is the module that requires LocationUIState.
  *
  * =============================================================================
  */
@@ -81,7 +96,7 @@
         _requireGlobalFn('generateId');
         _requireGlobalFn('markDataDirty');
         _requireGlobalFn('saveMasterData');
-        _requireGlobalFn('getCurrentYearSafe');
+        _requireGlobalFn('getCurrentYear');
         _requireGlobalFn('calculateAge');
     }
 
@@ -116,6 +131,7 @@
         _requireMethod('CharacterQueries', CQ, 'getCharacterById');
         _requireMethod('CharacterQueries', CQ, 'getCurrentLocationId');
         _requireMethod('CharacterQueries', CQ, 'getMoveHistory');
+        _requireMethod('CharacterQueries', CQ, 'getCharactersAtLocation');
     }
 
     function _verifyCanonical() {
