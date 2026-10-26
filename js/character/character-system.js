@@ -4,9 +4,12 @@
  * (js/character/character-system.js)
  * =============================================================================
  *
- * Purpose: expose the pre-refactor global API as one-way aliases onto the
- * canonical modules, for the remaining callers that have not yet been
- * migrated.
+ * LOCATION: js/character/character-system.js
+ *
+ * PURPOSE
+ * -------
+ * Expose the pre-refactor global API as one-way aliases onto the canonical
+ * modules, for the remaining callers that have not yet been migrated.
  *
  * LOAD THIS FILE LAST, after every other character subsystem file.
  *
@@ -22,44 +25,63 @@
  * not a compatibility feature. Every alias here points at a function that
  * already exists on a canonical namespace.
  *
- * MIGRATION POLICY:
- *   Every alias below is one-way. New code must call the canonical
- *   namespaces directly:
+ * CANONICAL NAMESPACE OWNERSHIP
+ * ----------------------------
+ * The character subsystem's public surface, as of this revision:
  *
- *     CharacterState
- *     CharacterCommands
- *     CharacterQueries
- *     CharacterCreationCommands
- *     CharacterDeletionCommands
- *     CharacterLifecycle
- *     FamilyRules, FamilyState, FamilyQueries, FamilyCommands
- *     MortalityRules, MortalityQueries, MortalityStatistics
+ *   CharacterState            — canonical character collection
+ *   CharacterCommands         — character-owned mutations (incl. death)
+ *   CharacterQueries          — semantic reads + summary projection
+ *   CharacterCreationCommands — creation boundary
+ *   CharacterDeletionCommands — deletion boundary (soft/hard/bulk)
+ *   CharacterLifecycle        — time progression + death dispatch
+ *   FamilyRules               — parentage policy, kinship
+ *   FamilyState               — parent-child edge collection
+ *   FamilyQueries             — family graph reads
+ *   FamilyCommands            — family graph mutations
+ *   FamilyStatistics          — family aggregation (uses FamilyQueries)
+ *   MortalityRules            — mortality policy
+ *   MortalityQueries          — mortality reads
+ *   MortalityStatistics       — mortality aggregation
+ *   ChildrenState             — pregnancy/surrogacy/adoption storage
+ *   ChildrenRules             — children policy
+ *   ChildrenQueries           — children reads
+ *   ChildrenCommands          — children mutations
+ *   ChildrenStatistics        — children aggregation
+ *   ChildrenGenerator         — birth proposal generation
  *
- *   The aliases exist so existing call sites keep working during the
- *   transition. Each alias should be removed once no caller references it.
+ * These are the canonical modules. This shim aliases legacy global names
+ * onto them. If any of these is missing, this shim throws at load.
  *
- *   To find remaining consumers:  grep -rn "window\.getCharacterById\b" js/
+ * MIGRATION POLICY
+ * ----------------
+ * Every alias below is one-way. New code must call the canonical
+ * namespaces directly. The aliases exist so existing call sites keep
+ * working during the transition. Each alias should be removed once no
+ * caller references it.
+ *
+ * To find remaining consumers:
+ *   grep -rn "window\.getCharacterById\b" js/
+ *   grep -rn "window\.getFamilyParents\b" js/
  *   (repeat for each alias; delete the alias when the count reaches zero.)
  *
  * DELETED MODULES (NOT aliased here):
- *   The following domains were deleted during the character refactor. Their
- *   global names are deliberately absent, not silently restored:
+ *   - family-accessors.js (FamilyAccessors)    → use FamilyQueries / FamilyRules
+ *   - relationship domain (Relationship*)       → optional; not part of
+ *                                                  the character subsystem
+ *   - mortality-state.js / mortality-commands.js (old) → removed
+ *   - children-lifecycle.js / pregnancy-service.js /
+ *     surrogacy-service.js / adoption-service.js        → removed
  *
- *     RelationshipState, RelationshipQueries, RelationshipCommands,
- *     RelationshipRules, RelationshipTypes, RelationshipUI
- *     RomanceRules, RomanceQueries, RomanceCommands
- *     FriendshipRules, FriendshipQueries, FriendshipCommands
- *     JealousyRules, JealousyQueries, JealousyCommands
- *     AffairRules, AffairQueries, AffairCommands
- *     MatchmakingRules, MatchmakingQueries
- *     ProfessionalRules, ProfessionalQueries, ProfessionalCommands
- *     ChildrenState, ChildrenCommands, ChildrenQueries,
- *     ChildrenLifecycle, PregnancyService, SurrogacyService,
- *     AdoptionService
- *     MortalityState, MortalityCommands
+ * If any caller still references those names, they receive `undefined`.
+ * That is a bug, not a shim failure. Fix the caller.
  *
- *   If any caller still references those names, they will receive
- *   `undefined`. That is a bug, not a shim failure. Fix the caller.
+ * DEPENDENCIES (REQUIRED):
+ *   See the REQUIRED list below. Every module listed must be loaded
+ *   before this file. Load order in `load order.txt` is the source of
+ *   truth.
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
@@ -72,19 +94,33 @@
     // =========================================================================
 
     var REQUIRED = [
-        ['CharacterState',             'character-state.js'],
-        ['CharacterCommands',          'character-commands.js'],
-        ['CharacterQueries',           'character-queries.js'],
-        ['CharacterCreationCommands',  'character-creation-commands.js'],
-        ['CharacterDeletionCommands',  'character-deletion-commands.js'],
-        ['CharacterLifecycle',         'character-lifecycle.js'],
-        ['FamilyRules',                'family-rules.js'],
-        ['FamilyState',                'family-state.js'],
-        ['FamilyQueries',              'family-queries.js'],
-        ['FamilyCommands',             'family-commands.js'],
-        ['MortalityRules',             'mortality-rules.js'],
-        ['MortalityQueries',           'mortality-queries.js'],
-        ['MortalityStatistics',        'mortality-statistics.js']
+        // Character core
+        ['CharacterState',            'character-state.js'],
+        ['CharacterCommands',         'character-commands.js'],
+        ['CharacterQueries',          'character-queries.js'],
+        ['CharacterCreationCommands', 'character-creation-commands.js'],
+        ['CharacterDeletionCommands', 'character-deletion-commands.js'],
+        ['CharacterLifecycle',        'character-lifecycle.js'],
+
+        // Family
+        ['FamilyRules',      'family-rules.js'],
+        ['FamilyState',      'family-state.js'],
+        ['FamilyQueries',    'family-queries.js'],
+        ['FamilyCommands',   'family-commands.js'],
+        ['FamilyStatistics', 'family-statistics.js'],
+
+        // Mortality
+        ['MortalityRules',      'mortality-rules.js'],
+        ['MortalityQueries',    'mortality-queries.js'],
+        ['MortalityStatistics', 'mortality-statistics.js'],
+
+        // Children
+        ['ChildrenState',      'children-state.js'],
+        ['ChildrenRules',      'children-rules.js'],
+        ['ChildrenQueries',    'children-queries.js'],
+        ['ChildrenCommands',   'children-commands.js'],
+        ['ChildrenStatistics', 'children-statistics.js'],
+        ['ChildrenGenerator',  'children-generator.js']
     ];
 
     var missing = [];
@@ -107,6 +143,12 @@
     var CDC = window.CharacterDeletionCommands;
     var CL  = window.CharacterLifecycle;
 
+    var FQ  = window.FamilyQueries;
+    var FC  = window.FamilyCommands;
+
+    var MQ  = window.MortalityQueries;
+    var MS  = window.MortalityStatistics;
+
     // =========================================================================
     // 2. STATE ALIASES
     // =========================================================================
@@ -114,22 +156,16 @@
     // Read side of CharacterState. Existing callers that used accessors.js
     // continue to work; accessors.js is free to disappear once nothing
     // references it.
+    //
+    // NOTE: getCharacters / getCharacterById historically returned live
+    // canonical objects. They now return projections. Callers that mutated
+    // the result through these functions were relying on removed
+    // behaviour; those callers must migrate to CharacterCommands.
 
-    /**
-     * Returns all characters as projections.
-     */
     window.getCharacters = function () {
         return CS.getAllCharacters();
     };
 
-    /**
-     * Returns a character projection by id, or null.
-     *
-     * Historically returned a live canonical object. Now returns a
-     * projection. Callers that mutated the result through this function
-     * were relying on removed behaviour; those callers must migrate to
-     * CharacterCommands.
-     */
     window.getCharacterById = function (id) {
         return CS.getCharacter(id);
     };
@@ -143,7 +179,6 @@
     };
 
     // State indexes
-
     window.getLivingCharacters = function () {
         return CS.getLivingCharacters();
     };
@@ -197,7 +232,6 @@
     };
 
     // Subscriptions
-
     window.subscribeCharacters = function (callback) {
         return CS.subscribe(callback);
     };
@@ -234,6 +268,10 @@
         return CQ.getCharactersInLocations(locationIds);
     };
 
+    window.getCharactersByAgeRange = function (minAge, maxAge, includeDeceased) {
+        return CQ.getCharactersByAgeRange(minAge, maxAge, includeDeceased);
+    };
+
     window.getCharacterProfessions = function (id) {
         return CQ.getCharacterProfessions(id);
     };
@@ -242,6 +280,8 @@
         return CQ.getPrimaryProfession(id);
     };
 
+    // Family delegates — these return simplified shapes; see
+    // character-queries.js for the shape contract.
     window.getCharacterChildren = function (characterId) {
         return CQ.getCharacterChildren(characterId);
     };
@@ -282,12 +322,13 @@
         return CC.updateCharactersFields(changes);
     };
 
-    window.markCharacterDeceased = function (characterId, deathData) {
-        return CC.markDeceased(characterId, deathData);
+    // Death transition. The single canonical death writer.
+    // Third argument is optional { referenceYear }.
+    window.markCharacterDeceased = function (characterId, deathData, options) {
+        return CC.markDeceased(characterId, deathData, options);
     };
 
     // Professions
-
     window.getCharacterProfession = function (characterId, professionId) {
         return CC.getProfession(characterId, professionId);
     };
@@ -325,7 +366,6 @@
     };
 
     // Surname
-
     window.recordCharacterSurnameChange = function (id, newSurname, year, reason, options) {
         return CC.recordCharacterSurnameChange(id, newSurname, year, reason, options);
     };
@@ -334,8 +374,7 @@
         return CC.revertCharacterSurnameChange(id);
     };
 
-    // Religion orchestration
-
+    // Religion orchestration (delegates to ReligionCommands when loaded)
     window.assignCharacterReligion = function (characterId, religionId, options) {
         return CC.assignCharacterReligion(characterId, religionId, options);
     };
@@ -424,49 +463,58 @@
     // The family domain owns parentage. These aliases expose the current
     // FamilyQueries / FamilyCommands surface under the names older callers
     // expect.
+    //
+    // FamilyAccessors (family-accessors.js) is DELETED. Aliases below
+    // route to FamilyQueries, which is the canonical implementation.
 
     window.getFamilyParents = function (childId, options) {
-        return window.FamilyQueries.getParents(childId, options);
+        return FQ.getParents(childId, options);
     };
 
     window.getFamilyParentsByRole = function (childId) {
-        return window.FamilyQueries.getParentsByRole(childId);
+        return FQ.getParentsByRole(childId);
     };
 
     window.getFamilyChildren = function (parentId, options) {
-        return window.FamilyQueries.getChildren(parentId, options);
+        return FQ.getChildren(parentId, options);
     };
 
     window.getFamilyChildIds = function (parentId) {
-        return window.FamilyQueries.getChildIds(parentId);
+        return FQ.getChildIds(parentId);
     };
 
     window.getFamilySiblings = function (childId) {
-        return window.FamilyQueries.getSiblings(childId);
+        return FQ.getSiblings(childId);
     };
 
     window.getFamilyGrandparentIds = function (childId, generation) {
-        return window.FamilyQueries.getGrandparentIds(childId, generation);
+        return FQ.getGrandparentIds(childId, generation);
     };
 
     window.getFamilyGrandchildIds = function (parentId, generation) {
-        return window.FamilyQueries.getGrandchildIds(parentId, generation);
+        return FQ.getGrandchildIds(parentId, generation);
     };
 
     window.setFamilyParent = function (childId, parentId, options) {
-        return window.FamilyCommands.setParent(childId, parentId, options);
+        return FC.setParent(childId, parentId, options);
     };
 
     window.removeFamilyParent = function (edgeId, options) {
-        return window.FamilyCommands.removeParent(edgeId, options);
+        return FC.removeParent(edgeId, options);
     };
 
     window.createFamilyAdoption = function (childId, adopterId, options) {
-        return window.FamilyCommands.createAdoption(childId, adopterId, options);
+        return FC.createAdoption(childId, adopterId, options);
     };
 
     window.removeFamilyAdoption = function (childId, adopterId, options) {
-        return window.FamilyCommands.removeAdoption(childId, adopterId, options);
+        return FC.removeAdoption(childId, adopterId, options);
+    };
+
+    // Aggregate family statistics. Canonical implementation lives in
+    // family-statistics.js; this is a thin alias, not a second impl.
+    window.getFamilyStatistics = function (characterId) {
+        return window.FamilyStatistics.getFamilyStatistics(characterId);
     };
 
     // =========================================================================
@@ -474,47 +522,47 @@
     // =========================================================================
 
     window.isCharacterLiving = function (characterId) {
-        return window.MortalityQueries.isLiving(characterId);
+        return MQ.isLiving(characterId);
     };
 
     window.isCharacterDeceased = function (characterId) {
-        return window.MortalityQueries.isDeceased(characterId);
+        return MQ.isDeceased(characterId);
     };
 
     window.getDeathRecord = function (characterId) {
-        return window.MortalityQueries.getDeathRecord(characterId);
+        return MQ.getDeathRecord(characterId);
     };
 
     window.getAllDeathRecords = function () {
-        return window.MortalityQueries.getAllDeathRecords();
+        return MQ.getAllDeathRecords();
     };
 
     window.getDeathsByYear = function (year) {
-        return window.MortalityQueries.getDeathsByYear(year);
+        return MQ.getDeathsByYear(year);
     };
 
     window.getDeathsByCause = function (cause) {
-        return window.MortalityQueries.getDeathsByCause(cause);
+        return MQ.getDeathsByCause(cause);
     };
 
     window.getMurderRecords = function () {
-        return window.MortalityQueries.getMurderRecords();
+        return MQ.getMurderRecords();
     };
 
     window.getExecutionRecords = function () {
-        return window.MortalityQueries.getExecutionRecords();
+        return MQ.getExecutionRecords();
     };
 
     window.getMortalityStatistics = function () {
-        return window.MortalityStatistics.getMortalityStatistics();
+        return MS.getMortalityStatistics();
     };
 
     window.getMurderStatistics = function () {
-        return window.MortalityStatistics.getMurderStatistics();
+        return MS.getMurderStatistics();
     };
 
     window.getExecutionStatistics = function () {
-        return window.MortalityStatistics.getExecutionStatistics();
+        return MS.getExecutionStatistics();
     };
 
     // =========================================================================
@@ -538,11 +586,10 @@
     //       CharacterCommands.updateDeathData command.
     //
     //   setParent(childId, parentId, parentType, options)  [old signature]
-    //       Use FamilyCommands.setParent(childId, parentId, options) with
-    //       the options object.
+    //       Use FamilyCommands.setParent(childId, parentId, options).
     //
     //   generateNewborn(mother, father, birthYear, options)
-    //       Children domain. Not implemented.
+    //       Use ChildrenCommands.recordBirth.
     //
     //   createAdoption(parentId, childId, options)   [old signature]
     //       Use FamilyCommands.createAdoption(childId, adopterId, options).
@@ -556,12 +603,13 @@
     //   getAdoptionType, getAdoptionYear, getAdoptionRecord,
     //   validateAdoption, createGuardianship, createFosterPlacement,
     //   removeAllAdoptiveParents, getAdoptionStats
-    //       Children/adoption domain. Not implemented.
+    //       Not implemented.
     //
     //   recordBirth, recordAdoption, legitimizeChild, recordSurrogacy,
     //   updateSurrogacyRecord, generateChildrenForCouple,
     //   getCharacterLastChildBirthYear, getCharacterTotalChildren
-    //       Children domain. Not implemented.
+    //       Not provided as flat globals. Use ChildrenCommands /
+    //       ChildrenQueries / ChildrenStatistics directly.
     //
     //   getChildren, getParents, getSiblings   [unified across bio/adopt]
     //       Not provided under these names. FamilyQueries exposes the
@@ -572,7 +620,9 @@
     //   getSocialDistance, getRelationshipNetwork,
     //   getRelationshipRecommendations, and every other relationship-*
     //   global
-    //       Relationship domain. Not implemented.
+    //       Relationship domain. Not installed by this shim. If your
+    //       relationship domain is loaded separately, it provides its
+    //       own aliases.
     //
     //   getRankById, getActiveRankDisplay, getRanks
     //       Rank domain. Not implemented here. If your rank module still
@@ -586,8 +636,11 @@
     //       Storage. Not touched by this shim. If storage.js is loaded,
     //       it exposes this name. The character subsystem never calls it.
     //
-    //   MortalityState, MortalityCommands, ChildrenState,
-    //   ChildrenCommands, ChildrenQueries, ChildrenLifecycle,
+    //   FamilyAccessors, family-accessors.js
+    //       DELETED. Use FamilyQueries / FamilyRules / FamilyStatistics.
+    //
+    //   MortalityState, MortalityCommands, ChildrenState (old),
+    //   ChildrenCommands (old), ChildrenQueries (old), ChildrenLifecycle,
     //   PregnancyService, SurrogacyService, AdoptionService,
     //   RelationshipState, RelationshipQueries, RelationshipCommands,
     //   RelationshipRules, RomanceCommands, RomanceQueries,
@@ -606,8 +659,10 @@
             'New code should call CharacterState / CharacterCommands / ' +
             'CharacterQueries / CharacterCreationCommands / ' +
             'CharacterDeletionCommands / CharacterLifecycle / FamilyRules / ' +
-            'FamilyState / FamilyQueries / FamilyCommands / MortalityRules / ' +
-            'MortalityQueries / MortalityStatistics directly.'
+            'FamilyState / FamilyQueries / FamilyCommands / FamilyStatistics / ' +
+            'MortalityRules / MortalityQueries / MortalityStatistics / ' +
+            'ChildrenState / ChildrenCommands / ChildrenQueries / ' +
+            'ChildrenStatistics / ChildrenRules / ChildrenGenerator directly.'
         );
     }
 
@@ -648,6 +703,7 @@
             removeFamilyParent: window.removeFamilyParent,
             getFamilyParents: window.getFamilyParents,
             getFamilyChildren: window.getFamilyChildren,
+            getFamilyStatistics: window.getFamilyStatistics,
 
             // Mortality
             getDeathRecord: window.getDeathRecord,
