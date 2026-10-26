@@ -2,27 +2,31 @@
  * =============================================================================
  * STILL WATERS - GLOBAL CONSTANTS (constants.js)
  * =============================================================================
- * 
- * LOCATION: js/core/constants.js
- * 
+ *
+ * LOCATION: js/core/constants/constants.js
+ *
  * SCOPE:
  *   Application-wide identifiers that do not belong to any single domain.
  *   Specifically:
  *     - localStorage keys
  *     - Cross-cutting configuration
- * 
+ *
  * OUT OF SCOPE (belongs in domain modules):
- *   - Crime constants → js/modules/crime/crime-constants.js
- *   - Character/age constants → js/core/age-constants.js
- *   - Relationship constants → js/modules/relationships/relationship-constants.js
- *   - Location constants → js/modules/locations/location-constants.js
- *   - Role constants → js/modules/roles/role-constants.js
- *   - UI options → js/ui/options.js
- * 
+ *   - Crime constants        → js/crime/crime-constants.js
+ *   - Character/age constants → js/core/constants/age-constants.js
+ *   - Character identity enums → js/core/constants/character-constants.js
+ *   - Relationship constants → js/relationships/relationship-constants.js
+ *   - Location constants     → js/location/location-constants.js
+ *   - Role constants         → js/roles/role-constants.js
+ *   - UI options             → js/core/constants/character-constants.js
+ *                              (the legacy ui-options.js duplicate has been
+ *                               removed; GENDER_VALUES / ATTRACTION_VALUES
+ *                               live in character-constants.js)
+ *
  * DEPENDENCIES: None. Load FIRST.
- * 
+ *
  * ICON POLICY: No emojis. No icons.
- * 
+ *
  * =============================================================================
  */
 
@@ -40,9 +44,21 @@ window.__CONSTANTS_LOADED = true;
 
 /**
  * Canonical localStorage key names.
- * All modules must use these — no literal strings.
+ *
+ * All modules that read or write localStorage MUST use these constants.
+ * No literal key strings anywhere else in the codebase.
+ *
+ * The MASTER and UI_STATE entries were previously absent while
+ * storage.js and ui-state.js hardcoded them. That inconsistency has been
+ * corrected: this table now enumerates every key the application uses.
  */
 window.LOCAL_STORAGE_KEYS = Object.freeze({
+    // Canonical application data (owned by storage.js)
+    MASTER: 'stillwaters_master',
+
+    // Panel UI state (owned by ui-state.js)
+    UI_STATE: 'stillwaters_ui_state',
+
     // Tree states
     LOCATION_TREE_STATE: 'location_tree_state',
     CHARACTER_TREE_STATE: 'character_tree_state_v3',
