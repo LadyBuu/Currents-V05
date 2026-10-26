@@ -17,7 +17,8 @@
  *   - Delegate the mutation to CharacterCommands.markDeceased
  *   - Dispatch cross-domain consequences:
  *       - family consequences via FamilyCommands.handleCharacterDeath
- *       - relationship consequences via RelationshipIntegration.handleCharacterDeath
+ *       - relationship consequences via
+ *         RelationshipIntegrations.handleCharacterDeath
  *       - rank consequences via RankIssues.handleCharacterDeath
  *   - Life stage classification
  *   - Age group classification
@@ -58,7 +59,7 @@
  *   notified, in this order:
  *
  *     1. FamilyCommands.handleCharacterDeath
- *     2. RelationshipIntegration.handleCharacterDeath
+ *     2. RelationshipIntegrations.handleCharacterDeath
  *     3. RankIssues.handleCharacterDeath
  *
  *   Each is called if and only if the module and method are present.
@@ -66,6 +67,16 @@
  *   cascade proceeds. The death operation is NOT transactional across
  *   domains. This is deliberate: each domain owns its own state, and a
  *   failure in one subsystem's cleanup must not prevent another's.
+ *
+ *   NAMING:
+ *     The relationship domain's cross-domain hook is exported by
+ *     js/relationships/relationship-integration.js under the namespace
+ *     "RelationshipIntegrations" (PLURAL). This is verified at line 505
+ *     of that file: `window.RelationshipIntegrations = { ... }`.
+ *
+ *     Earlier revisions of this file referenced the singular form,
+ *     which does not exist in the tree and silently skipped relationship
+ *     cleanup on every death. The plural form is correct.
  *
  *   The dispatch is centralised in _dispatchDeathEffects, which is
  *   called from both _die (simulation path) and killCharacter (command
@@ -98,7 +109,7 @@
  * DEPENDENCIES (OPTIONAL, called only if loaded):
  *   - family-commands.js:              FamilyCommands.handleCharacterDeath
  *   - relationships/relationship-integration.js:
- *                                       RelationshipIntegration.handleCharacterDeath
+ *                                       RelationshipIntegrations.handleCharacterDeath
  *   - ranks/rank-issues.js:            RankIssues.handleCharacterDeath
  *   - event-log.js:                    logEvent
  *
@@ -241,13 +252,12 @@
         // inheritance sources may resolve through a spouse who has just
         // died.
         //
-        // Module name is RelationshipIntegration (singular), matching
-        // the exported namespace of relationships/relationship-integration.js.
-        // Earlier revisions referenced the plural form; that module never
-        // existed. The singular form is the correct name.
-        if (window.RelationshipIntegration
-            && typeof window.RelationshipIntegration.handleCharacterDeath === 'function') {
-            window.RelationshipIntegration.handleCharacterDeath(characterId, {
+        // Namespace is RelationshipIntegrations (PLURAL). The module is
+        // js/relationships/relationship-integration.js; its exported
+        // namespace at line 505 is `window.RelationshipIntegrations`.
+        if (window.RelationshipIntegrations
+            && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
+            window.RelationshipIntegrations.handleCharacterDeath(characterId, {
                 deathYear: year
             });
         }
