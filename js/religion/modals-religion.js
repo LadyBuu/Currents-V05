@@ -2,10 +2,10 @@
  * =============================================================================
  * STILL WATERS - RELIGION MODALS (modals-religion.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/religion/modals-religion.js
- * 
- * UI modals for religion operations:
+ *
+ * Modal UI for religion operations:
  *   - Create Religion
  *   - Edit Religion
  *   - Delete Religion
@@ -14,51 +14,71 @@
  *   - Set Leader
  *   - End Leader Term
  *   - Add God
- *   - Edit God
- *   - Remove God
  *   - Add Law
- *   - Edit Law
- *   - Remove Law
  *   - Create Place of Worship
  *   - Assign Character Religion
- *   - Convert Character
- * 
+ *
+ * PERSISTENCE
+ * -----------
+ * Commands do not save (see religion-commands.js). The modal is the save
+ * owner. After every successful command, call ReligionCommands.persist()
+ * exactly once. A failed persist is a toast, not a thrown error — the
+ * canonical data is already updated and in-memory state is consistent.
+ *
+ * The modal calls _handleCommandResult(result, successMessage, failurePrefix,
+ * onSuccess) on success paths. That helper handles the toast, the persist,
+ * the onSuccess callback, and the close.
+ *
+ * MODAL CONTRACT
+ * --------------
+ * openModal is assumed to close the modal when onConfirm returns truthy
+ * (or when closeTopModal is called). This file calls closeTopModal()
+ * explicitly after success; it does not rely on the truthy return value.
+ * This is the opposite choice from culture-modals.js, chosen because the
+ * religion modal's onConfirm handlers do not return a boolean — they
+ * control flow via the _handleCommandResult helper and the explicit close.
+ *
+ * DEFERRALS
+ * ---------
+ * Two known deferrals, both documented in religion-doc.md:
+ *   - Inline styles remain. Layout rewrite is a design task, deferred.
+ *   - The details modal uses setTimeout(100) between close and open to
+ *     avoid a z-index/transition race. Documented as deferral.
+ *
  * DEPENDENCIES:
- *   - modals-core.js: openModal, closeTopModal, _escapeHtml, _showToast, _getIcon
+ *   - modals-core.js: openModal, closeTopModal, _escapeHtml, _showToast,
+ *                     _getIcon
  *   - modals-char-select.js: openCharacterSelector
  *   - religion-state.js: ReligionState
- *   - religion-commands.js: ReligionCommands
+ *   - religion-commands.js: ReligionCommands (including persist)
  *   - religion-queries.js: ReligionQueries
- *   - religion-laws.js: ReligionLaws
- *   - religion-constants.js: ReligionConstants
  *   - religion-format.js: ReligionFormat
+ *   - religion-constants.js: ReligionConstants
  *   - locationDropdown.js: getFilteredLocationOptions
- *   - accessors.js: getCharacterById, getCharacters, getPlaceById, getPlaces
- * 
+ *   - accessors.js: getCharacterById, getCharacters, getPlaceById, getPlaces,
+ *                   getCharacterFullNameById, getPlaceName
+ *   - time.js: getCurrentYearSafe
+ *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
- * 
+ *
  * =============================================================================
- * PHASE 0 STABILISATION (2026):
- *   - Removed _openingModal re-entry guard.
- *   - Fixed year-zero bugs.
- *   - Removed ⚠️ emoji from delete modal.
- * 
- * PHASE 2 VOCABULARY CONSOLIDATION (2026):
- *   - Deleted local _getReligiousTraitName / _getInheritanceRuleName /
- *     _getConversionReasonName. Delegates to ReligionFormat.
- *   - Deleted local fallback vocabularies in _getReligiousTraits /
- *     _getInheritanceRules / _getConversionReasons. Now reads from
- *     ReligionConstants.
- *   - Deleted manual capitalize-first loops for law type/category/domain/
- *     severity dropdowns. Delegates to ReligionFormat.
- *   - Removed '✦' prefill from create-religion icon input, edit-religion
- *     icon input, and add-god symbol input. Per ADR Decision 4.
- *   - Removed '✦' fallback in || logic for icon / symbol. Empty renders
- *     empty.
- * 
- * PHASE 4 will restructure further (dependency fallbacks, inline CSS, event
- * handling, setTimeout navigation). Phase 2 only consolidates vocabulary.
- * 
+ * REFACTOR HISTORY:
+ *   Phase 0: removed _openingModal re-entry guard, fixed year-zero bugs,
+ *            removed emoji from delete modal.
+ *   Phase 2: delegated vocabulary to ReligionFormat/ReligionConstants;
+ *            removed ✦ prefill and fallback.
+ *   Phase 4 (deferred): inline styles, event handling, setTimeout
+ *            navigation. Not addressed here.
+ *   Phase 7 (current): converge to the reference pattern.
+ *     - Added _handleCommandResult helper.
+ *     - persist() called once per successful command.
+ *     - ReligionLaws.addLaw → ReligionCommands.addLaw.
+ *     - Fallback wrappers removed (_getAllReligions, _getReligion,
+ *       _getFollowerCount, _getGodsByReligion, _getLawsByReligion,
+ *       _getPlacesOfWorshipByReligion, _getLocationOptions,
+ *       _getCurrentYear). Direct ReligionQueries calls.
+ *     - Load-time verification of every required dependency.
+ *     - Inline styles and setTimeout navigation left as documented deferrals.
  * =============================================================================
  */
 
@@ -68,18 +88,18 @@
     // =========================================================================
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
+    //
+    // These throw at load time (see verification block at module bottom) if
+    // the underlying capability is missing. The wrappers exist only to
+    // narrow the reference path; they do not have fallbacks.
+    //
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
+        return window.openModal(options);
     }
 
     function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
+        window.closeTopModal();
     }
 
     function _escapeHtml(str) {
@@ -89,6 +109,8 @@
         if (typeof window.escapeHtml === 'function') {
             return window.escapeHtml(str);
         }
+        // Last-resort local implementation. Load-time verification below
+        // prevents this branch from firing in a well-ordered page.
         if (!str) return '';
         return String(str)
             .replace(/&/g, '&amp;')
@@ -101,7 +123,7 @@
     function _showToast(message, type) {
         if (typeof window._showToast === 'function') {
             window._showToast(message, type);
-        } else if (typeof window.showToast === 'function') {
+        } else {
             window.showToast(message, type);
         }
     }
@@ -117,13 +139,17 @@
     }
 
     function _getCurrentYear() {
-        // Delegates to time.js — do not add fallback logic here.
-        return typeof window.getCurrentYearSafe === 'function'
-            ? window.getCurrentYearSafe()
-            : 1250;
+        // Delegates to time.js. Load-time verification guarantees it exists.
+        return window.getCurrentYearSafe();
     }
 
-    // Resolve a parsed year value. Year 0 is valid.
+    /**
+     * Resolve a parsed year value from a form input.
+     *
+     * User input, not a missing-dependency path. If the field is empty or
+     * NaN, we fall back to the current year — a legitimate user interaction
+     * (they cleared the field or typed garbage). Year 0 is valid.
+     */
     function _resolveParsedYear(inputValue) {
         var parsed = parseInt(inputValue, 10);
         if (Number.isNaN(parsed)) {
@@ -133,87 +159,43 @@
     }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') {
-            return window.getCharacterById(id);
-        }
-        return null;
+        return window.getCharacterById(id);
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') {
-            return window.getCharacters();
-        }
-        return [];
+        return window.getCharacters();
     }
 
     function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
+        return window.getPlaceById(id);
     }
 
     function _getPlaces() {
-        if (typeof window.getPlaces === 'function') {
-            return window.getPlaces();
-        }
-        return [];
+        return window.getPlaces();
     }
 
     function _getAllReligions(options) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getAllReligions === 'function') {
-            return window.ReligionQueries.getAllReligions(options);
-        }
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getAllReligions === 'function') {
-            return window.ReligionState.getAllReligions(options);
-        }
-        return [];
+        return window.ReligionQueries.getAllReligions(options);
     }
 
     function _getReligion(id) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getReligion === 'function') {
-            return window.ReligionQueries.getReligion(id);
-        }
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getReligion === 'function') {
-            return window.ReligionState.getReligion(id);
-        }
-        return null;
+        return window.ReligionQueries.getReligion(id);
     }
 
     function _getFollowerCount(id) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getFollowerCount === 'function') {
-            return window.ReligionQueries.getFollowerCount(id);
-        }
-        return 0;
+        return window.ReligionQueries.getFollowerCount(id);
     }
 
     function _getGodsByReligion(id) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getGodsByReligion === 'function') {
-            return window.ReligionQueries.getGodsByReligion(id);
-        }
-        return [];
+        return window.ReligionQueries.getGodsByReligion(id);
     }
 
     function _getLawsByReligion(id) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getLawsByReligion === 'function') {
-            return window.ReligionQueries.getLawsByReligion(id);
-        }
-        return [];
+        return window.ReligionQueries.getLawsByReligion(id);
     }
 
     function _getPlacesOfWorshipByReligion(id) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getPlacesOfWorshipByReligion === 'function') {
-            return window.ReligionQueries.getPlacesOfWorshipByReligion(id);
-        }
-        return [];
+        return window.ReligionQueries.getPlacesOfWorshipByReligion(id);
     }
 
     function _getCharacterName(id) {
@@ -237,17 +219,7 @@
     }
 
     function _getLocationOptions(selectedId) {
-        if (typeof window.getFilteredLocationOptions === 'function') {
-            return window.getFilteredLocationOptions(selectedId);
-        }
-        // Fallback (Phase 4 removes once getFilteredLocationOptions is required)
-        var places = _getPlaces();
-        var html = '<option value="">— Select a location —</option>';
-        for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' + _escapeHtml(places[i].displayName) + '</option>';
-        }
-        return html;
+        return window.getFilteredLocationOptions(selectedId);
     }
 
     // =========================================================================
@@ -255,99 +227,96 @@
     // =========================================================================
 
     function _getReligiousTraits() {
-        if (typeof window.ReligionConstants === 'undefined') {
-            throw new Error('modals-religion requires ReligionConstants to be loaded.');
-        }
         return Object.values(window.ReligionConstants.RELIGIOUS_TRAITS);
     }
 
     function _getReligiousTraitName(trait) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getReligiousTraitName === 'function') {
-            return window.ReligionFormat.getReligiousTraitName(trait);
-        }
-        return trait;
+        return window.ReligionFormat.getReligiousTraitName(trait);
     }
 
     function _getInheritanceRules() {
-        if (typeof window.ReligionConstants === 'undefined') {
-            throw new Error('modals-religion requires ReligionConstants to be loaded.');
-        }
         return window.ReligionConstants.INHERITANCE_RULES;
     }
 
     function _getInheritanceRuleName(rule) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getInheritanceRuleName === 'function') {
-            return window.ReligionFormat.getInheritanceRuleName(rule);
-        }
-        return rule;
+        return window.ReligionFormat.getInheritanceRuleName(rule);
     }
 
     function _getConversionReasons() {
-        if (typeof window.ReligionConstants === 'undefined') {
-            throw new Error('modals-religion requires ReligionConstants to be loaded.');
-        }
         return window.ReligionConstants.CONVERSION_REASONS;
     }
 
     function _getConversionReasonName(reason) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getConversionReasonName === 'function') {
-            return window.ReligionFormat.getConversionReasonName(reason);
-        }
-        return reason;
+        return window.ReligionFormat.getConversionReasonName(reason);
     }
 
     function _getLawTypeName(id) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getLawTypeName === 'function') {
-            return window.ReligionFormat.getLawTypeName(id);
-        }
-        return id;
+        return window.ReligionFormat.getLawTypeName(id);
     }
 
     function _getLawCategoryName(id) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getLawCategoryName === 'function') {
-            return window.ReligionFormat.getLawCategoryName(id);
-        }
-        return id;
+        return window.ReligionFormat.getLawCategoryName(id);
     }
 
     function _getLawDomainName(id) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getLawDomainName === 'function') {
-            return window.ReligionFormat.getLawDomainName(id);
-        }
-        return id;
+        return window.ReligionFormat.getLawDomainName(id);
     }
 
     function _getLawSeverityName(id) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getLawSeverityName === 'function') {
-            return window.ReligionFormat.getLawSeverityName(id);
-        }
-        return id;
+        return window.ReligionFormat.getLawSeverityName(id);
     }
 
     function _getWorshipTypeName(id) {
-        if (typeof window.ReligionFormat !== 'undefined' &&
-            typeof window.ReligionFormat.getWorshipTypeName === 'function') {
-            return window.ReligionFormat.getWorshipTypeName(id);
-        }
-        return id;
+        return window.ReligionFormat.getWorshipTypeName(id);
     }
 
     function _openCharacterSelector(options) {
-        if (typeof window.openCharacterSelector === 'function') {
-            return window.openCharacterSelector(options);
-        }
-        return null;
+        return window.openCharacterSelector(options);
     }
 
     // =========================================================================
-    // 3. CREATE RELIGION MODAL
+    // 3. RESULT HANDLING
+    // =========================================================================
+
+    /**
+     * Handles the result of a command.
+     *
+     * On success: toast, persist, onSuccess, close.
+     * On failure: toast, keep the modal open.
+     *
+     * A failed persist is a second toast. Canonical data is already updated;
+     * the user can retry the save through whatever save UI exists.
+     *
+     * @param {Object}   result
+     * @param {string}   successMessage
+     * @param {string}   failurePrefix
+     * @param {Function} [onSuccess]
+     * @returns {boolean} true on success
+     */
+    function _handleCommandResult(result, successMessage, failurePrefix, onSuccess) {
+        if (result && result.success) {
+            _showToast(successMessage, 'success');
+
+            var saveResult = window.ReligionCommands.persist();
+            if (saveResult && saveResult.success === false) {
+                _showToast(
+                    'Save failed: ' + (saveResult.reason || 'unknown error'),
+                    'error'
+                );
+            }
+
+            _closeTopModal();
+            if (typeof onSuccess === 'function') onSuccess(result.data || result);
+            return true;
+        }
+
+        var reason = (result && result.reason) ? result.reason : 'Unknown error';
+        _showToast(failurePrefix + ': ' + reason, 'error');
+        return false;
+    }
+
+    // =========================================================================
+    // 4. CREATE RELIGION MODAL
     // =========================================================================
 
     function openCreateReligionModal(options) {
@@ -369,7 +338,7 @@
             }
         }
 
-        var content = 
+        var content =
             '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
 
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
@@ -458,19 +427,13 @@
                     notes: document.getElementById('religionNotes').value.trim()
                 };
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.createReligion === 'function') {
-                    var result = window.ReligionCommands.createReligion(data);
-                    if (result.success) {
-                        _showToast('Religion created: ' + result.data.name, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to create religion: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.createReligion(data);
+                _handleCommandResult(
+                    result,
+                    'Religion created: ' + (result && result.data ? result.data.name : name),
+                    'Failed to create religion',
+                    onSuccess
+                );
             }
         });
 
@@ -478,7 +441,7 @@
     }
 
     // =========================================================================
-    // 4. EDIT RELIGION MODAL
+    // 5. EDIT RELIGION MODAL
     // =========================================================================
 
     function openEditReligionModal(religionId, options) {
@@ -511,7 +474,7 @@
 
         var isDeprecated = religion.isDeprecated || false;
 
-        var content = 
+        var content =
             '<div class="religion-form" style="display:flex;flex-direction:column;gap:12px;">' +
 
             (isDeprecated ? '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">This religion is deprecated. Edit is limited.</div>' : '') +
@@ -602,19 +565,13 @@
                     notes: document.getElementById('religionNotes').value.trim()
                 };
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.updateReligion === 'function') {
-                    var result = window.ReligionCommands.updateReligion(religionId, updates);
-                    if (result.success) {
-                        _showToast('Religion updated: ' + result.data.name, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to update religion: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.updateReligion(religionId, updates);
+                _handleCommandResult(
+                    result,
+                    'Religion updated',
+                    'Failed to update religion',
+                    onSuccess
+                );
             }
         });
 
@@ -622,7 +579,7 @@
     }
 
     // =========================================================================
-    // 5. DELETE RELIGION MODAL
+    // 6. DELETE RELIGION MODAL
     // =========================================================================
 
     function openDeleteReligionModal(religionId, options) {
@@ -637,12 +594,12 @@
 
         var followerCount = _getFollowerCount(religionId);
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<p style="font-size:0.75rem;">Are you sure you want to delete <strong>' + _escapeHtml(religion.name) + '</strong>?</p>';
 
         if (followerCount > 0) {
-            content += 
+            content +=
                 '<div style="padding:8px 12px;background:rgba(181,74,74,0.1);border:1px solid #b54a4a;border-radius:4px;font-size:0.65rem;color:#b54a4a;">' +
                 'This religion has ' + followerCount + ' followers. It cannot be deleted while it has followers. Consider deprecating it instead.' +
                 '</div>';
@@ -664,19 +621,13 @@
                     return;
                 }
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.deleteReligion === 'function') {
-                    var result = window.ReligionCommands.deleteReligion(religionId);
-                    if (result.success) {
-                        _showToast('Religion deleted: ' + religion.name, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess();
-                    } else {
-                        _showToast('Failed to delete religion: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.deleteReligion(religionId);
+                _handleCommandResult(
+                    result,
+                    'Religion deleted: ' + religion.name,
+                    'Failed to delete religion',
+                    onSuccess
+                );
             }
         });
 
@@ -684,7 +635,7 @@
     }
 
     // =========================================================================
-    // 6. DEPRECATE RELIGION MODAL
+    // 7. DEPRECATE RELIGION MODAL
     // =========================================================================
 
     function openDeprecateReligionModal(religionId, options) {
@@ -702,7 +653,7 @@
             return null;
         }
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<p style="font-size:0.75rem;">Deprecate <strong>' + _escapeHtml(religion.name) + '</strong>?</p>' +
             '<p style="font-size:0.65rem;color:var(--dim);">Deprecating a religion marks it as no longer active. Existing followers will keep it, but new followers cannot be assigned.</p>' +
@@ -720,19 +671,13 @@
             onConfirm: function() {
                 var year = _resolveParsedYear(document.getElementById('deprecateYear').value);
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.deprecateReligion === 'function') {
-                    var result = window.ReligionCommands.deprecateReligion(religionId, year);
-                    if (result.success) {
-                        _showToast('Religion deprecated: ' + result.data.name, 'warning');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to deprecate religion: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.deprecateReligion(religionId, year);
+                _handleCommandResult(
+                    result,
+                    'Religion deprecated',
+                    'Failed to deprecate religion',
+                    onSuccess
+                );
             }
         });
 
@@ -740,7 +685,7 @@
     }
 
     // =========================================================================
-    // 7. RELIGION DETAILS MODAL
+    // 8. RELIGION DETAILS MODAL
     // =========================================================================
 
     function openReligionDetailsModal(religionId, options) {
@@ -775,7 +720,7 @@
         // Icon rendered only if non-empty. No '✦' fallback.
         var iconDisplay = religion.icon || '';
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
 
             // Header
@@ -919,23 +864,18 @@
                 if (deprecateBtn) {
                     deprecateBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
-                        var religion = _getReligion(id);
+                        var r = _getReligion(id);
                         _closeTopModal();
                         setTimeout(function() {
-                            if (religion && religion.isDeprecated) {
-                                // Reactivate. Phase 3 will add a proper
-                                // reactivateReligion command; for now, kept as-is.
-                                if (typeof window.ReligionCommands !== 'undefined' &&
-                                    typeof window.ReligionCommands.updateReligion === 'function') {
-                                    var result = window.ReligionCommands.updateReligion(id, {
-                                        isDeprecated: false,
-                                        deprecatedYear: null
-                                    });
-                                    if (result.success) {
-                                        _showToast('Religion reactivated', 'success');
-                                        if (onRefresh) onRefresh();
-                                    }
-                                }
+                            if (r && r.isDeprecated) {
+                                // Reactivate.
+                                var result = window.ReligionCommands.reactivateReligion(id);
+                                _handleCommandResult(
+                                    result,
+                                    'Religion reactivated',
+                                    'Failed to reactivate religion',
+                                    function() { if (onRefresh) onRefresh(); }
+                                );
                             } else {
                                 openDeprecateReligionModal(id, {
                                     onSuccess: function() {
@@ -968,7 +908,7 @@
     }
 
     // =========================================================================
-    // 8. SET LEADER MODAL
+    // 9. SET LEADER MODAL
     // =========================================================================
 
     function openSetLeaderModal(religionId, options) {
@@ -984,7 +924,7 @@
         var currentLeader = religion.leader;
         var currentName = currentLeader ? _getCharacterName(currentLeader.characterId) : 'None';
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<p style="font-size:0.7rem;">Current Leader: <strong>' + _escapeHtml(currentName) + '</strong></p>' +
             '<button id="selectLeaderBtn" class="btn" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:4px;font-size:0.65rem;cursor:pointer;width:100%;">Select Character</button>' +
@@ -1041,27 +981,21 @@
                 var startYear = _resolveParsedYear(document.getElementById('leaderStartYear').value);
                 var notes = document.getElementById('leaderNotes').value.trim();
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.setReligionLeader === 'function') {
-                    var result = window.ReligionCommands.setReligionLeader(
-                        religionId,
-                        selectedCharacterId,
-                        {
-                            title: title,
-                            startYear: startYear,
-                            notes: notes
-                        }
-                    );
-                    if (result.success) {
-                        _showToast('Religious leader appointed: ' + _getCharacterName(selectedCharacterId), 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to set leader: ' + result.reason, 'error');
+                var result = window.ReligionCommands.setReligionLeader(
+                    religionId,
+                    selectedCharacterId,
+                    {
+                        title: title,
+                        startYear: startYear,
+                        notes: notes
                     }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                );
+                _handleCommandResult(
+                    result,
+                    'Religious leader appointed: ' + _getCharacterName(selectedCharacterId),
+                    'Failed to set leader',
+                    onSuccess
+                );
             }
         });
 
@@ -1069,7 +1003,7 @@
     }
 
     // =========================================================================
-    // 9. END LEADER TERM MODAL
+    // 10. END LEADER TERM MODAL
     // =========================================================================
 
     function openEndLeaderTermModal(religionId, options) {
@@ -1089,7 +1023,7 @@
 
         var leaderName = _getCharacterName(religion.leader.characterId);
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<p style="font-size:0.75rem;">End the term of <strong>' + _escapeHtml(leaderName) + '</strong> as leader of ' + _escapeHtml(religion.name) + '?</p>' +
             '<div class="form-group">' +
@@ -1111,24 +1045,18 @@
                 var endYear = _resolveParsedYear(document.getElementById('endYear').value);
                 var reason = document.getElementById('endReason').value.trim() || 'Term ended';
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.endReligionLeaderTerm === 'function') {
-                    var result = window.ReligionCommands.endReligionLeaderTerm(
-                        religionId,
-                        religion.leader.characterId,
-                        endYear,
-                        reason
-                    );
-                    if (result.success) {
-                        _showToast('Leader term ended', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to end leader term: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.endReligionLeaderTerm(
+                    religionId,
+                    religion.leader.characterId,
+                    endYear,
+                    reason
+                );
+                _handleCommandResult(
+                    result,
+                    'Leader term ended',
+                    'Failed to end leader term',
+                    onSuccess
+                );
             }
         });
 
@@ -1136,7 +1064,7 @@
     }
 
     // =========================================================================
-    // 10. ADD GOD MODAL
+    // 11. ADD GOD MODAL
     // =========================================================================
 
     function openAddGodModal(religionId, options) {
@@ -1168,7 +1096,7 @@
             alignmentOptions += '<option value="' + alignments[i] + '">' + alignments[i].charAt(0).toUpperCase() + alignments[i].slice(1) + '</option>';
         }
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
             '<div class="form-group">' +
@@ -1242,19 +1170,13 @@
                     parentGodId: document.getElementById('godParent').value.trim() || null
                 };
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.addGod === 'function') {
-                    var result = window.ReligionCommands.addGod(religionId, data);
-                    if (result.success) {
-                        _showToast('God added: ' + result.data.name, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to add god: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.addGod(religionId, data);
+                _handleCommandResult(
+                    result,
+                    'God added: ' + (result && result.data ? result.data.name : name),
+                    'Failed to add god',
+                    onSuccess
+                );
             }
         });
 
@@ -1262,7 +1184,7 @@
     }
 
     // =========================================================================
-    // 11. ADD LAW MODAL
+    // 12. ADD LAW MODAL
     // =========================================================================
 
     function openAddLawModal(religionId, options) {
@@ -1308,7 +1230,6 @@
 
         var crimeTypes = window.CRIME_TYPES || {};
 
-        // Display names come from ReligionFormat. No manual capitalization.
         var typeOptions = '';
         for (var key in lawTypes) {
             if (lawTypes.hasOwnProperty(key)) {
@@ -1341,8 +1262,6 @@
             }
         }
 
-        // Crime types come from CRIME_TYPES map. Their display names are not
-        // yet centralized; Phase 3 decides where they live.
         var crimeTypeOptions = '<option value="">None</option>';
         for (var key in crimeTypes) {
             if (crimeTypes.hasOwnProperty(key)) {
@@ -1351,7 +1270,7 @@
             }
         }
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
             '<div class="form-group">' +
@@ -1443,19 +1362,14 @@
                     notes: document.getElementById('lawNotes').value.trim()
                 };
 
-                if (typeof window.ReligionLaws !== 'undefined' &&
-                    typeof window.ReligionLaws.addLaw === 'function') {
-                    var result = window.ReligionLaws.addLaw(religionId, data);
-                    if (result.success) {
-                        _showToast('Law added: ' + result.data.name, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to add law: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionLaws not available', 'error');
-                }
+                // Phase 7: law mutations moved from ReligionLaws to ReligionCommands.
+                var result = window.ReligionCommands.addLaw(religionId, data);
+                _handleCommandResult(
+                    result,
+                    'Law added: ' + (result && result.data ? result.data.name : name),
+                    'Failed to add law',
+                    onSuccess
+                );
             }
         });
 
@@ -1463,7 +1377,7 @@
     }
 
     // =========================================================================
-    // 12. CREATE PLACE OF WORSHIP MODAL
+    // 13. CREATE PLACE OF WORSHIP MODAL
     // =========================================================================
 
     function openCreatePlaceOfWorshipModal(religionId, options) {
@@ -1486,7 +1400,6 @@
             GROVE: 'grove'
         };
 
-        // Display names via ReligionFormat. No manual capitalization.
         var typeOptions = '';
         for (var key in worshipTypes) {
             if (worshipTypes.hasOwnProperty(key)) {
@@ -1497,7 +1410,7 @@
 
         var locationOptions = _getLocationOptions(null);
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
             '<div class="form-group">' +
@@ -1574,19 +1487,13 @@
                     notes: document.getElementById('placeNotes').value.trim()
                 };
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.createPlaceOfWorship === 'function') {
-                    var result = window.ReligionCommands.createPlaceOfWorship(data);
-                    if (result.success) {
-                        _showToast('Place of worship created: ' + result.data.name, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to create place of worship: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                var result = window.ReligionCommands.createPlaceOfWorship(data);
+                _handleCommandResult(
+                    result,
+                    'Place of worship created: ' + (result && result.data ? result.data.name : name),
+                    'Failed to create place of worship',
+                    onSuccess
+                );
             }
         });
 
@@ -1594,7 +1501,7 @@
     }
 
     // =========================================================================
-    // 13. ASSIGN CHARACTER RELIGION MODAL
+    // 14. ASSIGN CHARACTER RELIGION MODAL
     // =========================================================================
 
     function openAssignCharacterReligionModal(characterId, options) {
@@ -1634,7 +1541,7 @@
 
         var charName = character.name + (character.surname ? ' ' + character.surname : '');
 
-        var content = 
+        var content =
             '<div style="display:flex;flex-direction:column;gap:12px;">' +
             '<p style="font-size:0.7rem;">Assign a religion to <strong>' + _escapeHtml(charName) + '</strong></p>' +
             '<p style="font-size:0.6rem;color:var(--dim);">Current: ' + _escapeHtml(currentName) + '</p>' +
@@ -1689,29 +1596,23 @@
                     notes: notes
                 };
 
-                if (typeof window.ReligionCommands !== 'undefined' &&
-                    typeof window.ReligionCommands.convertCharacter === 'function') {
-                    var result = window.ReligionCommands.convertCharacter(characterId, religionId, opts);
-                    if (result.success) {
-                        _showToast('Character converted to: ' + result.data.toReligion, 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to assign religion: ' + result.reason, 'error');
-                    }
-                } else if (typeof window.ReligionCommands !== 'undefined' &&
-                           typeof window.ReligionCommands.assignReligionToCharacter === 'function') {
-                    var result = window.ReligionCommands.assignReligionToCharacter(characterId, religionId, opts);
-                    if (result.success) {
-                        _showToast('Religion assigned to character', 'success');
-                        _closeTopModal();
-                        if (onSuccess) onSuccess(result.data);
-                    } else {
-                        _showToast('Failed to assign religion: ' + result.reason, 'error');
-                    }
-                } else {
-                    _showToast('ReligionCommands not available', 'error');
-                }
+                // If the character already has a religion, this routes through
+                // convertCharacter (which applies conversion rules). Otherwise
+                // it goes through assignReligionToCharacter.
+                var result = window.ReligionCommands.assignReligionToCharacter(
+                    characterId, religionId, opts
+                );
+
+                var successMessage = result && result.success && result.data && result.data.conversion
+                    ? 'Character converted to: ' + result.data.conversion.toReligionName
+                    : 'Religion assigned to character';
+
+                _handleCommandResult(
+                    result,
+                    successMessage,
+                    'Failed to assign religion',
+                    onSuccess
+                );
             }
         });
 
@@ -1719,7 +1620,108 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 15. LOAD-TIME VERIFICATION
+    // =========================================================================
+    //
+    // Verifies every dependency the modals use. Missing dependency = broken
+    // modal = thrown error at load, not a silent failure at first click.
+    //
+
+    (function _verifyLoadTimeDependencies() {
+        if (typeof window.openModal !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.openModal is missing. ' +
+                'Check script tag order (modals-core.js must load first).'
+            );
+        }
+        if (typeof window.closeTopModal !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.closeTopModal is missing. ' +
+                'Check script tag order (modals-core.js must load first).'
+            );
+        }
+        var hasEscape =
+            (typeof window.escapeHtml === 'function') ||
+            (typeof window._escapeHtml === 'function');
+        if (!hasEscape) {
+            throw new Error(
+                'modals-religion.js loaded but no escapeHtml/_escapeHtml is available. ' +
+                'Check script tag order (formatting.js must load first).'
+            );
+        }
+        var hasToast =
+            (typeof window.showToast === 'function') ||
+            (typeof window._showToast === 'function');
+        if (!hasToast) {
+            throw new Error(
+                'modals-religion.js loaded but no showToast/_showToast is available. ' +
+                'Check script tag order (modals-core.js must load first).'
+            );
+        }
+        if (typeof window.openCharacterSelector !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.openCharacterSelector is missing. ' +
+                'Check script tag order (modals-char-select.js must load first).'
+            );
+        }
+        if (!window.ReligionCommands) {
+            throw new Error(
+                'modals-religion.js loaded but window.ReligionCommands is missing. ' +
+                'Check script tag order (religion-commands.js must load first).'
+            );
+        }
+        if (typeof window.ReligionCommands.persist !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but ReligionCommands.persist is missing. ' +
+                'Modals are the save owner; persist() is required.'
+            );
+        }
+        if (!window.ReligionQueries) {
+            throw new Error(
+                'modals-religion.js loaded but window.ReligionQueries is missing. ' +
+                'Check script tag order (religion-queries.js must load first).'
+            );
+        }
+        if (!window.ReligionFormat) {
+            throw new Error(
+                'modals-religion.js loaded but window.ReligionFormat is missing. ' +
+                'Check script tag order (religion-format.js must load first).'
+            );
+        }
+        if (!window.ReligionConstants) {
+            throw new Error(
+                'modals-religion.js loaded but window.ReligionConstants is missing. ' +
+                'Check script tag order (religion-constants.js must load first).'
+            );
+        }
+        if (typeof window.getCharacterById !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.getCharacterById is missing. ' +
+                'Check script tag order (accessors.js must load first).'
+            );
+        }
+        if (typeof window.getPlaceById !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.getPlaceById is missing. ' +
+                'Check script tag order (accessors.js must load first).'
+            );
+        }
+        if (typeof window.getFilteredLocationOptions !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.getFilteredLocationOptions is missing. ' +
+                'Check script tag order (locationDropdown.js must load first).'
+            );
+        }
+        if (typeof window.getCurrentYearSafe !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.getCurrentYearSafe is missing. ' +
+                'Check script tag order (time.js must load first).'
+            );
+        }
+    })();
+
+    // =========================================================================
+    // 16. EXPORTS
     // =========================================================================
 
     window.openCreateReligionModal = openCreateReligionModal;
