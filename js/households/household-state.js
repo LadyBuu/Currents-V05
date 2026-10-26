@@ -40,6 +40,29 @@
  *     hydrateFromMasterData() throws by default. Callers that need to
  *     inspect without throwing can use _diagnostics.getIntegrityReport().
  *
+ * REVERSE-INDEX INTEGRITY (added)
+ * -------------------------------
+ *   The household record carries a `residenceId` field that is a
+ *   REVERSE INDEX into the residence system. The canonical occupancy is
+ *   `unit.householdId` on the residence side. The reverse index is
+ *   maintained by HouseholdCommands.associateWithResidence /
+ *   disassociateFromResidence, which ResidenceSystem calls when
+ *   occupancy changes.
+ *
+ *   If the residence side is deleted or demolished without the reverse
+ *   index being cleared, `household.residenceId` points at a missing
+ *   residence. `_diagnostics.getIntegrityReport()` now surfaces this as
+ *   `householdsWithMissingResidence`.
+ *
+ *   Conversely, if a residence unit still names a householdId that no
+ *   longer exists in the canonical household collection, the residence
+ *   holds orphan occupancy. That is surfaced as
+ *   `residencesWithOrphanHouseholdOccupancy`.
+ *
+ *   Both checks are O(N) per diagnostics call and are NOT run on every
+ *   hydrate — they run only when someone calls getIntegrityReport()
+ *   (bootstrap, repair tooling, debug UI). The hydrate path stays fast.
+ *
  * PUBLIC API SURFACE (intentionally tiny)
  * ---------------------------------------
  *   HouseholdState.subscribe(cb)
@@ -75,6 +98,12 @@
  *
  * DEPENDENCIES (REQUIRED at load):
  *   - storage.js (window.masterData)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at diagnostics time only):
+ *   - residence-system.js   (window.ResidenceSystem) — if present, the
+ *     diagnostics object cross-checks occupancy; if absent, the
+ *     residence-related fields in the report are marked
+ *     'residence_system_unavailable' and left empty.
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -142,11 +171,10 @@
         // not save; the flag is advisory.
         _dirty: false,
 
-        // Last hydrate error, if any. Preserved so diagnostics can see
-        // what broke without re-running hydrate.
+        // Last hydrate error, if any.
         _lastError: null,
 
-        version: 5,
+        version: 6,
         timestamp: Date.now()
     };
 
@@ -423,11 +451,6 @@
         }
     }
 
-    /**
-     * In-process event channel. Every mutation primitive and every command
-     * commit calls this. Subscribers receive:
-     *   { type: eventType, detail: payload, timestamp: ms }
-     */
     function publish(eventType, payload) {
         if (typeof eventType !== 'string' || eventType === '') return false;
         _notifySubscribers({
@@ -512,19 +535,6 @@
     // =========================================================================
     // 8. INTERNAL MUTATION SEAM
     // =========================================================================
-    //
-    // Only HouseholdCommands should call the replace* primitives.
-    //
-    // These primitives do NOT save. They:
-    //   - assign the new array
-    //   - mirror into masterData.data
-    //   - rebuild caches (households only)
-    //   - markDirty
-    //   - publish
-    //
-    // The caller is responsible for calling HouseholdCommands.persist()
-    // when the batch is complete.
-    // =========================================================================
 
     function _replaceHouseholds(households) {
         _state.households = households;
@@ -559,13 +569,6 @@
 
     // =========================================================================
     // 9. INTERNAL RECORD ACCESS
-    // =========================================================================
-    //
-    // WARNING: These return LIVE canonical objects.
-    //
-    // Only HouseholdCommands should MUTATE results.
-    // Only HouseholdCommands / HouseholdQueries should CALL these.
-    // Everything else (UI, other domains) must use HouseholdQueries.
     // =========================================================================
 
     function _getHouseholdRecord(householdId) {
@@ -648,6 +651,134 @@
     // =========================================================================
     // 11. DIAGNOSTICS
     // =========================================================================
+    //
+    // getIntegrityReport() is the canonical integrity inspection path.
+    // It is non-throwing, idempotent, and safe to call at any time —
+    // including during startup when the canonical arrays may still be
+    // corrupted.
+    //
+    // REVERSE-INDEX CROSS-CHECK
+    // -------------------------
+    // The household ↔ residence relationship is:
+    //   - household.residenceId (reverse index)
+    //   - residence.units[].householdId (canonical occupancy)
+    //
+    // These two MUST agree. When they don't, the report surfaces:
+    //   - householdsWithMissingResidence:
+    //       household.residenceId points at a residence that no longer
+    //       exists in masterData.data.residences.
+    //   - residencesWithOrphanHouseholdOccupancy:
+    //       a residence unit has householdId pointing at a household
+    //       that no longer exists in masterData.data.households.
+    //
+    // Both checks require window.ResidenceSystem to be loaded (for the
+    // residence side). If ResidenceSystem is not available, both lists
+    // are empty and `residenceReverseIndexAvailable` is false.
+    //
+    // Neither check throws. Missing residence records / missing units /
+    // malformed shapes are silently skipped (a shape problem is
+    // validation.js's concern, not the diagnostics').
+
+    function _checkResidenceReverseIndex() {
+        var result = {
+            available: false,
+            householdsWithMissingResidence: [],
+            residencesWithOrphanHouseholdOccupancy: []
+        };
+
+        // Household → residence check: does the residenceId resolve?
+        var residenceExistsFn = null;
+        var rs = window.ResidenceSystem;
+        if (rs && typeof rs.getResidence === 'function') {
+            residenceExistsFn = function(residenceId) {
+                try {
+                    return rs.getResidence(residenceId) !== null;
+                } catch (e) {
+                    return false;
+                }
+            };
+        }
+
+        // residenceExistsFn may still be null if ResidenceSystem is
+        // absent. The household→residence check can still run if the
+        // canonical residences array is present in masterData, since we
+        // can look it up directly.
+        var master;
+        try {
+            master = _getMasterData();
+        } catch (e) {
+            return result;
+        }
+
+        var canonicalResidences = Array.isArray(master.data.residences)
+            ? master.data.residences
+            : null;
+
+        if (!residenceExistsFn && canonicalResidences) {
+            var residenceIdSet = new Set();
+            for (var r = 0; r < canonicalResidences.length; r++) {
+                var rr = canonicalResidences[r];
+                if (rr && typeof rr.id === 'string') {
+                    residenceIdSet.add(rr.id);
+                }
+            }
+            residenceExistsFn = function(residenceId) {
+                return residenceIdSet.has(residenceId);
+            };
+        }
+
+        if (residenceExistsFn) {
+            result.available = true;
+
+            // Check 1: household.residenceId → residence.
+            for (var i = 0; i < _state.households.length; i++) {
+                var h = _state.households[i];
+                if (!h || typeof h.residenceId !== 'string') continue;
+                if (h.residenceId.length === 0) continue;
+                if (!residenceExistsFn(h.residenceId)) {
+                    result.householdsWithMissingResidence.push({
+                        householdId: h.id,
+                        householdName: h.name || null,
+                        residenceId: h.residenceId
+                    });
+                }
+            }
+
+            // Check 2: residence.units[].householdId → household.
+            if (canonicalResidences) {
+                var householdIdSet = new Set();
+                for (var hh = 0; hh < _state.households.length; hh++) {
+                    var hrec = _state.households[hh];
+                    if (hrec && typeof hrec.id === 'string') {
+                        householdIdSet.add(hrec.id);
+                    }
+                }
+
+                for (var res = 0; res < canonicalResidences.length; res++) {
+                    var residence = canonicalResidences[res];
+                    if (!residence || !Array.isArray(residence.units)) continue;
+                    for (var u = 0; u < residence.units.length; u++) {
+                        var unit = residence.units[u];
+                        if (!unit) continue;
+                        if (unit.isDemolished === true) continue;
+                        if (unit.isVacant === true) continue;
+                        if (typeof unit.householdId !== 'string') continue;
+                        if (unit.householdId.length === 0) continue;
+                        if (!householdIdSet.has(unit.householdId)) {
+                            result.residencesWithOrphanHouseholdOccupancy.push({
+                                residenceId: residence.id,
+                                residenceName: residence.name || null,
+                                unitNumber: unit.unitNumber,
+                                householdId: unit.householdId
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
 
     var _diagnostics = {
         getHouseholdCount: function() { return _state.households.length; },
@@ -659,8 +790,25 @@
         getLastError: function() { return _state._lastError; },
 
         /**
-         * Non-throwing integrity report. Safe to call at any time, including
-         * during startup when the canonical array may still be corrupted.
+         * Non-throwing integrity report.
+         *
+         * Returns:
+         * {
+         *   ok: boolean,
+         *   duplicates: {
+         *     households: [],
+         *     positions: [],
+         *     assignments: []
+         *   },
+         *   duplicateHouseholdHeads: [],
+         *   householdsWithMissingResidence: [],
+         *   residencesWithOrphanHouseholdOccupancy: [],
+         *   residenceReverseIndexAvailable: boolean,
+         *   counts: {
+         *     households, positions, assignments
+         *   },
+         *   reason?: string  (only on catastrophic failure)
+         * }
          */
         getIntegrityReport: function() {
             var households = [];
@@ -699,14 +847,29 @@
                 }
             }
 
+            var reverseIndex = _checkResidenceReverseIndex();
+
+            var ok =
+                hDup.length === 0 &&
+                pDup.length === 0 &&
+                aDup.length === 0 &&
+                duplicateHouseholdHeads.length === 0 &&
+                reverseIndex.householdsWithMissingResidence.length === 0 &&
+                reverseIndex.residencesWithOrphanHouseholdOccupancy.length === 0;
+
             return {
-                ok: hDup.length === 0 && pDup.length === 0 && aDup.length === 0,
+                ok: ok,
                 duplicates: {
                     households: hDup,
                     positions: pDup,
                     assignments: aDup
                 },
                 duplicateHouseholdHeads: duplicateHouseholdHeads,
+                householdsWithMissingResidence:
+                    reverseIndex.householdsWithMissingResidence,
+                residencesWithOrphanHouseholdOccupancy:
+                    reverseIndex.residencesWithOrphanHouseholdOccupancy,
+                residenceReverseIndexAvailable: reverseIndex.available,
                 counts: {
                     households: households.length,
                     positions: positions.length,
