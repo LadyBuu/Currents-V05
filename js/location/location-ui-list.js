@@ -3,16 +3,18 @@
  * LOCATION UI LIST
  * =============================================================================
  *
+ * LOCATION: js/location/location-ui-list.js
+ *
  * Renders prepared ViewModels. Does not query the domain.
  * No inline styles. No emoji. No fabricated values. No ASCII glyphs for icons.
  *
  * Depends on (checked at load time):
  *   - LocationViewModels    (data preparation)
  *   - LocationUIState       (transient UI state)
+ *   - window.getIcon        (icons.js)
  *
  * Optional, used when present:
- *   - window._getIcon       (icons.js via modals-core)
- *   - window._escapeHtml    (modals-core)
+ *   - window.escapeHtml     (formatting.js)
  *
  * Icon policy:
  *   Every glyph routes through _icon(name). Names map to the icons.js
@@ -39,9 +41,9 @@
             'location-ui-list.js requires location-ui-state.js first.'
         );
     }
-    if (typeof window._getIcon !== 'function') {
+    if (typeof window.getIcon !== 'function') {
         throw new Error(
-            'location-ui-list.js requires icons.js (_getIcon) to load first.'
+            'location-ui-list.js requires icons.js (getIcon) to load first.'
         );
     }
 
@@ -53,8 +55,8 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
         }
         if (str === null || str === undefined) return '';
         return String(str)
@@ -66,9 +68,9 @@
     }
 
     function _icon(name) {
-        // icons.js lookup via modals-core._getIcon. Missing icon throws —
-        // do not silently render a blank glyph.
-        return window._getIcon(name);
+        // icons.js lookup via getIcon. Missing icon throws — do not
+        // silently render a blank glyph.
+        return window.getIcon(name);
     }
 
     // Icon vocabulary used by this view. Maps domain meaning to icons.js names.
