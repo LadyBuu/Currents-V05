@@ -3,19 +3,21 @@
  * STILL WATERS - HOUSEHOLD ECONOMY (household-economy.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-economy.js
+ * LOCATION: js/households/household-economy.js
  *
  * PURPOSE
  * -------
- * Household economic domain: policy, calculation, and canonical mutation
- * of household wealth, debt, resources, income, and expenses.
+ * Household economic domain: pure calculation, canonical mutation of
+ * household wealth / debt / resources / income / expense history, and
+ * annual economy processing.
  *
  * CONVERGED PATTERN
  * -----------------
  *   - Pure calculations never mutate. Never throw on missing household;
- *     return 0 / false / null as appropriate.
- *   - Mutations route through HouseholdCommands, then call
- *     HouseholdCommands.persist() exactly ONCE per logical operation.
+ *     return 0 / false / null / empty as appropriate.
+ *   - Mutations route through HouseholdCommands.updateHousehold with a
+ *     real patch object, then HouseholdCommands.persist() exactly ONCE
+ *     per logical operation.
  *   - One logical operation → one mutation primitive → one commit →
  *     one persist.
  *   - No direct calls to HouseholdState._internal.replaceHouseholds.
@@ -23,18 +25,73 @@
  *       { success: true,  data: ... }
  *       { success: false, code: 'SOME_CODE', reason: 'human message' }
  *
- * RESULT SHAPE CHANGE
+ * CONSTANTS AND RULES
  * -------------------
- * This module previously returned raw values (wealth number, true/false)
- * from mutating functions. It now returns structured results from all
- * mutations so callers can distinguish "no household" from "zero wealth".
- * Pure reads still return raw values.
+ * Every economic catalog (ECONOMIC_TIERS, INCOME_SOURCES,
+ * EXPENSE_CATEGORIES, ECONOMIC_EVENTS), every threshold
+ * (BANKRUPTCY, DEBT_INTEREST_RATE, history caps), and every
+ * residence-cost multiplier lives in household-constants.js.
+ *
+ * Every pure economic calculation (getEconomicTier, netAnnualChange,
+ * calculateAnnualDebtInterest, evaluateBankruptcy,
+ * calculateEnterpriseNet) lives in household-rules.js. This module
+ * delegates to those functions; it does not reimplement them.
+ *
+ * This module previously carried its own copies of the constants and
+ * rules. That produced two divergent catalogs and made it impossible to
+ * change a threshold without editing three files. The local copies are
+ * gone.
+ *
+ * RANDOMNESS
+ * ----------
+ * The economic-event system no longer rolls internally. The catalog
+ * describes bounds (minDelta, maxDelta) and a probability weight
+ * (chance). The delta is computed by
+ * HouseholdConstants.getEconomicEventDelta(eventId, randomFn), which
+ * takes a caller-supplied random function.
+ *
+ * applyRandomEconomicEvent therefore accepts an options.random (or uses
+ * window.random from randomness.js). No function in this module calls
+ * Math.random. A missing random source throws — silent fallback to
+ * Math.random would break seeded simulation reproducibility.
+ *
+ * CLOCK CONTRACT
+ * --------------
+ * Annual economy is processed AGAINST AN EXPLICIT YEAR. Every function
+ * that needs "now" accepts options.year (or the `year` parameter
+ * directly). When the caller omits it, the function falls back to
+ * getCurrentYearSafe(). This is required so a multi-year simulation
+ * driver can call:
+ *
+ *     for (var y = startYear + 1; y <= finalYear; y++) {
+ *         HouseholdEconomy.processAnnualEconomy(householdId, { year: y });
+ *     }
+ *
+ * ...without every year's accounting collapsing onto the wall-clock
+ * year. The prior version read getCurrentYearSafe() inside every
+ * calculation, which made a 5-year advance produce 5 identical
+ * ledger entries tagged with the same year.
  *
  * CROSS-DOMAIN
  * ------------
  *   - Enterprise ownership  → IndustryQueries (read-only here)
  *   - Rent income/expenses  → ResidenceSystem (read-only here)
- *   - Salary tracking       → stored on household.economy (local)
+ *   - Salary / tuition      → stored on household.economy (local history)
+ *
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - household-constants.js
+ *   - household-rules.js
+ *   - household-commands.js  (updateHousehold, recordEvent, setStatus, persist)
+ *   - household-queries.js   (getHousehold, getHouseholdEnterpriseSummaries)
+ *   - time.js                (getCurrentYearSafe)
+ *   - randomness.js          (random)
+ *   - accessors.js           (getCharacterById)
+ *
+ * DEPENDENCIES (OPTIONAL, checked at call time):
+ *   - residence-system.js    (calculateRentIncome/Expenses)
+ *   - industry-queries.js    (getHouseholdEnterpriseSummaries)
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
@@ -43,7 +100,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. LOAD-TIME DEPENDENCY VERIFICATION
+    // 0. HARD DEPENDENCY CHECKS
     // =========================================================================
 
     function _requireObject(name, obj) {
@@ -60,6 +117,29 @@
         return fn;
     }
 
+    // Constants + rules — required
+    var C = _requireObject('HouseholdConstants', window.HouseholdConstants);
+    if (!C.THRESHOLDS || typeof C.THRESHOLDS.BANKRUPTCY !== 'number') {
+        throw new Error(
+            'HouseholdEconomy: HouseholdConstants.THRESHOLDS is missing or too old.'
+        );
+    }
+    if (typeof C.getEconomicEventDelta !== 'function') {
+        throw new Error(
+            'HouseholdEconomy: HouseholdConstants.getEconomicEventDelta is required.'
+        );
+    }
+
+    var R = _requireObject('HouseholdRules', window.HouseholdRules);
+    _requireFunction('HouseholdRules.getEconomicTier', R.getEconomicTier);
+    _requireFunction('HouseholdRules.netAnnualChange', R.netAnnualChange);
+    _requireFunction('HouseholdRules.calculateAnnualDebtInterest',
+        R.calculateAnnualDebtInterest);
+    _requireFunction('HouseholdRules.evaluateBankruptcy', R.evaluateBankruptcy);
+    _requireFunction('HouseholdRules.calculateEnterpriseNet',
+        R.calculateEnterpriseNet);
+
+    // Commands + queries — required
     var _commands = _requireObject('HouseholdCommands', window.HouseholdCommands);
     _requireFunction('HouseholdCommands.updateHousehold', _commands.updateHousehold);
     _requireFunction('HouseholdCommands.recordEvent', _commands.recordEvent);
@@ -71,218 +151,193 @@
     _requireFunction('HouseholdQueries.getHouseholdEnterpriseSummaries',
         _queries.getHouseholdEnterpriseSummaries);
 
+    // Time + randomness + accessors — required
     var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
         window.getCurrentYearSafe);
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
 
-    // Optional deps — recorded at load, checked at call time
-    var _residenceSystemPresent = typeof window.ResidenceSystem !== 'undefined' &&
-        window.ResidenceSystem !== null;
-    var _industryQueriesPresent = typeof window.IndustryQueries !== 'undefined' &&
-        window.IndustryQueries !== null;
+    if (typeof window.random !== 'function') {
+        throw new Error(
+            'HouseholdEconomy: randomness.js must load first (random missing).'
+        );
+    }
+    var _random = window.random;
+
+    // Optional deps — checked at call time
+    function _residenceSystem() {
+        return (typeof window.ResidenceSystem !== 'undefined'
+                && window.ResidenceSystem !== null)
+            ? window.ResidenceSystem
+            : null;
+    }
 
     // =========================================================================
-    // 2. RESULT HELPERS
+    // 1. RESULT HELPERS
     // =========================================================================
 
     function _ok(data) {
         return { success: true, data: data === undefined ? null : data };
     }
-    function _fail(code, reason) {
-        return { success: false, code: code, reason: reason || code };
+    function _fail(code, reason, extra) {
+        var result = { success: false, code: code, reason: reason || code };
+        if (extra) {
+            for (var k in extra) {
+                if (Object.prototype.hasOwnProperty.call(extra, k)) {
+                    result[k] = extra[k];
+                }
+            }
+        }
+        return result;
     }
 
     // =========================================================================
-    // 3. CONSTANTS (to be extracted to household-constants.js)
+    // 2. YEAR / NUMBER HELPERS
     // =========================================================================
 
-    var ECONOMIC_TIERS = {
-        DESTITUTE:  { id: 'destitute',  minWealth: 0,    maxWealth: 10,       label: 'Destitute' },
-        POOR:       { id: 'poor',       minWealth: 11,   maxWealth: 30,       label: 'Poor' },
-        MODERATE:   { id: 'moderate',   minWealth: 31,   maxWealth: 70,       label: 'Moderate' },
-        PROSPEROUS: { id: 'prosperous', minWealth: 71,   maxWealth: 120,      label: 'Prosperous' },
-        WEALTHY:    { id: 'wealthy',    minWealth: 121,  maxWealth: 200,      label: 'Wealthy' },
-        NOBLE:      { id: 'noble',      minWealth: 201,  maxWealth: 500,      label: 'Noble' },
-        VERY_NOBLE: { id: 'very_noble', minWealth: 501,  maxWealth: 1000,     label: 'High Noble' },
-        ROYAL:      { id: 'royal',      minWealth: 1001, maxWealth: Infinity, label: 'Royal' }
-    };
-
-    var INCOME_SOURCES = {
-        agriculture: { id: 'agriculture', name: 'Agriculture',     baseIncome: 10 },
-        livestock:   { id: 'livestock',   name: 'Livestock',       baseIncome: 8 },
-        trade:       { id: 'trade',       name: 'Trade',           baseIncome: 15 },
-        crafts:      { id: 'crafts',      name: 'Crafts',          baseIncome: 12 },
-        taxes:       { id: 'taxes',       name: 'Taxes',           baseIncome: 20 },
-        rent:        { id: 'rent',        name: 'Rent',            baseIncome: 10 },
-        tribute:     { id: 'tribute',     name: 'Tribute',         baseIncome: 25 },
-        patronage:   { id: 'patronage',   name: 'Patronage',       baseIncome: 5 },
-        military:    { id: 'military',    name: 'Military Service', baseIncome: 15 },
-        mining:      { id: 'mining',      name: 'Mining',          baseIncome: 18 }
-    };
-
-    var EXPENSE_CATEGORIES = {
-        food:        { id: 'food',        name: 'Food & Supplies',      baseExpense: 8 },
-        maintenance: { id: 'maintenance', name: 'Property Maintenance', baseExpense: 6 },
-        taxes:       { id: 'taxes',       name: 'Taxes Paid',           baseExpense: 10 },
-        staff:       { id: 'staff',       name: 'Staff Wages',          baseExpense: 12 },
-        luxury:      { id: 'luxury',      name: 'Luxury Goods',         baseExpense: 15 },
-        debt:        { id: 'debt',        name: 'Debt Payments',        baseExpense: 10 },
-        tithe:       { id: 'tithe',       name: 'Religious Tithe',      baseExpense: 5 },
-        medical:     { id: 'medical',     name: 'Medical Expenses',     baseExpense: 8 }
-    };
-
-    var ECONOMIC_EVENTS = {
-        good_harvest: {
-            id: 'good_harvest', name: 'Good Harvest',
-            description: 'A bountiful harvest brings prosperity',
-            delta: function() { return 10 + Math.floor(Math.random() * 20); },
-            chance: 0.15
-        },
-        poor_harvest: {
-            id: 'poor_harvest', name: 'Poor Harvest',
-            description: 'Poor harvest leads to food shortages',
-            delta: function() { return -(10 + Math.floor(Math.random() * 15)); },
-            chance: 0.10
-        },
-        trade_bonus: {
-            id: 'trade_bonus', name: 'Trade Windfall',
-            description: 'A profitable trade deal brings extra income',
-            delta: function() { return 15 + Math.floor(Math.random() * 30); },
-            chance: 0.08
-        },
-        tax_increase: {
-            id: 'tax_increase', name: 'Tax Increase',
-            description: 'Increased taxes reduce household wealth',
-            delta: function() { return -(5 + Math.floor(Math.random() * 10)); },
-            chance: 0.12
-        },
-        theft: {
-            id: 'theft', name: 'Theft',
-            description: 'Household was robbed',
-            delta: function() { return -(10 + Math.floor(Math.random() * 20)); },
-            chance: 0.05
-        },
-        inheritance: {
-            id: 'inheritance', name: 'Inheritance',
-            description: 'Received inheritance from distant relative',
-            delta: function() { return 20 + Math.floor(Math.random() * 50); },
-            chance: 0.03
-        },
-        fire: {
-            id: 'fire', name: 'Fire',
-            description: 'Property damaged by fire',
-            delta: function() { return -(15 + Math.floor(Math.random() * 30)); },
-            chance: 0.04
+    function _effectiveYear(options) {
+        options = options || {};
+        if (options.year !== undefined && options.year !== null) {
+            if (typeof options.year === 'number' && isFinite(options.year)) {
+                return options.year;
+            }
+            // Invalid explicit year is a caller bug; return null so
+            // callers abort rather than silently substituting current year.
+            return null;
         }
-    };
+        return _getCurrentYearSafe();
+    }
 
-    var BANKRUPTCY_THRESHOLD = -50;
-    var DEBT_INTEREST_RATE = 0.05;
-    var MAX_TRANSACTION_HISTORY = 100;
-    var MAX_RESOURCE_HISTORY = 100;
-    var MAX_SALARY_HISTORY = 100;
-    var MAX_TUITION_HISTORY = 100;
-    var MAX_SCHOOL_PROFIT_HISTORY = 100;
-    var MAX_EVENT_LOG = 200;
+    function _isFiniteNumber(v) {
+        return typeof v === 'number' && isFinite(v);
+    }
+
+    function _readArrayHistory(arr, limit) {
+        if (!Array.isArray(arr)) return [];
+        if (typeof limit !== 'number' || !isFinite(limit) || limit <= 0) {
+            return arr.slice();
+        }
+        if (arr.length <= limit) return arr.slice();
+        return arr.slice(-limit);
+    }
 
     // =========================================================================
-    // 4. PURE CALCULATIONS
+    // 3. PURE CALCULATIONS
     // =========================================================================
     //
-    // These never mutate. They never throw on missing household; they
-    // return 0 / false / null / empty as appropriate. Callers that need
-    // to distinguish "missing" from "zero" should check the household
-    // via HouseholdQueries first.
-    // =========================================================================
+    // These never mutate. Missing household / missing data returns 0
+    // (or an empty object). Invalid arguments return 0.
+    //
+    // Every function accepts options.year where the calculation depends
+    // on "now"; the fallback is getCurrentYearSafe().
 
+    /**
+     * Returns the economic tier object for a wealth value.
+     * Delegates to HouseholdRules.getEconomicTier.
+     */
     function getEconomicTier(wealth) {
-        var w = typeof wealth === 'number' && isFinite(wealth) ? wealth : 0;
-        var keys = Object.keys(ECONOMIC_TIERS);
-        for (var i = 0; i < keys.length; i++) {
-            var tier = ECONOMIC_TIERS[keys[i]];
-            if (w >= tier.minWealth && w <= tier.maxWealth) return tier;
-        }
-        return ECONOMIC_TIERS.DESTITUTE;
+        return R.getEconomicTier(wealth);
     }
 
     function getHouseholdWealth(householdId) {
         var h = _queries.getHousehold(householdId);
-        return h && typeof h.wealth === 'number' ? h.wealth : 0;
+        return h && _isFiniteNumber(h.wealth) ? h.wealth : 0;
     }
 
     function getHouseholdDebt(householdId) {
         var h = _queries.getHousehold(householdId);
-        return h && typeof h.debt === 'number' ? h.debt : 0;
+        return h && _isFiniteNumber(h.debt) ? h.debt : 0;
     }
 
     function getHouseholdResources(householdId) {
         var h = _queries.getHousehold(householdId);
         if (!h) return { food: 0, livestock: 0, goods: 0 };
-        // Resources are not in the household projection; read the canonical
-        // record directly (read-only).
+
+        // Resources are not on the flat projection; read the canonical
+        // record read-only via HouseholdState._internal.
         var state = window.HouseholdState;
-        if (!state || !state._internal) return { food: 0, livestock: 0, goods: 0 };
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return { food: 0, livestock: 0, goods: 0 };
+        }
         var record = state._internal.getHouseholdRecord(householdId);
         if (!record) return { food: 0, livestock: 0, goods: 0 };
         var r = record.resources || {};
         return {
-            food: typeof r.food === 'number' ? r.food : 0,
-            livestock: typeof r.livestock === 'number' ? r.livestock : 0,
-            goods: typeof r.goods === 'number' ? r.goods : 0
+            food: _isFiniteNumber(r.food) ? r.food : 0,
+            livestock: _isFiniteNumber(r.livestock) ? r.livestock : 0,
+            goods: _isFiniteNumber(r.goods) ? r.goods : 0
         };
     }
 
     function calculateRentIncome(householdId) {
-        if (!_residenceSystemPresent) return 0;
-        var rs = window.ResidenceSystem;
-        if (typeof rs.getTotalRentIncome !== 'function') return 0;
+        var rs = _residenceSystem();
+        if (!rs || typeof rs.getTotalRentIncome !== 'function') return 0;
         var v = rs.getTotalRentIncome(householdId, 'household');
-        return typeof v === 'number' && isFinite(v) ? v : 0;
+        return _isFiniteNumber(v) ? v : 0;
     }
 
     function calculateRentExpenses(householdId) {
-        if (!_residenceSystemPresent) return 0;
-        var rs = window.ResidenceSystem;
-        if (typeof rs.getTotalRentExpenses !== 'function') return 0;
+        var rs = _residenceSystem();
+        if (!rs || typeof rs.getTotalRentExpenses !== 'function') return 0;
         var v = rs.getTotalRentExpenses(householdId, 'household');
-        return typeof v === 'number' && isFinite(v) ? v : 0;
+        return _isFiniteNumber(v) ? v : 0;
     }
 
+    /**
+     * Enterprise net income/expense. Delegates to HouseholdRules.
+     * Returns {income, expense}. Missing IndustryQueries → 0/0.
+     */
     function calculateEnterpriseNet(householdId) {
-        var summaries;
+        var summaries = [];
         try {
             summaries = _queries.getHouseholdEnterpriseSummaries(householdId);
         } catch (e) {
-            summaries = [];
+            // Household has enterprises but Industry is not loaded.
+            // Return 0/0 rather than throwing — annual processing should
+            // still work for a household whose enterprises cannot be
+            // summarised right now.
+            return { income: 0, expense: 0 };
         }
-        var income = 0;
-        var expense = 0;
-        for (var i = 0; i < summaries.length; i++) {
-            var s = summaries[i];
-            if (s.ownershipType === 'public') continue;
-            var profit = typeof s.annualProfit === 'number' ? s.annualProfit : 0;
-            if (profit > 0) income += profit;
-            else if (profit < 0) expense += -profit;
-        }
-        return { income: income, expense: expense };
+        return R.calculateEnterpriseNet(summaries);
     }
 
-    function calculateAnnualIncome(householdId) {
-        var income = 0;
+    /**
+     * Total annual income.
+     *
+     * Includes: explicit income sources, member salaries (from
+     * professions), private enterprise profit, rent income, and
+     * school-profit entries for the effective year.
+     *
+     * @param {string} householdId
+     * @param {Object} [options] - {year}
+     * @returns {number}
+     */
+    function calculateAnnualIncome(householdId, options) {
+        var year = _effectiveYear(options);
+        if (year === null) return 0;
 
         var state = window.HouseholdState;
-        if (!state || !state._internal) return 0;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return 0;
+        }
         var record = state._internal.getHouseholdRecord(householdId);
         if (!record) return 0;
 
+        var income = 0;
         var economy = record.economy || {};
+
+        // Explicit income sources (year-agnostic; they represent standing
+        // streams of revenue, not per-year entries).
         if (Array.isArray(economy.incomeSources)) {
             for (var i = 0; i < economy.incomeSources.length; i++) {
                 income += economy.incomeSources[i].amount || 0;
             }
         }
 
+        // Member professions (year-agnostic — profession salary is a
+        // standing rate, not a per-year figure).
         if (Array.isArray(record.members)) {
             for (var j = 0; j < record.members.length; j++) {
                 var member = record.members[j];
@@ -295,20 +350,24 @@
                 if (!character || !Array.isArray(character.professions)) continue;
                 for (var k = 0; k < character.professions.length; k++) {
                     var p = character.professions[k];
-                    if (typeof p.baseSalary === 'number') income += p.baseSalary;
-                    if (typeof p.customSalary === 'number') income += p.customSalary;
+                    if (_isFiniteNumber(p.baseSalary)) income += p.baseSalary;
+                    if (_isFiniteNumber(p.customSalary)) income += p.customSalary;
                 }
             }
         }
 
+        // Enterprise profit (year-agnostic — annualProfit is the standing
+        // annual figure per enterprise).
         var ent = calculateEnterpriseNet(householdId);
         income += ent.income;
+
+        // Rent income (year-agnostic — current contract rent).
         income += calculateRentIncome(householdId);
 
-        if (economy && Array.isArray(economy.schoolProfitHistory)) {
-            var currentYear = _getCurrentYearSafe();
+        // School profit for the effective year only.
+        if (Array.isArray(economy.schoolProfitHistory)) {
             for (var m = 0; m < economy.schoolProfitHistory.length; m++) {
-                if (economy.schoolProfitHistory[m].year === currentYear) {
+                if (economy.schoolProfitHistory[m].year === year) {
                     income += economy.schoolProfitHistory[m].amount || 0;
                 }
             }
@@ -317,14 +376,30 @@
         return income;
     }
 
-    function calculateAnnualExpenses(householdId) {
-        var expenses = 0;
+    /**
+     * Total annual expenses.
+     *
+     * Includes: explicit expense entries, staff wages, private
+     * enterprise loss, rent expenses, tuition for the effective year,
+     * and debt interest.
+     *
+     * @param {string} householdId
+     * @param {Object} [options] - {year}
+     * @returns {number}
+     */
+    function calculateAnnualExpenses(householdId, options) {
+        var year = _effectiveYear(options);
+        if (year === null) return 0;
 
         var state = window.HouseholdState;
-        if (!state || !state._internal) return 0;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return 0;
+        }
         var record = state._internal.getHouseholdRecord(householdId);
         if (!record) return 0;
 
+        var expenses = 0;
         var economy = record.economy || {};
 
         if (Array.isArray(economy.expenses)) {
@@ -333,87 +408,145 @@
             }
         }
 
+        // Staff wages: flat per staff member. (Domain policy; the per-
+        // member figure is a placeholder until wage tracking moves to
+        // household.economy.staffWages.)
         if (Array.isArray(record.members)) {
             for (var j = 0; j < record.members.length; j++) {
                 if (record.members[j].type === 'staff') expenses += 8;
             }
         }
 
+        // Enterprise loss.
         var ent = calculateEnterpriseNet(householdId);
         expenses += ent.expense;
+
+        // Rent expenses.
         expenses += calculateRentExpenses(householdId);
 
+        // Tuition for the effective year only.
         if (Array.isArray(economy.tuitionExpensesHistory)) {
-            var currentYear = _getCurrentYearSafe();
             for (var k = 0; k < economy.tuitionExpensesHistory.length; k++) {
-                if (economy.tuitionExpensesHistory[k].year === currentYear) {
+                if (economy.tuitionExpensesHistory[k].year === year) {
                     expenses += economy.tuitionExpensesHistory[k].amount || 0;
                 }
             }
         }
 
-        var debt = typeof record.debt === 'number' ? record.debt : 0;
-        if (debt > 0) expenses += debt * DEBT_INTEREST_RATE;
+        // Debt interest. Delegated to HouseholdRules.
+        expenses += R.calculateAnnualDebtInterest(record.debt);
 
         return expenses;
     }
 
-    function computeNetAnnualChange(householdId) {
-        return calculateAnnualIncome(householdId) - calculateAnnualExpenses(householdId);
+    function computeNetAnnualChange(householdId, options) {
+        return calculateAnnualIncome(householdId, options)
+             - calculateAnnualExpenses(householdId, options);
     }
 
     function isBankrupt(householdId) {
         var h = _queries.getHousehold(householdId);
         if (!h) return false;
-        return typeof h.wealth === 'number' && h.wealth < BANKRUPTCY_THRESHOLD;
+        return R.evaluateBankruptcy(h.wealth);
     }
 
     // =========================================================================
-    // 5. MUTATION CORE
+    // 4. MUTATION CORE
     // =========================================================================
     //
-    // _applyMutation is the ONLY place in this module that:
-    //   - gets the live canonical record
-    //   - runs a mutator against it
-    //   - commits via HouseholdCommands (one commit)
-    //   - persists via HouseholdCommands.persist (one save)
+    // _applyMutation is the ONLY place in this module that mutates a
+    // household record. It:
     //
-    // Every economy mutation funnels through it. If the mutator returns
-    // { abort: true, code, reason }, we skip commit and persist.
-    // =========================================================================
+    //   1. Reads the canonical record via HouseholdQueries (verifying
+    //      the household exists).
+    //   2. Runs a PURE projection function (`mutator`) that receives
+    //      the current record and returns a PATCH object — a plain
+    //      object of field → new value. The mutator MUST NOT mutate
+    //      the record it was given.
+    //   3. Applies the patch via HouseholdCommands.updateHousehold. The
+    //      command validates the allowlist and commits (marks dirty,
+    //      publishes, dispatches).
+    //   4. Persists ONCE via HouseholdCommands.persist.
+    //
+    // Why patch-then-command instead of mutate-then-commit:
+    //
+    //   - updateHousehold validates field ownership. A mutator that
+    //     wrote a forbidden field would have partially applied the
+    //     mutation before the command rejected it. Patch-then-command
+    //     means the command sees the whole change at once and can
+    //     reject it cleanly before any field is touched.
+    //
+    //   - The mutation is expressed in one place (the patch), so the
+    //     audit trail (transaction history) and the actual change are
+    //     built from the same values.
+    //
+    // Mutator contract:
+    //
+    //   function mutator(record) -> patch
+    //     - record is the CANONICAL household object; treat as read-only.
+    //     - patch is a plain object whose keys are in the
+    //       _ALLOWED_HOUSEHOLD_UPDATE_FIELDS allowlist of
+    //       household-commands.js. Typically { wealth, debt, resources,
+    //       economy, eventLog, status }.
+    //     - Mutators that need to abort return { __abort: true,
+    //       code, reason }. _applyMutation surfaces that as a _fail.
+    //
+    // _applyMutation returns:
+    //
+    //   _ok({ householdId, ...extra })
+    //   _fail(code, reason)
+    //
+    // It does NOT dispatch domain-specific events beyond what
+    // HouseholdCommands.updateHousehold already publishes
+    // ('householdUpdated'). Callers that need a distinct event name (for
+    // subscriber listeners) call HouseholdState.publish themselves
+    // AFTER the mutation succeeds.
 
-    function _applyMutation(householdId, mutator, eventName, payload) {
+    function _applyMutation(householdId, mutator, extraData) {
         var state = window.HouseholdState;
-        if (!state || !state._internal) {
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
             return _fail('STATE_UNAVAILABLE', 'HouseholdState is not available');
         }
         var record = state._internal.getHouseholdRecord(householdId);
         if (!record) return _fail('NOT_FOUND', 'Household not found');
 
-        var result = mutator(record);
-        if (result && result.abort) {
-            return _fail(result.code || 'MUTATION_ABORTED',
-                result.reason || 'Mutation aborted');
-        }
-
-        // Commit via commands. updateHousehold with empty updates is the
-        // canonical no-op that still fires _commit and markDirty.
-        // We pass a single event name so the domain event is what
-        // subscribers actually see.
-        var commitResult = _commands.updateHousehold(householdId, {});
-        if (!commitResult || commitResult.success === false) {
+        // Run the pure projection.
+        var patch;
+        try {
+            patch = mutator(record);
+        } catch (e) {
             return _fail(
-                (commitResult && commitResult.code) || 'COMMIT_FAILED',
-                (commitResult && commitResult.reason) || 'Failed to commit mutation'
+                'MUTATOR_THREW',
+                (e && e.message) ? e.message : 'Mutator threw'
             );
         }
 
-        // Publish the domain-specific event
-        if (eventName && typeof state.publish === 'function') {
-            state.publish(eventName, payload || {});
+        if (!patch || typeof patch !== 'object') {
+            return _fail(
+                'MUTATOR_INVALID',
+                'Mutator returned a non-object patch'
+            );
+        }
+        if (patch.__abort === true) {
+            return _fail(
+                patch.code || 'MUTATION_ABORTED',
+                patch.reason || 'Mutation aborted'
+            );
         }
 
-        // Persist once
+        // Apply via the command. The command's allowlist rejects
+        // forbidden fields. The command's _commit does markDirty +
+        // publish('householdUpdated') + dispatch.
+        var commitResult = _commands.updateHousehold(householdId, patch);
+        if (!commitResult || commitResult.success === false) {
+            return _fail(
+                (commitResult && commitResult.code) || 'COMMIT_FAILED',
+                (commitResult && commitResult.reason) || 'Failed to apply mutation'
+            );
+        }
+
+        // Persist once.
         var persistResult = _commands.persist();
         if (!persistResult || persistResult.success === false) {
             return _fail(
@@ -422,161 +555,182 @@
             );
         }
 
-        return _ok({ householdId: householdId });
+        var data = { householdId: householdId };
+        if (extraData && typeof extraData === 'object') {
+            for (var k in extraData) {
+                if (Object.prototype.hasOwnProperty.call(extraData, k)) {
+                    data[k] = extraData[k];
+                }
+            }
+        }
+        return _ok(data);
+    }
+
+    /**
+     * Appends a transaction entry to the household's economy.transactions
+     * and trims the history. Mutates `economy` in place — callers pass a
+     * shallow copy of the current economy object.
+     *
+     * @private
+     */
+    function _pushTransaction(economy, entry) {
+        if (!economy || typeof economy !== 'object') return;
+        if (!Array.isArray(economy.transactions)) economy.transactions = [];
+        economy.transactions.push(entry);
+        var cap = C.THRESHOLDS.MAX_TRANSACTION_HISTORY;
+        if (economy.transactions.length > cap) {
+            economy.transactions = economy.transactions.slice(-cap);
+        }
+    }
+
+    /**
+     * Returns a shallow copy of the household's economy object plus an
+     * `economy.transactions` array that is guaranteed to exist and to be
+     * a real array (not a reference into canonical state).
+     *
+     * @private
+     */
+    function _copyEconomy(record) {
+        var economy = (record && record.economy && typeof record.economy === 'object')
+            ? Object.assign({}, record.economy)
+            : {};
+        economy.transactions = Array.isArray(economy.transactions)
+            ? economy.transactions.slice()
+            : [];
+        return economy;
     }
 
     // =========================================================================
-    // 6. WEALTH / DEBT / RESOURCE MUTATIONS
+    // 5. WEALTH / DEBT / RESOURCE MUTATIONS
     // =========================================================================
 
-    function updateHouseholdWealth(householdId, delta, reason) {
-        if (typeof delta !== 'number' || !isFinite(delta)) {
+    function updateHouseholdWealth(householdId, delta, reason, options) {
+        if (!_isFiniteNumber(delta)) {
             return _fail('INVALID_DELTA', 'delta must be a finite number');
         }
-
-        var state = window.HouseholdState;
         var h = _queries.getHousehold(householdId);
         if (!h) return _fail('NOT_FOUND', 'Household not found');
-        var record = state && state._internal
-            ? state._internal.getHouseholdRecord(householdId) : null;
-        if (!record) return _fail('NOT_FOUND', 'Household record not found');
 
-        var oldWealth = typeof record.wealth === 'number' ? record.wealth : 0;
-        var newWealth = oldWealth + delta;
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            if (!Array.isArray(r.economy.transactions)) r.economy.transactions = [];
-            r.economy.transactions.push({
-                year: _getCurrentYearSafe(),
+        var oldWealth = _isFiniteNumber(h.wealth) ? h.wealth : 0;
+
+        return _applyMutation(householdId, function(record) {
+            var currentWealth = _isFiniteNumber(record.wealth) ? record.wealth : 0;
+            var newWealth = currentWealth + delta;
+
+            var economy = _copyEconomy(record);
+            _pushTransaction(economy, {
+                year: year,
                 type: 'wealth_change',
                 amount: delta,
                 reason: reason || 'Wealth adjustment',
-                oldWealth: oldWealth,
-                newWealth: newWealth
+                oldWealth: currentWealth,
+                newWealth: newWealth,
+                timestamp: Date.now()
             });
-            if (r.economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                r.economy.transactions =
-                    r.economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
-            r.wealth = newWealth;
-        }, 'householdWealthChanged', {
-            householdId: householdId,
-            oldWealth: oldWealth,
-            newWealth: newWealth,
-            delta: delta,
-            reason: reason || 'Wealth adjustment'
-        });
 
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
+            return {
+                wealth: newWealth,
+                economy: economy
+            };
+        }, {
             oldWealth: oldWealth,
-            newWealth: newWealth,
+            newWealth: oldWealth + delta,
             delta: delta
         });
     }
 
-    function modifyHouseholdDebt(householdId, delta) {
-        if (typeof delta !== 'number' || !isFinite(delta)) {
+    function modifyHouseholdDebt(householdId, delta, options) {
+        if (!_isFiniteNumber(delta)) {
             return _fail('INVALID_DELTA', 'delta must be a finite number');
         }
-
-        var state = window.HouseholdState;
         var h = _queries.getHousehold(householdId);
         if (!h) return _fail('NOT_FOUND', 'Household not found');
-        var record = state && state._internal
-            ? state._internal.getHouseholdRecord(householdId) : null;
-        if (!record) return _fail('NOT_FOUND', 'Household record not found');
 
-        var oldDebt = typeof record.debt === 'number' ? record.debt : 0;
-        var newDebt = Math.max(0, oldDebt + delta);
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            if (!Array.isArray(r.economy.transactions)) r.economy.transactions = [];
-            r.economy.transactions.push({
-                year: _getCurrentYearSafe(),
+        var oldDebt = _isFiniteNumber(h.debt) ? h.debt : 0;
+
+        return _applyMutation(householdId, function(record) {
+            var currentDebt = _isFiniteNumber(record.debt) ? record.debt : 0;
+            var newDebt = Math.max(0, currentDebt + delta);
+
+            var economy = _copyEconomy(record);
+            _pushTransaction(economy, {
+                year: year,
                 type: 'debt_change',
                 amount: delta,
-                oldDebt: oldDebt,
-                newDebt: newDebt
+                oldDebt: currentDebt,
+                newDebt: newDebt,
+                timestamp: Date.now()
             });
-            if (r.economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                r.economy.transactions =
-                    r.economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
-            r.debt = newDebt;
-        }, 'householdDebtChanged', {
-            householdId: householdId,
-            oldDebt: oldDebt,
-            newDebt: newDebt,
-            delta: delta
-        });
 
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
+            return {
+                debt: newDebt,
+                economy: economy
+            };
+        }, {
             oldDebt: oldDebt,
-            newDebt: newDebt,
+            newDebt: Math.max(0, oldDebt + delta),
             delta: delta
         });
     }
 
-    function updateHouseholdResources(householdId, resourceType, delta) {
+    function updateHouseholdResources(householdId, resourceType, delta, options) {
         var valid = ['food', 'livestock', 'goods'];
         if (valid.indexOf(resourceType) === -1) {
-            return _fail('INVALID_RESOURCE_TYPE',
-                'Resource type must be food, livestock, or goods');
+            return _fail(
+                'INVALID_RESOURCE_TYPE',
+                'Resource type must be food, livestock, or goods'
+            );
         }
-        if (typeof delta !== 'number' || !isFinite(delta)) {
+        if (!_isFiniteNumber(delta)) {
             return _fail('INVALID_DELTA', 'delta must be a finite number');
         }
 
-        var state = window.HouseholdState;
-        var record = state && state._internal
-            ? state._internal.getHouseholdRecord(householdId) : null;
-        if (!record) return _fail('NOT_FOUND', 'Household not found');
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        var oldValue = (record.resources &&
-            typeof record.resources[resourceType] === 'number')
-            ? record.resources[resourceType] : 0;
+        var current = getHouseholdResources(householdId);
+        var oldValue = current[resourceType] || 0;
         var newValue = Math.max(0, oldValue + delta);
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.resources || typeof r.resources !== 'object') {
-                r.resources = { food: 0, livestock: 0, goods: 0 };
-            }
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            if (!Array.isArray(r.economy.resourceHistory)) {
-                r.economy.resourceHistory = [];
-            }
-            r.economy.resourceHistory.push({
-                year: _getCurrentYearSafe(),
+        return _applyMutation(householdId, function(record) {
+            var currentResources = (record.resources
+                && typeof record.resources === 'object')
+                ? Object.assign({}, record.resources)
+                : { food: 0, livestock: 0, goods: 0 };
+
+            var currentVal = _isFiniteNumber(currentResources[resourceType])
+                ? currentResources[resourceType]
+                : 0;
+            var newVal = Math.max(0, currentVal + delta);
+
+            var economy = _copyEconomy(record);
+            if (!Array.isArray(economy.resourceHistory)) economy.resourceHistory = [];
+            economy.resourceHistory.push({
+                year: year,
                 resource: resourceType,
                 delta: delta,
-                oldValue: oldValue,
-                newValue: newValue
+                oldValue: currentVal,
+                newValue: newVal,
+                timestamp: Date.now()
             });
-            if (r.economy.resourceHistory.length > MAX_RESOURCE_HISTORY) {
-                r.economy.resourceHistory =
-                    r.economy.resourceHistory.slice(-MAX_RESOURCE_HISTORY);
+            var cap = C.THRESHOLDS.MAX_RESOURCE_HISTORY;
+            if (economy.resourceHistory.length > cap) {
+                economy.resourceHistory = economy.resourceHistory.slice(-cap);
             }
-            r.resources[resourceType] = newValue;
-        }, 'householdResourcesChanged', {
-            householdId: householdId,
-            resourceType: resourceType,
-            oldValue: oldValue,
-            newValue: newValue,
-            delta: delta
-        });
 
-        if (!mutResult.success) return mutResult;
+            currentResources[resourceType] = newVal;
 
-        return _ok({
-            householdId: householdId,
+            return {
+                resources: currentResources,
+                economy: economy
+            };
+        }, {
             resourceType: resourceType,
             oldValue: oldValue,
             newValue: newValue,
@@ -585,28 +739,33 @@
     }
 
     // =========================================================================
-    // 7. SALARY / TUITION / SCHOOL PROFIT
+    // 6. SALARY / TUITION / SCHOOL PROFIT
     // =========================================================================
 
     function receiveSalary(householdId, characterId, roleId, salary, year) {
-        if (typeof salary !== 'number' || !isFinite(salary)) {
+        if (!_isFiniteNumber(salary)) {
             return _fail('INVALID_SALARY', 'salary must be a finite number');
         }
 
-        var record = window.HouseholdState && window.HouseholdState._internal
-            ? window.HouseholdState._internal.getHouseholdRecord(householdId)
-            : null;
-        if (!record) return _fail('NOT_FOUND', 'Household not found');
+        var h = _queries.getHousehold(householdId);
+        if (!h) return _fail('NOT_FOUND', 'Household not found');
 
-        var y = year === undefined || year === null ? _getCurrentYearSafe() : year;
-        var oldWealth = typeof record.wealth === 'number' ? record.wealth : 0;
-        var newWealth = oldWealth + salary;
+        var y = (year === undefined || year === null)
+            ? _getCurrentYearSafe()
+            : year;
+        if (!_isFiniteNumber(y)) {
+            return _fail('INVALID_YEAR', 'Invalid year');
+        }
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            var economy = r.economy;
+        var oldWealth = _isFiniteNumber(h.wealth) ? h.wealth : 0;
 
-            economy.salaryIncome = (typeof economy.salaryIncome === 'number'
+        return _applyMutation(householdId, function(record) {
+            var currentWealth = _isFiniteNumber(record.wealth) ? record.wealth : 0;
+            var newWealth = currentWealth + salary;
+
+            var economy = _copyEconomy(record);
+
+            economy.salaryIncome = (_isFiniteNumber(economy.salaryIncome)
                 ? economy.salaryIncome : 0) + salary;
 
             if (!Array.isArray(economy.salaryIncomeHistory)) {
@@ -616,54 +775,51 @@
                 year: y,
                 characterId: characterId,
                 roleId: roleId || null,
-                amount: salary
+                amount: salary,
+                timestamp: Date.now()
             });
-            if (economy.salaryIncomeHistory.length > MAX_SALARY_HISTORY) {
-                economy.salaryIncomeHistory =
-                    economy.salaryIncomeHistory.slice(-MAX_SALARY_HISTORY);
+            var cap = C.THRESHOLDS.MAX_SALARY_HISTORY;
+            if (economy.salaryIncomeHistory.length > cap) {
+                economy.salaryIncomeHistory = economy.salaryIncomeHistory.slice(-cap);
             }
 
-            if (!Array.isArray(economy.transactions)) economy.transactions = [];
-            economy.transactions.push({
+            _pushTransaction(economy, {
                 year: y,
                 type: 'salary_received',
                 amount: salary,
                 roleId: roleId || null,
                 characterId: characterId,
-                oldWealth: oldWealth,
-                newWealth: newWealth
+                oldWealth: currentWealth,
+                newWealth: newWealth,
+                timestamp: Date.now()
             });
-            if (economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                economy.transactions =
-                    economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
 
-            r.wealth = newWealth;
-        }, 'householdSalaryReceived', {
-            householdId: householdId,
+            return {
+                wealth: newWealth,
+                economy: economy
+            };
+        }, {
             characterId: characterId,
             roleId: roleId || null,
-            amount: salary,
-            year: y
-        });
-
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
-            characterId: characterId,
             amount: salary,
             year: y
         });
     }
 
     function getSalaryIncome(householdId, year) {
-        var y = year === undefined || year === null ? _getCurrentYearSafe() : year;
+        var y = (year === undefined || year === null)
+            ? _getCurrentYearSafe()
+            : year;
+        if (!_isFiniteNumber(y)) return 0;
+
         var state = window.HouseholdState;
-        if (!state || !state._internal) return 0;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return 0;
+        }
         var record = state._internal.getHouseholdRecord(householdId);
-        if (!record || !record.economy ||
-            !Array.isArray(record.economy.salaryIncomeHistory)) {
+        if (!record || !record.economy
+            || !Array.isArray(record.economy.salaryIncomeHistory)) {
             return 0;
         }
         var total = 0;
@@ -676,32 +832,41 @@
 
     function getTotalSalariesReceived(householdId) {
         var state = window.HouseholdState;
-        if (!state || !state._internal) return 0;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return 0;
+        }
         var record = state._internal.getHouseholdRecord(householdId);
         if (!record || !record.economy) return 0;
-        return typeof record.economy.salaryIncome === 'number'
-            ? record.economy.salaryIncome : 0;
+        return _isFiniteNumber(record.economy.salaryIncome)
+            ? record.economy.salaryIncome
+            : 0;
     }
 
     function trackTuitionExpense(householdId, tuition, institutionId, studentId, year) {
-        if (typeof tuition !== 'number' || !isFinite(tuition)) {
+        if (!_isFiniteNumber(tuition)) {
             return _fail('INVALID_TUITION', 'tuition must be a finite number');
         }
 
-        var record = window.HouseholdState && window.HouseholdState._internal
-            ? window.HouseholdState._internal.getHouseholdRecord(householdId)
-            : null;
-        if (!record) return _fail('NOT_FOUND', 'Household not found');
+        var h = _queries.getHousehold(householdId);
+        if (!h) return _fail('NOT_FOUND', 'Household not found');
 
-        var y = year === undefined || year === null ? _getCurrentYearSafe() : year;
-        var oldWealth = typeof record.wealth === 'number' ? record.wealth : 0;
-        var newWealth = oldWealth - tuition;
+        var y = (year === undefined || year === null)
+            ? _getCurrentYearSafe()
+            : year;
+        if (!_isFiniteNumber(y)) {
+            return _fail('INVALID_YEAR', 'Invalid year');
+        }
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            var economy = r.economy;
+        var oldWealth = _isFiniteNumber(h.wealth) ? h.wealth : 0;
 
-            economy.tuitionExpenses = (typeof economy.tuitionExpenses === 'number'
+        return _applyMutation(householdId, function(record) {
+            var currentWealth = _isFiniteNumber(record.wealth) ? record.wealth : 0;
+            var newWealth = currentWealth - tuition;
+
+            var economy = _copyEconomy(record);
+
+            economy.tuitionExpenses = (_isFiniteNumber(economy.tuitionExpenses)
                 ? economy.tuitionExpenses : 0) + tuition;
 
             if (!Array.isArray(economy.tuitionExpensesHistory)) {
@@ -711,53 +876,52 @@
                 year: y,
                 institutionId: institutionId || null,
                 studentId: studentId || null,
-                amount: tuition
+                amount: tuition,
+                timestamp: Date.now()
             });
-            if (economy.tuitionExpensesHistory.length > MAX_TUITION_HISTORY) {
+            var cap = C.THRESHOLDS.MAX_TUITION_HISTORY;
+            if (economy.tuitionExpensesHistory.length > cap) {
                 economy.tuitionExpensesHistory =
-                    economy.tuitionExpensesHistory.slice(-MAX_TUITION_HISTORY);
+                    economy.tuitionExpensesHistory.slice(-cap);
             }
 
-            if (!Array.isArray(economy.transactions)) economy.transactions = [];
-            economy.transactions.push({
+            _pushTransaction(economy, {
                 year: y,
                 type: 'tuition_paid',
                 amount: -tuition,
                 institutionId: institutionId || null,
                 studentId: studentId || null,
-                oldWealth: oldWealth,
-                newWealth: newWealth
+                oldWealth: currentWealth,
+                newWealth: newWealth,
+                timestamp: Date.now()
             });
-            if (economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                economy.transactions =
-                    economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
 
-            r.wealth = newWealth;
-        }, 'householdTuitionPaid', {
-            householdId: householdId,
+            return {
+                wealth: newWealth,
+                economy: economy
+            };
+        }, {
             institutionId: institutionId || null,
             studentId: studentId || null,
-            amount: tuition,
-            year: y
-        });
-
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
             amount: tuition,
             year: y
         });
     }
 
     function getTuitionExpenses(householdId, year) {
-        var y = year === undefined || year === null ? _getCurrentYearSafe() : year;
+        var y = (year === undefined || year === null)
+            ? _getCurrentYearSafe()
+            : year;
+        if (!_isFiniteNumber(y)) return 0;
+
         var state = window.HouseholdState;
-        if (!state || !state._internal) return 0;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return 0;
+        }
         var record = state._internal.getHouseholdRecord(householdId);
-        if (!record || !record.economy ||
-            !Array.isArray(record.economy.tuitionExpensesHistory)) {
+        if (!record || !record.economy
+            || !Array.isArray(record.economy.tuitionExpensesHistory)) {
             return 0;
         }
         var total = 0;
@@ -769,24 +933,29 @@
     }
 
     function receiveSchoolProfit(householdId, amount, institutionId, year) {
-        if (typeof amount !== 'number' || !isFinite(amount)) {
+        if (!_isFiniteNumber(amount)) {
             return _fail('INVALID_AMOUNT', 'amount must be a finite number');
         }
 
-        var record = window.HouseholdState && window.HouseholdState._internal
-            ? window.HouseholdState._internal.getHouseholdRecord(householdId)
-            : null;
-        if (!record) return _fail('NOT_FOUND', 'Household not found');
+        var h = _queries.getHousehold(householdId);
+        if (!h) return _fail('NOT_FOUND', 'Household not found');
 
-        var y = year === undefined || year === null ? _getCurrentYearSafe() : year;
-        var oldWealth = typeof record.wealth === 'number' ? record.wealth : 0;
-        var newWealth = oldWealth + amount;
+        var y = (year === undefined || year === null)
+            ? _getCurrentYearSafe()
+            : year;
+        if (!_isFiniteNumber(y)) {
+            return _fail('INVALID_YEAR', 'Invalid year');
+        }
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            var economy = r.economy;
+        var oldWealth = _isFiniteNumber(h.wealth) ? h.wealth : 0;
 
-            economy.schoolProfits = (typeof economy.schoolProfits === 'number'
+        return _applyMutation(householdId, function(record) {
+            var currentWealth = _isFiniteNumber(record.wealth) ? record.wealth : 0;
+            var newWealth = currentWealth + amount;
+
+            var economy = _copyEconomy(record);
+
+            economy.schoolProfits = (_isFiniteNumber(economy.schoolProfits)
                 ? economy.schoolProfits : 0) + amount;
 
             if (!Array.isArray(economy.schoolProfitHistory)) {
@@ -795,51 +964,50 @@
             economy.schoolProfitHistory.push({
                 year: y,
                 institutionId: institutionId || null,
-                amount: amount
+                amount: amount,
+                timestamp: Date.now()
             });
-            if (economy.schoolProfitHistory.length > MAX_SCHOOL_PROFIT_HISTORY) {
+            var cap = C.THRESHOLDS.MAX_SCHOOL_PROFIT_HISTORY;
+            if (economy.schoolProfitHistory.length > cap) {
                 economy.schoolProfitHistory =
-                    economy.schoolProfitHistory.slice(-MAX_SCHOOL_PROFIT_HISTORY);
+                    economy.schoolProfitHistory.slice(-cap);
             }
 
-            if (!Array.isArray(economy.transactions)) economy.transactions = [];
-            economy.transactions.push({
+            _pushTransaction(economy, {
                 year: y,
                 type: 'school_profit',
                 amount: amount,
                 institutionId: institutionId || null,
-                oldWealth: oldWealth,
-                newWealth: newWealth
+                oldWealth: currentWealth,
+                newWealth: newWealth,
+                timestamp: Date.now()
             });
-            if (economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                economy.transactions =
-                    economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
 
-            r.wealth = newWealth;
-        }, 'householdSchoolProfitReceived', {
-            householdId: householdId,
+            return {
+                wealth: newWealth,
+                economy: economy
+            };
+        }, {
             institutionId: institutionId || null,
-            amount: amount,
-            year: y
-        });
-
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
             amount: amount,
             year: y
         });
     }
 
     function getSchoolProfits(householdId, year) {
-        var y = year === undefined || year === null ? _getCurrentYearSafe() : year;
+        var y = (year === undefined || year === null)
+            ? _getCurrentYearSafe()
+            : year;
+        if (!_isFiniteNumber(y)) return 0;
+
         var state = window.HouseholdState;
-        if (!state || !state._internal) return 0;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return 0;
+        }
         var record = state._internal.getHouseholdRecord(householdId);
-        if (!record || !record.economy ||
-            !Array.isArray(record.economy.schoolProfitHistory)) {
+        if (!record || !record.economy
+            || !Array.isArray(record.economy.schoolProfitHistory)) {
             return 0;
         }
         var total = 0;
@@ -851,38 +1019,40 @@
     }
 
     // =========================================================================
-    // 8. TRADE
+    // 7. TRADE
     // =========================================================================
     //
-    // Trade touches two households. Per the converged pattern, each
-    // household is its own logical operation → one commit → one persist.
-    // If the target commit fails after the source succeeds, we roll back
-    // the source through the same mutation primitive, so the rollback is
-    // structurally identical to a normal mutation.
-    // =========================================================================
+    // Trade touches two households. Each side is its own logical operation
+    // (its own commit + persist). If the target side fails after the
+    // source succeeds, we attempt a rollback of the source through the
+    // same mutation primitive.
+    //
+    // Both sides are validated BEFORE either is applied, so we never
+    // start a trade that cannot finish.
 
-    function executeTrade(sourceId, targetId, trade) {
+    function executeTrade(sourceId, targetId, trade, options) {
         if (!trade || typeof trade !== 'object') {
             return _fail('INVALID_TRADE', 'Trade data required');
         }
-
         var source = _queries.getHousehold(sourceId);
         var target = _queries.getHousehold(targetId);
         if (!source) return _fail('SOURCE_NOT_FOUND', 'Source household not found');
         if (!target) return _fail('TARGET_NOT_FOUND', 'Target household not found');
+
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var sourceGives = trade.sourceGives || {};
         var targetGives = trade.targetGives || {};
 
         var sourceResources = getHouseholdResources(sourceId);
         var targetResources = getHouseholdResources(targetId);
-        var sourceWealth = typeof source.wealth === 'number' ? source.wealth : 0;
-        var targetWealth = typeof target.wealth === 'number' ? target.wealth : 0;
+        var sourceWealth = _isFiniteNumber(source.wealth) ? source.wealth : 0;
+        var targetWealth = _isFiniteNumber(target.wealth) ? target.wealth : 0;
 
-        // Validate source can afford
+        // Validate both sides can afford what they're giving.
         if ((sourceGives.wealth || 0) > sourceWealth) {
-            return _fail('INSUFFICIENT_WEALTH',
-                'Source cannot afford wealth portion');
+            return _fail('INSUFFICIENT_WEALTH', 'Source cannot afford wealth portion');
         }
         if ((sourceGives.food || 0) > sourceResources.food) {
             return _fail('INSUFFICIENT_FOOD', 'Source lacks food');
@@ -893,11 +1063,8 @@
         if ((sourceGives.goods || 0) > sourceResources.goods) {
             return _fail('INSUFFICIENT_GOODS', 'Source lacks goods');
         }
-
-        // Validate target can afford
         if ((targetGives.wealth || 0) > targetWealth) {
-            return _fail('INSUFFICIENT_WEALTH',
-                'Target cannot afford wealth portion');
+            return _fail('INSUFFICIENT_WEALTH', 'Target cannot afford wealth portion');
         }
         if ((targetGives.food || 0) > targetResources.food) {
             return _fail('INSUFFICIENT_FOOD', 'Target lacks food');
@@ -909,9 +1076,7 @@
             return _fail('INSUFFICIENT_GOODS', 'Target lacks goods');
         }
 
-        var year = _getCurrentYearSafe();
-
-        // Snapshot source for rollback
+        // Snapshot the source for rollback.
         var sourceSnapshot = {
             wealth: sourceWealth,
             resources: {
@@ -921,14 +1086,13 @@
             }
         };
 
-        // Apply source
-        var sourceApply = _applyTradeSide(
+        // Apply source side.
+        var sourceResult = _applyTradeSide(
             sourceId,
             sourceWealth - (sourceGives.wealth || 0) + (targetGives.wealth || 0),
             {
                 food: sourceResources.food - (sourceGives.food || 0) + (targetGives.food || 0),
-                livestock: sourceResources.livestock - (sourceGives.livestock || 0) +
-                    (targetGives.livestock || 0),
+                livestock: sourceResources.livestock - (sourceGives.livestock || 0) + (targetGives.livestock || 0),
                 goods: sourceResources.goods - (sourceGives.goods || 0) + (targetGives.goods || 0)
             },
             {
@@ -937,22 +1101,22 @@
                 type: 'export',
                 gave: JSON.parse(JSON.stringify(sourceGives)),
                 received: JSON.parse(JSON.stringify(targetGives))
-            },
-            'householdTradeSource'
+            }
         );
-        if (!sourceApply.success) {
-            return _fail('SOURCE_UPDATE_FAILED',
-                sourceApply.reason || 'Failed to update source');
+        if (!sourceResult.success) {
+            return _fail(
+                'SOURCE_UPDATE_FAILED',
+                sourceResult.reason || 'Failed to update source'
+            );
         }
 
-        // Apply target
-        var targetApply = _applyTradeSide(
+        // Apply target side.
+        var targetResult = _applyTradeSide(
             targetId,
             targetWealth - (targetGives.wealth || 0) + (sourceGives.wealth || 0),
             {
                 food: targetResources.food - (targetGives.food || 0) + (sourceGives.food || 0),
-                livestock: targetResources.livestock - (targetGives.livestock || 0) +
-                    (sourceGives.livestock || 0),
+                livestock: targetResources.livestock - (targetGives.livestock || 0) + (sourceGives.livestock || 0),
                 goods: targetResources.goods - (targetGives.goods || 0) + (sourceGives.goods || 0)
             },
             {
@@ -961,11 +1125,10 @@
                 type: 'import',
                 gave: JSON.parse(JSON.stringify(targetGives)),
                 received: JSON.parse(JSON.stringify(sourceGives))
-            },
-            'householdTradeTarget'
+            }
         );
-        if (!targetApply.success) {
-            // Best-effort rollback of source
+        if (!targetResult.success) {
+            // Best-effort rollback of source.
             try {
                 _applyTradeSide(
                     sourceId,
@@ -976,20 +1139,22 @@
                         partnerId: targetId,
                         type: 'rollback',
                         gave: {},
-                        received: {}
-                    },
-                    'householdTradeRollback'
+                        received: {},
+                        reason: 'Target update failed'
+                    }
                 );
-            } catch (rollbackErr) {
+            } catch (e) {
                 if (typeof console !== 'undefined' && console.error) {
                     console.error(
                         'HouseholdEconomy.executeTrade: rollback failed',
-                        rollbackErr
+                        e
                     );
                 }
             }
-            return _fail('TARGET_UPDATE_FAILED',
-                targetApply.reason || 'Failed to update target');
+            return _fail(
+                'TARGET_UPDATE_FAILED',
+                targetResult.reason || 'Failed to update target'
+            );
         }
 
         return _ok({
@@ -1000,22 +1165,35 @@
     }
 
     /**
-     * Applies one side of a trade. Records the trade entry in economy.trades,
-     * updates wealth and resources. Commits and persists once.
+     * Applies one side of a trade. Builds a patch that sets wealth +
+     * resources and appends a trade history entry, then applies via
+     * _applyMutation (one commit, one persist per side).
      */
-    function _applyTradeSide(householdId, newWealth, newResources, tradeEntry, eventName) {
-        return _applyMutation(householdId, function(r) {
-            r.wealth = newWealth;
-            r.resources = newResources;
-
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            if (!Array.isArray(r.economy.trades)) r.economy.trades = [];
-            r.economy.trades.push(tradeEntry);
-            if (r.economy.trades.length > MAX_TRANSACTION_HISTORY) {
-                r.economy.trades = r.economy.trades.slice(-MAX_TRANSACTION_HISTORY);
+    function _applyTradeSide(householdId, newWealth, newResources, tradeEntry) {
+        return _applyMutation(householdId, function(record) {
+            var economy = _copyEconomy(record);
+            if (!Array.isArray(economy.trades)) economy.trades = [];
+            economy.trades.push(tradeEntry);
+            var cap = C.THRESHOLDS.MAX_TRANSACTION_HISTORY;
+            if (economy.trades.length > cap) {
+                economy.trades = economy.trades.slice(-cap);
             }
-        }, eventName, {
-            householdId: householdId,
+
+            // Overwrite resources wholesale — the caller computed the
+            // full new resource state. This matches the previous
+            // behaviour and is safe because the caller validated bounds.
+            var resourcesCopy = {
+                food: _isFiniteNumber(newResources.food) ? newResources.food : 0,
+                livestock: _isFiniteNumber(newResources.livestock) ? newResources.livestock : 0,
+                goods: _isFiniteNumber(newResources.goods) ? newResources.goods : 0
+            };
+
+            return {
+                wealth: newWealth,
+                resources: resourcesCopy,
+                economy: economy
+            };
+        }, {
             partnerId: tradeEntry.partnerId,
             type: tradeEntry.type
         });
@@ -1023,9 +1201,13 @@
 
     function getTradePartners(householdId) {
         var state = window.HouseholdState;
-        if (!state || !state._internal) return [];
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return [];
+        }
         var record = state._internal.getHouseholdRecord(householdId);
-        if (!record || !record.economy || !Array.isArray(record.economy.trades)) {
+        if (!record || !record.economy
+            || !Array.isArray(record.economy.trades)) {
             return [];
         }
         var seen = {};
@@ -1042,95 +1224,222 @@
     }
 
     // =========================================================================
-    // 9. ECONOMIC EVENTS
+    // 8. ECONOMIC EVENTS
     // =========================================================================
+    //
+    // The catalog lives in household-constants.js. The delta calculation
+    // lives in HouseholdConstants.getEconomicEventDelta(eventId, randomFn).
+    // This module only:
+    //   - validates the event id
+    //   - picks a random event weighted by chance (applyRandomEconomicEvent)
+    //   - dispatches to updateHouseholdWealth + recordEvent for the actual
+    //     mutation
+    //
+    // All randomness routes through window.random (or options.random).
 
-    function triggerEconomicEvent(householdId, eventTypeId) {
-        var event = ECONOMIC_EVENTS[eventTypeId];
-        if (!event) return _fail('INVALID_EVENT', 'Unknown economic event');
+    function _resolveRandom(options) {
+        if (options && typeof options.random === 'function') {
+            return options.random;
+        }
+        return _random;
+    }
 
-        var delta = typeof event.delta === 'function'
-            ? event.delta()
-            : (event.delta || 0);
+    /**
+     * Fires a specific economic event.
+     *
+     * Single logical operation: the wealth change and the event-log entry
+     * are applied in ONE patch (so a mid-operation failure cannot leave
+     * wealth changed but the event unrecorded), then committed and
+     * persisted once.
+     *
+     * @param {string} householdId
+     * @param {string} eventTypeId
+     * @param {Object} [options] - { year, random }
+     * @returns {{success, data?, code?, reason?}}
+     */
+    function triggerEconomicEvent(householdId, eventTypeId, options) {
+        var event = C.ECONOMIC_EVENTS[eventTypeId];
+        if (!event) {
+            return _fail('INVALID_EVENT', 'Unknown economic event "' +
+                String(eventTypeId) + '"');
+        }
+
+        var h = _queries.getHousehold(householdId);
+        if (!h) return _fail('NOT_FOUND', 'Household not found');
+
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        var randomFn = _resolveRandom(options);
+        var delta;
+        try {
+            delta = C.getEconomicEventDelta(eventTypeId, randomFn);
+        } catch (e) {
+            return _fail(
+                'INVALID_DELTA',
+                (e && e.message) ? e.message : 'Failed to compute event delta'
+            );
+        }
+
         if (delta === 0) {
-            return _ok({ householdId: householdId, delta: 0, noChange: true });
+            return _ok({
+                householdId: householdId,
+                event: event,
+                delta: 0,
+                newWealth: _isFiniteNumber(h.wealth) ? h.wealth : 0,
+                noChange: true
+            });
         }
 
-        var wealthResult = updateHouseholdWealth(householdId, delta, event.name);
-        if (!wealthResult.success) return wealthResult;
+        var oldWealth = _isFiniteNumber(h.wealth) ? h.wealth : 0;
 
-        // Separate logical operation: record the event. This is a second
-        // commit + persist. Acceptable: an event is a discrete domain
-        // action, not a batch.
-        _commands.recordEvent(householdId, {
-            year: _getCurrentYearSafe(),
-            type: 'economic_event',
-            message: event.name,
-            details: event.description,
-            amount: delta
-        });
-        var persistResult = _commands.persist();
-        if (!persistResult.success) {
-            return _fail('PERSIST_FAILED',
-                persistResult.reason || 'Failed to persist event');
-        }
+        return _applyMutation(householdId, function(record) {
+            var currentWealth = _isFiniteNumber(record.wealth) ? record.wealth : 0;
+            var newWealth = currentWealth + delta;
 
-        return _ok({
-            householdId: householdId,
+            var economy = _copyEconomy(record);
+            _pushTransaction(economy, {
+                year: year,
+                type: 'economic_event',
+                eventId: event.id,
+                eventName: event.name,
+                amount: delta,
+                oldWealth: currentWealth,
+                newWealth: newWealth,
+                timestamp: Date.now()
+            });
+
+            // Also append to eventLog so it shows in the UI history.
+            var eventLog = Array.isArray(record.eventLog)
+                ? record.eventLog.slice()
+                : [];
+            eventLog.push({
+                year: year,
+                type: 'economic_event',
+                message: event.name,
+                details: event.description,
+                amount: delta,
+                timestamp: Date.now()
+            });
+            var cap = C.THRESHOLDS.MAX_EVENT_LOG;
+            if (eventLog.length > cap) eventLog = eventLog.slice(-cap);
+
+            return {
+                wealth: newWealth,
+                economy: economy,
+                eventLog: eventLog
+            };
+        }, {
             event: event,
             delta: delta,
-            newWealth: wealthResult.data.newWealth
+            newWealth: oldWealth + delta,
+            year: year
         });
     }
 
-    function applyRandomEconomicEvent(householdId) {
-        var eventIds = Object.keys(ECONOMIC_EVENTS);
+    /**
+     * Rolls a weighted random event and triggers it if one fires.
+     *
+     * The chance weights come from the catalog. Only events whose chance
+     * is > 0 participate. The roll is a single draw against the sum of
+     * weights; if the draw exceeds the sum, no event fires (the "nothing
+     * happens" probability is 1 - sum(chances)).
+     *
+     * @param {string} householdId
+     * @param {Object} [options] - { year, random }
+     */
+    function applyRandomEconomicEvent(householdId, options) {
+        options = options || {};
+
+        var h = _queries.getHousehold(householdId);
+        if (!h) return _fail('NOT_FOUND', 'Household not found');
+
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        var randomFn = _resolveRandom(options);
+
+        // Build weighted list from catalog.
+        var weights = [];
         var totalChance = 0;
-        var weighted = [];
-        for (var i = 0; i < eventIds.length; i++) {
-            var e = ECONOMIC_EVENTS[eventIds[i]];
-            var c = typeof e.chance === 'number' ? e.chance : 0.05;
-            weighted.push({ id: eventIds[i], chance: c });
-            totalChance += c;
+        for (var i = 0; i < C.ECONOMIC_EVENT_IDS.length; i++) {
+            var id = C.ECONOMIC_EVENT_IDS[i];
+            var event = C.ECONOMIC_EVENTS[id];
+            var chance = _isFiniteNumber(event.chance) ? event.chance : 0;
+            if (chance > 0) {
+                weights.push({ id: id, chance: chance });
+                totalChance += chance;
+            }
         }
 
-        var roll = Math.random();
-        if (roll > totalChance) {
+        if (totalChance <= 0) {
             return _ok({ householdId: householdId, triggered: false });
         }
 
+        var roll = randomFn();
+        if (roll >= totalChance) {
+            return _ok({
+                householdId: householdId,
+                triggered: false,
+                roll: roll,
+                totalChance: totalChance
+            });
+        }
+
         var cumulative = 0;
-        for (var j = 0; j < weighted.length; j++) {
-            cumulative += weighted[j].chance;
-            if (roll <= cumulative) {
-                return triggerEconomicEvent(householdId, weighted[j].id);
+        for (var j = 0; j < weights.length; j++) {
+            cumulative += weights[j].chance;
+            if (roll < cumulative) {
+                var triggerResult = triggerEconomicEvent(householdId, weights[j].id, {
+                    year: year,
+                    random: randomFn
+                });
+                if (!triggerResult.success) return triggerResult;
+                return _ok(Object.assign({ triggered: true }, triggerResult.data));
             }
         }
+
+        // Floating-point safety net; should not be reachable.
         return _ok({ householdId: householdId, triggered: false });
     }
 
     // =========================================================================
-    // 10. ANNUAL PROCESSING
-    // =========================================================================
-    //
-    // Single mutation: wealth += netChange, append events, update status
-    // if bankrupt. One commit, one persist.
+    // 9. ANNUAL PROCESSING
     // =========================================================================
 
-    function processAnnualEconomy(householdId) {
+    /**
+     * Processes one year of economy for a household.
+     *
+     * Single patch:
+     *   - wealth += net change
+     *   - append annual_economy transaction
+     *   - append event-log entries for enterprise profit/loss, rent
+     *     income, rent expense (year-tagged)
+     *   - flip status to 'bankrupt' if the new wealth crosses the
+     *     threshold
+     *
+     * One commit, one persist.
+     *
+     * @param {string} householdId
+     * @param {Object} [options] - { year }
+     */
+    function processAnnualEconomy(householdId, options) {
         var h = _queries.getHousehold(householdId);
         if (!h) return _fail('NOT_FOUND', 'Household not found');
 
-        var year = _getCurrentYearSafe();
-        var oldWealth = typeof h.wealth === 'number' ? h.wealth : 0;
-        var income = calculateAnnualIncome(householdId);
-        var expenses = calculateAnnualExpenses(householdId);
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
+
+        var oldWealth = _isFiniteNumber(h.wealth) ? h.wealth : 0;
+        var income = calculateAnnualIncome(householdId, { year: year });
+        var expenses = calculateAnnualExpenses(householdId, { year: year });
         var netChange = income - expenses;
         var newWealth = oldWealth + netChange;
-        var nowBankrupt = newWealth < BANKRUPTCY_THRESHOLD;
+        var nowBankrupt = R.evaluateBankruptcy(newWealth);
 
         var rentIncome = calculateRentIncome(householdId);
         var rentExpense = calculateRentExpenses(householdId);
+
         var enterpriseSummaries = [];
         try {
             enterpriseSummaries = _queries.getHouseholdEnterpriseSummaries(householdId);
@@ -1138,38 +1447,37 @@
             enterpriseSummaries = [];
         }
 
-        // Single mutation + commit + persist
-        var mutResult = _applyMutation(householdId, function(r) {
-            r.wealth = newWealth;
+        return _applyMutation(householdId, function(record) {
+            var currentWealth = _isFiniteNumber(record.wealth) ? record.wealth : 0;
+            var computedWealth = currentWealth + netChange;
 
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            if (!Array.isArray(r.economy.transactions)) r.economy.transactions = [];
-
-            r.economy.transactions.push({
+            var economy = _copyEconomy(record);
+            _pushTransaction(economy, {
                 year: year,
                 type: 'annual_economy',
                 amount: netChange,
                 income: income,
                 expenses: expenses,
-                oldWealth: oldWealth,
-                newWealth: newWealth
+                oldWealth: currentWealth,
+                newWealth: computedWealth,
+                timestamp: Date.now()
             });
-            if (r.economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                r.economy.transactions =
-                    r.economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
 
-            // Append economic events for this year
-            if (!Array.isArray(r.eventLog)) r.eventLog = [];
+            // Append event-log entries.
+            var eventLog = Array.isArray(record.eventLog)
+                ? record.eventLog.slice()
+                : [];
 
             for (var i = 0; i < enterpriseSummaries.length; i++) {
                 var s = enterpriseSummaries[i];
-                if (typeof s.annualProfit !== 'number' || s.annualProfit === 0) {
+                if (!_isFiniteNumber(s.annualProfit) || s.annualProfit === 0) {
                     continue;
                 }
-                r.eventLog.push({
+                eventLog.push({
                     year: year,
-                    type: s.annualProfit > 0 ? 'enterprise_profit' : 'enterprise_loss',
+                    type: s.annualProfit > 0
+                        ? 'enterprise_profit'
+                        : 'enterprise_loss',
                     amount: Math.abs(s.annualProfit),
                     details: s.name,
                     timestamp: Date.now()
@@ -1177,7 +1485,7 @@
             }
 
             if (rentIncome > 0) {
-                r.eventLog.push({
+                eventLog.push({
                     year: year,
                     type: 'rent_income',
                     amount: rentIncome,
@@ -1186,7 +1494,7 @@
                 });
             }
             if (rentExpense > 0) {
-                r.eventLog.push({
+                eventLog.push({
                     year: year,
                     type: 'rent_expense',
                     amount: rentExpense,
@@ -1195,31 +1503,26 @@
                 });
             }
 
-            if (r.eventLog.length > MAX_EVENT_LOG) {
-                r.eventLog = r.eventLog.slice(-MAX_EVENT_LOG);
+            var eventCap = C.THRESHOLDS.MAX_EVENT_LOG;
+            if (eventLog.length > eventCap) {
+                eventLog = eventLog.slice(-eventCap);
             }
 
-            // Status transition
-            if (nowBankrupt && r.status !== 'bankrupt') {
-                r.status = 'bankrupt';
-            } else if (!nowBankrupt && r.status === 'bankrupt' && newWealth > 10) {
-                r.status = 'active';
+            // Status transition.
+            var patch = {
+                wealth: computedWealth,
+                economy: economy,
+                eventLog: eventLog
+            };
+
+            if (nowBankrupt && record.status !== 'bankrupt') {
+                patch.status = 'bankrupt';
+            } else if (!nowBankrupt && record.status === 'bankrupt' && computedWealth > 10) {
+                patch.status = 'active';
             }
-        }, 'householdAnnualEconomyProcessed', {
-            householdId: householdId,
-            year: year,
-            oldWealth: oldWealth,
-            newWealth: newWealth,
-            income: income,
-            expenses: expenses,
-            netChange: netChange,
-            bankrupt: nowBankrupt
-        });
 
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
+            return patch;
+        }, {
             householdName: h.name || 'Unnamed',
             year: year,
             oldWealth: oldWealth,
@@ -1234,16 +1537,20 @@
     }
 
     /**
-     * Consumes annual food based on member count.
-     *
-     * Single mutation: subtract food, fall back to livestock, fall back to
-     * emergency wealth purchase. One commit, one persist.
+     * Consumes annual food based on member count. Falls back to livestock,
+     * then emergency wealth purchase. One commit, one persist.
      */
-    function consumeAnnualFood(householdId) {
-        var record = window.HouseholdState && window.HouseholdState._internal
-            ? window.HouseholdState._internal.getHouseholdRecord(householdId)
-            : null;
+    function consumeAnnualFood(householdId, options) {
+        var state = window.HouseholdState;
+        if (!state || !state._internal
+            || typeof state._internal.getHouseholdRecord !== 'function') {
+            return _fail('STATE_UNAVAILABLE', 'HouseholdState is not available');
+        }
+        var record = state._internal.getHouseholdRecord(householdId);
         if (!record) return _fail('NOT_FOUND', 'Household not found');
+
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         var memberCount = Array.isArray(record.members) ? record.members.length : 0;
         var foodNeeded = memberCount * 2;
@@ -1251,7 +1558,6 @@
         var resources = getHouseholdResources(householdId);
         var availableFood = resources.food;
         var availableLivestock = resources.livestock;
-        var oldWealth = typeof record.wealth === 'number' ? record.wealth : 0;
 
         var foodUsed = 0;
         var livestockUsed = 0;
@@ -1269,88 +1575,72 @@
                 livestockUsed = Math.min(availableLivestock, livestockNeeded);
                 deficit -= livestockUsed * 3;
             }
-
             if (deficit > 0) {
                 emergencyCost = deficit * 0.5;
             }
         }
 
-        var newFood = Math.max(0, availableFood - foodUsed);
-        var newLivestock = Math.max(0, availableLivestock - livestockUsed);
-        var newWealth = oldWealth - emergencyCost;
+        var computedNewFood = Math.max(0, availableFood - foodUsed);
+        var computedNewLivestock = Math.max(0, availableLivestock - livestockUsed);
 
-        var mutResult = _applyMutation(householdId, function(r) {
-            if (!r.resources || typeof r.resources !== 'object') {
-                r.resources = { food: 0, livestock: 0, goods: 0 };
-            }
-            r.resources.food = newFood;
-            r.resources.livestock = newLivestock;
-            r.wealth = newWealth;
+        return _applyMutation(householdId, function(r) {
+            var currentWealth = _isFiniteNumber(r.wealth) ? r.wealth : 0;
+            var newWealth = currentWealth - emergencyCost;
 
-            if (!r.economy || typeof r.economy !== 'object') r.economy = {};
-            if (!Array.isArray(r.economy.transactions)) r.economy.transactions = [];
+            var currentResources = (r.resources && typeof r.resources === 'object')
+                ? Object.assign({}, r.resources)
+                : { food: 0, livestock: 0, goods: 0 };
+            currentResources.food = computedNewFood;
+            currentResources.livestock = computedNewLivestock;
 
-            r.economy.transactions.push({
-                year: _getCurrentYearSafe(),
+            var economy = _copyEconomy(r);
+            _pushTransaction(economy, {
+                year: year,
                 type: 'food_consumption',
                 foodUsed: foodUsed,
                 livestockUsed: livestockUsed,
                 emergencyCost: emergencyCost,
-                oldWealth: oldWealth,
-                newWealth: newWealth
+                oldWealth: currentWealth,
+                newWealth: newWealth,
+                timestamp: Date.now()
             });
-            if (r.economy.transactions.length > MAX_TRANSACTION_HISTORY) {
-                r.economy.transactions =
-                    r.economy.transactions.slice(-MAX_TRANSACTION_HISTORY);
-            }
-        }, 'householdFoodConsumed', {
-            householdId: householdId,
-            foodUsed: foodUsed,
-            livestockUsed: livestockUsed,
-            emergencyCost: emergencyCost,
-            deficit: deficit > 0
-        });
 
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
+            return {
+                wealth: newWealth,
+                resources: currentResources,
+                economy: economy
+            };
+        }, {
             foodUsed: foodUsed,
             livestockUsed: livestockUsed,
             emergencyCost: emergencyCost,
             insufficient: deficit > 0,
-            newFood: newFood,
-            newLivestock: newLivestock,
-            newWealth: newWealth
+            newFood: computedNewFood,
+            newLivestock: computedNewLivestock
         });
     }
 
     // =========================================================================
-    // 11. BANKRUPTCY
+    // 10. BANKRUPTCY
     // =========================================================================
 
-    function handleBankruptcy(householdId) {
+    function handleBankruptcy(householdId, options) {
         if (!isBankrupt(householdId)) {
             return _fail('NOT_BANKRUPT', 'Household is not bankrupt');
         }
 
-        var record = window.HouseholdState && window.HouseholdState._internal
-            ? window.HouseholdState._internal.getHouseholdRecord(householdId)
-            : null;
-        if (!record) return _fail('NOT_FOUND', 'Household not found');
+        var year = _effectiveYear(options);
+        if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
-        var oldWealth = typeof record.wealth === 'number' ? record.wealth : 0;
-        var oldDebt = typeof record.debt === 'number' ? record.debt : 0;
-        var year = _getCurrentYearSafe();
+        var h = _queries.getHousehold(householdId);
+        var oldWealth = h && _isFiniteNumber(h.wealth) ? h.wealth : 0;
+        var oldDebt = h && _isFiniteNumber(h.debt) ? h.debt : 0;
 
-        // Single mutation: reset wealth + debt, set status, record event
-        var mutResult = _applyMutation(householdId, function(r) {
-            r.wealth = 0;
-            r.debt = 0;
-            r.status = 'bankrupt';
-
-            if (!r.eventLog) r.eventLog = [];
-            r.eventLog.push({
+        return _applyMutation(householdId, function(record) {
+            var eventLog = Array.isArray(record.eventLog)
+                ? record.eventLog.slice()
+                : [];
+            eventLog.push({
                 year: year,
                 type: 'status_changed',
                 from: record.status || 'active',
@@ -1358,20 +1648,16 @@
                 reason: 'Bankruptcy processed - debt forgiven',
                 timestamp: Date.now()
             });
-            if (r.eventLog.length > MAX_EVENT_LOG) {
-                r.eventLog = r.eventLog.slice(-MAX_EVENT_LOG);
-            }
-        }, 'householdBankruptcyProcessed', {
-            householdId: householdId,
-            year: year,
-            oldWealth: oldWealth,
-            oldDebt: oldDebt
-        });
+            var cap = C.THRESHOLDS.MAX_EVENT_LOG;
+            if (eventLog.length > cap) eventLog = eventLog.slice(-cap);
 
-        if (!mutResult.success) return mutResult;
-
-        return _ok({
-            householdId: householdId,
+            return {
+                wealth: 0,
+                debt: 0,
+                status: 'bankrupt',
+                eventLog: eventLog
+            };
+        }, {
             year: year,
             oldWealth: oldWealth,
             oldDebt: oldDebt,
@@ -1381,18 +1667,28 @@
     }
 
     // =========================================================================
+    // 11. CONSTANT / RULE RE-EXPORTS (compatibility surface)
+    // =========================================================================
+    //
+    // The prior module exposed ECONOMIC_TIERS, INCOME_SOURCES,
+    // EXPENSE_CATEGORIES, ECONOMIC_EVENTS, BANKRUPTCY_THRESHOLD directly
+    // on window.HouseholdEconomy. Those re-exports are preserved so
+    // existing callers don't break — but they point at the SAME frozen
+    // objects as HouseholdConstants, so there is no divergence risk.
+
+    // =========================================================================
     // 12. EXPORTS
     // =========================================================================
 
     window.HouseholdEconomy = {
-        // Constants
-        ECONOMIC_TIERS: ECONOMIC_TIERS,
-        INCOME_SOURCES: INCOME_SOURCES,
-        EXPENSE_CATEGORIES: EXPENSE_CATEGORIES,
-        ECONOMIC_EVENTS: ECONOMIC_EVENTS,
-        BANKRUPTCY_THRESHOLD: BANKRUPTCY_THRESHOLD,
+        // ===== Constant re-exports (compatibility surface) =====
+        ECONOMIC_TIERS: C.ECONOMIC_TIERS,
+        INCOME_SOURCES: C.INCOME_SOURCES,
+        EXPENSE_CATEGORIES: C.EXPENSE_CATEGORIES,
+        ECONOMIC_EVENTS: C.ECONOMIC_EVENTS,
+        BANKRUPTCY_THRESHOLD: C.THRESHOLDS.BANKRUPTCY,
 
-        // Pure calculations
+        // ===== Pure calculations =====
         getEconomicTier: getEconomicTier,
         getHouseholdWealth: getHouseholdWealth,
         getHouseholdDebt: getHouseholdDebt,
@@ -1405,12 +1701,12 @@
         computeNetAnnualChange: computeNetAnnualChange,
         isBankrupt: isBankrupt,
 
-        // Wealth / debt / resource mutations
+        // ===== Wealth / debt / resource mutations =====
         updateHouseholdWealth: updateHouseholdWealth,
         modifyHouseholdDebt: modifyHouseholdDebt,
         updateHouseholdResources: updateHouseholdResources,
 
-        // Salary / tuition / school
+        // ===== Salary / tuition / school =====
         receiveSalary: receiveSalary,
         getSalaryIncome: getSalaryIncome,
         getTotalSalariesReceived: getTotalSalariesReceived,
@@ -1419,19 +1715,19 @@
         receiveSchoolProfit: receiveSchoolProfit,
         getSchoolProfits: getSchoolProfits,
 
-        // Trade
+        // ===== Trade =====
         executeTrade: executeTrade,
         getTradePartners: getTradePartners,
 
-        // Events
+        // ===== Events =====
         triggerEconomicEvent: triggerEconomicEvent,
         applyRandomEconomicEvent: applyRandomEconomicEvent,
 
-        // Annual processing
+        // ===== Annual processing =====
         processAnnualEconomy: processAnnualEconomy,
         consumeAnnualFood: consumeAnnualFood,
 
-        // Bankruptcy
+        // ===== Bankruptcy =====
         handleBankruptcy: handleBankruptcy
     };
 
