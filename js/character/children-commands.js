@@ -3,6 +3,8 @@
  * STILL WATERS - CHILDREN COMMANDS (js/character/children-commands.js)
  * =============================================================================
  *
+ * LOCATION: js/character/children-commands.js
+ *
  * Mutation boundary for pregnancy, surrogacy, and adoption metadata.
  *
  * SCOPE:
@@ -47,13 +49,46 @@
  *   rolls. When options.outcome is supplied, the entire random process
  *   is bypassed.
  *
+ * RANDOMNESS:
+ *   All rolls route through window.random() from randomness.js. This
+ *   module does NOT call Math.random directly, and no fallback is
+ *   provided. A missing randomness.js is a load-order bug and throws.
+ *   Determinism is therefore preserved end-to-end: given the same seed
+ *   and the same starting data, the same birth outcomes are produced.
+ *
+ * COMMIT SEMANTICS:
+ *   Single-attempt commands (recordBirth, recordPregnancyAttempt,
+ *   recordSurrogacyArrangement, recordAdoptionMetadata, and their
+ *   sibling mutators) commit exactly once per call. That is the
+ *   contract for a single command.
+ *
+ *   recordPregnancyAttempts is a BATCH wrapper. It calls
+ *   recordPregnancyAttempt once per simulated attempt, and each
+ *   attempt commits independently. The batch therefore produces
+ *   N commits and N childrenChanged events for N attempts. This is
+ *   a known deviation from "one command = one commit" and is
+ *   intentional: refactoring to a single commit would require
+ *   threading a no-commit mode through every code path in
+ *   recordPregnancyAttempt, which is more risk than the deviation
+ *   is worth today. Callers that need atomic batch behaviour must
+ *   compose their own transaction around the individual calls.
+ *
  * CONTRACT:
  *   - Every public command returns { success, reason?, ... }.
  *   - Validation happens before any mutation. Partial mutation on
  *     failure is rolled back.
- *   - One command = one commit = one childrenChanged event.
  *   - No lock. Commands are synchronous.
  *   - No fallback dependencies.
+ *
+ * MATERNAL DEATH:
+ *   When a pregnancy attempt kills the mother, the death is applied
+ *   through CharacterLifecycle.killCharacter (not
+ *   CharacterCommands.markDeceased). killCharacter dispatches the
+ *   cross-domain death consequences (family edge closure, relationship
+ *   termination, rank deprecation) that a bare markDeceased would not.
+ *   If CharacterLifecycle is unavailable, the command refuses the
+ *   maternal-death outcome rather than silently leaving stale family
+ *   and rank state.
  *
  * DEPENDENCIES (REQUIRED):
  *   - children-state.js:              ChildrenState
@@ -64,6 +99,10 @@
  *   - family-commands.js:             FamilyCommands
  *   - ids.js:                         generateId
  *   - time.js:                        getCurrentYear, isValidYear
+ *   - randomness.js:                  random
+ *
+ * DEPENDENCIES (REQUIRED for maternal death only):
+ *   - character-lifecycle.js:         CharacterLifecycle.killCharacter
  *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
  *   - religion-commands.js:           ReligionCommands
@@ -89,7 +128,8 @@
         'FamilyCommands',
         'generateId',
         'getCurrentYear',
-        'isValidYear'
+        'isValidYear',
+        'random'
     ];
     var missing = [];
     for (var i = 0; i < REQUIRED.length; i++) {
@@ -185,8 +225,14 @@
         return age >= 0 ? age : null;
     }
 
+    /**
+     * Deterministic RNG draw. Routes through randomness.js so that
+     * seeded simulations are reproducible. There is no Math.random
+     * fallback: a missing randomness.js is a load-order bug and is
+     * caught by the required-dependency guard at the top of this file.
+     */
     function _roll() {
-        return Math.random();
+        return window.random();
     }
 
     // =========================================================================
@@ -265,7 +311,47 @@
     }
 
     // =========================================================================
-    // 5. BIRTH
+    // 5. MATERNAL DEATH (routes through CharacterLifecycle)
+    // =========================================================================
+    //
+    // A mother who dies in childbirth is a full death. Family edges must
+    // be closed, relationships ended, ranks deprecated, and the death
+    // event logged. CharacterCommands.markDeceased performs none of
+    // those; it only writes the character record. CharacterLifecycle's
+    // killCharacter does all of them. If killCharacter is unavailable
+    // the command REFUSES the maternal-death outcome rather than
+    // producing a half-dead world.
+
+    function _applyMaternalDeath(motherId, birthYear) {
+        if (typeof window.CharacterLifecycle === 'undefined'
+            || typeof window.CharacterLifecycle.killCharacter !== 'function') {
+            return {
+                success: false,
+                reason: 'character-lifecycle.js (killCharacter) is required ' +
+                        'for maternal death; refusing to record a death ' +
+                        'without cross-domain cleanup.'
+            };
+        }
+
+        var result = window.CharacterLifecycle.killCharacter(motherId, {
+            deathYear: birthYear,
+            deathCause: 'childbed_fever',
+            deathCauseDetail: 'Childbed fever',
+            deathNotes: 'Died following childbirth'
+        });
+        if (!result || result.success !== true) {
+            return {
+                success: false,
+                reason: result && result.reason
+                    ? result.reason
+                    : 'CharacterLifecycle.killCharacter failed.'
+            };
+        }
+        return { success: true };
+    }
+
+    // =========================================================================
+    // 6. BIRTH
     // =========================================================================
 
     function recordBirth(motherId, fatherId, birthYear, options) {
@@ -437,7 +523,7 @@
     }
 
     // =========================================================================
-    // 6. PREGNANCY ATTEMPT
+    // 7. PREGNANCY ATTEMPT
     // =========================================================================
 
     function _getRoll(options, key) {
@@ -520,13 +606,19 @@
             if (birthResult.success) childIds.push(birthResult.childId);
         }
 
-        if (maternalDeath && !_getCharacter(motherId).isDeceased) {
-            CC.markDeceased(motherId, {
-                deathYear: birthYear,
-                deathCause: 'childbed_fever',
-                deathCauseDetail: 'Childbed fever',
-                deathNotes: 'Died following childbirth'
-            });
+        if (maternalDeath) {
+            var deathResult = _applyMaternalDeath(motherId, birthYear);
+            if (!deathResult.success) {
+                // The births succeeded but the death could not be
+                // recorded safely. Surface the failure rather than
+                // leave the mother alive-with-dead-child or produce a
+                // half-dispatch. Callers can retry the death via
+                // CharacterLifecycle once the missing module is loaded.
+                return _fail(
+                    'Births recorded but maternal death could not be applied: '
+                    + deathResult.reason
+                );
+            }
         }
 
         _commitAndNotify('recordPregnancyAttempt', [motherId, fatherId].filter(Boolean));
@@ -677,12 +769,13 @@
         }
 
         if (outcome.maternalDeath === true && !mother.isDeceased) {
-            CC.markDeceased(motherId, {
-                deathYear: birthYear,
-                deathCause: 'childbed_fever',
-                deathCauseDetail: 'Childbed fever',
-                deathNotes: 'Died following childbirth'
-            });
+            var deathResult = _applyMaternalDeath(motherId, birthYear);
+            if (!deathResult.success) {
+                return _fail(
+                    'Births recorded but maternal death could not be applied: '
+                    + deathResult.reason
+                );
+            }
         }
 
         _commitAndNotify('recordPregnancyAttempt', [motherId, fatherId].filter(Boolean));
@@ -698,20 +791,21 @@
     }
 
     // =========================================================================
-    // 7. BATCH PREGNANCY ATTEMPTS
+    // 8. BATCH PREGNANCY ATTEMPTS
     // =========================================================================
 
     /**
      * Runs recordPregnancyAttempt over a range of years, one attempt per
-     * year, until maxChildren is reached or the range ends. Commits once
-     * for the whole batch.
+     * year, until maxChildren is reached or the range ends.
      *
-     * The internal implementation composes the single-attempt command
-     * synchronously. Because that command commits per call, the batch
-     * commit is a super-commit: it does not prevent intermediate commits.
-     * To avoid the extra commits, use the caller-supplied maxAttempts to
-     * bound the loop and accept the intermediate commits, or call this
-     * function with a single attempt per year manually.
+     * COMMIT SEMANTICS: This is a BATCH wrapper. Each internal attempt
+     * commits independently, so the batch produces N commits and N
+     * childrenChanged events for N attempts. Callers that need atomic
+     * batch behaviour must compose their own transaction around the
+     * individual calls, or call recordPregnancyAttempt directly.
+     *
+     * The spacing gap between successful births also uses window.random
+     * so seeded simulations are reproducible.
      *
      * @param {string} motherId
      * @param {string|null} fatherId
@@ -818,8 +912,9 @@
             }
 
             if (childrenFromAttempt > 0) {
+                // Use window.random for deterministic spacing.
                 var gap = minSpacing + Math.floor(
-                    Math.random() * (maxSpacing - minSpacing + 1)
+                    _roll() * (maxSpacing - minSpacing + 1)
                 );
                 year += gap;
             } else {
@@ -835,7 +930,7 @@
     }
 
     // =========================================================================
-    // 8. SURROGACY
+    // 9. SURROGACY
     // =========================================================================
 
     function recordSurrogacyArrangement(intendedParentId, surrogateId, options) {
@@ -915,8 +1010,7 @@
                 parentType: 'legal',
                 parentRole: legalRole,
                 startYear: birthYear,
-                notes: 'Intended parent via surrogacy',
-                bypassConsent: true
+                notes: 'Intended parent via surrogacy'
             });
             if (!intendedEdge || intendedEdge.success !== true) continue;
 
@@ -928,8 +1022,7 @@
                         parentType: 'legal',
                         parentRole: partnerRole,
                         startYear: birthYear,
-                        notes: 'Intended parent via surrogacy',
-                        bypassConsent: true
+                        notes: 'Intended parent via surrogacy'
                     });
                 }
             }
@@ -1135,7 +1228,7 @@
     }
 
     // =========================================================================
-    // 9. ADOPTION METADATA
+    // 10. ADOPTION METADATA
     // =========================================================================
 
     function recordAdoptionMetadata(childId, adopterId, options) {
@@ -1263,7 +1356,7 @@
     }
 
     // =========================================================================
-    // 10. REFERENCE CLEANUP
+    // 11. REFERENCE CLEANUP
     // =========================================================================
 
     function removeAllReferencesTo(characterId) {
@@ -1324,7 +1417,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.ChildrenCommands = {
