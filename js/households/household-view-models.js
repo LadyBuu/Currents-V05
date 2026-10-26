@@ -3,7 +3,7 @@
  * STILL WATERS - HOUSEHOLD VIEW MODELS (household-view-models.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-view-models.js
+ * LOCATION: js/households/household-view-models.js
  *
  * PURPOSE
  * -------
@@ -18,35 +18,67 @@
  *   - Not queries. Semantic reads stay in household-queries.js.
  *   - Not rules. Policy stays in household-rules.js.
  *   - Not state. Nothing is persisted.
+ *   - Not constants. Catalog values (ECONOMIC_TIERS, RESIDENCE_TYPES, ...)
+ *     come from household-constants.js. This module wraps them for form
+ *     use; it does not re-declare their values.
  *
  * DESIGN NOTES
  * ------------
  *   - Constants are frozen. Mutating them throws in strict mode.
  *   - Shaping functions are pure: inputs → output, no side effects.
- *   - Icons route through `_getIcon` — no emoji, no ASCII art.
- *   - Returned strings are *already escaped* by the caller. This module
- *     produces HTML-free values and objects. Escaping stays in the modals.
- *   - Where the caller already has a current value (e.g. current status),
- *     the helper accepts it as a parameter and returns an `options` string
- *     with the current value selected.
+ *   - Icons route through `window.Icons` — no emoji, no ASCII art.
+ *   - Returned strings are already escaped where they come from data.
+ *     This module produces HTML-safe values and objects. Escaping of
+ *     user-supplied strings stays in the modals (via
+ *     HouseholdModals.esc).
  *
- * CONSUMERS
- * ---------
- *   modals-household.js           — default wealth/reputation, status options,
- *                                   status badge, wealth color
- *   modals-household-economy.js   — net change color
- *   modals-household-staff.js     — DEFAULT_SKILL_LEVEL
- *   modals-residence.js           — vacancy reasons, demolition reasons,
- *                                   initial built year
- *   modals-residence-rental.js    — initial rent, rental end reasons
- *   modals-residence-staff.js     — DEFAULT_SKILL_LEVEL
- *   household-ui-list.js          — status badge, member badge
+ * SURFACE (grouped)
+ * -----------------
+ *   FORM DEFAULTS
+ *     DEFAULT_SKILL_LEVEL, DEFAULT_INITIAL_WEALTH,
+ *     DEFAULT_INITIAL_REPUTATION, DEFAULT_INITIAL_RENT,
+ *     DEFAULT_UNIT_COUNT, DEFAULT_MAX_UNITS,
+ *     resolveInitialBuiltYear(currentYear)
+ *
+ *   OPTION LISTS (return <option> inner HTML)
+ *     getHouseholdStatusOptions(current)
+ *     getHouseholdFilterStatusOptions(current, counts)
+ *     getVacancyReasonOptions(current)
+ *     getRentalEndReasonOptions(current)
+ *     getDemolitionReasonOptions(current)
+ *     getResidenceConditionOptions(current)
+ *     getResidenceTypeOptions(current)
+ *
+ *   STATUS BADGES
+ *     getStatusBadge(status)      -> { label, color, icon }
+ *     getMemberBadge(status)      -> { text, color } | null
+ *
+ *   COLOR HELPERS
+ *     getWealthColor(wealth)
+ *     getDebtColor(debt)
+ *     getNetChangeColor(netChange)
+ *     getProfitColor(profit)
+ *     getUnitOccupancyColor(status)
+ *
+ *   LABEL HELPERS
+ *     getViewModeLabel(mode)
+ *     getUnitStatusLabel(unit)
+ *     getResidenceStatusLabel(residence)
+ *
+ * DEPENDENCIES
+ * ------------
+ *   - household-constants.js (OPTIONAL — falls back to inline defaults
+ *     that match the current constants catalog exactly, so a missing
+ *     constants module does not break rendering. New code should always
+ *     prefer the constants module; the inline defaults exist so this
+ *     file can be loaded and tested in isolation.)
  *
  * LOAD ORDER
  * ----------
  *   household-constants.js
  *   household-rules.js
  *   household-view-models.js    ← this file
+ *   household-orchestration.js
  *   household-state.js
  *   household-queries.js
  *   household-commands.js
@@ -58,9 +90,8 @@
  *   household-ui-list.js
  *   modals-*.js
  *
- * DEPENDENCIES
- * ------------
- *   - household-constants.js (optional — falls back to inline defaults)
+ * ICON POLICY: No emojis. No icons. Icons are chosen by callers
+ * (HouseholdModals / modal files) using icons.js.
  *
  * =============================================================================
  */
@@ -69,7 +100,7 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY ACCESS
+    // 0. CONSTANTS ACCESS
     // =========================================================================
 
     function _constants() {
@@ -79,8 +110,6 @@
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
         if (str === undefined || str === null) return '';
         return String(str)
             .replace(/&/g, '&amp;')
@@ -90,25 +119,18 @@
             .replace(/'/g, '&#39;');
     }
 
-    function _getIcon(name) {
-        if (typeof window._getIcon === 'function') return window._getIcon(name) || '';
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     // =========================================================================
-    // 2. FORM DEFAULTS
+    // 1. FORM DEFAULTS
     // =========================================================================
     //
     // These are the values a modal pre-fills into an empty form field. They
     // are deliberately NOT the values a command applies when a field is
     // omitted — the command has its own (possibly stricter) defaults. These
     // are what the *user sees* when they open the modal.
-    // =========================================================================
 
     /**
-     * Default skill level when a role is granted via character profession.
-     * Used by:
+     * Default skill level when a role is granted via character profession
+     * on assignment. Used by:
      *   - assignCharacterToPosition (when granting a missing role)
      *   - assignCharacterToStaffPosition (same, residence side)
      */
@@ -116,32 +138,26 @@
 
     /**
      * Default initial wealth for a newly created household.
-     * User can override in the create-household modal.
      */
     var DEFAULT_INITIAL_WEALTH = 0;
 
     /**
      * Default initial reputation for a newly created household.
-     * User can override in the create-household modal.
      */
     var DEFAULT_INITIAL_REPUTATION = 10;
 
     /**
      * Default initial rent for a newly rented residence.
-     * User can override in the set-renter modal.
      */
     var DEFAULT_INITIAL_RENT = 50;
 
     /**
      * Default unit count for a multi-unit residence when none is specified.
-     * Used by createResidence when `unitCount` is omitted. Kept here for
-     * UI parity — the create-residence modal can show the same number.
      */
     var DEFAULT_UNIT_COUNT = 3;
 
     /**
      * Maximum units a newly created multi-unit residence can have.
-     * Matches the residence-system default; exposed for form validation.
      */
     var DEFAULT_MAX_UNITS = 20;
 
@@ -157,18 +173,24 @@
     }
 
     // =========================================================================
-    // 3. OPTION LISTS (return HTML strings for <select>)
+    // 2. OPTION LISTS (return HTML strings for <select>)
     // =========================================================================
-    //
-    // These produce a full <select> body with the current value selected.
-    // The caller wraps it in a `<select data-field="...">` tag. Keeping the
-    // option body here means every place that shows a status filter shows
-    // the same statuses in the same order.
+
+    function _buildOptions(options, current) {
+        var html = '';
+        for (var i = 0; i < options.length; i++) {
+            var o = options[i];
+            var selected = (current === o.id) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(o.id) + '"' + selected + '>' +
+                _escapeHtml(o.label) + '</option>';
+        }
+        return html;
+    }
 
     /**
      * Household status options. Includes only the statuses a user should
-     * be able to set manually. Diagnostic-only statuses (destroyed) are
-     * excluded.
+     * be able to set manually. Diagnostic-only statuses (destroyed,
+     * bankrupt) are excluded from manual editing.
      */
     function getHouseholdStatusOptions(current) {
         var statuses = [
@@ -196,7 +218,6 @@
             { id: 'declining',   label: 'Declining' },
             { id: 'deprecated',  label: 'Deprecated' }
         ];
-        // Append counts if provided
         var withCounts = statuses.map(function(s) {
             return {
                 id: s.id,
@@ -213,11 +234,11 @@
      */
     function getVacancyReasonOptions(current) {
         var reasons = [
-            { id: 'household_moved',        label: 'Household moved out' },
+            { id: 'household_moved',         label: 'Household moved out' },
             { id: 'household_disassociated', label: 'Household disassociated' },
-            { id: 'manual',                 label: 'Manual (admin)' },
-            { id: 'sold',                   label: 'Sold' },
-            { id: 'destroyed',              label: 'Destroyed' }
+            { id: 'manual',                  label: 'Manual (admin)' },
+            { id: 'sold',                    label: 'Sold' },
+            { id: 'destroyed',               label: 'Destroyed' }
         ];
         return _buildOptions(reasons, current);
     }
@@ -227,13 +248,13 @@
      */
     function getRentalEndReasonOptions(current) {
         var reasons = [
-            { id: 'tenant_moved_out',   label: 'Tenant moved out' },
-            { id: 'tenant_evicted',     label: 'Tenant evicted' },
-            { id: 'lease_expired',      label: 'Lease expired' },
-            { id: 'owner_occupying',    label: 'Owner taking possession' },
-            { id: 'property_sold',      label: 'Property sold' },
-            { id: 'mutual_agreement',   label: 'Mutual agreement' },
-            { id: 'custom',             label: 'Custom reason' }
+            { id: 'tenant_moved_out', label: 'Tenant moved out' },
+            { id: 'tenant_evicted',   label: 'Tenant evicted' },
+            { id: 'lease_expired',    label: 'Lease expired' },
+            { id: 'owner_occupying',  label: 'Owner taking possession' },
+            { id: 'property_sold',    label: 'Property sold' },
+            { id: 'mutual_agreement', label: 'Mutual agreement' },
+            { id: 'custom',           label: 'Custom reason' }
         ];
         return _buildOptions(reasons, current);
     }
@@ -255,6 +276,8 @@
 
     /**
      * Residence condition options for the rehabilitate modal.
+     * Prefers household-constants.js; falls back to inline defaults that
+     * match the current constants catalog exactly.
      */
     function getResidenceConditionOptions(current) {
         var c = _constants();
@@ -291,19 +314,8 @@
         return _buildOptions(options, current);
     }
 
-    function _buildOptions(options, current) {
-        var html = '';
-        for (var i = 0; i < options.length; i++) {
-            var o = options[i];
-            var selected = (current === o.id) ? ' selected' : '';
-            html += '<option value="' + _escapeHtml(o.id) + '"' + selected + '>' +
-                _escapeHtml(o.label) + '</option>';
-        }
-        return html;
-    }
-
     // =========================================================================
-    // 4. STATUS BADGES
+    // 3. STATUS BADGES
     // =========================================================================
     //
     // A badge is a small UI object describing how to render a status:
@@ -315,7 +327,7 @@
      *
      * `color` is a CSS variable name (e.g. 'var(--success)') or a hex
      * string, chosen to match the CSS variables available in the app.
-     * `icon` is the icon key passed to `_getIcon`.
+     * `icon` is the icon key passed to icons.js.
      */
     function getStatusBadge(status) {
         switch (status) {
@@ -339,8 +351,8 @@
     }
 
     /**
-     * Short badge text for a household's living count. Used in the list row.
-     * Returns `null` when no badge should be shown.
+     * Short badge text for a household's living count. Used in the list
+     * row. Returns `null` when no badge should be shown.
      */
     function getMemberBadge(status) {
         if (!status) return null;
@@ -369,7 +381,7 @@
     }
 
     // =========================================================================
-    // 5. COLOR HELPERS
+    // 4. COLOR HELPERS
     // =========================================================================
     //
     // Modals repeatedly compute `x >= 0 ? 'var(--success)' : 'var(--danger)'`.
@@ -395,16 +407,20 @@
         return profit >= 0 ? 'var(--success)' : 'var(--danger)';
     }
 
+    /**
+     * Occupancy color for a unit snapshot. `status` is `{isVacant,
+     * isDemolished}` (any subset works — missing keys default to the
+     * "occupied" case).
+     */
     function getUnitOccupancyColor(status) {
-        // status is {isVacant, isDemolished}
         if (!status) return 'var(--dim)';
-        if (status.isDemolished) return '#8a2020';
-        if (status.isVacant) return '#c87040';
+        if (status.isDemolished === true) return '#8a2020';
+        if (status.isVacant === true) return '#c87040';
         return '#4a9e6a';
     }
 
     // =========================================================================
-    // 6. LABEL HELPERS
+    // 5. LABEL HELPERS
     // =========================================================================
     //
     // Human-readable labels for enum-like values. These return plain text
@@ -421,20 +437,20 @@
 
     function getUnitStatusLabel(unit) {
         if (!unit) return 'Unknown';
-        if (unit.isDemolished) return 'Demolished';
-        if (unit.isVacant) return 'Vacant';
+        if (unit.isDemolished === true) return 'Demolished';
+        if (unit.isVacant === true) return 'Vacant';
         return 'Occupied';
     }
 
     function getResidenceStatusLabel(residence) {
         if (!residence) return 'Unknown';
-        if (residence.isDemolished) return 'Demolished';
-        if (residence.isVacant) return 'Vacant';
+        if (residence.isDemolished === true) return 'Demolished';
+        if (residence.isVacant === true) return 'Vacant';
         return 'Occupied';
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     var api = {
@@ -473,7 +489,7 @@
         getResidenceStatusLabel: getResidenceStatusLabel,
 
         // Diagnostics
-        version: 1,
+        version: 2,
         isPresentationOnly: true
     };
 
