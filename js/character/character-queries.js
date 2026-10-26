@@ -3,6 +3,8 @@
  * STILL WATERS - CHARACTER QUERIES (js/character/character-queries.js)
  * =============================================================================
  *
+ * LOCATION: js/character/character-queries.js
+ *
  * Semantic character-level read API.
  *
  * SCOPE:
@@ -18,7 +20,7 @@
  *   - Profession semantics           -> character-commands.js (reads)
  *   - Population statistics          -> character-statistics.js
  *   - Relationship semantics         -> future relationship domain
- *   - Rank semantics                 -> future rank domain
+ *   - Rank semantics                 -> ranks/rank-queries.js
  *   - Mutation                       -> character-commands.js
  *   - Persistence                    -> storage.js
  *   - Presentation                   -> character-ui-list.js, modals
@@ -31,10 +33,29 @@
  *   family semantics. If FamilyQueries is not loaded, they return
  *   null or [] without fabricating data.
  *
+ *   SHAPE NOTE:
+ *     FamilyQueries.getParents returns EDGE WRAPPERS:
+ *       { id, parentId, childId, parentType, parentRole, ... }
+ *     This module's getCharacterParents returns a SIMPLIFIED shape:
+ *       { father, mother, adoptiveParents }
+ *     The simplification is intentional — most callers (modals,
+ *     summaries) want the role-resolved parent ids, not the full edge
+ *     record. Callers that need the full edge data must call
+ *     FamilyQueries.getParents or FamilyQueries.getParentsByRole
+ *     directly. Do not "improve" getCharacterParents to return edges;
+ *     that would break every modal in the character UI.
+ *
  * AGE FILTERING:
  *   getCharactersByAgeRange filters by current age (or age at death for
  *   deceased characters). It uses calculateAge when available and falls
  *   back to a numeric difference when not. It never fabricates an age.
+ *
+ * RANK DISPLAY:
+ *   getCharacterSummary.rank is a STRING (the human-readable rank name
+ *   or custom title), or null. It is resolved by reading the rank
+ *   assignment via CharacterCommands and then the rank record via
+ *   accessors. If either layer is unavailable, rank is null. The raw
+ *   activeRankId is exposed separately as rankId.
  *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
@@ -52,7 +73,7 @@
  * DEPENDENCIES (OPTIONAL, present in the current codebase):
  *   - character-commands.js  (CharacterCommands)
  *   - family-queries.js      (FamilyQueries)
- *   - role-queries.js        (RoleQueries)
+ *   - accessors.js           (getRankById)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -254,7 +275,55 @@
     }
 
     // =========================================================================
-    // 5. CHARACTER SUMMARY
+    // 5. RANK DISPLAY RESOLUTION
+    // =========================================================================
+    //
+    // getCharacterSummary.rank must be a human-readable string. The
+    // canonical source is:
+    //   1. CharacterCommands.getRankAssignment(characterId, activeRankId)
+    //      → yields the assignment record (customTitle, number.display)
+    //   2. accessors.getRankById(activeRankId) → yields the rank record
+    //      (name, symbol) for the fallback display string.
+    //
+    // If neither layer is available, rank is null. This is deliberate:
+    // the summary must never fabricate a rank.
+
+    function _resolveRankDisplay(characterId, activeRankId) {
+        if (!_hasId(characterId) || !_hasId(activeRankId)) return null;
+
+        // Prefer the assignment's custom title / display number, because
+        // that is what the character has actually been recorded as.
+        if (typeof window.CharacterCommands !== 'undefined'
+            && typeof window.CharacterCommands.getRankAssignment === 'function') {
+            var assignment = window.CharacterCommands.getRankAssignment(
+                characterId,
+                activeRankId
+            );
+            if (assignment) {
+                if (_hasId(assignment.customTitle)) {
+                    return assignment.customTitle;
+                }
+                if (assignment.number
+                    && typeof assignment.number.display === 'string'
+                    && assignment.number.display.length > 0) {
+                    return assignment.number.display;
+                }
+            }
+        }
+
+        // Fallback: read the rank record itself.
+        if (typeof window.getRankById === 'function') {
+            var rank = window.getRankById(activeRankId);
+            if (rank && typeof rank.name === 'string' && rank.name.length > 0) {
+                return rank.name;
+            }
+        }
+
+        return null;
+    }
+
+    // =========================================================================
+    // 6. CHARACTER SUMMARY
     // =========================================================================
 
     function getCharacterSummary(id) {
@@ -264,13 +333,7 @@
         var age = _age(projection);
         var fullName = _fullName(projection);
 
-        var rankDisplay = null;
-        if (projection.activeRankId
-            && typeof window.RoleQueries !== 'undefined'
-            && typeof window.RoleQueries.getRankSummary === 'function') {
-            var rankSummary = window.RoleQueries.getRankSummary(projection.activeRankId);
-            if (rankSummary) rankDisplay = rankSummary.name || null;
-        }
+        var rankDisplay = _resolveRankDisplay(projection.id, projection.activeRankId);
 
         var primaryProfession = null;
         var professionCount = 0;
@@ -358,7 +421,7 @@
     }
 
     // =========================================================================
-    // 6. CHARACTER FACTS
+    // 7. CHARACTER FACTS
     // =========================================================================
 
     function getCharacterFacts(id) {
@@ -398,8 +461,11 @@
     }
 
     // =========================================================================
-    // 7. FAMILY COMPATIBILITY DELEGATES
+    // 8. FAMILY COMPATIBILITY DELEGATES
     // =========================================================================
+    //
+    // These return SIMPLIFIED shapes (ids or role-resolved ids), not
+    // FamilyQueries' edge wrappers. See the SHAPE NOTE in the header.
 
     function _familyAvailable() {
         return typeof window.FamilyQueries !== 'undefined';
@@ -479,15 +545,33 @@
         return window.FamilyQueries.classifyKinship(charId1, charId2);
     }
 
+    /**
+     * Numeric kinship closeness between two characters.
+     *
+     * Returns:
+     *   0   self
+     *   1   parent / child
+     *   2   sibling / grandparent / grandchild
+     *   3   aunt/uncle / niece/nephew
+     *   4   first cousin
+     *   5+  more distant cousins
+     *   99  unrelated
+     *   null for missing ids or when FamilyQueries is unavailable
+     *
+     * NOTE: do NOT delegate to FamilyQueries.isBloodRelated — that
+     * returns a boolean. This function returns a number, and the two
+     * names are deliberately different because the return types are
+     * different.
+     */
     function getCharacterKinshipCloseness(charId1, charId2) {
         if (!_hasId(charId1) || !_hasId(charId2)) return null;
         if (!_familyAvailable()) return null;
-        if (typeof window.FamilyQueries.isBloodRelated !== 'function') return null;
-        return window.FamilyQueries.isBloodRelated(charId1, charId2);
+        if (typeof window.FamilyQueries.getKinshipCloseness !== 'function') return null;
+        return window.FamilyQueries.getKinshipCloseness(charId1, charId2);
     }
 
     // =========================================================================
-    // 8. PROFESSION COMPATIBILITY DELEGATES
+    // 9. PROFESSION COMPATIBILITY DELEGATES
     // =========================================================================
 
     function getCharacterProfessions(id) {
@@ -508,7 +592,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.CharacterQueries = {
