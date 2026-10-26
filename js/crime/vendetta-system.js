@@ -11,11 +11,28 @@
  *   its own storage, its own cache, its own copy of VENDETTA_STATUS, and a
  *   createBloodFeud() that deadlocked itself via a module-wide guard. It
  *   has been reduced to a thin delegation layer over the canonical
- *   implementation in CrimeState and CrimeCommands.
+ *   implementation in CrimeState, CrimeCommands, CrimeQueries, and
+ *   CrimeConstants.
  *
  *   Every function below forwards to the canonical implementation. The
- *   shapes of the returned objects are preserved so existing callers do
- *   not break during migration. New code must not use this file.
+ *   result shape is preserved so existing callers do not break during
+ *   migration. New code must not use this file.
+ *
+ * RESULT CONTRACT (RETURN SHAPE CHANGED):
+ *
+ *   The old VendettaSystem unwrapped CrimeState results into bare objects
+ *   (or null on failure). That unwrapping collapsed "not found" and
+ *   "already exists" and "persistence failed" into the same `null`, which
+ *   made failures indistinguishable to callers.
+ *
+ *   This shim now forwards the full structured result:
+ *
+ *     { success: true, data: {...} }
+ *     { success: false, reason: string, code?: string }
+ *
+ *   Callers that used `if (result === null)` must migrate to
+ *   `if (!result.success)`. The shim's purpose is to keep the function
+ *   names alive during migration, not to preserve a lossy return shape.
  *
  * CANONICAL REPLACEMENTS:
  *
@@ -47,8 +64,7 @@
  *       → CrimeState.resolveVendetta(id, data)
  *
  *   VendettaSystem.escalateVendetta(id, options)
- *       → CrimeState.recordVendettaDeath(...) OR explicit status update
- *         via a CrimeState escalation command (see note below)
+ *       → CrimeCommands.escalateVendetta(id, options)
  *
  *   VendettaSystem.createBloodFeud(victimId, killerId, options)
  *       → CrimeCommands.createBloodFeud(victimId, killerId, options)
@@ -59,18 +75,6 @@
  *   VendettaSystem.clearVendettaCache()
  *       → CrimeState.reload()
  *
- * RETURN SHAPE NOTES:
- *
- *   The old VendettaSystem returned bare objects (or null) from most
- *   functions. The canonical CrimeState returns structured
- *   { success, data, error } results.
- *
- *   This shim unwraps those results so legacy callers continue to receive
- *   the bare-object shape they previously expected. A null return means
- *   failure; there is no error message available in this compatibility
- *   layer. Callers that need error detail must migrate to CrimeState
- *   directly.
- *
  * WHAT THIS FILE MUST NOT BECOME:
  *
  *   - A second storage layer.
@@ -78,6 +82,7 @@
  *   - A second VENDETTA_STATUS constant.
  *   - A second createBloodFeud implementation.
  *   - Anything that writes to masterData.data.vendettas directly.
+ *   - Anything that unwraps a canonical result to a bare object.
  *
  *   If any of those reappear here, the file has regressed.
  *
@@ -88,182 +93,177 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY RESOLUTION
+    // 1. LOAD-TIME DEPENDENCY RESOLUTION
     // =========================================================================
 
-    function _requireCrimeState() {
-        if (typeof window.CrimeState === 'undefined') {
-            throw new Error(
-                '[VendettaSystem] Required dependency CrimeState is not available. ' +
-                'This legacy shim cannot function without the canonical crime module.'
-            );
-        }
-        return window.CrimeState;
+    // The shim is a forwarder. Every module it delegates to must be loaded
+    // before the shim evaluates, and every module it delegates to must be
+    // present. Failures are loud at load, not silent at call time.
+
+    if (typeof window.CrimeConstants === 'undefined') {
+        throw new Error('vendetta-system.js requires CrimeConstants');
+    }
+    if (typeof window.CrimeState === 'undefined') {
+        throw new Error('vendetta-system.js requires CrimeState');
+    }
+    if (typeof window.CrimeCommands === 'undefined') {
+        throw new Error('vendetta-system.js requires CrimeCommands');
+    }
+    if (typeof window.CrimeQueries === 'undefined') {
+        throw new Error('vendetta-system.js requires CrimeQueries');
     }
 
-    function _requireCrimeCommands() {
-        if (typeof window.CrimeCommands === 'undefined') {
-            throw new Error(
-                '[VendettaSystem] Required dependency CrimeCommands is not available. ' +
-                'This legacy shim cannot function without the canonical crime module.'
-            );
+    // Verify the specific methods the shim forwards to. If CrimeState or
+    // CrimeCommands is present but missing a method, that is a broken
+    // canonical module and the shim should not paper over it.
+    var _requiredStateMethods = [
+        'createVendetta',
+        'getVendetta',
+        'getAllVendettas',
+        'getVendettasByHousehold',
+        'getVendettasByCharacter',
+        'getActiveVendettas',
+        'recordVendettaDeath',
+        'resolveVendetta',
+        'reload'
+    ];
+
+    var _requiredCommandMethods = [
+        'escalateVendetta',
+        'createBloodFeud'
+    ];
+
+    var _requiredQueryMethods = [
+        'getVendettaStats'
+    ];
+
+    for (var i = 0; i < _requiredStateMethods.length; i++) {
+        var m = _requiredStateMethods[i];
+        if (typeof window.CrimeState[m] !== 'function') {
+            throw new Error('vendetta-system.js: CrimeState.' + m + ' is not available');
         }
-        return window.CrimeCommands;
+    }
+    for (var j = 0; j < _requiredCommandMethods.length; j++) {
+        var cm = _requiredCommandMethods[j];
+        if (typeof window.CrimeCommands[cm] !== 'function') {
+            throw new Error('vendetta-system.js: CrimeCommands.' + cm + ' is not available');
+        }
+    }
+    for (var k = 0; k < _requiredQueryMethods.length; k++) {
+        var qm = _requiredQueryMethods[k];
+        if (typeof window.CrimeQueries[qm] !== 'function') {
+            throw new Error('vendetta-system.js: CrimeQueries.' + qm + ' is not available');
+        }
     }
 
-    function _requireCrimeQueries() {
-        if (typeof window.CrimeQueries === 'undefined') {
-            throw new Error(
-                '[VendettaSystem] Required dependency CrimeQueries is not available. ' +
-                'This legacy shim cannot function without the canonical crime module.'
-            );
-        }
-        return window.CrimeQueries;
-    }
-
-    function _requireConstants() {
-        if (typeof window.CrimeConstants === 'undefined') {
-            throw new Error(
-                '[VendettaSystem] Required dependency CrimeConstants is not available. ' +
-                'This legacy shim cannot function without the canonical constants module.'
-            );
-        }
-        return window.CrimeConstants;
-    }
+    var C = window.CrimeConstants;
+    var State = window.CrimeState;
+    var Commands = window.CrimeCommands;
+    var Queries = window.CrimeQueries;
 
     // =========================================================================
-    // 2. CONSTANTS (read-only re-export from the canonical source)
+    // 2. DEPRECATION WARNINGS (once per function)
     // =========================================================================
 
-    // Read lazily so that VendettaSystem.VENDETTA_STATUS is available even
-    // if CrimeConstants loads after this file in the boot order.
-    Object.defineProperty(window, 'VendettaSystem_VENDETTA_STATUS', {
-        configurable: true,
-        get: function() {
-            return _requireConstants().VENDETTA_STATUS;
-        }
-    });
-
-    // =========================================================================
-    // 3. DEPRECATION NOTICE HELPER
-    // =========================================================================
-
-    var _deprecationWarned = {};
-    function _warnOnce(key, message) {
-        if (_deprecationWarned[key]) return;
-        _deprecationWarned[key] = true;
-        if (typeof console !== 'undefined' && console.warn) {
-            console.warn('[VendettaSystem] ' + message);
-        }
-    }
+    var _warned = {};
 
     function _warn(name, replacement) {
-        _warnOnce(
-            name,
-            'VendettaSystem.' + name + ' is deprecated. Use ' + replacement + ' instead.'
-        );
+        if (_warned[name]) return;
+        _warned[name] = true;
+        if (typeof console !== 'undefined' && console.warn) {
+            console.warn(
+                '[VendettaSystem] VendettaSystem.' + name +
+                ' is deprecated. Use ' + replacement + ' instead.'
+            );
+        }
     }
 
     // =========================================================================
-    // 4. UNWRAP HELPERS
+    // 3. PUBLIC API (delegated)
     // =========================================================================
     //
-    // CrimeState returns { success, data, error } from its commands. The
-    // legacy VendettaSystem returned the bare object (or null) from those
-    // same operations. These helpers unwrap the new shape back to the old
-    // one so existing callers do not break.
-
-    function _unwrapCommandResult(result) {
-        if (!result) return null;
-        if (result.success === true) return result.data || null;
-        return null;
-    }
-
-    // Queries return bare values already; no unwrapping needed.
-
-    // =========================================================================
-    // 5. PUBLIC API (delegated)
-    // =========================================================================
+    // Every function returns whatever the canonical function returns.
+    // No unwrapping. No bare-object shims. No swallowed failures.
+    //
+    // The only difference between this shim and the canonical module is
+    // the function name and the one-time deprecation warning.
 
     /**
      * @deprecated Use CrimeConstants.VENDETTA_STATUS.
      */
     function getVendettaStatus() {
-        return _requireConstants().VENDETTA_STATUS;
+        return C.VENDETTA_STATUS;
     }
 
     /**
      * @deprecated Use CrimeState.createVendetta(data).
      *
      * @param {Object} data
-     * @returns {Object|null}  Vendetta record or null on failure.
+     * @returns {{success: true, data: Object}|{success: false, reason: string, code?: string}}
      */
     function createVendetta(data) {
         _warn('createVendetta', 'CrimeState.createVendetta(data)');
-        var result = _requireCrimeState().createVendetta(data);
-        return _unwrapCommandResult(result);
+        return State.createVendetta(data);
     }
 
     /**
      * @deprecated Use CrimeState.getVendetta(id).
+     *
+     * Queries return bare values (the vendetta record or null), not result
+     * objects. This is the one function whose return shape is unchanged.
      *
      * @param {string} vendettaId
      * @returns {Object|null}
      */
     function getVendettaById(vendettaId) {
         _warn('getVendettaById', 'CrimeState.getVendetta(id)');
-        return _requireCrimeState().getVendetta(vendettaId);
+        return State.getVendetta(vendettaId);
     }
 
     /**
      * @deprecated Use CrimeState.getAllVendettas(options).
      *
-     * The includeResolved default has been standardised across the domain:
-     * resolved vendettas are INCLUDED by default. Legacy callers of this
-     * shim may have relied on the old default (excluded). To preserve
-     * behaviour for those callers, this shim historically passed
-     * { includeResolved: false } when the option was omitted.
-     *
-     * That old behaviour is now considered wrong. This shim matches the
-     * canonical default: include resolved. Callers that want the old
-     * behaviour must pass { includeResolved: false } explicitly.
+     * Query return shape is unchanged: an array. includeResolved is included
+     * by default at the canonical layer; callers that relied on the old
+     * (excluded) default must pass { includeResolved: false } explicitly.
      *
      * @param {Object} [options]
      * @returns {Array}
      */
     function getAllVendettas(options) {
         _warn('getAllVendettas', 'CrimeState.getAllVendettas(options)');
-        return _requireCrimeState().getAllVendettas(options);
+        return State.getAllVendettas(options);
     }
 
     /**
      * @deprecated Use CrimeState.getVendettasByHousehold(id, options).
      *
-     * includeResolved default is now "include resolved". See the note on
-     * getAllVendettas above.
+     * Query return shape is unchanged: an array.
      */
     function getVendettasByHousehold(householdId, options) {
         _warn('getVendettasByHousehold', 'CrimeState.getVendettasByHousehold(id, options)');
-        return _requireCrimeState().getVendettasByHousehold(householdId, options);
+        return State.getVendettasByHousehold(householdId, options);
     }
 
     /**
      * @deprecated Use CrimeState.getVendettasByCharacter(id, options).
+     *
+     * Query return shape is unchanged: an array.
      */
     function getVendettasByCharacter(characterId, options) {
         _warn('getVendettasByCharacter', 'CrimeState.getVendettasByCharacter(id, options)');
-        return _requireCrimeState().getVendettasByCharacter(characterId, options);
+        return State.getVendettasByCharacter(characterId, options);
     }
 
     /**
      * @deprecated Use CrimeState.getActiveVendettas(householdId).
      *
-     * Canonical semantics: returns UNRESOLVED vendettas (status ACTIVE or
-     * ESCALATED). This matches the old VendettaSystem behaviour.
+     * Canonical semantics: returns unresolved vendettas (status ACTIVE or
+     * ESCALATED). Query return shape is unchanged: an array.
      */
     function getActiveVendettas(householdId) {
         _warn('getActiveVendettas', 'CrimeState.getActiveVendettas(householdId)');
-        return _requireCrimeState().getActiveVendettas(householdId);
+        return State.getActiveVendettas(householdId);
     }
 
     /**
@@ -271,12 +271,11 @@
      *
      * @param {string} vendettaId
      * @param {Object} deathData
-     * @returns {Object|null}  Updated vendetta or null on failure.
+     * @returns {{success: true, data: Object}|{success: false, reason: string, code?: string}}
      */
     function recordVendettaDeath(vendettaId, deathData) {
         _warn('recordVendettaDeath', 'CrimeState.recordVendettaDeath(id, deathData)');
-        var result = _requireCrimeState().recordVendettaDeath(vendettaId, deathData);
-        return _unwrapCommandResult(result);
+        return State.recordVendettaDeath(vendettaId, deathData);
     }
 
     /**
@@ -284,60 +283,41 @@
      *
      * @param {string} vendettaId
      * @param {Object} resolutionData
-     * @returns {Object|null}
+     * @returns {{success: true, data: Object}|{success: false, reason: string, code?: string}}
      */
     function resolveVendetta(vendettaId, resolutionData) {
         _warn('resolveVendetta', 'CrimeState.resolveVendetta(id, resolutionData)');
-        var result = _requireCrimeState().resolveVendetta(vendettaId, resolutionData);
-        return _unwrapCommandResult(result);
+        return State.resolveVendetta(vendettaId, resolutionData);
     }
 
     /**
-     * @deprecated Manual escalation is no longer a domain operation.
+     * @deprecated Use CrimeCommands.escalateVendetta(id, options).
      *
-     * In the canonical model, a vendetta escalates automatically when its
-     * death count reaches the escalation threshold (see
-     * CrimeConstants.VENDETTA_ESCALATION_THRESHOLD). There is no separate
-     * escalate command. If a caller needs to force escalation for a specific
-     * narrative reason, they must do so through whatever domain process
-     * ultimately adds a death to the vendetta.
+     * Escalation semantics:
+     *   - Escalation is automatic when a vendetta's death count reaches
+     *     CrimeConstants.VENDETTA_ESCALATION_THRESHOLD.
+     *   - escalateVendetta() is now an explicit command that:
+     *       (a) returns { escalated: true } when the vendetta reaches
+     *           ESCALATED status, whether by threshold or by force;
+     *       (b) returns { escalated: false } when the vendetta is already
+     *           escalated (idempotent);
+     *       (c) fails with ESCALATION_FAILED when the threshold has not
+     *           been reached and options.force is not set;
+     *       (d) requires options.reason when options.force is true.
      *
-     * This shim preserves the old function for compatibility, but it does
-     * not fabricate a death. It records a death with an explicit
-     * "escalation" reason so the escalation occurs as a consequence of a
-     * legitimate state change. Callers that used escalateVendetta purely to
-     * change status without a death should migrate to a purpose-built
-     * domain operation once one exists.
+     * The old shim recorded a synthetic death and returned the vendetta
+     * whether or not it had actually escalated. This shim now forwards the
+     * full structured result from the canonical command, so callers see
+     * `escalated: false` if escalation did not happen.
      *
      * @param {string} vendettaId
-     * @param {Object} [options]
-     * @returns {Object|null}
+     * @param {Object} [options]  { force?: boolean, reason?: string, year?: number }
+     * @returns {{success: true, data: {vendetta: Object, escalated: boolean}}|
+     *           {success: false, reason: string, code?: string}}
      */
     function escalateVendetta(vendettaId, options) {
-        _warn('escalateVendetta',
-            'no direct equivalent; escalation is automatic at the threshold. ' +
-            'This shim records a synthetic death to trigger it.');
-        options = options || {};
-        var state = _requireCrimeState();
-        var vendetta = state.getVendetta(vendettaId);
-        if (!vendetta) return null;
-
-        var constants = _requireConstants();
-        if (vendetta.status === constants.VENDETTA_STATUS.RESOLVED) return null;
-        if (vendetta.status === constants.VENDETTA_STATUS.ESCALATED) return vendetta;
-
-        var result = state.recordVendettaDeath(vendettaId, {
-            victimId: null,
-            killerId: null,
-            year: (typeof options.year === 'number') ? options.year : undefined,
-            reason: options.reason || 'Escalation (legacy shim)',
-            crimeId: null
-        });
-
-        // Note: recording a single death does not necessarily cross the
-        // escalation threshold. If callers rely on escalateVendetta
-        // guaranteeing ESCALATED status, they must be updated.
-        return _unwrapCommandResult(result);
+        _warn('escalateVendetta', 'CrimeCommands.escalateVendetta(id, options)');
+        return Commands.escalateVendetta(vendettaId, options);
     }
 
     /**
@@ -346,27 +326,25 @@
      * @param {string} victimId
      * @param {string} killerId
      * @param {Object} [options]
-     * @returns {Object|null}  Vendetta record or null on failure.
+     * @returns {{success: true, data: Object}|{success: false, reason: string, code?: string}}
      */
     function createBloodFeud(victimId, killerId, options) {
         _warn('createBloodFeud', 'CrimeCommands.createBloodFeud(victimId, killerId, options)');
-        var result = _requireCrimeCommands().createBloodFeud(victimId, killerId, options);
-        return _unwrapCommandResult(result);
+        return Commands.createBloodFeud(victimId, killerId, options);
     }
 
     /**
      * @deprecated Use CrimeQueries.getVendettaStats(householdId).
      *
-     * The canonical query returns the same shape as the old function, but
-     * `bodyCount` in the old per-vendetta records is now derived from
-     * `deaths.length`. The statistics themselves are unchanged.
+     * Statistics query returns a plain object, not a result wrapper. Return
+     * shape is unchanged.
      *
      * @param {string} [householdId]
      * @returns {Object}
      */
     function getVendettaStats(householdId) {
         _warn('getVendettaStats', 'CrimeQueries.getVendettaStats(householdId)');
-        return _requireCrimeQueries().getVendettaStats(householdId);
+        return Queries.getVendettaStats(householdId);
     }
 
     /**
@@ -375,19 +353,20 @@
      * The old VendettaSystem maintained its own cache. That cache no longer
      * exists; vendetta state is owned by CrimeState. This shim forwards to
      * the canonical reload, which rebuilds all crime and vendetta indexes.
+     *
+     * Return value: `true` on success, `false` on failure (matching
+     * CrimeState.reload's shape). The old shim returned undefined; callers
+     * that relied on that should continue not relying on the return value.
+     *
+     * @returns {boolean}
      */
     function clearVendettaCache() {
         _warn('clearVendettaCache', 'CrimeState.reload()');
-        var state = _requireCrimeState();
-        if (typeof state.reload === 'function') {
-            state.reload();
-        } else if (typeof state.invalidateCache === 'function') {
-            state.invalidateCache();
-        }
+        return State.reload();
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 4. EXPORTS
     // =========================================================================
 
     window.VendettaSystem = {
