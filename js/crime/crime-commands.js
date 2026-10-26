@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - CRIME & VENDETTA COMMANDS (crime-commands.js)
+ * STILL WATERS - CRIME COMMANDS (crime-commands.js)
  * =============================================================================
  *
  * LOCATION: js/core/crime/crime-commands.js
@@ -10,45 +10,55 @@
  *     1. validates inputs
  *     2. resolves context
  *     3. asks CrimeLawIntegration for a legal evaluation
- *     4. records the crime through CrimeState
- *     5. kills or mutates characters through the appropriate commands
- *     6. applies legal consequences returned by the law layer
- *     7. updates households, settlements, and vendettas
- *     8. logs the event
- *     9. returns a structured result
+ *     4. records the crime through CrimeState (unsolved)
+ *     5. solves it via solveCrime when the outcome is legally determined
+ *     6. kills or mutates characters through CharacterCommands / globals
+ *     7. applies the legal consequences returned by the law layer
+ *     8. updates households and settlements through their public command
+ *        boundaries
+ *     9. commits the transaction (hydrate + markDirty + publish + dispatch)
+ *    10. returns a structured result
  *
  *   It does NOT decide what a punishment is. It executes the consequences
  *   returned by CrimeLawIntegration.evaluateAction().
  *
+ * RESULT CONTRACT:
+ *   { success: true, data: {...} }
+ *   { success: false, reason: string, code?: string }
+ *
+ * COMMIT TAIL (_commit):
+ *   1. CrimeState.hydrateFromMasterData()   — rebuild indexes over mutations
+ *   2. markDataDirty()                      — flag for the next save
+ *   3. CrimeState.publish()                 — in-process subscribers
+ *   4. dispatchEvent(CustomEvent)           — cross-domain consumers
+ *
+ *   No saveMasterData inside a command. Persistence is CrimeCommands.persist(),
+ *   called by the UI once per modal action.
+ *
  * OWNERSHIP:
- *   - triggerMurder, triggerExecution, createBloodFeud workflows
- *   - household side-effect semantics (perpetrator-side vs victim-side)
- *   - orchestration of character death, relationship termination, and
- *     vendetta creation
+ *   - triggerMurder, triggerExecution, escalateVendetta, createBloodFeud
+ *   - orchestration of character death, relationship termination, vendetta
+ *     creation, and household side effects
+ *   - the persist boundary
  *
  * WHAT THIS MODULE DOES NOT DO:
  *   - It does not decide legal consequences. (CrimeLawIntegration)
  *   - It does not own crime or vendetta records. (CrimeState)
  *   - It does not compute statistics. (CrimeQueries)
  *   - It does not reach into another domain's private state. All cross-
- *     domain effects go through the domain's public command API.
- *   - It does not use a module-wide recursion guard. Composition is legal;
- *     a command that calls another command is doing exactly what it should.
- *   - It does not normalise options with `||` on values that could legitimately
- *     be falsy. Years, counts, and booleans are checked explicitly.
+ *     domain effects go through that domain's public command API.
+ *   - It does not use a module-wide recursion guard. Commands compose freely.
+ *   - It does not unwrap results into bare objects. Everything structured.
  *
- * DEPENDENCIES (required):
- *   - CrimeState
- *   - CrimeLawIntegration
- *   - CrimeConstants
- *   - getCharacterById, getHouseholdById, getPlaceById
- *   - getCurrentYearSafe
- *   - killCharacter
- *   - HouseholdCommands (preferred) or HouseholdState (fallback)
- *   - SettlementCommands (preferred) or a documented settlement impact API
- *   - eventLogger: logEvent
- *
- * Missing required dependencies fail loudly. No fabricated fallbacks.
+ * DEPENDENCIES (required, verified at load):
+ *   - CrimeConstants, CrimeState, CrimeLawIntegration
+ *   - getCurrentYearSafe, generateId, killCharacter, logEvent
+ *   - getCharacterById, getHouseholdById, getCurrentLocationId
+ *   - getRelationshipsForCharacter, endRelationship
+ *   - HouseholdCommands (applyPerpetratorCrime, applyVictimCrime,
+ *                       applyExecutionToHousehold)
+ *   - SettlementGovernmentCommands.recordCrimeImpact (optional; absence
+ *     warns once and skips settlement effects)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -59,140 +69,168 @@
     'use strict';
 
     // =========================================================================
-    // 0. DEPENDENCY WRAPPERS
+    // 0. LOAD-TIME DEPENDENCY RESOLUTION
     // =========================================================================
 
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('[CrimeCommands] Required dependency getCurrentYearSafe is not available.');
+    var C = window.CrimeConstants;
+    var State = window.CrimeState;
+    var Law = window.CrimeLawIntegration;
+
+    if (!C)     throw new Error('crime-commands.js requires CrimeConstants');
+    if (!State) throw new Error('crime-commands.js requires CrimeState');
+    if (!Law)   throw new Error('crime-commands.js requires CrimeLawIntegration');
+
+    if (typeof window.getCurrentYearSafe !== 'function') {
+        throw new Error('crime-commands.js requires getCurrentYearSafe');
+    }
+    if (typeof window.generateId !== 'function') {
+        throw new Error('crime-commands.js requires generateId');
+    }
+    if (typeof window.killCharacter !== 'function') {
+        throw new Error('crime-commands.js requires killCharacter');
+    }
+    if (typeof window.logEvent !== 'function') {
+        throw new Error('crime-commands.js requires logEvent');
+    }
+    if (typeof window.getCharacterById !== 'function') {
+        throw new Error('crime-commands.js requires getCharacterById');
+    }
+    if (typeof window.getHouseholdById !== 'function') {
+        throw new Error('crime-commands.js requires getHouseholdById');
+    }
+    if (typeof window.getCurrentLocationId !== 'function') {
+        throw new Error('crime-commands.js requires getCurrentLocationId');
+    }
+    if (typeof window.getRelationshipsForCharacter !== 'function') {
+        throw new Error('crime-commands.js requires getRelationshipsForCharacter');
+    }
+    if (typeof window.endRelationship !== 'function') {
+        throw new Error('crime-commands.js requires endRelationship');
+    }
+
+    // HouseholdCommands.apply* are hard requirements under the refactor.
+    // If these are missing, the load fails. The bootstrap verifies the
+    // same surface, but this local check ensures the module is unusable
+    // if loaded without them, regardless of whether bootstrap ran.
+    if (typeof window.HouseholdCommands === 'undefined') {
+        throw new Error('crime-commands.js requires HouseholdCommands');
+    }
+    if (typeof window.HouseholdCommands.applyPerpetratorCrime !== 'function') {
+        throw new Error('crime-commands.js requires HouseholdCommands.applyPerpetratorCrime');
+    }
+    if (typeof window.HouseholdCommands.applyVictimCrime !== 'function') {
+        throw new Error('crime-commands.js requires HouseholdCommands.applyVictimCrime');
+    }
+    if (typeof window.HouseholdCommands.applyExecutionToHousehold !== 'function') {
+        throw new Error('crime-commands.js requires HouseholdCommands.applyExecutionToHousehold');
+    }
+
+    // SettlementGovernmentCommands.recordCrimeImpact is optional. Warn once
+    // on first use if it's absent so the skipped side effect is visible.
+    var _warnedSettlement = false;
+    function _getSettlementRecordImpact() {
+        if (typeof window.SettlementGovernmentCommands !== 'undefined' &&
+            typeof window.SettlementGovernmentCommands.recordCrimeImpact === 'function') {
+            return window.SettlementGovernmentCommands.recordCrimeImpact;
         }
-        return window.getCurrentYearSafe();
-    }
-
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById !== 'function') return null;
-        return window.getCharacterById(id);
-    }
-
-    function _getHouseholdById(id) {
-        if (typeof window.getHouseholdById !== 'function') return null;
-        return window.getHouseholdById(id);
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById !== 'function') return null;
-        return window.getPlaceById(id);
-    }
-
-    function _getCurrentLocationId(character) {
-        if (!character) return null;
-        if (character.currentLocationId) return character.currentLocationId;
-        if (character.moves && character.moves.length > 0) {
-            var sorted = character.moves.slice().sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-            return sorted[0] ? sorted[0].locationId : null;
+        if (!_warnedSettlement && typeof console !== 'undefined' && console.warn) {
+            _warnedSettlement = true;
+            console.warn(
+                'crime-commands.js: SettlementGovernmentCommands.recordCrimeImpact ' +
+                'is not available — settlement crime impacts will be skipped.'
+            );
         }
-        return null;
-    }
-
-    function _getCrimeState() {
-        if (typeof window.CrimeState === 'undefined') {
-            throw new Error('[CrimeCommands] Required dependency CrimeState is not available.');
-        }
-        return window.CrimeState;
-    }
-
-    function _getLawIntegration() {
-        if (typeof window.CrimeLawIntegration === 'undefined') {
-            throw new Error('[CrimeCommands] Required dependency CrimeLawIntegration is not available.');
-        }
-        return window.CrimeLawIntegration;
-    }
-
-    function _getConstants() {
-        if (typeof window.CrimeConstants === 'undefined') {
-            throw new Error('[CrimeCommands] Required dependency CrimeConstants is not available.');
-        }
-        return window.CrimeConstants;
-    }
-
-    function _killCharacter(character, deathYear, deathCause, options) {
-        if (typeof window.killCharacter !== 'function') {
-            throw new Error('[CrimeCommands] Required dependency killCharacter is not available.');
-        }
-        return window.killCharacter(character, deathYear, deathCause, options);
-    }
-
-    function _logEvent(category, type, message, subjects) {
-        if (typeof window.logEvent === 'function') {
-            window.logEvent(category, type, message, subjects);
-        }
-    }
-
-    function _chance(probability) {
-        if (typeof window.chance === 'function') return window.chance(probability);
-        return Math.random() < probability;
-    }
-
-    function _pickRandom(array) {
-        if (typeof window.pickRandom === 'function') return window.pickRandom(array);
-        if (!array || array.length === 0) return null;
-        return array[Math.floor(Math.random() * array.length)];
-    }
-
-    function _getHouseholdCommands() {
-        if (typeof window.HouseholdCommands !== 'undefined') return window.HouseholdCommands;
-        return null;
-    }
-
-    function _getSettlementCommands() {
-        if (typeof window.SettlementCommands !== 'undefined') return window.SettlementCommands;
-        if (window.SettlementCrimeCommands) return window.SettlementCrimeCommands;
-        return null;
-    }
-
-    function _getHouseholdState() {
-        if (typeof window.HouseholdState !== 'undefined') return window.HouseholdState;
         return null;
     }
 
     // =========================================================================
-    // 1. OPTION NORMALISATION
+    // 1. HELPERS
     // =========================================================================
-    //
-    // Options are normalised without truthiness coercion. A year of 0 is a
-    // year of 0. A boolean of false is false. Only `undefined` triggers a
-    // default.
+
+    function _now() { return window.getCurrentYearSafe(); }
+    function _ok(data) { return { success: true, data: data }; }
+    function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
 
     function _normaliseOptions(options) {
         return (options && typeof options === 'object') ? options : {};
     }
 
     function _resolveYear(options) {
-        return (typeof options.year === 'number') ? options.year : _getCurrentYear();
+        return (typeof options.year === 'number') ? options.year : _now();
     }
+
+    // =========================================================================
+    // 2. COMMIT TAIL
+    // =========================================================================
+    //
+    // Runs after every successful command. Rebuilds indexes over whatever
+    // mutations the command performed, marks the data dirty, publishes the
+    // in-process event, and dispatches a CustomEvent for cross-domain
+    // consumers.
+    //
+    // Note: this is the transaction boundary. It does NOT save. Callers
+    // that need persistence call CrimeCommands.persist() once after the
+    // command returns.
+
+    function _commit(eventName, payload) {
+        State.hydrateFromMasterData(true);
+        window.markDataDirty();
+        State.publish(eventName, payload);
+        _dispatch(eventName, payload);
+    }
+
+    function _dispatch(eventName, detail) {
+        if (typeof window.dispatchEvent !== 'function') return;
+        if (typeof CustomEvent !== 'function') return;
+        try {
+            window.dispatchEvent(new CustomEvent(eventName, { detail: detail || null }));
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('crime-commands.js: dispatch failed', eventName, e);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 3. PERSISTENCE BOUNDARY
+    // =========================================================================
+
+    function persist() {
+        if (typeof window.saveMasterData !== 'function') {
+            return _fail('saveMasterData unavailable', C.CODES.PERSIST_FAILED);
+        }
+        try {
+            window.saveMasterData();
+            return _ok(null);
+        } catch (e) {
+            return _fail(e.message || String(e), C.CODES.PERSIST_FAILED);
+        }
+    }
+
+    // =========================================================================
+    // 4. LOGGING
+    // =========================================================================
+
+    function _log(category, type, message, subjects) {
+        window.logEvent(category, type, message, subjects || []);
+    }
+
+    // =========================================================================
+    // 5. CONTEXT RESOLUTION
+    // =========================================================================
 
     function _resolveLocation(options, victim, killer) {
         if (options.locationId) return options.locationId;
-        var victimLoc = victim ? _getCurrentLocationId(victim) : null;
-        if (victimLoc) return victimLoc;
-        var killerLoc = killer ? _getCurrentLocationId(killer) : null;
-        if (killerLoc) return killerLoc;
+        if (victim) {
+            var victimLoc = window.getCurrentLocationId(victim);
+            if (victimLoc) return victimLoc;
+        }
+        if (killer) {
+            var killerLoc = window.getCurrentLocationId(killer);
+            if (killerLoc) return killerLoc;
+        }
         return null;
     }
-
-    // =========================================================================
-    // 2. HOUSEHOLD SIDE EFFECTS
-    // =========================================================================
-    //
-    // Perpetrator-side and victim-side effects are distinct. The victim's
-    // household gains a victim record, not a criminal record. The
-    // perpetrator's household gains a criminal record, not a victim record.
-    //
-    // Where HouseholdCommands exposes explicit functions, we use them. If
-    // only HouseholdState is available, we use its public update API. We do
-    // not touch household fields directly.
 
     function _getHouseholdIdForCharacter(character) {
         if (!character) return null;
@@ -201,212 +239,88 @@
         return null;
     }
 
-    /**
-     * Applies perpetrator-side effects to a household: criminal count and
-     * membership, prestige loss, crime history entry.
-     */
+    // =========================================================================
+    // 6. HOUSEHOLD SIDE EFFECTS
+    // =========================================================================
+    //
+    // Every household effect goes through HouseholdCommands. No fallback to
+    // HouseholdState. If HouseholdCommands is missing, the load failed
+    // earlier and this code never runs.
+
     function _applyPerpetratorHouseholdEffects(householdId, params) {
         if (!householdId) return;
-
-        var commands = _getHouseholdCommands();
-        if (commands && typeof commands.applyPerpetratorCrime === 'function') {
-            commands.applyPerpetratorCrime(householdId, params);
-            return;
-        }
-
-        var state = _getHouseholdState();
-        if (!state || typeof state.getHousehold !== 'function' ||
-            typeof state.updateHousehold !== 'function') {
-            return;
-        }
-
-        var household = state.getHousehold(householdId);
-        if (!household) return;
-
-        var prestigeLoss = params.prestigeLoss || 0;
-        var criminalMembers = (household.criminalMembers || []).slice();
-        if (params.perpetratorId && criminalMembers.indexOf(params.perpetratorId) === -1) {
-            criminalMembers.push(params.perpetratorId);
-        }
-
-        var crimeHistory = (household.crimeHistory || []).slice();
-        crimeHistory.push({
-            type: params.eventType,
-            role: 'perpetrator',
-            perpetratorId: params.perpetratorId || null,
-            victimId: params.victimId || null,
-            year: params.year,
-            prestigeLoss: prestigeLoss,
-            timestamp: Date.now()
-        });
-        if (crimeHistory.length > 100) crimeHistory = crimeHistory.slice(-100);
-
-        state.updateHousehold(householdId, {
-            prestige: Math.max(0, (household.prestige || 50) - prestigeLoss),
-            criminalCount: (household.criminalCount || 0) + (params.perpetratorId ? 1 : 0),
-            criminalMembers: criminalMembers,
-            crimeHistory: crimeHistory
-        }, { recordHistory: false });
+        window.HouseholdCommands.applyPerpetratorCrime(householdId, params);
     }
 
-    /**
-     * Applies victim-side effects to a household: victim count and
-     * membership, prestige loss (usually lower than perpetrator side),
-     * crime history entry.
-     */
     function _applyVictimHouseholdEffects(householdId, params) {
         if (!householdId) return;
-
-        var commands = _getHouseholdCommands();
-        if (commands && typeof commands.applyVictimCrime === 'function') {
-            commands.applyVictimCrime(householdId, params);
-            return;
-        }
-
-        var state = _getHouseholdState();
-        if (!state || typeof state.getHousehold !== 'function' ||
-            typeof state.updateHousehold !== 'function') {
-            return;
-        }
-
-        var household = state.getHousehold(householdId);
-        if (!household) return;
-
-        var prestigeLoss = params.prestigeLoss || 0;
-        var victimMembers = (household.victimMembers || []).slice();
-        if (params.victimId && victimMembers.indexOf(params.victimId) === -1) {
-            victimMembers.push(params.victimId);
-        }
-
-        var crimeHistory = (household.crimeHistory || []).slice();
-        crimeHistory.push({
-            type: params.eventType,
-            role: 'victim',
-            perpetratorId: params.perpetratorId || null,
-            victimId: params.victimId || null,
-            year: params.year,
-            prestigeLoss: prestigeLoss,
-            timestamp: Date.now()
-        });
-        if (crimeHistory.length > 100) crimeHistory = crimeHistory.slice(-100);
-
-        var updates = {
-            victimCount: (household.victimCount || 0) + (params.victimId ? 1 : 0),
-            victimMembers: victimMembers,
-            crimeHistory: crimeHistory
-        };
-
-        if (prestigeLoss > 0) {
-            updates.prestige = Math.max(0, (household.prestige || 50) - prestigeLoss);
-        }
-
-        state.updateHousehold(householdId, updates, { recordHistory: false });
+        window.HouseholdCommands.applyVictimCrime(householdId, params);
     }
 
     function _applyExecutionHouseholdEffects(householdId, params) {
         if (!householdId) return;
-
-        var commands = _getHouseholdCommands();
-        if (commands && typeof commands.applyExecutionToHousehold === 'function') {
-            commands.applyExecutionToHousehold(householdId, params);
-            return;
-        }
-
-        var state = _getHouseholdState();
-        if (!state || typeof state.getHousehold !== 'function' ||
-            typeof state.updateHousehold !== 'function') {
-            return;
-        }
-
-        var household = state.getHousehold(householdId);
-        if (!household) return;
-
-        var crimeHistory = (household.crimeHistory || []).slice();
-        crimeHistory.push({
-            type: 'execution',
-            role: 'condemned_household',
-            condemnedId: params.condemnedId || null,
-            year: params.year,
-            timestamp: Date.now()
-        });
-        if (crimeHistory.length > 100) crimeHistory = crimeHistory.slice(-100);
-
-        state.updateHousehold(householdId, {
-            executedCount: (household.executedCount || 0) + 1,
-            crimeHistory: crimeHistory
-        }, { recordHistory: false });
+        window.HouseholdCommands.applyExecutionToHousehold(householdId, params);
     }
 
     // =========================================================================
-    // 3. SETTLEMENT SIDE EFFECTS
+    // 7. SETTLEMENT SIDE EFFECTS
     // =========================================================================
-    //
-    // Settlement effects go through a public command boundary. If the
-    // settlement domain has not yet exposed one, we skip the effect and
-    // log the omission rather than reaching into private state.
 
     function _recordSettlementCrimeImpact(locationId, eventData) {
         if (!locationId) return;
-
-        var commands = _getSettlementCommands();
-        if (commands && typeof commands.recordCrimeImpact === 'function') {
-            commands.recordCrimeImpact(locationId, eventData);
-            return;
+        var impact = _getSettlementRecordImpact();
+        if (!impact) return;
+        try {
+            impact(locationId, eventData);
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('crime-commands.js: recordCrimeImpact threw', e);
+            }
         }
-
-        // No public boundary available. Do not reach into private state.
-        // The absence is logged once per call site via the caller's event
-        // log so it is visible without being noisy.
     }
 
     // =========================================================================
-    // 4. CONSEQUENCE EXECUTION
+    // 8. CONSEQUENCE EXECUTION
     // =========================================================================
+    //
+    // Executes a single legal consequence produced by
+    // CrimeLawIntegration.evaluateAction().
+    //
+    // Unknown consequence types are returned as { applied: false } and
+    // surfaced to the caller. They are not guessed at.
 
-    /**
-     * Executes a single legal consequence produced by
-     * CrimeLawIntegration.evaluateAction().
-     *
-     * Unknown consequence types are logged and skipped; they are not
-     * guessed at. This preserves the contract that the command layer only
-     * enacts what the law layer has explicitly prescribed.
-     */
     function _executeConsequence(consequence, ctx) {
-        if (!consequence || !consequence.type) return null;
+        if (!consequence || !consequence.type) {
+            return { type: 'unknown', applied: false, reason: 'no-type' };
+        }
 
         switch (consequence.type) {
-            case 'execution':
+            case C.CONSEQUENCE_TYPES.EXECUTION:
                 return _executeExecutionConsequence(consequence, ctx);
 
-            case 'imprisonment':
-            case 'exile':
-            case 'fine':
-            case 'penance':
-            case 'excommunication':
-                // These consequence types require domain APIs that are not
-                // yet part of the crime system. They are surfaced in the
-                // returned result so callers and UI can display them, but
-                // the command layer does not invent effects for them.
-                return { type: consequence.type, applied: false, reason: 'no handler' };
+            case C.CONSEQUENCE_TYPES.IMPRISONMENT:
+            case C.CONSEQUENCE_TYPES.EXILE:
+            case C.CONSEQUENCE_TYPES.FINE:
+            case C.CONSEQUENCE_TYPES.PENANCE:
+            case C.CONSEQUENCE_TYPES.EXCOMMUNICATION:
+                return { type: consequence.type, applied: false, reason: 'no-handler' };
 
-            case 'other':
+            case C.CONSEQUENCE_TYPES.OTHER:
             default:
                 return { type: consequence.type, applied: false, reason: 'unrecognised' };
         }
     }
 
     function _executeExecutionConsequence(consequence, ctx) {
-        var condemned = ctx.killer; // For murder, the condemned is the killer.
+        var condemned = ctx.killer;
         if (!condemned || condemned.isDeceased) {
-            return { type: 'execution', applied: false, reason: 'condemned unavailable' };
+            return { type: C.CONSEQUENCE_TYPES.EXECUTION, applied: false, reason: 'condemned-unavailable' };
         }
-
-        var method = consequence.method || null;
 
         var result = triggerExecution(condemned.id, {
             year: ctx.year,
             reason: consequence.description || consequence.type,
-            method: method,
+            method: consequence.method || null,
             locationId: ctx.locationId,
             isForMurder: !!ctx.isForMurder,
             victimId: ctx.victim ? ctx.victim.id : null,
@@ -418,15 +332,15 @@
         });
 
         return {
-            type: 'execution',
+            type: C.CONSEQUENCE_TYPES.EXECUTION,
             applied: !!result.success,
             executionResult: result.success ? result.data : null,
-            error: result.success ? null : result.error
+            reason: result.success ? null : result.reason
         };
     }
 
     // =========================================================================
-    // 5. PUBLIC COMMANDS
+    // 9. PUBLIC COMMANDS
     // =========================================================================
 
     /**
@@ -435,35 +349,36 @@
      * @param {string} victimId
      * @param {string} killerId
      * @param {Object} [options]
-     * @returns {{success: boolean, data?: Object, error?: string}}
+     * @returns {{success: true, data: Object}|{success: false, reason: string, code?: string}}
      */
     function triggerMurder(victimId, killerId, options) {
         options = _normaliseOptions(options);
 
         try {
-            var constants = _getConstants();
-            var victim = _getCharacterById(victimId);
-            var killer = _getCharacterById(killerId);
+            var victim = window.getCharacterById(victimId);
+            var killer = window.getCharacterById(killerId);
 
-            if (!victim) return { success: false, error: 'Victim not found' };
-            if (!killer) return { success: false, error: 'Killer not found' };
-            if (victim.isDeceased) return { success: false, error: 'Victim is already deceased' };
-            if (victimId === killerId) return { success: false, error: 'Cannot murder oneself' };
+            if (!victim) return _fail('Victim not found', C.CODES.NOT_FOUND);
+            if (!killer) return _fail('Killer not found', C.CODES.NOT_FOUND);
+            if (victim.isDeceased) return _fail('Victim is already deceased', C.CODES.ALREADY_DECEASED);
+            if (victimId === killerId) return _fail('Cannot murder oneself', C.CODES.SAME_CHARACTER);
 
             var year = _resolveYear(options);
             var reason = options.reason || getRandomMurderReason();
             var killerGotAway = (typeof options.killerGotAway === 'boolean')
                 ? options.killerGotAway
-                : _chance(0.3);
+                : (typeof window.chance === 'function'
+                    ? window.chance(0.3)
+                    : Math.random() < 0.3);
             var startVendetta = (typeof options.startVendetta === 'boolean')
                 ? options.startVendetta
                 : true;
             var locationId = _resolveLocation(options, victim, killer);
 
-            // ---- Law evaluation ----
+            // ---- Law evaluation -----------------------------------------
             var action = {
-                type: constants.CRIME_TYPES.MURDER,
-                domain: constants.LAW_DOMAINS.VIOLENCE,
+                type: C.CRIME_TYPES.MURDER,
+                domain: C.LAW_DOMAINS.VIOLENCE,
                 details: {
                     victimId: victimId,
                     killerId: killerId,
@@ -479,19 +394,16 @@
                 year: year
             };
 
-            var evaluation = _getLawIntegration().evaluateAction(killerId, action, context);
+            var evaluation = Law.evaluateAction(killerId, action, context);
 
-            // ---- Record crime ----
+            // ---- Record crime (unsolved) --------------------------------
             var crimeData = {
-                type: constants.CRIME_TYPES.MURDER,
+                type: C.CRIME_TYPES.MURDER,
                 perpetratorId: killer.id,
                 victimId: victim.id,
                 year: year,
                 reason: reason,
                 locationId: locationId,
-                solved: !killerGotAway,
-                solvedAt: !killerGotAway ? year : null,
-                solution: !killerGotAway ? 'Killer apprehended' : null,
                 notes: options.notes || null,
                 civilViolation: evaluation.civil.length > 0
                     ? _summariseViolation(evaluation.civil[0], 'civil', locationId)
@@ -503,14 +415,24 @@
                 violatedLaws: evaluation.violations.map(_summariseViolationItem)
             };
 
-            var recordResult = _getCrimeState().recordCrime(crimeData);
+            var recordResult = State.recordCrime(crimeData);
             if (!recordResult.success) {
-                return { success: false, error: 'Failed to record crime: ' + recordResult.error };
+                return _fail('Failed to record crime: ' + recordResult.reason, C.CODES.VALIDATION);
             }
             var crime = recordResult.data;
 
-            // ---- Kill victim ----
-            var killResult = _killCharacter(victim, year, 'Murdered', {
+            // ---- Solve if the killer was apprehended -------------------
+            if (!killerGotAway) {
+                var solveResult = State.solveCrime(crime.id, 'Killer apprehended', year);
+                if (!solveResult.success) {
+                    State.deleteCrime(crime.id);
+                    return _fail('Failed to solve crime: ' + solveResult.reason, C.CODES.VALIDATION);
+                }
+                crime = solveResult.data;
+            }
+
+            // ---- Kill victim -------------------------------------------
+            var killResult = window.killCharacter(victim, year, 'Murdered', {
                 killer: killer,
                 murderReason: reason,
                 killerGotAway: killerGotAway,
@@ -518,17 +440,17 @@
             });
 
             if (!killResult || killResult.success === false) {
-                // The crime record exists but the victim survived. Roll back
-                // the crime record so state and reality agree.
-                _getCrimeState().deleteCrime(crime.id);
-                return {
-                    success: false,
-                    error: 'Failed to kill victim: ' +
-                        (killResult && killResult.reason ? killResult.reason : 'unknown')
-                };
+                State.deleteCrime(crime.id);
+                return _fail(
+                    'Failed to kill victim: ' +
+                    (killResult && (killResult.reason || killResult.error)
+                        ? (killResult.reason || killResult.error)
+                        : 'unknown'),
+                    C.CODES.KILL_FAILED
+                );
             }
 
-            // ---- Execute legal consequences ----
+            // ---- Execute legal consequences ----------------------------
             var consequenceResults = [];
             var executionResult = null;
             if (!killerGotAway && !killer.isDeceased) {
@@ -542,18 +464,17 @@
                         murderReason: reason
                     });
                     consequenceResults.push(res);
-                    if (res && res.type === 'execution' && res.applied) {
+                    if (res && res.type === C.CONSEQUENCE_TYPES.EXECUTION && res.applied) {
                         executionResult = res.executionResult;
                     }
                 }
             }
 
-            // ---- Vendetta ----
+            // ---- Vendetta ----------------------------------------------
             var vendettaResult = null;
             if (startVendetta) {
                 var victimHouseholdId = _getHouseholdIdForCharacter(victim);
                 var killerHouseholdId = _getHouseholdIdForCharacter(killer);
-
                 if (victimHouseholdId && killerHouseholdId &&
                     victimHouseholdId !== killerHouseholdId) {
                     vendettaResult = createBloodFeud(victimId, killerId, {
@@ -565,7 +486,7 @@
                 }
             }
 
-            // ---- Household side effects ----
+            // ---- Household side effects --------------------------------
             var vHouseholdId = _getHouseholdIdForCharacter(victim);
             var kHouseholdId = _getHouseholdIdForCharacter(killer);
 
@@ -588,7 +509,7 @@
                 });
             }
 
-            // ---- Settlement side effects ----
+            // ---- Settlement side effects -------------------------------
             if (locationId) {
                 _recordSettlementCrimeImpact(locationId, {
                     type: 'murder',
@@ -601,8 +522,8 @@
                 });
             }
 
-            // ---- Logging ----
-            _logEvent('murder', 'Murder',
+            // ---- Logging + commit --------------------------------------
+            _log('murder', 'Murder',
                 (victim.name || 'Unknown') + ' was murdered by ' +
                 (killer.name || 'Unknown') + ' (' + reason + ')' +
                 (killerGotAway ? '. The killer escaped.' : '.') +
@@ -611,60 +532,61 @@
                     : ''),
                 [victim, killer]);
 
-            return {
-                success: true,
-                data: {
-                    victim: victim,
-                    killer: killer,
-                    crime: crime,
-                    year: year,
-                    locationId: locationId,
-                    killerGotAway: killerGotAway,
-                    legalEvaluation: evaluation,
-                    consequenceResults: consequenceResults,
-                    execution: executionResult,
-                    vendetta: vendettaResult && vendettaResult.success
-                        ? vendettaResult.data
-                        : null,
-                    householdUpdates: {
-                        victimHouseholdId: vHouseholdId,
-                        killerHouseholdId: kHouseholdId
-                    }
+            _commit(C.EVENTS.CRIME_RECORDED, {
+                crimeId: crime.id,
+                type: C.CRIME_TYPES.MURDER,
+                victimId: victimId,
+                killerId: killerId
+            });
+
+            return _ok({
+                victim: victim,
+                killer: killer,
+                crime: crime,
+                year: year,
+                locationId: locationId,
+                killerGotAway: killerGotAway,
+                legalEvaluation: evaluation,
+                consequenceResults: consequenceResults,
+                execution: executionResult,
+                vendetta: vendettaResult && vendettaResult.success
+                    ? vendettaResult.data
+                    : null,
+                householdUpdates: {
+                    victimHouseholdId: vHouseholdId,
+                    killerHouseholdId: kHouseholdId
                 }
-            };
+            });
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         }
     }
 
     /**
-     * Triggers an execution with law evaluation.
-     *
-     * @param {string} condemnedId
-     * @param {Object} [options]
+     * Triggers an execution with law evaluation. Records the crime unsolved,
+     * solves it immediately (the outcome is legally determined), then kills
+     * the condemned.
      */
     function triggerExecution(condemnedId, options) {
         options = _normaliseOptions(options);
 
         try {
-            var constants = _getConstants();
-            var condemned = _getCharacterById(condemnedId);
+            var condemned = window.getCharacterById(condemnedId);
 
-            if (!condemned) return { success: false, error: 'Condemned character not found' };
-            if (condemned.isDeceased) return { success: false, error: 'Character is already deceased' };
+            if (!condemned) return _fail('Condemned character not found', C.CODES.NOT_FOUND);
+            if (condemned.isDeceased) return _fail('Character is already deceased', C.CODES.ALREADY_DECEASED);
 
             var year = _resolveYear(options);
             var reason = options.reason || 'Unspecified reason';
-            var method = options.method || getRandomExecutionMethod().name;
+            var method = options.method || _randomExecutionMethod().name;
             var executionerId = options.executionerId || null;
-            var locationId = options.locationId ||
-                _getCurrentLocationId(condemned) ||
-                null;
+            var locationId = options.locationId || window.getCurrentLocationId(condemned) || null;
 
+            // ---- Law evaluation -----------------------------------------
             var action = {
-                type: constants.CRIME_TYPES.EXECUTION,
-                domain: constants.LAW_DOMAINS.DEATH,
+                type: C.CRIME_TYPES.EXECUTION,
+                domain: C.LAW_DOMAINS.DEATH,
                 details: {
                     condemnedId: condemnedId,
                     reason: reason,
@@ -679,20 +601,24 @@
             };
 
             var evaluation = executionerId
-                ? _getLawIntegration().evaluateAction(executionerId, action, context)
-                : { lawful: true, violations: [], civil: [], religious: [],
-                    governingLaw: null, consequences: [] };
+                ? Law.evaluateAction(executionerId, action, context)
+                : {
+                    lawful: true,
+                    violations: [],
+                    civil: [],
+                    religious: [],
+                    governingLaw: null,
+                    consequences: []
+                };
 
+            // ---- Record crime (unsolved) --------------------------------
             var crimeData = {
-                type: constants.CRIME_TYPES.EXECUTION,
+                type: C.CRIME_TYPES.EXECUTION,
                 perpetratorId: executionerId || 'state',
                 victimId: condemned.id,
                 year: year,
                 reason: reason,
                 locationId: locationId,
-                solved: true,
-                solvedAt: year,
-                solution: 'Legal execution',
                 method: method,
                 notes: options.notes || null,
                 metadata: {
@@ -710,13 +636,22 @@
                 violatedLaws: evaluation.violations.map(_summariseViolationItem)
             };
 
-            var recordResult = _getCrimeState().recordCrime(crimeData);
+            var recordResult = State.recordCrime(crimeData);
             if (!recordResult.success) {
-                return { success: false, error: 'Failed to record execution: ' + recordResult.error };
+                return _fail('Failed to record execution: ' + recordResult.reason, C.CODES.VALIDATION);
             }
             var crime = recordResult.data;
 
-            var killResult = _killCharacter(condemned, year, 'Executed: ' + reason, {
+            // ---- Solve immediately -------------------------------------
+            var solveResult = State.solveCrime(crime.id, 'Legal execution', year);
+            if (!solveResult.success) {
+                State.deleteCrime(crime.id);
+                return _fail('Failed to solve execution record: ' + solveResult.reason, C.CODES.VALIDATION);
+            }
+            crime = solveResult.data;
+
+            // ---- Kill condemned ----------------------------------------
+            var killResult = window.killCharacter(condemned, year, 'Executed: ' + reason, {
                 executionReason: reason,
                 executionMethod: method,
                 executionerId: executionerId,
@@ -724,28 +659,38 @@
             });
 
             if (!killResult || killResult.success === false) {
-                _getCrimeState().deleteCrime(crime.id);
-                return {
-                    success: false,
-                    error: 'Failed to kill condemned: ' +
-                        (killResult && killResult.reason ? killResult.reason : 'unknown')
-                };
+                State.deleteCrime(crime.id);
+                return _fail(
+                    'Failed to kill condemned: ' +
+                    (killResult && (killResult.reason || killResult.error)
+                        ? (killResult.reason || killResult.error)
+                        : 'unknown'),
+                    C.CODES.KILL_FAILED
+                );
             }
 
-            // End relationships if requested
-            if (options.endRelationships !== false &&
-                typeof window.getRelationshipsForCharacter === 'function' &&
-                typeof window.endRelationship === 'function') {
-                var relationships = window.getRelationshipsForCharacter(condemned.id);
-                for (var i = 0; i < relationships.length; i++) {
-                    var rel = relationships[i];
-                    if (rel.status === 'ongoing') {
-                        window.endRelationship(rel.id, year,
-                            'Execution of ' + (condemned.name || 'Unknown'));
+            // ---- End relationships -------------------------------------
+            if (options.endRelationships !== false) {
+                try {
+                    var relationships = window.getRelationshipsForCharacter(condemned.id);
+                    for (var i = 0; i < relationships.length; i++) {
+                        var rel = relationships[i];
+                        if (rel.status === 'ongoing') {
+                            window.endRelationship(
+                                rel.id,
+                                year,
+                                'Execution of ' + (condemned.name || 'Unknown')
+                            );
+                        }
+                    }
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error('crime-commands.js: endRelationship flow threw', e);
                     }
                 }
             }
 
+            // ---- Household side effects --------------------------------
             var householdId = _getHouseholdIdForCharacter(condemned);
             if (householdId) {
                 _applyExecutionHouseholdEffects(householdId, {
@@ -754,6 +699,7 @@
                 });
             }
 
+            // ---- Settlement side effects -------------------------------
             if (locationId) {
                 _recordSettlementCrimeImpact(locationId, {
                     type: 'execution',
@@ -765,28 +711,128 @@
                 });
             }
 
-            _logEvent('execution', 'Execution',
+            _log('execution', 'Execution',
                 (condemned.name || 'Unknown') + ' was executed for ' + reason +
                 ' via ' + method + ' in ' + year,
                 [condemned]);
 
-            return {
-                success: true,
-                data: {
-                    condemned: condemned,
-                    crime: crime,
-                    year: year,
-                    locationId: locationId,
-                    reason: reason,
-                    method: method,
-                    executionerId: executionerId,
-                    householdId: householdId,
-                    legalEvaluation: evaluation
-                }
-            };
+            _commit(C.EVENTS.CRIME_RECORDED, {
+                crimeId: crime.id,
+                type: C.CRIME_TYPES.EXECUTION,
+                condemnedId: condemnedId
+            });
+
+            return _ok({
+                condemned: condemned,
+                crime: crime,
+                year: year,
+                locationId: locationId,
+                reason: reason,
+                method: method,
+                executionerId: executionerId,
+                householdId: householdId,
+                legalEvaluation: evaluation
+            });
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
+        }
+    }
+
+    /**
+     * Explicitly escalates a vendetta. Escalation normally happens
+     * automatically inside recordVendettaDeath when the death count reaches
+     * C.VENDETTA_ESCALATION_THRESHOLD. This command is the explicit override:
+     *
+     *   - Without options.force, it succeeds only if the vendetta has already
+     *     reached the threshold. This is a retry path for automatic escalation
+     *     that somehow didn't fire.
+     *   - With options.force === true and options.reason, it escalates
+     *     regardless of the death count. Requires a reason for audit trail.
+     *
+     * Returns { success: true, data: { vendetta, escalated } } where
+     * `escalated` is true if this call transitioned the vendetta from ACTIVE
+     * to ESCALATED, false if it was already ESCALATED.
+     *
+     * @param {string} vendettaId
+     * @param {Object} [options]  { force, reason, year }
+     */
+    function escalateVendetta(vendettaId, options) {
+        options = _normaliseOptions(options);
+
+        try {
+            var vendetta = State._getVendettaCanonical(vendettaId);
+            if (!vendetta) return _fail('Vendetta not found', C.CODES.NOT_FOUND);
+
+            var statuses = C.VENDETTA_STATUS;
+            if (vendetta.status === statuses.RESOLVED) {
+                return _fail('Vendetta is resolved', C.CODES.ALREADY_RESOLVED);
+            }
+            if (vendetta.status === statuses.ESCALATED) {
+                return _ok({ vendetta: vendetta, escalated: false });
+            }
+
+            var year = _resolveYear(options);
+
+            if (options.force === true) {
+                if (!options.reason) {
+                    return _fail('Force escalation requires a reason', C.CODES.VALIDATION);
+                }
+
+                var setResult = State._setVendettaStatus(vendettaId, statuses.ESCALATED, {
+                    escalatedAt: year,
+                    reason: options.reason
+                });
+                if (!setResult.success) {
+                    return _fail(setResult.reason, setResult.code || C.CODES.ESCALATION_FAILED);
+                }
+
+                _log('vendetta', 'Vendetta Escalated (forced)',
+                    'Vendetta ' + vendettaId + ' escalated by force: ' + options.reason,
+                    []);
+
+                _commit(C.EVENTS.VENDETTA_ESCALATED, {
+                    vendettaId: vendettaId,
+                    forced: true,
+                    reason: options.reason
+                });
+
+                return _ok({ vendetta: setResult.data, escalated: true });
+            }
+
+            // Non-force path: retry automatic escalation if the vendetta
+            // has reached the threshold but is still ACTIVE.
+            var threshold = C.VENDETTA_ESCALATION_THRESHOLD;
+            var deathCount = Array.isArray(vendetta.deaths) ? vendetta.deaths.length : 0;
+            if (deathCount < threshold) {
+                return _fail(
+                    'Vendetta has not reached the escalation threshold (' +
+                    deathCount + '/' + threshold + ' deaths); use force: true with a reason to override',
+                    C.CODES.ESCALATION_FAILED
+                );
+            }
+
+            var retryResult = State._setVendettaStatus(vendettaId, statuses.ESCALATED, {
+                escalatedAt: year,
+                reason: 'Automatic escalation retry'
+            });
+            if (!retryResult.success) {
+                return _fail(retryResult.reason, retryResult.code || C.CODES.ESCALATION_FAILED);
+            }
+
+            _log('vendetta', 'Vendetta Escalated',
+                'Vendetta ' + vendettaId + ' escalated after reaching ' + threshold + ' deaths',
+                []);
+
+            _commit(C.EVENTS.VENDETTA_ESCALATED, {
+                vendettaId: vendettaId,
+                forced: false
+            });
+
+            return _ok({ vendetta: retryResult.data, escalated: true });
+
+        } catch (e) {
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         }
     }
 
@@ -798,20 +844,23 @@
         options = _normaliseOptions(options);
 
         try {
-            var victim = _getCharacterById(victimId);
-            var killer = _getCharacterById(killerId);
+            var victim = window.getCharacterById(victimId);
+            var killer = window.getCharacterById(killerId);
             if (!victim || !killer) {
-                return { success: false, error: 'Victim or killer not found' };
+                return _fail('Victim or killer not found', C.CODES.NOT_FOUND);
             }
 
             var victimHouseholdId = _getHouseholdIdForCharacter(victim);
             var killerHouseholdId = _getHouseholdIdForCharacter(killer);
 
             if (!victimHouseholdId || !killerHouseholdId) {
-                return { success: false, error: 'One or both households not found' };
+                return _fail('One or both households not found', C.CODES.NO_HOUSEHOLD);
             }
             if (victimHouseholdId === killerHouseholdId) {
-                return { success: false, error: 'Cannot create a vendetta within a single household' };
+                return _fail(
+                    'Cannot create a vendetta within a single household',
+                    C.CODES.SAME_HOUSEHOLD
+                );
             }
 
             var year = _resolveYear(options);
@@ -819,11 +868,10 @@
                 ('Blood feud from murder of ' + (victim.name || 'Unknown') +
                  ' by ' + (killer.name || 'Unknown'));
 
-            var existing = _getCrimeState().getActiveVendettaBetween(
-                victimHouseholdId, killerHouseholdId);
-
+            // Existing vendetta? Record the death on the existing one.
+            var existing = State.getActiveVendettaBetween(victimHouseholdId, killerHouseholdId);
             if (existing) {
-                var deathResult = _getCrimeState().recordVendettaDeath(existing.id, {
+                var deathResult = State.recordVendettaDeath(existing.id, {
                     victimId: victimId,
                     killerId: killerId,
                     year: year,
@@ -831,12 +879,18 @@
                     crimeId: options.crimeId || null
                 });
                 if (!deathResult.success) {
-                    return { success: false, error: deathResult.error };
+                    return _fail(deathResult.reason, deathResult.code);
                 }
-                return { success: true, data: deathResult.data };
+                _commit(C.EVENTS.VENDETTA_DEATH, {
+                    vendettaId: existing.id,
+                    victimId: victimId,
+                    killerId: killerId
+                });
+                return _ok(deathResult.data);
             }
 
-            var vendettaResult = _getCrimeState().createVendetta({
+            // New vendetta.
+            var vendettaResult = State.createVendetta({
                 householdAId: victimHouseholdId,
                 householdBId: killerHouseholdId,
                 characterAId: victimId,
@@ -848,10 +902,11 @@
             });
 
             if (!vendettaResult.success) {
-                return { success: false, error: vendettaResult.error };
+                return _fail(vendettaResult.reason, vendettaResult.code);
             }
 
-            var firstDeath = _getCrimeState().recordVendettaDeath(vendettaResult.data.id, {
+            // First death on the new vendetta.
+            var firstDeath = State.recordVendettaDeath(vendettaResult.data.id, {
                 victimId: victimId,
                 killerId: killerId,
                 year: year,
@@ -860,23 +915,29 @@
             });
 
             if (!firstDeath.success) {
-                return { success: false, error: firstDeath.error };
+                return _fail(firstDeath.reason, firstDeath.code);
             }
 
-            _logEvent('vendetta', 'Blood Feud Created',
+            _log('vendetta', 'Blood Feud Created',
                 'Blood feud created over the murder of ' +
                 (victim.name || 'Unknown'),
                 [victim, killer]);
 
-            return { success: true, data: firstDeath.data };
+            _commit(C.EVENTS.VENDETTA_CREATED, {
+                vendettaId: vendettaResult.data.id,
+                victimId: victimId,
+                killerId: killerId
+            });
+
+            return _ok(firstDeath.data);
 
         } catch (e) {
-            return { success: false, error: e.message || String(e) };
+            return _fail(e.message || String(e), C.CODES.VALIDATION);
         }
     }
 
     // =========================================================================
-    // 6. VIOLATION SUMMARISATION (shape contract for crime records)
+    // 10. VIOLATION SUMMARISATION (shape contract for crime records)
     // =========================================================================
 
     function _summariseViolationItem(violation) {
@@ -904,14 +965,16 @@
     }
 
     // =========================================================================
-    // 7. HELPERS
+    // 11. HELPERS
     // =========================================================================
 
     function getRandomMurderReason(category) {
-        var constants = _getConstants();
-        var reasons = constants.MURDER_REASONS || {};
+        var reasons = C.MURDER_REASONS || {};
         if (category && reasons[category]) {
-            return _pickRandom(reasons[category]) || 'Unspecified';
+            var picked = (typeof window.pickRandom === 'function')
+                ? window.pickRandom(reasons[category])
+                : null;
+            return picked || 'Unspecified';
         }
         var all = [];
         for (var key in reasons) {
@@ -919,30 +982,43 @@
                 all = all.concat(reasons[key]);
             }
         }
-        return _pickRandom(all) || 'Unspecified';
+        var picked2 = (typeof window.pickRandom === 'function')
+            ? window.pickRandom(all)
+            : null;
+        return picked2 || 'Unspecified';
     }
 
-    function getRandomExecutionMethod() {
-        var constants = _getConstants();
-        var methods = constants.EXECUTION_METHODS || {};
+    function _randomExecutionMethod() {
+        var methods = C.EXECUTION_METHODS || {};
         var array = [];
         for (var key in methods) {
             if (Object.prototype.hasOwnProperty.call(methods, key)) {
                 array.push(methods[key]);
             }
         }
-        return _pickRandom(array) || { id: 'unknown', name: 'Unknown' };
+        var picked = (typeof window.pickRandom === 'function')
+            ? window.pickRandom(array)
+            : null;
+        return picked || { id: 'unknown', name: 'Unknown' };
+    }
+
+    function getRandomExecutionMethod() {
+        return _randomExecutionMethod();
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 12. EXPORTS
     // =========================================================================
 
     window.CrimeCommands = {
         // Workflows
         triggerMurder: triggerMurder,
         triggerExecution: triggerExecution,
+        escalateVendetta: escalateVendetta,
         createBloodFeud: createBloodFeud,
+
+        // Persistence
+        persist: persist,
 
         // Helpers
         getRandomMurderReason: getRandomMurderReason,
