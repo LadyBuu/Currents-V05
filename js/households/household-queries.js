@@ -1,9 +1,9 @@
 /**
  * =============================================================================
- * STILL WATERS - HOUSEHOLD QUERIES (household-queries.js)
+ * STILL WATERS - HOUSEHOLD QUERIES (js/households/household-queries.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-queries.js
+ * LOCATION: js/households/household-queries.js
  *
  * PURPOSE
  * -------
@@ -12,7 +12,7 @@
  * CONVERGED PATTERN NOTES
  * -----------------------
  *   - No mutations. No _processing guard.
- *   - Required dependencies fail loudly (throw at load or at call time).
+ *   - Required dependencies fail loudly (throw at load).
  *   - Optional dependencies are checked at call time; if a query
  *     fundamentally cannot be answered without an optional dep (e.g.
  *     enterprise summaries without IndustryQueries), and the household
@@ -20,6 +20,16 @@
  *     enterprises, we return [] — because empty is legitimate.
  *   - Public reads never expose live canonical records.
  *   - Historical queries accept explicit referenceYear.
+ *
+ * DELEGATION
+ * ----------
+ *   Status computation          → HouseholdRules.calculateHouseholdStatus
+ *   Demographic aggregation     → HouseholdRules.calculateDemographics
+ *   Heir filtering              → HouseholdRules.filterEligibleHeirs
+ *
+ *   These rules are pure and tested independently. This module projects
+ *   household records into the fact shape the rules take, then returns
+ *   the rules' output. It does NOT reimplement the rules.
  *
  * WHAT IS SNAPSHOTTED
  * -------------------
@@ -35,17 +45,18 @@
  *
  * DEPENDENCIES (required)
  * -----------------------
- *   - HouseholdState
- *   - getCharacterById
- *   - getCharacters
- *   - getCurrentYearSafe
+ *   - household-state.js:   HouseholdState
+ *   - household-rules.js:   HouseholdRules
+ *   - accessors.js:         getCharacterById, getCharacters
+ *   - time.js:              getCurrentYear, calculateAge
+ *   - family-queries.js:    FamilyQueries (heir discovery, edge reads)
  *
  * DEPENDENCIES (optional)
  * -----------------------
- *   - getChildren, getParents  (heir discovery — if missing, external
- *                               heirs are not included)
  *   - IndustryState            (getHouseholdEnterprises)
  *   - IndustryQueries          (getHouseholdEnterpriseSummaries)
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
@@ -80,25 +91,38 @@
         typeof _state._internal.getAssignmentRecord !== 'function' ||
         typeof _state._internal.getAllAssignmentRecords !== 'function') {
         throw new Error(
-            'HouseholdQueries: HouseholdState._internal is missing required methods');
+            'HouseholdQueries: HouseholdState._internal is missing required methods'
+        );
     }
     var _internal = _state._internal;
 
+    var _rules = _requireObject('HouseholdRules', window.HouseholdRules);
+    _requireFunction('HouseholdRules.calculateHouseholdStatus',
+        _rules.calculateHouseholdStatus);
+    _requireFunction('HouseholdRules.calculateDemographics',
+        _rules.calculateDemographics);
+    _requireFunction('HouseholdRules.filterEligibleHeirs',
+        _rules.filterEligibleHeirs);
+
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
-    var _getCharacters = _requireFunction('getCharacters', window.getCharacters);
-    var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
-        window.getCurrentYearSafe);
+    var _getCharacters = _requireFunction('getCharacters',
+        window.getCharacters);
+    var _getCurrentYear = _requireFunction('getCurrentYear',
+        window.getCurrentYear);
+    var _calculateAge = _requireFunction('calculateAge',
+        window.calculateAge);
 
-    // Optional deps — checked at call time
-    function _getChildren(characterId) {
-        if (typeof window.getChildren !== 'function') return null;
-        return window.getChildren(characterId);
-    }
-    function _getParents(characterId) {
-        if (typeof window.getParents !== 'function') return null;
-        return window.getParents(characterId);
-    }
+    var _fq = _requireObject('FamilyQueries', window.FamilyQueries);
+    _requireFunction('FamilyQueries.getChildIds', _fq.getChildIds);
+    _requireFunction('FamilyQueries.getBiologicalChildIds',
+        _fq.getBiologicalChildIds);
+    _requireFunction('FamilyQueries.getParents', _fq.getParents);
+    _requireFunction('FamilyQueries.getParentsByRole', _fq.getParentsByRole);
+    _requireFunction('FamilyQueries.getBiologicalParentIds',
+        _fq.getBiologicalParentIds);
+
+    // Optional deps — checked at call time.
     function _industryState() {
         return typeof window.IndustryState !== 'undefined'
             ? window.IndustryState
@@ -142,41 +166,49 @@
     }
 
     function _ageAt(character, referenceYear) {
-        if (!character || character.birthYear === undefined ||
-            character.birthYear === null) {
+        if (!character) return null;
+        if (character.birthYear === undefined || character.birthYear === null) {
             return null;
         }
-        var year = referenceYear !== null && referenceYear !== undefined
+        var year = (referenceYear !== null && referenceYear !== undefined)
             ? referenceYear
-            : _getCurrentYearSafe();
-        return year - character.birthYear;
+            : _getCurrentYear();
+        var age = _calculateAge(
+            character.birthYear,
+            character.isDeceased === true,
+            character.deathYear,
+            year
+        );
+        return age;
     }
 
     function _resolveReferenceYear(options) {
         options = options || {};
-        if (options.referenceYear === undefined || options.referenceYear === null) {
+        if (options.referenceYear === undefined
+            || options.referenceYear === null) {
             return null;
         }
         return options.referenceYear;
     }
 
+    function _lookupCharacter(id) {
+        if (!id) return null;
+        try {
+            return _getCharacterById(id);
+        } catch (e) {
+            return null;
+        }
+    }
+
     // =========================================================================
     // 3. HOUSEHOLD STATUS PROJECTION
     // =========================================================================
+    //
+    // Computes status via HouseholdRules.calculateHouseholdStatus. The
+    // per-household member walk happens here because the rules take
+    // pre-counted facts; they do not read state.
 
-    function getHouseholdStatus(householdId) {
-        var household = _internal.getHouseholdRecord(householdId);
-        if (!household) {
-            return {
-                exists: false,
-                status: 'unknown',
-                livingCount: 0,
-                deceasedCount: 0,
-                missingCount: 0,
-                totalMembers: 0
-            };
-        }
-
+    function _computeStatusFacts(household) {
         var persisted = household.status || null;
         var livingCount = 0;
         var deceasedCount = 0;
@@ -188,12 +220,7 @@
         if (Array.isArray(household.members)) {
             for (var i = 0; i < household.members.length; i++) {
                 var member = household.members[i];
-                var character = null;
-                try {
-                    character = _getCharacterById(member.characterId);
-                } catch (e) {
-                    character = null;
-                }
+                var character = _lookupCharacter(member.characterId);
                 if (!character) {
                     missingCount++;
                 } else if (character.isDeceased) {
@@ -204,41 +231,92 @@
             }
         }
 
-        var isEmpty = totalMembers === 0;
-        var isVacant = livingCount === 0 && totalMembers > 0;
-        var isDeclining = livingCount > 0 && totalMembers > 3 &&
-            (livingCount / totalMembers) <= 0.5;
-
-        var status;
-        if (persisted === 'destroyed') status = 'destroyed';
-        else if (persisted === 'deprecated') status = 'deprecated';
-        else if (isEmpty) status = 'empty';
-        else if (isVacant) status = 'vacant';
-        else if (isDeclining) status = 'declining';
-        else status = 'active';
+        var status = _rules.calculateHouseholdStatus(
+            {
+                livingCount: livingCount,
+                deceasedCount: deceasedCount,
+                missingCount: missingCount,
+                totalMembers: totalMembers
+            },
+            persisted
+        );
 
         return {
-            exists: true,
             status: status,
             persistedStatus: persisted,
             livingCount: livingCount,
             deceasedCount: deceasedCount,
             missingCount: missingCount,
             totalMembers: totalMembers,
-            isEmpty: isEmpty,
-            isVacant: isVacant,
-            isDeclining: isDeclining
+            isEmpty: totalMembers === 0,
+            isVacant: livingCount === 0 && totalMembers > 0,
+            isDeclining: livingCount > 0 && totalMembers > 3
+                && (livingCount / totalMembers) <= 0.5
         };
+    }
+
+    function _emptyStatus() {
+        return {
+            exists: false,
+            status: 'unknown',
+            livingCount: 0,
+            deceasedCount: 0,
+            missingCount: 0,
+            totalMembers: 0,
+            isEmpty: true,
+            isVacant: false,
+            isDeclining: false,
+            persistedStatus: null
+        };
+    }
+
+    function getHouseholdStatus(householdId) {
+        var household = _internal.getHouseholdRecord(householdId);
+        if (!household) return _emptyStatus();
+
+        var facts = _computeStatusFacts(household);
+        facts.exists = true;
+        return facts;
+    }
+
+    /**
+     * Batch status lookup. Returns a Map keyed by household id.
+     * Used by household-ui-list.js to avoid O(n²) status recomputation.
+     *
+     * @param {Array<string>} [householdIds] - when omitted, computes for
+     *   every household in the collection.
+     * @returns {Map<string, Object>}
+     */
+    function getHouseholdStatuses(householdIds) {
+        var map = new Map();
+        var records;
+        if (Array.isArray(householdIds)) {
+            records = [];
+            for (var i = 0; i < householdIds.length; i++) {
+                var r = _internal.getHouseholdRecord(householdIds[i]);
+                if (r) records.push(r);
+            }
+        } else {
+            records = _internal.getAllHouseholdRecords({
+                includeDeprecated: true
+            });
+        }
+        for (var j = 0; j < records.length; j++) {
+            var household = records[j];
+            if (!household || !household.id) continue;
+            var facts = _computeStatusFacts(household);
+            facts.exists = true;
+            map.set(household.id, facts);
+        }
+        return map;
     }
 
     // =========================================================================
     // 4. HOUSEHOLD LOOKUPS
     // =========================================================================
 
-    function getHousehold(householdId) {
-        var household = _internal.getHouseholdRecord(householdId);
+    function _snapshotHousehold(household) {
         if (!household) return null;
-
         return {
             id: household.id,
             name: household.name || '',
@@ -247,8 +325,10 @@
             status: household.status || null,
             reputation: household.reputation !== undefined
                 ? household.reputation : null,
-            wealth: household.wealth !== undefined ? household.wealth : null,
-            debt: household.debt !== undefined ? household.debt : null,
+            wealth: household.wealth !== undefined
+                ? household.wealth : null,
+            debt: household.debt !== undefined
+                ? household.debt : null,
             powerScore: household.powerScore !== undefined
                 ? household.powerScore : null,
             foundedYear: household.foundedYear !== undefined
@@ -263,6 +343,10 @@
         };
     }
 
+    function getHousehold(householdId) {
+        return _snapshotHousehold(_internal.getHouseholdRecord(householdId));
+    }
+
     function getAllHouseholds(options) {
         options = options || {};
         var records = _internal.getAllHouseholdRecords({
@@ -270,7 +354,7 @@
         });
         var result = [];
         for (var i = 0; i < records.length; i++) {
-            result.push(getHousehold(records[i].id));
+            result.push(_snapshotHousehold(records[i]));
         }
         return result;
     }
@@ -283,7 +367,7 @@
         var result = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].locationId === locationId) {
-                result.push(getHousehold(records[i].id));
+                result.push(_snapshotHousehold(records[i]));
             }
         }
         return result;
@@ -297,7 +381,7 @@
         var result = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].status === status) {
-                result.push(getHousehold(records[i].id));
+                result.push(_snapshotHousehold(records[i]));
             }
         }
         return result;
@@ -324,7 +408,7 @@
             if (!Array.isArray(members)) continue;
             for (var j = 0; j < members.length; j++) {
                 if (members[j].characterId === characterId) {
-                    result.push(getHousehold(all[i].id));
+                    result.push(_snapshotHousehold(all[i]));
                     break;
                 }
             }
@@ -337,6 +421,11 @@
      *
      * By default excludes deprecated/destroyed. Pass includeDeprecated:true
      * to include them.
+     *
+     * Deduplicates by household id, so a household with a corrupt duplicate
+     * head entry (same character twice) still appears exactly once. This
+     * matters for repair tooling and for repairMemberships() callers that
+     * walk the result — duplicate rows would cause double processing.
      */
     function getHouseholdsHeadedBy(characterId, options) {
         options = options || {};
@@ -345,14 +434,18 @@
         var all = _internal.getAllHouseholdRecords({
             includeDeprecated: options.includeDeprecated === true
         });
+        var seen = {};
         var result = [];
         for (var i = 0; i < all.length; i++) {
-            var members = all[i].members;
+            var household = all[i];
+            if (seen[household.id]) continue;
+            var members = household.members;
             if (!Array.isArray(members)) continue;
             for (var j = 0; j < members.length; j++) {
                 var m = members[j];
                 if (m.characterId === characterId && m.isHead) {
-                    result.push(getHousehold(all[i].id));
+                    seen[household.id] = true;
+                    result.push(_snapshotHousehold(household));
                     break;
                 }
             }
@@ -388,12 +481,7 @@
         var result = [];
         for (var i = 0; i < household.members.length; i++) {
             var member = household.members[i];
-            var character = null;
-            try {
-                character = _getCharacterById(member.characterId);
-            } catch (e) {
-                character = null;
-            }
+            var character = _lookupCharacter(member.characterId);
 
             result.push({
                 characterId: member.characterId,
@@ -479,6 +567,9 @@
     // =========================================================================
     // 7. DEMOGRAPHIC PROJECTIONS
     // =========================================================================
+    //
+    // Delegates to HouseholdRules.calculateDemographics. This module's
+    // only job is to project members into the fact shape the rules take.
 
     function getDemographics(householdId, options) {
         options = options || {};
@@ -486,64 +577,11 @@
         var members = getHouseholdMembers(householdId, {
             referenceYear: referenceYear
         });
-
-        var stats = {
-            total: 0, male: 0, female: 0, unknown: 0,
-            children: 0, youth: 0, adults: 0, elders: 0,
-            ageUnknown: 0, living: 0, deceased: 0, missing: 0,
-            byAgeGroup: {}
-        };
-
-        for (var i = 0; i < members.length; i++) {
-            var m = members[i];
-            stats.total++;
-
-            if (m.isMissing) { stats.missing++; continue; }
-
-            var c = m.character;
-            if (c.gender === 'male') stats.male++;
-            else if (c.gender === 'female') stats.female++;
-            else stats.unknown++;
-
-            if (m.isDeceased) stats.deceased++;
-            else stats.living++;
-
-            var age = m.age;
-            if (age === null || age === undefined) {
-                stats.ageUnknown++;
-                continue;
-            }
-
-            if (age < 18) stats.children++;
-            else if (age < 26) stats.youth++;
-            else if (age < 60) stats.adults++;
-            else stats.elders++;
-
-            var group;
-            if (age < 10) group = '0-9';
-            else if (age < 20) group = '10-19';
-            else if (age < 30) group = '20-29';
-            else if (age < 40) group = '30-39';
-            else if (age < 50) group = '40-49';
-            else if (age < 60) group = '50-59';
-            else if (age < 70) group = '60-69';
-            else if (age < 80) group = '70-79';
-            else group = '80+';
-
-            if (!stats.byAgeGroup[group]) stats.byAgeGroup[group] = 0;
-            stats.byAgeGroup[group]++;
-        }
-
-        return stats;
+        return _rules.calculateDemographics(members);
     }
 
     // =========================================================================
     // 8. NAME PERIODS
-    // =========================================================================
-    //
-    // getHouseholdNamePeriods is called by modals-household-snapshot.js.
-    // The projection computes index, periodEnd, and isCurrent so the UI
-    // does not need to sort or decorate the raw nameHistory array.
     // =========================================================================
 
     function getHouseholdNamePeriods(householdId) {
@@ -577,33 +615,15 @@
     // =========================================================================
     // 9. TEMPORAL SNAPSHOTS
     // =========================================================================
-    //
-    // getHouseholdSnapshot and getCharacterHouseholdSnapshot are called
-    // by modals-household-snapshot.js. They produce a projection of the
-    // household as it existed at a specific reference year.
-    //
-    // The snapshot cannot resurrect deleted members, but it can:
-    //   - include members whose joinedYear <= referenceYear
-    //   - exclude members whose leftYear is set and < referenceYear
-    //   - exclude members whose birthYear > referenceYear (not yet born)
-    //   - include members who died after referenceYear (alive at snapshot)
-    //   - mark members who died at or before referenceYear as deceased
-    //
-    // For character snapshots, viewMode controls which year is used:
-    //   'at_death' → character.deathYear (or current year if alive)
-    //   'at_join'  → character's earliest householdHistory joinedYear
-    //   'all'      → current year
-    // =========================================================================
 
     function getHouseholdSnapshot(householdId, referenceYear, viewMode) {
         var household = _internal.getHouseholdRecord(householdId);
         if (!household) return null;
 
-        var year = referenceYear !== undefined && referenceYear !== null
+        var year = (referenceYear !== undefined && referenceYear !== null)
             ? referenceYear
-            : _getCurrentYearSafe();
+            : _getCurrentYear();
 
-        // Find the name period that was current at referenceYear
         var nameAtTime = household.name || '';
         var periodAtTime = null;
         if (Array.isArray(household.nameHistory)) {
@@ -626,7 +646,6 @@
             }
         }
 
-        // Build member snapshots
         var members = [];
         var livingCount = 0;
         var totalMembers = 0;
@@ -634,12 +653,7 @@
         if (Array.isArray(household.members)) {
             for (var m = 0; m < household.members.length; m++) {
                 var member = household.members[m];
-                var character = null;
-                try {
-                    character = _getCharacterById(member.characterId);
-                } catch (e) {
-                    character = null;
-                }
+                var character = _lookupCharacter(member.characterId);
 
                 var joinedYear = member.joinedYear !== undefined
                     ? member.joinedYear : null;
@@ -649,7 +663,6 @@
                     ? character.birthYear : null;
                 if (birthYear !== null && birthYear > year) continue;
 
-                // Member left the household before the snapshot?
                 var leftYear = null;
                 if (character && Array.isArray(character.householdHistory)) {
                     for (var hh = 0; hh < character.householdHistory.length; hh++) {
@@ -719,16 +732,11 @@
     }
 
     function getCharacterHouseholdSnapshot(characterId, viewMode) {
-        var character = null;
-        try {
-            character = _getCharacterById(characterId);
-        } catch (e) {
-            character = null;
-        }
+        var character = _lookupCharacter(characterId);
         if (!character) return null;
 
         var mode = viewMode || 'at_death';
-        var year = _getCurrentYearSafe();
+        var year = _getCurrentYear();
 
         if (mode === 'at_death') {
             if (character.deathYear !== undefined &&
@@ -749,7 +757,6 @@
             }
         }
 
-        // Find the household that contained the character at this year.
         var householdId = null;
         if (Array.isArray(character.householdHistory)) {
             for (var hh = character.householdHistory.length - 1; hh >= 0; hh--) {
@@ -765,16 +772,13 @@
         }
 
         if (!householdId) {
-            // Fall back to the character's current household
             var current = getCharacterHousehold(characterId);
             if (!current) return null;
             householdId = current.id;
         }
 
         var snapshot = getHouseholdSnapshot(householdId, year, mode);
-        if (snapshot) {
-            snapshot.targetCharacterId = characterId;
-        }
+        if (snapshot) snapshot.targetCharacterId = characterId;
         return snapshot;
     }
 
@@ -818,7 +822,8 @@
             if (options.departmentId && p.departmentId !== options.departmentId) {
                 continue;
             }
-            if (options.requiredRoleId && p.requiredRoleId !== options.requiredRoleId) {
+            if (options.requiredRoleId
+                && p.requiredRoleId !== options.requiredRoleId) {
                 continue;
             }
             result.push(_snapshotPosition(p));
@@ -891,17 +896,6 @@
 
     // =========================================================================
     // 12. ENTERPRISE PROJECTIONS
-    // =========================================================================
-    //
-    // Both getHouseholdEnterprises and getHouseholdEnterpriseSummaries
-    // follow the same rule:
-    //   - If household has no enterprises → return [] (empty is legitimate)
-    //   - If household has enterprises but required industry module is
-    //     missing → throw (silent fallback would hide a real failure)
-    //   - Otherwise → return snapshots from the industry module
-    //
-    // This is the same rule applied across the module: missing
-    // infrastructure is loud, empty data is quiet.
     // =========================================================================
 
     function getHouseholdEnterprises(householdId) {
@@ -1010,6 +1004,15 @@
     // =========================================================================
     // 13. HEIR DISCOVERY
     // =========================================================================
+    //
+    // External children and siblings come from FamilyQueries. This is
+    // the canonical source; family-accessors.js is deleted. The prior
+    // implementation used window.getChildren / window.getParents, which
+    // were legacy aliases that disappeared when family-accessors.js was
+    // removed.
+    //
+    // The result is filtered via HouseholdRules.filterEligibleHeirs so
+    // the eligibility policy (age bounds, validity) stays in one place.
 
     function getHouseholdHeirs(householdId, deceasedId, options) {
         options = options || {};
@@ -1021,28 +1024,21 @@
         var minAge = options.minAge !== undefined ? options.minAge : null;
         var maxAge = options.maxAge !== undefined ? options.maxAge : null;
 
-        var seen = {};
+        var seen = Object.create(null);
         var candidates = [];
 
-        // First pass: current household members
+        // 1) Current household members
         if (Array.isArray(household.members)) {
             for (var i = 0; i < household.members.length; i++) {
                 var member = household.members[i];
                 if (member.characterId === deceasedId) continue;
 
-                var character = null;
-                try {
-                    character = _getCharacterById(member.characterId);
-                } catch (e) {
-                    character = null;
-                }
+                var character = _lookupCharacter(member.characterId);
                 if (!character) continue;
                 if (character.isDeceased) continue;
 
                 var age = _ageAt(character, referenceYear);
                 if (age === null) continue;
-                if (minAge !== null && age < minAge) continue;
-                if (maxAge !== null && age > maxAge) continue;
 
                 if (seen[character.id]) continue;
                 seen[character.id] = true;
@@ -1055,34 +1051,26 @@
                         (character.surname ? ' ' + character.surname : ''),
                     age: age,
                     isHead: member.isHead === true,
-                    type: member.type || 'family',
+                    type: 'family',
                     relation: 'member',
                     source: 'household'
                 });
             }
         }
 
-        // Second pass: children and siblings (if external allowed and
-        // family accessors available)
-        if (includeExternal) {
-            var children = _getChildren(deceasedId);
-            if (Array.isArray(children)) {
-                for (var j = 0; j < children.length; j++) {
-                    var childId = children[j];
+        // 2) External: biological children and siblings of the deceased
+        if (includeExternal && deceasedId) {
+            // Biological children
+            var childIds = _fq.getBiologicalChildIds(deceasedId);
+            if (Array.isArray(childIds)) {
+                for (var c = 0; c < childIds.length; c++) {
+                    var childId = childIds[c];
                     if (seen[childId]) continue;
-
-                    var child = null;
-                    try {
-                        child = _getCharacterById(childId);
-                    } catch (e) {
-                        child = null;
-                    }
+                    var child = _lookupCharacter(childId);
                     if (!child || child.isDeceased) continue;
 
                     var childAge = _ageAt(child, referenceYear);
                     if (childAge === null) continue;
-                    if (minAge !== null && childAge < minAge) continue;
-                    if (maxAge !== null && childAge > maxAge) continue;
 
                     seen[child.id] = true;
                     candidates.push({
@@ -1100,33 +1088,24 @@
                 }
             }
 
-            var parents = _getParents(deceasedId);
-            if (parents && (parents.father || parents.mother)) {
-                var parentIds = [];
-                if (parents.father) parentIds.push(parents.father);
-                if (parents.mother) parentIds.push(parents.mother);
-
+            // Siblings: children of the deceased's biological parents,
+            // excluding the deceased.
+            var parentIds = _fq.getBiologicalParentIds(deceasedId);
+            if (Array.isArray(parentIds)) {
                 for (var p = 0; p < parentIds.length; p++) {
-                    var siblings = _getChildren(parentIds[p]);
-                    if (!Array.isArray(siblings)) continue;
+                    var sibIds = _fq.getBiologicalChildIds(parentIds[p]);
+                    if (!Array.isArray(sibIds)) continue;
 
-                    for (var k = 0; k < siblings.length; k++) {
-                        var sibId = siblings[k];
+                    for (var s = 0; s < sibIds.length; s++) {
+                        var sibId = sibIds[s];
                         if (sibId === deceasedId) continue;
                         if (seen[sibId]) continue;
 
-                        var sibling = null;
-                        try {
-                            sibling = _getCharacterById(sibId);
-                        } catch (e) {
-                            sibling = null;
-                        }
+                        var sibling = _lookupCharacter(sibId);
                         if (!sibling || sibling.isDeceased) continue;
 
                         var sibAge = _ageAt(sibling, referenceYear);
                         if (sibAge === null) continue;
-                        if (minAge !== null && sibAge < minAge) continue;
-                        if (maxAge !== null && sibAge > maxAge) continue;
 
                         seen[sibling.id] = true;
                         candidates.push({
@@ -1146,16 +1125,21 @@
             }
         }
 
-        // Sort: current head first, then household members, then external,
-        // then by age (oldest first).
-        candidates.sort(function(a, b) {
+        // Filter via HouseholdRules so the eligibility policy stays in
+        // one place. Then sort.
+        var filtered = _rules.filterEligibleHeirs(candidates, {
+            minAge: minAge,
+            maxAge: maxAge
+        });
+
+        filtered.sort(function(a, b) {
             var priA = a.isHead ? 0 : (a.type === 'family' ? 1 : 2);
             var priB = b.isHead ? 0 : (b.type === 'family' ? 1 : 2);
             if (priA !== priB) return priA - priB;
             return (b.age || 0) - (a.age || 0);
         });
 
-        return candidates;
+        return filtered;
     }
 
     // =========================================================================
@@ -1171,8 +1155,8 @@
             var m = members[i];
             if (m.type !== 'staff') continue;
 
-            if (options.departmentId &&
-                m.departmentId !== options.departmentId) {
+            if (options.departmentId
+                && m.departmentId !== options.departmentId) {
                 continue;
             }
 
@@ -1245,9 +1229,9 @@
         } catch (e) {
             // Household has enterprises but Industry is not loaded — that's
             // a legitimate runtime concern for the caller, but the details
-            // modal should still render. We swallow here so the modal is
-            // usable; callers that need the full enterprise list use
-            // getHouseholdEnterpriseSummaries directly (which will throw).
+            // modal should still render. Callers that need the full
+            // enterprise list use getHouseholdEnterpriseSummaries directly
+            // (which throws).
             enterpriseSummaries = [];
             enterpriseStats = null;
         }
@@ -1333,18 +1317,22 @@
             }
 
             if (Array.isArray(h.members)) {
+                var hasHead = false;
                 for (var j = 0; j < h.members.length; j++) {
-                    if (h.members[j].type === 'family') stats.totalFamilyMembers++;
-                    else if (h.members[j].type === 'staff') stats.totalStaffMembers++;
+                    if (h.members[j].type === 'family') {
+                        stats.totalFamilyMembers++;
+                    } else if (h.members[j].type === 'staff') {
+                        stats.totalStaffMembers++;
+                    }
+                    if (h.members[j].isHead) hasHead = true;
                 }
+                if (hasHead) stats.householdsWithHead++;
+                else stats.householdsWithoutHead++;
             }
 
-            if (getHouseholdHead(h.id)) stats.householdsWithHead++;
-            else stats.householdsWithoutHead++;
-
             if (count === 0) stats.emptyHouseholds++;
-            var st = getHouseholdStatus(h.id);
-            if (st.status === 'vacant') stats.vacantHouseholds++;
+            var statusFacts = getHouseholdStatus(h.id);
+            if (statusFacts.status === 'vacant') stats.vacantHouseholds++;
 
             if (h.wealth !== undefined && h.wealth !== null) {
                 totalWealth += h.wealth;
@@ -1368,7 +1356,7 @@
             }
         }
 
-        // null means "no data", not "zero" — the caller can distinguish
+        // null means "no data", not "zero". The caller can distinguish
         // "average wealth of these households is 0" from "no household
         // has a wealth field".
         stats.averageWealth = wealthCount > 0 ? totalWealth / wealthCount : null;
@@ -1395,6 +1383,7 @@
 
         // Status
         getHouseholdStatus: getHouseholdStatus,
+        getHouseholdStatuses: getHouseholdStatuses,
 
         // Members
         getHouseholdMembers: getHouseholdMembers,
