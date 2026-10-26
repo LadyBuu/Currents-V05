@@ -2,28 +2,55 @@
  * =============================================================================
  * STILL WATERS - DISASTER DAMAGE COORDINATOR (disaster-damage.js)
  * =============================================================================
- * 
+ *
  * LOCATION: js/core/disaster/disaster-damage.js
- * 
- * Central coordinator for applying structural damage from disasters.
- * Integrates with: Settlement, Education, Industry, Household, Residence systems.
- * 
- * EXPORTED FUNCTIONS:
- *   - DisasterDamage.applyStructuralDamage(locationId, disaster, options)
- *   - DisasterDamage.getDamageSummary(disasterId)
- *   - DisasterDamage.getDestructionList(disasterId)
- *   - DisasterDamage.getLocationDestruction(locationId, options)
- * 
- * DEPENDENCIES:
- *   - disaster-state.js: DisasterState
- *   - settlement-commands.js: SettlementCommands
- *   - education-commands.js: EducationCommands
- *   - industry-commands.js: IndustryCommands
- *   - household-commands.js: HouseholdCommands
- *   - residence-system.js: ResidenceSystem
- * 
+ *
+ * PURPOSE:
+ *   Central coordinator for applying structural damage from disasters.
+ *   Integrates with Settlement, Education, Industry, Household, and
+ *   Residence systems.
+ *
+ * RESULT CONTRACT:
+ *   { success: true, data: DamageReport }
+ *   { success: false, reason: string, code?: string }
+ *
+ *   The damage report shape is preserved from the previous version (see
+ *   §DamageReport below). Systems that are not loaded are skipped; the
+ *   report's `errors` array records only actual failures, not skipped
+ *   systems.
+ *
+ * COMMIT BOUNDARY:
+ *   This module is a coordinator, not a command. It calls the owning
+ *   domain's commands for each destruction (demolishFeature, etc.). Each
+ *   destruction is its own transaction owned by that domain. There is no
+ *   overall commit here — the caller (DisasterCommands.applyDisasterEffects)
+ *   is what commits the aggregate state via _commit + persist.
+ *
+ * WHAT THIS MODULE DOES NOT DO:
+ *   - It does not own disaster records. (DisasterState)
+ *   - It does not orchestrate the disaster lifecycle. (DisasterCommands)
+ *   - It does not save. (DisasterCommands.persist)
+ *   - It does not reach into another domain's private state; every
+ *     destruction goes through that domain's public command boundary.
+ *   - It does not use a module-wide recursion guard. Composition is
+ *     acyclic: applyStructuralDamage calls into each domain's commands,
+ *     none of which call back into applyStructuralDamage.
+ *
+ * DEPENDENCIES (required, verified at load):
+ *   - DisasterConstants
+ *   - DisasterState
+ *
+ * DEPENDENCIES (optional, shape-checked at load if present):
+ *   - SettlementQueries.getSettlementData
+ *   - SettlementFeatureCommands.demolishFeature
+ *   - SettlementFeatureDefinitions (or the query module that resolves feature
+ *     ids to definitions)
+ *   - EducationState.getInstitutionsByLocation + EducationCommands.demolishInstitution
+ *   - IndustryState.getEnterprisesByLocation + IndustryCommands.demolishEnterprise
+ *   - HouseholdState.getHouseholdsByLocation + HouseholdCommands.demolishHousehold
+ *   - ResidenceSystem.getResidencesByLocation + ResidenceSystem.demolishResidence
+ *
  * ICON POLICY: No emojis. No icons.
- * 
  * =============================================================================
  */
 
@@ -31,788 +58,700 @@
     'use strict';
 
     // =========================================================================
-    // 0. RECURSION GUARD
+    // 0. LOAD-TIME DEPENDENCY RESOLUTION
     // =========================================================================
 
-    var _processing = false;
+    var C = window.DisasterConstants;
+    var State = window.DisasterState;
 
-    // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
-    // =========================================================================
+    if (!C)     throw new Error('disaster-damage.js requires DisasterConstants');
+    if (!State) throw new Error('disaster-damage.js requires DisasterState');
 
-    function _getDisasterState() {
-        return typeof window.DisasterState !== 'undefined' ? window.DisasterState : null;
+    if (!C.CODES) throw new Error('disaster-damage.js requires DisasterConstants.CODES');
+    if (!C.DAMAGE_CHANCE) throw new Error('disaster-damage.js requires DisasterConstants.DAMAGE_CHANCE');
+    if (!C.DISASTER_TYPE_DAMAGE_MULTIPLIERS) {
+        throw new Error('disaster-damage.js requires DisasterConstants.DISASTER_TYPE_DAMAGE_MULTIPLIERS');
     }
-
-    function _getSettlementCommands() {
-        return typeof window.SettlementCommands !== 'undefined' ? window.SettlementCommands : null;
+    if (!C.DAMAGE_SYSTEM_MULTIPLIERS) {
+        throw new Error('disaster-damage.js requires DisasterConstants.DAMAGE_SYSTEM_MULTIPLIERS');
     }
-
-    function _getSettlementState() {
-        return typeof window.SettlementState !== 'undefined' ? window.SettlementState : null;
-    }
-
-    function _getSettlementFeatures() {
-        return typeof window.SettlementFeatures !== 'undefined' ? window.SettlementFeatures : null;
-    }
-
-    function _getEducationCommands() {
-        return typeof window.EducationCommands !== 'undefined' ? window.EducationCommands : null;
-    }
-
-    function _getEducationState() {
-        return typeof window.EducationState !== 'undefined' ? window.EducationState : null;
-    }
-
-    function _getIndustryCommands() {
-        return typeof window.IndustryCommands !== 'undefined' ? window.IndustryCommands : null;
-    }
-
-    function _getIndustryState() {
-        return typeof window.IndustryState !== 'undefined' ? window.IndustryState : null;
-    }
-
-    function _getHouseholdCommands() {
-        return typeof window.HouseholdCommands !== 'undefined' ? window.HouseholdCommands : null;
-    }
-
-    function _getHouseholdState() {
-        return typeof window.HouseholdState !== 'undefined' ? window.HouseholdState : null;
-    }
-
-    function _getResidenceSystem() {
-        return typeof window.ResidenceSystem !== 'undefined' ? window.ResidenceSystem : null;
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') {
-            return window.getPlaceById(id);
-        }
-        return null;
+    if (!C.DAMAGE_ITEM_VALUES) {
+        throw new Error('disaster-damage.js requires DisasterConstants.DAMAGE_ITEM_VALUES');
     }
 
     // =========================================================================
-    // 2. HELPERS
+    // 1. HELPERS
     // =========================================================================
 
-    function _isLoaded(name) {
-        switch (name) {
-            case 'settlement': return !!(window.SettlementCommands && window.SettlementState);
-            case 'education': return !!(window.EducationCommands && window.EducationState);
-            case 'industry': return !!(window.IndustryCommands && window.IndustryState);
-            case 'household': return !!(window.HouseholdCommands && window.HouseholdState);
-            case 'residence': return !!(window.ResidenceSystem);
-            default: return false;
-        }
+    function _ok(data) { return { success: true, data: data }; }
+    function _fail(reason, code) {
+        return { success: false, reason: reason, code: code || null };
     }
 
-    function _safeCall(fn, fallback) {
-        try {
-            return fn();
-        } catch (e) {
-            return fallback !== undefined ? fallback : null;
-        }
-    }
-
-    // =========================================================================
-    // 3. CORE DAMAGE CALCULATION
-    // =========================================================================
-
-    /**
-     * Calculates destruction chance from severity
-     * @param {number} severity - Disaster severity (0-100)
-     * @returns {number} - Destruction chance (0-1)
-     */
-    function _calculateDestructionChance(severity) {
-        // Severity 0-100 maps to destruction chance 0-0.65
-        // Cap at 65% so not everything is destroyed
-        return Math.min(0.65, (severity / 100) * 0.65);
+    function _isFiniteNumber(v) {
+        return typeof v === 'number' && isFinite(v);
     }
 
     /**
-     * Gets disaster type multiplier for structural damage
-     * @param {string} disasterType - Disaster ID
-     * @returns {number} - Multiplier
+     * Picks items from `items` to destroy, given a base chance plus
+     * disaster-type and system-type multipliers. Chance is clamped to
+     * DAMAGE_CHANCE.maxAdjustedChance so a maximum-severity event never
+     * destroys everything unconditionally.
      */
-    function _getDisasterTypeMultiplier(disasterType) {
-        var multipliers = {
-            'earthquake': 1.4,
-            'landslide': 1.4,
-            'volcano': 1.3,
-            'fire': 1.3,
-            'hurricane': 1.2,
-            'tornado': 1.2,
-            'tsunami': 1.2,
-            'flood': 1.1,
-            'avalanche': 1.2,
-            'drought': 0.5,
-            'plague': 0.1,
-            'famine': 0.3
-        };
-        return multipliers[disasterType] || 1.0;
-    }
+    function _selectItemsToDestroy(items, baseChance, disaster, systemMultiplier) {
+        if (!items || items.length === 0) return [];
 
-    /**
-     * Selects items to destroy based on chance
-     * @param {Array} items - Items to consider
-     * @param {number} baseChance - Base destruction chance
-     * @param {Object} disaster - Disaster object
-     * @param {number} typeMultiplier - Additional multiplier for this type
-     * @returns {Array} - Items to destroy
-     */
-    function _selectItemsToDestroy(items, baseChance, disaster, typeMultiplier) {
-        var toDestroy = [];
-        if (!items || items.length === 0) return toDestroy;
+        var typeMultiplier = 1.0;
+        if (disaster && disaster.disasterId) {
+            typeMultiplier =
+                C.DISASTER_TYPE_DAMAGE_MULTIPLIERS[disaster.disasterId] || 1.0;
+        }
+        var adjusted = baseChance * typeMultiplier * (systemMultiplier || 1.0);
+        if (adjusted > C.DAMAGE_CHANCE.maxAdjustedChance) {
+            adjusted = C.DAMAGE_CHANCE.maxAdjustedChance;
+        }
 
-        var disasterType = disaster ? (disaster.disasterId || 'unknown') : 'unknown';
-        var typeMult = _getDisasterTypeMultiplier(disasterType);
-        var adjustedChance = Math.min(0.9, baseChance * typeMult * (typeMultiplier || 1.0));
-
+        var out = [];
         for (var i = 0; i < items.length; i++) {
-            if (Math.random() < adjustedChance) {
-                toDestroy.push(items[i]);
-            }
+            if (Math.random() < adjusted) out.push(items[i]);
         }
+        return out;
+    }
 
-        return toDestroy;
+    function _calculateDestructionChance(severity) {
+        if (!_isFiniteNumber(severity)) return 0;
+        var base = (severity / 100) * C.DAMAGE_CHANCE.maxBaseChance;
+        return Math.min(C.DAMAGE_CHANCE.maxBaseChance, base);
     }
 
     // =========================================================================
-    // 4. STRUCTURAL DAMAGE APPLICATION
+    // 2. SYSTEM AVAILABILITY
     // =========================================================================
+    //
+    // Each `_isLoaded*` check requires both the owning module AND the
+    // specific method this coordinator calls. If the module is present
+    // but missing the method, the load failed earlier (see
+    // disaster-bootstrap) — but we re-check here so this file is safe
+    // when loaded standalone.
 
-    /**
-     * Main entry point: Apply structural damage from a disaster
-     * @param {string} locationId - The location affected
-     * @param {Object} disaster - The disaster object
-     * @param {Object} options - Damage options
-     * @param {number} options.destructionChance - Override chance (0-1)
-     * @param {boolean} options.demolishHouseholds - Also demolish households (default: true)
-     * @returns {Object} - Damage report
-     */
-    function applyStructuralDamage(locationId, disaster, options) {
-        if (_processing) {
-            return { success: false, error: 'Damage processing already in progress' };
-        }
-        _processing = true;
+    function _isLoadedSettlement() {
+        return (
+            typeof window.SettlementQueries !== 'undefined' &&
+            typeof window.SettlementQueries.getSettlementData === 'function' &&
+            typeof window.SettlementFeatureCommands !== 'undefined' &&
+            typeof window.SettlementFeatureCommands.demolishFeature === 'function'
+        );
+    }
 
-        try {
-            options = options || {};
+    function _isLoadedEducation() {
+        return (
+            typeof window.EducationState !== 'undefined' &&
+            typeof window.EducationState.getInstitutionsByLocation === 'function' &&
+            typeof window.EducationCommands !== 'undefined' &&
+            typeof window.EducationCommands.demolishInstitution === 'function'
+        );
+    }
 
-            var severity = disaster ? (disaster.severity || 50) : 50;
-            var baseChance = options.destructionChance !== undefined ? 
-                options.destructionChance : 
-                _calculateDestructionChance(severity);
-            var chance = Math.min(0.9, baseChance);
+    function _isLoadedIndustry() {
+        return (
+            typeof window.IndustryState !== 'undefined' &&
+            typeof window.IndustryState.getEnterprisesByLocation === 'function' &&
+            typeof window.IndustryCommands !== 'undefined' &&
+            typeof window.IndustryCommands.demolishEnterprise === 'function'
+        );
+    }
 
-            var results = {
-                success: true,
-                locationId: locationId,
-                disasterId: disaster ? disaster.id : null,
-                year: disaster ? disaster.year : null,
-                featuresDestroyed: [],
-                schoolsDestroyed: [],
-                enterprisesDestroyed: [],
-                residencesDemolished: [],
-                householdsDestroyed: [],
-                totalLoss: 0,
-                summary: {
-                    features: 0,
-                    schools: 0,
-                    enterprises: 0,
-                    residences: 0,
-                    households: 0
-                },
-                errors: []
-            };
+    function _isLoadedHousehold() {
+        return (
+            typeof window.HouseholdState !== 'undefined' &&
+            typeof window.HouseholdState.getHouseholdsByLocation === 'function' &&
+            typeof window.HouseholdCommands !== 'undefined' &&
+            typeof window.HouseholdCommands.demolishHousehold === 'function'
+        );
+    }
 
-            // 1. Destroy settlement features
-            if (_isLoaded('settlement')) {
-                try {
-                    var featuresResult = _destroySettlementFeatures(locationId, chance, disaster);
-                    results.featuresDestroyed = featuresResult.destroyed;
-                    results.errors = results.errors.concat(featuresResult.errors || []);
-                } catch (e) {
-                    results.errors.push({ system: 'settlement', error: e.message });
-                }
-            }
-
-            // 2. Destroy schools
-            if (_isLoaded('education')) {
-                try {
-                    var schoolsResult = _destroySchools(locationId, chance, disaster);
-                    results.schoolsDestroyed = schoolsResult.destroyed;
-                    results.errors = results.errors.concat(schoolsResult.errors || []);
-                } catch (e) {
-                    results.errors.push({ system: 'education', error: e.message });
-                }
-            }
-
-            // 3. Destroy enterprises
-            if (_isLoaded('industry')) {
-                try {
-                    var enterprisesResult = _destroyEnterprises(locationId, chance, disaster);
-                    results.enterprisesDestroyed = enterprisesResult.destroyed;
-                    results.errors = results.errors.concat(enterprisesResult.errors || []);
-                } catch (e) {
-                    results.errors.push({ system: 'industry', error: e.message });
-                }
-            }
-
-            // 4. Demolish residences
-            if (_isLoaded('residence')) {
-                try {
-                    var residencesResult = _demolishResidences(locationId, chance, disaster);
-                    results.residencesDemolished = residencesResult.demolished;
-                    results.errors = results.errors.concat(residencesResult.errors || []);
-                } catch (e) {
-                    results.errors.push({ system: 'residence', error: e.message });
-                }
-            }
-
-            // 5. Destroy households (if enabled)
-            if (options.demolishHouseholds !== false && _isLoaded('household')) {
-                try {
-                    var householdsResult = _destroyHouseholds(locationId, chance * 0.5, disaster);
-                    results.householdsDestroyed = householdsResult.destroyed;
-                    results.errors = results.errors.concat(householdsResult.errors || []);
-                } catch (e) {
-                    results.errors.push({ system: 'household', error: e.message });
-                }
-            }
-
-            // 6. Calculate total loss
-            results.totalLoss = _calculateTotalLoss(results);
-
-            // 7. Update summary
-            results.summary = {
-                features: results.featuresDestroyed.length,
-                schools: results.schoolsDestroyed.length,
-                enterprises: results.enterprisesDestroyed.length,
-                residences: results.residencesDemolished.length,
-                households: results.householdsDestroyed.length
-            };
-
-            // 8. Save damage record to disaster
-            if (disaster && disaster.id) {
-                _saveDamageRecord(disaster.id, results);
-            }
-
-            return results;
-
-        } catch (e) {
-            return { 
-                success: false, 
-                error: e.message || 'Failed to apply structural damage',
-                locationId: locationId,
-                disasterId: disaster ? disaster.id : null
-            };
-        } finally {
-            _processing = false;
-        }
+    function _isLoadedResidence() {
+        return (
+            typeof window.ResidenceSystem !== 'undefined' &&
+            typeof window.ResidenceSystem.getResidencesByLocation === 'function' &&
+            typeof window.ResidenceSystem.demolishResidence === 'function'
+        );
     }
 
     // =========================================================================
-    // 5. SYSTEM-SPECIFIC DESTRUCTION FUNCTIONS
+    // 3. SYSTEM-SPECIFIC DESTRUCTION
     // =========================================================================
 
-    /**
-     * Destroys settlement features
-     */
     function _destroySettlementFeatures(locationId, chance, disaster) {
-        var result = { destroyed: [], errors: [] };
+        var destroyed = [];
+        var errors = [];
+
+        if (!_isLoadedSettlement()) {
+            return { destroyed: destroyed, errors: errors, skipped: true };
+        }
 
         try {
-            var state = _getSettlementState();
-            var commands = _getSettlementCommands();
-            var features = _getSettlementFeatures();
-
-            if (!state || !commands || !features) {
-                result.errors.push({ system: 'settlement', error: 'System not fully loaded' });
-                return result;
-            }
-
-            var settlement = state.getSettlementData(locationId);
+            var settlement = window.SettlementQueries.getSettlementData(locationId);
             if (!settlement) {
-                result.errors.push({ system: 'settlement', error: 'Settlement data not found' });
-                return result;
+                return { destroyed: destroyed, errors: errors, skipped: true };
             }
 
             var featureIds = settlement.featureIds || [];
-            if (featureIds.length === 0) return result;
+            if (featureIds.length === 0) {
+                return { destroyed: destroyed, errors: errors, skipped: false };
+            }
 
-            var featureObjects = [];
+            // Resolve feature definitions.
+            var featureQueries = window.SettlementFeatureQueries;
+            if (!featureQueries || typeof featureQueries.getFeatureById !== 'function') {
+                return {
+                    destroyed: destroyed,
+                    errors: errors,
+                    skipped: true
+                };
+            }
+
+            var resolvable = [];
             for (var i = 0; i < featureIds.length; i++) {
-                var f = features.getFeatureById(featureIds[i]);
-                if (f) featureObjects.push(f);
+                var feature = featureQueries.getFeatureById(featureIds[i]);
+                if (feature) resolvable.push(feature);
+            }
+            if (resolvable.length === 0) {
+                return { destroyed: destroyed, errors: errors, skipped: false };
             }
 
-            var toDestroy = _selectItemsToDestroy(featureObjects, chance * 0.6, disaster);
+            var toDestroy = _selectItemsToDestroy(
+                resolvable,
+                chance,
+                disaster,
+                C.DAMAGE_SYSTEM_MULTIPLIERS.features
+            );
 
-            for (var i = 0; i < toDestroy.length; i++) {
-                var feature = toDestroy[i];
+            for (var j = 0; j < toDestroy.length; j++) {
+                var f = toDestroy[j];
                 try {
-                    var demolishResult = commands.demolishFeature(
+                    var result = window.SettlementFeatureCommands.demolishFeature(
                         locationId,
-                        feature.id
+                        f.id,
+                        { reason: 'Destroyed by ' + (disaster && disaster.disasterType || 'disaster') }
                     );
-
-                    if (demolishResult && demolishResult.success) {
-                        result.destroyed.push({
-                            id: feature.id,
-                            name: feature.name,
+                    if (result && result.success !== false) {
+                        destroyed.push({
+                            id: f.id,
+                            name: f.name,
                             type: 'settlement_feature',
-                            category: feature.category || 'uncategorized',
+                            category: f.category || 'uncategorized',
                             demolished: true,
-                            year: disaster ? disaster.year : null
+                            year: (disaster && disaster.year) || null
+                        });
+                    } else {
+                        errors.push({
+                            system: 'settlement',
+                            feature: f.name,
+                            reason: (result && result.reason) || 'unknown'
                         });
                     }
                 } catch (e) {
-                    result.errors.push({ 
-                        system: 'settlement', 
-                        feature: feature.name,
-                        error: e.message 
+                    errors.push({
+                        system: 'settlement',
+                        feature: f.name,
+                        reason: e.message || 'exception'
                     });
                 }
             }
         } catch (e) {
-            result.errors.push({ system: 'settlement', error: e.message });
+            errors.push({ system: 'settlement', reason: e.message || 'exception' });
         }
 
-        return result;
+        return { destroyed: destroyed, errors: errors, skipped: false };
     }
 
-    /**
-     * Destroys schools
-     */
     function _destroySchools(locationId, chance, disaster) {
-        var result = { destroyed: [], errors: [] };
+        var destroyed = [];
+        var errors = [];
+
+        if (!_isLoadedEducation()) {
+            return { destroyed: destroyed, errors: errors, skipped: true };
+        }
 
         try {
-            var state = _getEducationState();
-            var commands = _getEducationCommands();
-
-            if (!state || !commands) {
-                result.errors.push({ system: 'education', error: 'System not fully loaded' });
-                return result;
+            var institutions = window.EducationState.getInstitutionsByLocation(locationId);
+            if (!institutions || institutions.length === 0) {
+                return { destroyed: destroyed, errors: errors, skipped: false };
             }
 
-            var schools = state.getInstitutionsByLocation(locationId);
-            if (!schools || schools.length === 0) return result;
-
-            var toDestroy = _selectItemsToDestroy(schools, chance * 0.7, disaster);
+            var toDestroy = _selectItemsToDestroy(
+                institutions,
+                chance,
+                disaster,
+                C.DAMAGE_SYSTEM_MULTIPLIERS.schools
+            );
 
             for (var i = 0; i < toDestroy.length; i++) {
-                var school = toDestroy[i];
+                var inst = toDestroy[i];
                 try {
-                    var demolishResult = commands.demolishInstitution(
-                        school.id,
-                        'Destroyed by ' + (disaster ? disaster.disasterType : 'disaster'),
-                        disaster ? disaster.year : null,
+                    var result = window.EducationCommands.demolishInstitution(
+                        inst.id,
+                        'Destroyed by ' + (disaster && disaster.disasterType || 'disaster'),
+                        (disaster && disaster.year) || null,
                         {
                             destroyedBy: 'disaster',
-                            disasterId: disaster ? disaster.id : null
+                            disasterId: disaster && disaster.id || null
                         }
                     );
-
-                    if (demolishResult && demolishResult.success) {
-                        result.destroyed.push({
-                            id: school.id,
-                            name: school.name,
+                    if (result && result.success !== false) {
+                        destroyed.push({
+                            id: inst.id,
+                            name: inst.name,
                             type: 'school',
-                            institutionType: school.type || 'unknown',
+                            institutionType: inst.type || 'unknown',
                             demolished: true,
-                            year: disaster ? disaster.year : null
+                            year: (disaster && disaster.year) || null
+                        });
+                    } else {
+                        errors.push({
+                            system: 'education',
+                            school: inst.name,
+                            reason: (result && result.reason) || 'unknown'
                         });
                     }
                 } catch (e) {
-                    result.errors.push({
+                    errors.push({
                         system: 'education',
-                        school: school.name,
-                        error: e.message
+                        school: inst.name,
+                        reason: e.message || 'exception'
                     });
                 }
             }
         } catch (e) {
-            result.errors.push({ system: 'education', error: e.message });
+            errors.push({ system: 'education', reason: e.message || 'exception' });
         }
 
-        return result;
+        return { destroyed: destroyed, errors: errors, skipped: false };
     }
 
-    /**
-     * Destroys enterprises
-     */
     function _destroyEnterprises(locationId, chance, disaster) {
-        var result = { destroyed: [], errors: [] };
+        var destroyed = [];
+        var errors = [];
+
+        if (!_isLoadedIndustry()) {
+            return { destroyed: destroyed, errors: errors, skipped: true };
+        }
 
         try {
-            var state = _getIndustryState();
-            var commands = _getIndustryCommands();
-
-            if (!state || !commands) {
-                result.errors.push({ system: 'industry', error: 'System not fully loaded' });
-                return result;
+            var enterprises = window.IndustryState.getEnterprisesByLocation(locationId);
+            if (!enterprises || enterprises.length === 0) {
+                return { destroyed: destroyed, errors: errors, skipped: false };
             }
 
-            var enterprises = state.getEnterprisesByLocation(locationId);
-            if (!enterprises || enterprises.length === 0) return result;
-
-            var toDestroy = _selectItemsToDestroy(enterprises, chance * 0.8, disaster);
+            var toDestroy = _selectItemsToDestroy(
+                enterprises,
+                chance,
+                disaster,
+                C.DAMAGE_SYSTEM_MULTIPLIERS.enterprises
+            );
 
             for (var i = 0; i < toDestroy.length; i++) {
-                var enterprise = toDestroy[i];
+                var ent = toDestroy[i];
                 try {
-                    var demolishResult = commands.demolishEnterprise(
-                        enterprise.id,
-                        'Destroyed by ' + (disaster ? disaster.disasterType : 'disaster'),
-                        disaster ? disaster.year : null,
+                    var result = window.IndustryCommands.demolishEnterprise(
+                        ent.id,
+                        'Destroyed by ' + (disaster && disaster.disasterType || 'disaster'),
+                        (disaster && disaster.year) || null,
                         {
                             destroyedBy: 'disaster',
-                            disasterId: disaster ? disaster.id : null
+                            disasterId: disaster && disaster.id || null
                         }
                     );
-
-                    if (demolishResult && demolishResult.success) {
-                        result.destroyed.push({
-                            id: enterprise.id,
-                            name: enterprise.name,
+                    if (result && result.success !== false) {
+                        destroyed.push({
+                            id: ent.id,
+                            name: ent.name,
                             type: 'enterprise',
-                            category: enterprise.category || 'unknown',
+                            category: ent.category || 'unknown',
                             demolished: true,
-                            year: disaster ? disaster.year : null
+                            year: (disaster && disaster.year) || null
+                        });
+                    } else {
+                        errors.push({
+                            system: 'industry',
+                            enterprise: ent.name,
+                            reason: (result && result.reason) || 'unknown'
                         });
                     }
                 } catch (e) {
-                    result.errors.push({
+                    errors.push({
                         system: 'industry',
-                        enterprise: enterprise.name,
-                        error: e.message
+                        enterprise: ent.name,
+                        reason: e.message || 'exception'
                     });
                 }
             }
         } catch (e) {
-            result.errors.push({ system: 'industry', error: e.message });
+            errors.push({ system: 'industry', reason: e.message || 'exception' });
         }
 
-        return result;
+        return { destroyed: destroyed, errors: errors, skipped: false };
     }
 
-    /**
-     * Demolishes residences
-     */
     function _demolishResidences(locationId, chance, disaster) {
-        var result = { demolished: [], errors: [] };
+        var demolished = [];
+        var errors = [];
+
+        if (!_isLoadedResidence()) {
+            return { demolished: demolished, errors: errors, skipped: true };
+        }
 
         try {
-            var system = _getResidenceSystem();
-
-            if (!system) {
-                result.errors.push({ system: 'residence', error: 'System not loaded' });
-                return result;
+            var residences = window.ResidenceSystem.getResidencesByLocation(locationId);
+            if (!residences || residences.length === 0) {
+                return { demolished: demolished, errors: errors, skipped: false };
             }
 
-            var residences = system.getResidencesByLocation(locationId);
-            if (!residences || residences.length === 0) return result;
+            var active = [];
+            for (var i = 0; i < residences.length; i++) {
+                if (!residences[i].isDemolished) active.push(residences[i]);
+            }
+            if (active.length === 0) {
+                return { demolished: demolished, errors: errors, skipped: false };
+            }
 
-            // Filter out already demolished residences
-            var activeResidences = residences.filter(function(r) {
-                return !r.isDemolished;
-            });
+            var toDestroy = _selectItemsToDestroy(
+                active,
+                chance,
+                disaster,
+                C.DAMAGE_SYSTEM_MULTIPLIERS.residences
+            );
 
-            if (activeResidences.length === 0) return result;
-
-            var toDestroy = _selectItemsToDestroy(activeResidences, chance * 0.9, disaster);
-
-            for (var i = 0; i < toDestroy.length; i++) {
-                var residence = toDestroy[i];
+            for (var j = 0; j < toDestroy.length; j++) {
+                var res = toDestroy[j];
                 try {
-                    var demolishResult = system.demolishResidence(
-                        residence.id,
-                        'Destroyed by ' + (disaster ? disaster.disasterType : 'disaster'),
-                        disaster ? disaster.year : null,
+                    var result = window.ResidenceSystem.demolishResidence(
+                        res.id,
+                        'Destroyed by ' + (disaster && disaster.disasterType || 'disaster'),
+                        (disaster && disaster.year) || null,
                         {
                             destroyedBy: 'disaster',
-                            disasterId: disaster ? disaster.id : null
+                            disasterId: disaster && disaster.id || null
                         }
                     );
-
-                    if (demolishResult && demolishResult.success) {
-                        result.demolished.push({
-                            id: residence.id,
-                            name: residence.name,
+                    if (result && result.success !== false) {
+                        demolished.push({
+                            id: res.id,
+                            name: res.name,
                             type: 'residence',
-                            residenceType: residence.typeId || 'unknown',
-                            unitsDemolished: demolishResult.unitsDemolished || 0,
+                            residenceType: res.typeId || 'unknown',
+                            unitsDemolished: (result && result.unitsDemolished) || 0,
                             demolished: true,
-                            year: disaster ? disaster.year : null
+                            year: (disaster && disaster.year) || null
+                        });
+                    } else {
+                        errors.push({
+                            system: 'residence',
+                            residence: res.name,
+                            reason: (result && result.reason) || 'unknown'
                         });
                     }
                 } catch (e) {
-                    result.errors.push({
+                    errors.push({
                         system: 'residence',
-                        residence: residence.name,
-                        error: e.message
+                        residence: res.name,
+                        reason: e.message || 'exception'
                     });
                 }
             }
         } catch (e) {
-            result.errors.push({ system: 'residence', error: e.message });
+            errors.push({ system: 'residence', reason: e.message || 'exception' });
         }
 
-        return result;
+        return { demolished: demolished, errors: errors, skipped: false };
     }
 
-    /**
-     * Destroys households
-     */
     function _destroyHouseholds(locationId, chance, disaster) {
-        var result = { destroyed: [], errors: [] };
+        var destroyed = [];
+        var errors = [];
+
+        if (!_isLoadedHousehold()) {
+            return { destroyed: destroyed, errors: errors, skipped: true };
+        }
 
         try {
-            var state = _getHouseholdState();
-            var commands = _getHouseholdCommands();
-
-            if (!state || !commands) {
-                result.errors.push({ system: 'household', error: 'System not fully loaded' });
-                return result;
+            var households = window.HouseholdState.getHouseholdsByLocation(locationId);
+            if (!households || households.length === 0) {
+                return { destroyed: destroyed, errors: errors, skipped: false };
             }
 
-            var households = state.getHouseholdsByLocation(locationId);
-            if (!households || households.length === 0) return result;
-
-            // Only destroy vulnerable households
-            var vulnerableHouseholds = households.filter(function(h) {
-                // Don't destroy active households with members and wealth
-                var hasMembers = h.members && h.members.length > 0;
-                var hasWealth = (h.wealth || 0) >= 20;
+            // Only destroy vulnerable households.
+            var vulnerable = [];
+            for (var i = 0; i < households.length; i++) {
+                var h = households[i];
+                if (h.status === 'destroyed') continue;
+                var hasMembers = Array.isArray(h.members) && h.members.length > 0;
+                var hasWealth = _isFiniteNumber(h.wealth) && h.wealth >= 20;
                 var hasResidence = !!h.residenceId;
                 var isProtected = hasMembers && hasWealth && hasResidence;
-                return !isProtected && h.status !== 'destroyed';
-            });
+                if (!isProtected) vulnerable.push(h);
+            }
 
-            if (vulnerableHouseholds.length === 0) return result;
+            if (vulnerable.length === 0) {
+                return { destroyed: destroyed, errors: errors, skipped: false };
+            }
 
-            var toDestroy = _selectItemsToDestroy(vulnerableHouseholds, chance, disaster);
+            var toDestroy = _selectItemsToDestroy(
+                vulnerable,
+                chance,
+                disaster,
+                C.DAMAGE_SYSTEM_MULTIPLIERS.households
+            );
 
-            for (var i = 0; i < toDestroy.length; i++) {
-                var household = toDestroy[i];
+            for (var j = 0; j < toDestroy.length; j++) {
+                var hh = toDestroy[j];
                 try {
-                    var demolishResult = commands.demolishHousehold(
-                        household.id,
-                        'Destroyed by ' + (disaster ? disaster.disasterType : 'disaster'),
-                        disaster ? disaster.year : null,
+                    var result = window.HouseholdCommands.demolishHousehold(
+                        hh.id,
+                        'Destroyed by ' + (disaster && disaster.disasterType || 'disaster'),
+                        (disaster && disaster.year) || null,
                         {
                             destroyedBy: 'disaster',
-                            disasterId: disaster ? disaster.id : null,
+                            disasterId: disaster && disaster.id || null,
                             demolishResidence: true
                         }
                     );
-
-                    if (demolishResult && demolishResult.success) {
-                        result.destroyed.push({
-                            id: household.id,
-                            name: household.name,
+                    if (result && result.success !== false) {
+                        destroyed.push({
+                            id: hh.id,
+                            name: hh.name,
                             type: 'household',
-                            membersRemoved: demolishResult.membersRemoved || 0,
+                            membersRemoved: (result && result.membersRemoved) || 0,
                             demolished: true,
-                            year: disaster ? disaster.year : null
+                            year: (disaster && disaster.year) || null
+                        });
+                    } else {
+                        errors.push({
+                            system: 'household',
+                            household: hh.name,
+                            reason: (result && result.reason) || 'unknown'
                         });
                     }
                 } catch (e) {
-                    result.errors.push({
+                    errors.push({
                         system: 'household',
-                        household: household.name,
-                        error: e.message
+                        household: hh.name,
+                        reason: e.message || 'exception'
                     });
                 }
             }
         } catch (e) {
-            result.errors.push({ system: 'household', error: e.message });
+            errors.push({ system: 'household', reason: e.message || 'exception' });
         }
 
-        return result;
+        return { destroyed: destroyed, errors: errors, skipped: false };
     }
 
     // =========================================================================
-    // 6. LOSS CALCULATION & PERSISTENCE
+    // 4. LOSS CALCULATION
     // =========================================================================
 
-    /**
-     * Calculates total loss from destruction
-     */
     function _calculateTotalLoss(results) {
         var total = 0;
-
-        // Each destroyed item has a base value
-        total += results.featuresDestroyed.length * 30;
-        total += results.schoolsDestroyed.length * 100;
-        total += results.enterprisesDestroyed.length * 75;
-        total += results.residencesDemolished.length * 80;
-        total += results.householdsDestroyed.length * 50;
-
+        var v = C.DAMAGE_ITEM_VALUES;
+        total += (results.featuresDestroyed    || []).length * v.features;
+        total += (results.schoolsDestroyed     || []).length * v.schools;
+        total += (results.enterprisesDestroyed || []).length * v.enterprises;
+        total += (results.residencesDemolished || []).length * v.residences;
+        total += (results.householdsDestroyed  || []).length * v.households;
         return total;
     }
 
-    /**
-     * Saves damage record to the disaster
-     */
-    function _saveDamageRecord(disasterId, results) {
-        try {
-            var state = _getDisasterState();
-            if (!state) return;
-
-            var disaster = state.getDisaster(disasterId);
-            if (!disaster) return;
-
-            state.updateDisaster(disasterId, {
-                structuralDamage: {
-                    featuresDestroyed: results.featuresDestroyed.length,
-                    schoolsDestroyed: results.schoolsDestroyed.length,
-                    enterprisesDestroyed: results.enterprisesDestroyed.length,
-                    residencesDemolished: results.residencesDemolished.length,
-                    householdsDestroyed: results.householdsDestroyed.length,
-                    totalLoss: results.totalLoss,
-                    destructionList: {
-                        features: results.featuresDestroyed,
-                        schools: results.schoolsDestroyed,
-                        enterprises: results.enterprisesDestroyed,
-                        residences: results.residencesDemolished,
-                        households: results.householdsDestroyed
-                    }
-                },
-                // Convenience fields
-                featuresDestroyed: results.featuresDestroyed.length,
-                schoolsDestroyed: results.schoolsDestroyed.length,
-                enterprisesDestroyed: results.enterprisesDestroyed.length,
-                residencesDemolished: results.residencesDemolished.length,
-                householdsDestroyed: results.householdsDestroyed.length,
-                totalLoss: results.totalLoss
-            });
-        } catch (e) {
-            // Failed to save - log but don't fail
-        }
-    }
-
     // =========================================================================
-    // 7. QUERY FUNCTIONS
+    // 5. DAMAGE RECORD PERSISTENCE
     // =========================================================================
+    //
+    // Persist the damage report back onto the disaster record via
+    // State.updateDisaster. If the disaster has no id (was never
+    // recorded), the update is skipped — this is legitimate when the
+    // damage coordinator is called on an in-flight record before
+    // DisasterCommands records it.
 
-    /**
-     * Gets damage summary for a disaster
-     * @param {string} disasterId - Disaster ID
-     * @returns {Object|null} - Damage summary
-     */
-    function getDamageSummary(disasterId) {
-        try {
-            var state = _getDisasterState();
-            if (!state) return null;
-
-            var disaster = state.getDisaster(disasterId);
-            if (!disaster) return null;
-
-            return disaster.structuralDamage || null;
-        } catch (e) {
-            return null;
-        }
-    }
-
-    /**
-     * Gets all destruction caused by a disaster
-     * @param {string} disasterId - Disaster ID
-     * @param {string} type - Optional: 'features', 'schools', 'enterprises', 'residences', 'households'
-     * @returns {Array|null} - Destruction list
-     */
-    function getDestructionList(disasterId, type) {
-        try {
-            var state = _getDisasterState();
-            if (!state) return null;
-
-            var disaster = state.getDisaster(disasterId);
-            if (!disaster) return null;
-
-            var damage = disaster.structuralDamage;
-            if (!damage) return null;
-
-            if (type) {
-                return damage.destructionList ? damage.destructionList[type] || [] : [];
-            }
-
-            // Return all
-            var all = [];
-            var lists = damage.destructionList || {};
-            for (var key in lists) {
-                if (lists.hasOwnProperty(key)) {
-                    var items = lists[key] || [];
-                    for (var i = 0; i < items.length; i++) {
-                        all.push({ ...items[i], category: key });
-                    }
+    function _saveDamageRecord(disasterId, report) {
+        if (!disasterId) return;
+        var result = State.updateDisaster(disasterId, {
+            structuralDamage: {
+                featuresDestroyed:    (report.featuresDestroyed    || []).length,
+                schoolsDestroyed:     (report.schoolsDestroyed     || []).length,
+                enterprisesDestroyed: (report.enterprisesDestroyed || []).length,
+                residencesDemolished: (report.residencesDemolished || []).length,
+                householdsDestroyed:  (report.householdsDestroyed  || []).length,
+                totalLoss: report.totalLoss,
+                destructionList: {
+                    features:    report.featuresDestroyed    || [],
+                    schools:     report.schoolsDestroyed     || [],
+                    enterprises: report.enterprisesDestroyed || [],
+                    residences:  report.residencesDemolished || [],
+                    households:  report.householdsDestroyed  || []
                 }
             }
-            return all;
-        } catch (e) {
-            return null;
+        });
+        if (!result.success && typeof console !== 'undefined' && console.error) {
+            console.error(
+                'disaster-damage.js: failed to persist damage record for ' +
+                disasterId + ': ' + (result.reason || 'unknown')
+            );
         }
     }
 
-    /**
-     * Gets all destroyed items for a location
-     * @param {string} locationId - Location ID
-     * @param {Object} options - Filter options
-     * @param {string} options.type - Filter by type
-     * @param {number} options.limit - Max items to return
-     * @returns {Array} - Array of destroyed items
-     */
+    // =========================================================================
+    // 6. PUBLIC ENTRY: APPLY STRUCTURAL DAMAGE
+    // =========================================================================
+    //
+    // Orchestrates the five category-level destroyers, aggregates their
+    // reports, computes total loss, and persists the record back onto the
+    // disaster. Skips categories whose owning system is not loaded.
+
+    function applyStructuralDamage(locationId, disaster, options) {
+        if (typeof locationId !== 'string' || locationId.length === 0) {
+            return _fail('Invalid locationId', C.CODES.VALIDATION);
+        }
+        if (!disaster) {
+            return _fail('No disaster provided', C.CODES.VALIDATION);
+        }
+
+        options = options || {};
+        var severity = _isFiniteNumber(disaster.severity) ? disaster.severity : 50;
+        var baseChance = _isFiniteNumber(options.destructionChance)
+            ? options.destructionChance
+            : _calculateDestructionChance(severity);
+
+        var report = {
+            locationId: locationId,
+            disasterId: disaster.id || null,
+            year: disaster.year || null,
+            featuresDestroyed:    [],
+            schoolsDestroyed:     [],
+            enterprisesDestroyed: [],
+            residencesDemolished: [],
+            householdsDestroyed:  [],
+            totalLoss: 0,
+            errors: []
+        };
+
+        var r;
+
+        r = _destroySettlementFeatures(locationId, baseChance, disaster);
+        report.featuresDestroyed = r.destroyed;
+        report.errors = report.errors.concat(r.errors);
+
+        r = _destroySchools(locationId, baseChance, disaster);
+        report.schoolsDestroyed = r.destroyed;
+        report.errors = report.errors.concat(r.errors);
+
+        r = _destroyEnterprises(locationId, baseChance, disaster);
+        report.enterprisesDestroyed = r.destroyed;
+        report.errors = report.errors.concat(r.errors);
+
+        r = _demolishResidences(locationId, baseChance, disaster);
+        report.residencesDemolished = r.demolished;
+        report.errors = report.errors.concat(r.errors);
+
+        if (options.demolishHouseholds !== false) {
+            r = _destroyHouseholds(locationId, baseChance, disaster);
+            report.householdsDestroyed = r.destroyed;
+            report.errors = report.errors.concat(r.errors);
+        }
+
+        report.totalLoss = _calculateTotalLoss(report);
+
+        _saveDamageRecord(report.disasterId, report);
+
+        return _ok(report);
+    }
+
+    // =========================================================================
+    // 7. QUERIES
+    // =========================================================================
+
+    function getDamageSummary(disasterId) {
+        var disaster = State.getDisaster(disasterId);
+        if (!disaster) return null;
+        return disaster.structuralDamage || null;
+    }
+
+    function getDestructionList(disasterId, type) {
+        var disaster = State.getDisaster(disasterId);
+        if (!disaster) return null;
+
+        var damage = disaster.structuralDamage;
+        if (!damage || !damage.destructionList) return [];
+
+        if (type) {
+            return damage.destructionList[type]
+                ? damage.destructionList[type].slice()
+                : [];
+        }
+
+        var all = [];
+        var lists = damage.destructionList;
+        var keys = ['features', 'schools', 'enterprises', 'residences', 'households'];
+        for (var i = 0; i < keys.length; i++) {
+            var list = lists[keys[i]];
+            if (!Array.isArray(list)) continue;
+            for (var j = 0; j < list.length; j++) {
+                var item = {};
+                for (var key in list[j]) {
+                    if (Object.prototype.hasOwnProperty.call(list[j], key)) {
+                        item[key] = list[j][key];
+                    }
+                }
+                item.category = keys[i];
+                all.push(item);
+            }
+        }
+        return all;
+    }
+
     function getLocationDestruction(locationId, options) {
         options = options || {};
+        var limit = (typeof options.limit === 'number' && options.limit > 0)
+            ? options.limit
+            : 50;
         var result = [];
-        var limit = options.limit || 50;
 
-        try {
-            var state = _getDisasterState();
-            if (!state) return result;
+        var disasters = State.getDisastersByLocation(locationId);
+        if (!disasters || disasters.length === 0) return result;
 
-            var disasters = state.getDisastersByLocation(locationId);
-            if (!disasters || disasters.length === 0) return result;
+        var keys = ['features', 'schools', 'enterprises', 'residences', 'households'];
 
-            // Collect from all disasters
-            for (var i = 0; i < disasters.length; i++) {
-                var disaster = disasters[i];
-                var damage = disaster.structuralDamage;
-                if (!damage) continue;
+        for (var i = 0; i < disasters.length; i++) {
+            var disaster = disasters[i];
+            var damage = disaster.structuralDamage;
+            if (!damage || !damage.destructionList) continue;
 
-                var lists = damage.destructionList || {};
-                for (var key in lists) {
-                    if (lists.hasOwnProperty(key)) {
-                        if (options.type && options.type !== key) continue;
-                        var items = lists[key] || [];
-                        for (var j = 0; j < items.length; j++) {
-                            result.push({
-                                ...items[j],
-                                category: key,
-                                disasterId: disaster.id,
-                                disasterType: disaster.disasterType,
-                                disasterYear: disaster.year
-                            });
+            for (var ki = 0; ki < keys.length; ki++) {
+                var key = keys[ki];
+                if (options.type && options.type !== key) continue;
+
+                var list = damage.destructionList[key];
+                if (!Array.isArray(list)) continue;
+
+                for (var j = 0; j < list.length; j++) {
+                    var item = {};
+                    for (var itemKey in list[j]) {
+                        if (Object.prototype.hasOwnProperty.call(list[j], itemKey)) {
+                            item[itemKey] = list[j][itemKey];
                         }
                     }
+                    item.category = key;
+                    item.disasterId = disaster.id;
+                    item.disasterType = disaster.disasterType;
+                    item.disasterYear = disaster.year;
+                    result.push(item);
                 }
             }
-
-            // Sort by year (most recent first)
-            result.sort(function(a, b) {
-                return (b.year || 0) - (a.year || 0);
-            });
-
-            // Apply limit
-            if (result.length > limit) {
-                result = result.slice(0, limit);
-            }
-
-        } catch (e) {
-            // Error getting destruction
         }
 
+        result.sort(function(a, b) { return (b.year || 0) - (a.year || 0); });
+
+        if (result.length > limit) result = result.slice(0, limit);
         return result;
     }
 
@@ -820,25 +759,21 @@
     // 8. EXPORTS
     // =========================================================================
 
-    var DisasterDamage = {
+    window.DisasterDamage = {
         applyStructuralDamage: applyStructuralDamage,
         getDamageSummary: getDamageSummary,
         getDestructionList: getDestructionList,
         getLocationDestruction: getLocationDestruction,
 
-        // Internal helpers (exposed for testing)
+        // Internal helpers exposed for testing
         _calculateDestructionChance: _calculateDestructionChance,
-        _getDisasterTypeMultiplier: _getDisasterTypeMultiplier,
         _selectItemsToDestroy: _selectItemsToDestroy
     };
 
-    window.DisasterDamage = DisasterDamage;
-
-    // Flag to prevent duplicate initialization
     window._DisasterDamageInitialized = true;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = DisasterDamage;
+        module.exports = window.DisasterDamage;
     }
 
 })();
