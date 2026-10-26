@@ -3,17 +3,28 @@
  * STILL WATERS - CHARACTER FACTORY (js/character/character-factory.js)
  * =============================================================================
  *
+ * LOCATION: js/character/character-factory.js
+ *
  * Canonical constructor for character entities.
  *
- * Every character that enters the canonical collection must be produced by
- * this factory. Manual creation, random generation, import, cloning, and
- * any future creation path funnel through buildCharacter().
+ * Every character that enters the canonical collection through the
+ * normal creation path must be produced by this factory. Manual creation,
+ * random generation, import, cloning, and any future creation path
+ * funnel through buildCharacter().
+ *
+ * The one exception is createCharacterFromData (in
+ * character-creation-commands.js), which inserts a pre-built record
+ * directly. That path is legitimate — import and cloning need it — but
+ * it must validate the record's shape first. That is what
+ * validateBuiltCharacter() is for.
  *
  * SCOPE:
  *   - Validating character-owned input data against the canonical schema
  *   - Applying canonical defaults for missing optional fields
  *   - Generating the character ID
  *   - Assembling the complete character object
+ *   - Validating a pre-built character record's shape (for
+ *     createCharacterFromData)
  *
  * OUT OF SCOPE:
  *   - Mutation of the canonical collection -> character-creation-commands.js
@@ -49,18 +60,45 @@
  *   state here because the persistence schema requires it:
  *
  *       professions                       -> character-commands.js
- *       rankAssignments                   -> future rank domain
- *       activeRankId, activeRankNumber    -> future rank domain
- *       relationships                     -> future relationship domain
- *       friends                           -> future relationship domain
+ *       rankAssignments                   -> ranks domain
+ *       activeRankId, activeRankNumber    -> ranks domain
+ *       relationships                     -> relationships domain
+ *       friends                           -> relationships domain
  *       apprentices, masterId,
  *         isMaster, masterProfessionId,
- *         apprenticeshipDetails           -> future apprenticeship domain
+ *         apprenticeshipDetails           -> apprenticeship domain
  *       religionHistory                   -> religion commands
+ *       education, educationHistory,
+ *         subjectProgress, isLiterate     -> education commands
  *
  *   The factory accepts identity pointers (activeRankId, isMaster,
  *   masterId, masterProfessionId) from the caller because those describe
  *   the character's current identity. It does not accept domain records.
+ *
+ * PRE-BUILT VALIDATION (validateBuiltCharacter):
+ *   createCharacterFromData inserts a caller-built record directly,
+ *   bypassing buildCharacter. That is a legitimate escape hatch for
+ *   import, cloning, and test harnesses — but only if the record has the
+ *   shape every downstream projection expects. validateBuiltCharacter
+ *   enforces that shape without regenerating the id.
+ *
+ *   The validator is INTENTIONALLY MINIMAL. It checks:
+ *     - plain object
+ *     - non-empty string id
+ *     - non-empty string name
+ *     - the five domain-owned embedded arrays are actually arrays
+ *     - createdAt and updatedAt are finite numbers
+ *
+ *   It does NOT validate:
+ *     - enum values (gender, attraction, surnameSource)
+ *     - year bounds
+ *     - cross-field consistency (isDeceased vs deathYear)
+ *     - the shape of individual entries inside the embedded arrays
+ *
+ *   Those are the responsibility of the caller. The point of the
+ *   validator is to catch the shape errors that would silently break
+ *   CharacterState._project() and downstream consumers, not to
+ *   re-run the full factory.
  *
  * DEPENDENCIES (REQUIRED):
  *   - ids.js:   generateId
@@ -502,7 +540,7 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC ENTRY POINT
+    // 9. PUBLIC ENTRY POINT - BUILD
     // =========================================================================
 
     function buildCharacter(data, options) {
@@ -572,15 +610,87 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. PUBLIC ENTRY POINT - VALIDATE PRE-BUILT
+    // =========================================================================
+
+    /**
+     * Validates the shape of a pre-built character record.
+     *
+     * Used by CharacterCreationCommands.createCharacterFromData. Does
+     * NOT regenerate the id, does NOT re-validate enum values, does NOT
+     * check cross-field consistency. Only catches the shape errors that
+     * would silently break CharacterState._project() and downstream
+     * consumers.
+     *
+     * Returns { ok: true } or { ok: false, reason }.
+     *
+     * @param {*} character
+     * @returns {{ ok: boolean, reason?: string }}
+     */
+    function validateBuiltCharacter(character) {
+        if (!_isPlainObject(character)) {
+            return { ok: false, reason: 'Character must be a plain object.' };
+        }
+        if (!_hasId(character.id)) {
+            return { ok: false, reason: 'Character id is required.' };
+        }
+        if (typeof character.name !== 'string' || character.name.trim() === '') {
+            return { ok: false, reason: 'Character name is required.' };
+        }
+
+        // Domain-owned embedded containers. CharacterState._project() and
+        // every domain reader assumes these are arrays. If they are
+        // missing or the wrong type, the projection will silently
+        // produce {} or undefined for those fields downstream.
+        var requiredArrays = [
+            'professions',
+            'rankAssignments',
+            'relationships',
+            'friends',
+            'apprentices'
+        ];
+        for (var i = 0; i < requiredArrays.length; i++) {
+            var field = requiredArrays[i];
+            if (!Array.isArray(character[field])) {
+                return {
+                    ok: false,
+                    reason: 'Character.' + field + ' must be an array ' +
+                            '(buildCharacter normally ensures this).'
+                };
+            }
+        }
+
+        // Metadata fields every consumer reads.
+        if (typeof character.createdAt !== 'number'
+            || !Number.isFinite(character.createdAt)) {
+            return {
+                ok: false,
+                reason: 'Character.createdAt must be a finite number.'
+            };
+        }
+        if (typeof character.updatedAt !== 'number'
+            || !Number.isFinite(character.updatedAt)) {
+            return {
+                ok: false,
+                reason: 'Character.updatedAt must be a finite number.'
+            };
+        }
+
+        return { ok: true };
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.buildCharacter = buildCharacter;
+    window.validateBuiltCharacter = validateBuiltCharacter;
     window.CHARACTER_SCHEMA_FIELDS = Object.keys(FIELD_VALIDATORS);
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
             buildCharacter: buildCharacter,
+            validateBuiltCharacter: validateBuiltCharacter,
             CHARACTER_SCHEMA_FIELDS: window.CHARACTER_SCHEMA_FIELDS
         };
     }
