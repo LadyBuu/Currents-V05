@@ -3,6 +3,8 @@
  * LOCATION MODALS
  * =============================================================================
  *
+ * LOCATION: js/location/modals-location.js
+ *
  * UI form orchestration. Reads ViewModels, invokes Commands.
  * Does not query the domain. Does not decide deletion policy.
  *
@@ -18,9 +20,8 @@
  *   - window.openModal, window.closeTopModal
  *
  * Optional, used when present:
- *   - window._escapeHtml
- *   - window._showToast
- *   - window._getIcon
+ *   - window.escapeHtml  (formatting.js)
+ *   - window.showToast   (ui.js)
  *
  * Icon policy:
  *   Confirm and cancel buttons render plain text. Icons appear only inside
@@ -66,8 +67,8 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
+        if (typeof window.escapeHtml === 'function') {
+            return window.escapeHtml(str);
         }
         if (str === null || str === undefined) return '';
         return String(str)
@@ -79,8 +80,8 @@
     }
 
     function _toast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type || 'info');
+        if (typeof window.showToast === 'function') {
+            window.showToast(msg, type || 'info');
         }
     }
 
@@ -177,8 +178,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Add Location',
-            content: html,
+            titleHtml: 'Add Location',
+            contentHtml: html,
             confirmText: 'Create',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -254,8 +255,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Edit Location: ' + place.displayName,
-            content: html,
+            titleHtml: 'Edit Location: ' + place.displayName,
+            contentHtml: html,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -313,8 +314,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Delete Location',
-            content: html,
+            titleHtml: 'Delete Location',
+            contentHtml: html,
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -360,8 +361,8 @@
         html += '</div>';
 
         window.openModal({
-            title: 'Hierarchy: ' + place.displayName,
-            content: html,
+            titleHtml: 'Hierarchy: ' + place.displayName,
+            contentHtml: html,
             confirmText: 'Close',
             cancelText: '',
             onConfirm: function () {
@@ -401,8 +402,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Add Location Type',
-            content: html,
+            titleHtml: 'Add Location Type',
+            contentHtml: html,
             confirmText: 'Create',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -456,8 +457,8 @@
             '</form>';
 
         window.openModal({
-            title: 'Edit Location Type: ' + type.displayName,
-            content: html,
+            titleHtml: 'Edit Location Type: ' + type.displayName,
+            contentHtml: html,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -503,8 +504,8 @@
             '</div>';
 
         window.openModal({
-            title: 'Delete Location Type',
-            content: html,
+            titleHtml: 'Delete Location Type',
+            contentHtml: html,
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: function () {
