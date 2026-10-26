@@ -3,6 +3,8 @@
  * LOCATION MOVEMENT
  * =============================================================================
  *
+ * LOCATION: js/location/location-movement.js
+ *
  * Movement rules and calculations.
  *
  * Depends on (checked at load time):
@@ -10,16 +12,18 @@
  *   - LocationQueries
  *   - LocationHierarchy
  *   - CharacterQueries
- *   - time.js (window.getCurrentYearSafe, window.calculateAge)
+ *   - time.js (window.getCurrentYear, window.calculateAge)
  *
  * Does NOT mutate. Mutations belong to LocationCommands.
  * Does NOT own character move records. CharacterQueries owns those.
  *
- * Note on TimeQueries:
- *   TimeQueries does not exist. Time is accessed through the window-global
- *   helpers defined in js/core/time.js:
- *     - window.getCurrentYearSafe()  — alias of window.getCurrentYear
+ * Note on time helpers:
+ *   Time is accessed through the canonical window-global helpers in
+ *   js/core/time.js:
+ *     - window.getCurrentYear()       — canonical current year
  *     - window.calculateAge(birthYear, isDeceased, deathYear, asOfYear)
+ *
+ *   The deprecated window.getCurrentYearSafe alias is NOT used here.
  *
  * Note on getAgeAt:
  *   CharacterQueries.getAgeAt does not exist. It was a phantom method in an
@@ -56,9 +60,9 @@
             '(CharacterQueries) first.'
         );
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
+    if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
-            'location-movement.js requires time.js (getCurrentYearSafe).'
+            'location-movement.js requires time.js (getCurrentYear).'
         );
     }
     if (typeof window.calculateAge !== 'function') {
@@ -174,7 +178,7 @@
         }
 
         var moveYear = (year === undefined || year === null)
-            ? window.getCurrentYearSafe()
+            ? window.getCurrentYear()
             : year;
 
         if (character.birthYear !== null &&
@@ -319,7 +323,7 @@
 
         if (character.isDeceased) hard.push('Character is deceased');
 
-        var currentYear = window.getCurrentYearSafe();
+        var currentYear = window.getCurrentYear();
         var age = _ageAtYear(character, currentYear);
         if (age !== null && age < MIN_TRAVEL_AGE) {
             hard.push(
