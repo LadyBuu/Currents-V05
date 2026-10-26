@@ -1,16 +1,16 @@
 /**
  * =============================================================================
- * STILL WATERS - HOUSEHOLD RULES (household-rules.js)
+ * STILL WATERS - HOUSEHOLD RULES (js/households/household-rules.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/household-rules.js
+ * LOCATION: js/households/household-rules.js
  *
  * PURPOSE
  * -------
  * Pure policy for the household domain. Every function here is either:
  *
  *   - a pure calculation (no side effects, deterministic given inputs)
- *   - an explicitly-labeled helper that mutates a passed-in record
+ *   - an explicitly-labelled helper that mutates a passed-in record
  *     (applyHeadChange) — everything else is side-effect free
  *
  * WHAT THIS MODULE IS NOT
@@ -35,16 +35,17 @@
  * ---------
  *   household-commands.js     — pickSuccessor, applyHeadChange,
  *                               getEconomicTier, netAnnualChange
- *   household-queries.js      — calculateHouseholdStatus, calculateDemographics,
- *                               filterEligibleHeirs
+ *   household-queries.js      — calculateHouseholdStatus,
+ *                               calculateDemographics,
+ *                               isHouseholdVacant, filterEligibleHeirs
  *   household-economy.js      — getEconomicTier, calculateEnterpriseNet,
  *                               netAnnualChange, calculateAnnualDebtInterest,
  *                               evaluateBankruptcy
- *   household-servant.js      — calculateServiceQuality, calculateRecommendation
+ *   household-servant.js      — calculateServiceQuality,
+ *                               calculateRecommendation
  *   residence-system.js       — calculateRepairCost, calculateOccupiedUnitCount,
  *                               calculateVacantUnitCount, isResidenceVacant,
- *                               calculateUnitStats, calculateConditionChange,
- *                               calculateRehabilitatedValue
+ *                               calculateUnitStats, calculateRehabilitatedValue
  *
  * LOAD ORDER
  * ----------
@@ -63,6 +64,8 @@
  * ------------
  *   - household-constants.js (optional — falls back to inline thresholds
  *     if missing; see _constants())
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
@@ -186,6 +189,20 @@
     }
 
     /**
+     * Deprecation-fallback successor. Same policy as pickSuccessor, but
+     * documented here as the "the household is about to lose its head,
+     * who is next?" case. Callers should use pickSuccessor for the general
+     * case.
+     *
+     * @param {Object} household
+     * @param {Function} getCharacterById
+     * @returns {string|null}
+     */
+    function deriveDeprecationSuccessor(household, getCharacterById) {
+        return pickSuccessor(household, getCharacterById);
+    }
+
+    /**
      * Applies a head change to a household record.
      *
      * MUTATES the passed household record. This is the ONE rules function
@@ -277,8 +294,7 @@
 
     /**
      * Whether a wealth value puts the household below the bankruptcy
-     * threshold.
-     * Pure.
+     * threshold. Pure.
      */
     function evaluateBankruptcy(wealth, threshold) {
         var w = typeof wealth === 'number' && isFinite(wealth) ? wealth : 0;
@@ -472,7 +488,82 @@
     }
 
     // =========================================================================
-    // 6. HEIR ELIGIBILITY
+    // 6. HOUSEHOLD STATUS AND VACANCY
+    // =========================================================================
+
+    /**
+     * Derives household status from member counts and persisted status.
+     *
+     * Precedence:
+     *   1. 'destroyed' (persisted)
+     *   2. 'deprecated' (persisted)
+     *   3. 'empty' (no members)
+     *   4. 'vacant' (all members deceased or missing)
+     *   5. 'declining' (>half deceased, at least 4 members)
+     *   6. 'active'
+     *
+     * @param {Object} counts - {livingCount, deceasedCount, missingCount,
+     *   totalMembers}. Caller computes these from member lookups.
+     * @param {string|null} persistedStatus - household.status
+     * @returns {string} status id
+     */
+    function calculateHouseholdStatus(counts, persistedStatus) {
+        var c = counts || {};
+        var living = typeof c.livingCount === 'number' ? c.livingCount : 0;
+        var total = typeof c.totalMembers === 'number' ? c.totalMembers : 0;
+
+        if (persistedStatus === 'destroyed') return 'destroyed';
+        if (persistedStatus === 'deprecated') return 'deprecated';
+
+        var isEmpty = total === 0;
+        var isVacant = living === 0 && total > 0;
+        var isDeclining = living > 0 && total > 3 &&
+            (living / total) <= 0.5;
+
+        if (isEmpty) return 'empty';
+        if (isVacant) return 'vacant';
+        if (isDeclining) return 'declining';
+        return 'active';
+    }
+
+    /**
+     * Whether a household is effectively vacant.
+     *
+     * Vacant means: no members, OR no living members with a resolvable
+     * character projection. A household whose members are all missing
+     * (deleted characters) is vacant — no successor can be appointed.
+     *
+     * @param {Object} household - canonical household record
+     * @param {Function} getCharacterById
+     * @returns {boolean}
+     */
+    function isHouseholdVacant(household, getCharacterById) {
+        if (!household) return true;
+        if (!Array.isArray(household.members) || household.members.length === 0) {
+            return true;
+        }
+        if (typeof getCharacterById !== 'function') {
+            return false;
+        }
+
+        for (var i = 0; i < household.members.length; i++) {
+            var m = household.members[i];
+            if (!m || !m.characterId) continue;
+            var character = null;
+            try {
+                character = getCharacterById(m.characterId);
+            } catch (e) {
+                character = null;
+            }
+            if (character && !character.isDeceased) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // =========================================================================
+    // 7. HEIR ELIGIBILITY
     // =========================================================================
 
     /**
@@ -501,45 +592,6 @@
             if (maxAge !== null && c.age > maxAge) return false;
             return true;
         });
-    }
-
-    // =========================================================================
-    // 7. HOUSEHOLD STATUS
-    // =========================================================================
-
-    /**
-     * Derives household status from member counts and persisted status.
-     *
-     * Precedence:
-     *   1. 'destroyed' (persisted)
-     *   2. 'deprecated' (persisted)
-     *   3. 'empty' (no members)
-     *   4. 'vacant' (all deceased)
-     *   5. 'declining' (>half deceased, at least 4 members)
-     *   6. 'active'
-     *
-     * @param {Object} counts - {livingCount, deceasedCount, missingCount,
-     *   totalMembers}. Caller computes these from member lookups.
-     * @param {string|null} persistedStatus - household.status
-     * @returns {string} status id
-     */
-    function calculateHouseholdStatus(counts, persistedStatus) {
-        var c = counts || {};
-        var living = typeof c.livingCount === 'number' ? c.livingCount : 0;
-        var total = typeof c.totalMembers === 'number' ? c.totalMembers : 0;
-
-        if (persistedStatus === 'destroyed') return 'destroyed';
-        if (persistedStatus === 'deprecated') return 'deprecated';
-
-        var isEmpty = total === 0;
-        var isVacant = living === 0 && total > 0;
-        var isDeclining = living > 0 && total > 3 &&
-            (living / total) <= 0.5;
-
-        if (isEmpty) return 'empty';
-        if (isVacant) return 'vacant';
-        if (isDeclining) return 'declining';
-        return 'active';
     }
 
     // =========================================================================
@@ -617,6 +669,7 @@
     var api = {
         // Succession
         pickSuccessor: pickSuccessor,
+        deriveDeprecationSuccessor: deriveDeprecationSuccessor,
         applyHeadChange: applyHeadChange,
 
         // Economy
@@ -643,12 +696,13 @@
 
         // Household status
         calculateHouseholdStatus: calculateHouseholdStatus,
+        isHouseholdVacant: isHouseholdVacant,
 
         // Demographics
         calculateDemographics: calculateDemographics,
 
         // Diagnostics
-        version: 1,
+        version: 2,
         isPure: true
     };
 
