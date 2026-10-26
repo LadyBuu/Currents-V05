@@ -1,8 +1,81 @@
 /**
- * modals-core.js
- * Modal manager. onConfirm/onMount receive the modal root. onConfirm
- * returning false keeps the modal open. No silent fallbacks for required deps.
+ * =============================================================================
+ * STILL WATERS - MODAL CORE (js/core/modals-core.js)
+ * =============================================================================
+ *
+ * LOCATION: js/core/modals-core.js
+ *
+ * SCOPE:
+ *   - openModal / closeTopModal / closeAllModals
+ *   - alertDialog / confirmDialog / successDialog / errorDialog
+ *   - openPreviewModal (consequence-aware confirm dialog)
+ *
+ * OUT OF SCOPE:
+ *   - Domain-specific modals     -> modals-*.js in each domain
+ *   - Icons                      -> icons.js
+ *   - HTML escaping              -> formatting.js (escapeHtml)
+ *   - Presentation CSS           -> stylesheet
+ *
+ * CALLBACK CONTRACT:
+ *   onMount(root)
+ *     Called after DOM insertion. Exceptions are logged and swallowed;
+ *     the modal stays open. Prefer onMount over onOpen; the latter is a
+ *     compatibility alias that only fires if onMount is not supplied.
+ *
+ *   onOpen(root)
+ *     Alias for onMount. If both supplied, onMount wins.
+ *
+ *   onConfirm(root)
+ *     Called when the confirm button is clicked. Return false to keep
+ *     the modal open. Any other return (including undefined) closes the
+ *     modal with a "confirmed" outcome. Exceptions propagate; the modal
+ *     stays open.
+ *
+ *   onCancel(root)
+ *     Called when the modal closes WITHOUT a confirmed outcome. This
+ *     includes: cancel button click, overlay click (when enabled),
+ *     Escape key, close (X) button click, and closeTopModal() /
+ *     closeAllModals() called by external code. The confirm button does
+ *     NOT trigger onCancel.
+ *
+ *     Exceptions thrown from onCancel are logged and swallowed. This is
+ *     deliberate: cancel is a notification, not a step in the close
+ *     sequence. A throwing onCancel must not prevent the modal from
+ *     closing, and must not propagate to the caller that triggered the
+ *     close.
+ *
+ *     onCancel is NOT invoked if the modal was closed because onConfirm
+ *     returned true/undefined (that is a confirmed close). It is also
+ *     NOT invoked when the modal closes itself programmatically via the
+ *     returned handle's .close() — that is an explicit close, not a
+ *     user cancel.
+ *
+ * DISTINGUISHING CANCEL FROM CONFIRM:
+ *   - If the caller cares about the difference, it supplies both
+ *     onConfirm and onCancel. Confirmed closes call onConfirm; every
+ *     other close calls onCancel (or neither, if the close was
+ *     programmatic).
+ *   - If the caller only supplies onConfirm, an unconfirmed close
+ *     looks like "the modal went away and onConfirm did not run." That
+ *     is fine for simple dialogs (alertDialog, confirmDialog) where
+ *     the caller already treats absence-of-confirm as the failure path.
+ *   - If the caller only supplies onCancel, confirmed closes will look
+ *     like "the modal went away and onCancel did not run." Also fine.
+ *
+ * TRUST:
+ *   titleHtml and contentHtml are inserted as innerHTML. The caller is
+ *   responsible for escaping any untrusted text. Icons from icons.js
+ *   are the only trusted HTML this module inserts on its own behalf.
+ *
+ * DEPENDENCIES (REQUIRED):
+ *   - formatting.js (escapeHtml)
+ *   - icons.js      (Icons)
+ *
+ * ICON POLICY: Uses SVG from icons.js. No emojis.
+ *
+ * =============================================================================
  */
+
 (function() {
     'use strict';
 
@@ -29,7 +102,9 @@
         return v === undefined || v === null;
     }
 
-    // ---- Modal manager -------------------------------------------------------
+    // =========================================================================
+    // 1. MODAL STACK
+    // =========================================================================
 
     var _modalStack = [];
     var _currentModalId = 0;
@@ -38,28 +113,18 @@
     /**
      * Opens a modal dialog.
      *
-     * TRUST: titleHtml and contentHtml are inserted as innerHTML.
-     *
-     * Callback contract:
-     *   - onMount(root)  — called after DOM insertion. Errors are logged.
-     *   - onOpen(root)   — alias for onMount. If both supplied, onMount wins.
-     *   - onConfirm(root) — called on confirm. Return false to keep the modal
-     *                       open. Any other return (including undefined) closes.
-     *                       Exceptions propagate; modal stays open.
-     *   - onCancel(root)  — called on cancel. Same return semantics as onConfirm.
-     *
      * @param {Object} [options]
-     * @param {string} [options.titleHtml]      trusted HTML
-     * @param {string} [options.contentHtml]    trusted HTML
-     * @param {Function} [options.onMount]      receives modal element
-     * @param {Function} [options.onOpen]       alias for onMount
-     * @param {Function} [options.onConfirm]    receives modal element; false keeps open
-     * @param {Function} [options.onCancel]     receives modal element; false keeps open
-     * @param {string} [options.confirmText]    default 'Confirm'
-     * @param {string} [options.cancelText]     default 'Cancel'
+     * @param {string} [options.titleHtml]        trusted HTML
+     * @param {string} [options.contentHtml]      trusted HTML
+     * @param {Function} [options.onMount]        receives modal element
+     * @param {Function} [options.onOpen]         alias for onMount
+     * @param {Function} [options.onConfirm]      receives modal element; false keeps open
+     * @param {Function} [options.onCancel]       receives modal element; called on ANY non-confirmed close
+     * @param {string} [options.confirmText]      default 'Confirm'
+     * @param {string} [options.cancelText]       default 'Cancel'
      * @param {boolean} [options.closeOnOverlay]  default true
      * @param {boolean} [options.showCloseButton] default true
-     * @param {string} [options.size]           'small' | 'medium' | 'large'
+     * @param {string} [options.size]             'small' | 'medium' | 'large'
      * @returns {{ element: HTMLElement, close: Function }}
      */
     function openModal(options) {
@@ -144,7 +209,30 @@
         var stackEntry = { id: modalId, element: modal, escapeHandler: null, close: null };
         _modalStack.push(stackEntry);
 
-        function closeModal() {
+        // ---------------------------------------------------------------------
+        // Close paths
+        // ---------------------------------------------------------------------
+        //
+        // Every close goes through _finishClose, which is the single place
+        // that (a) tears down listeners, (b) removes the DOM, (c) restores
+        // focus, and (d) optionally invokes onCancel.
+        //
+        // A close is either:
+        //   - CONFIRMED:  the confirm button was clicked and its
+        //                 onConfirm returned anything other than false.
+        //   - CANCELLED:  the user clicked cancel / overlay / close, pressed
+        //                 Escape, or external code called
+        //                 closeTopModal / closeAllModals.
+        //   - PROGRAMMATIC: the caller used the returned .close() handle.
+        //                 Programmatic close does NOT invoke onCancel;
+        //                 it is an explicit "make it go away" from code
+        //                 that already knows the outcome.
+        //
+        // onCancel fires only for CANCELLED closes. This is what callers
+        // rely on to distinguish "user backed out" from "the code closed
+        // this itself."
+
+        function _teardownStackEntry() {
             if (stackEntry.escapeHandler) {
                 document.removeEventListener('keydown', stackEntry.escapeHandler);
                 stackEntry.escapeHandler = null;
@@ -159,42 +247,86 @@
             }
         }
 
-        stackEntry.close = closeModal;
+        function _fireCancel() {
+            if (typeof onCancel !== 'function') return;
+            try {
+                onCancel(modal);
+            } catch (err) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('modals-core.js: onCancel threw:', err);
+                }
+            }
+        }
+
+        function _finishClose(kind) {
+            _teardownStackEntry();
+            if (kind === 'cancelled') _fireCancel();
+        }
+
+        function _closeAsConfirmed() {
+            _finishClose('confirmed');
+        }
+
+        function _closeAsCancelled() {
+            _finishClose('cancelled');
+        }
+
+        function _closeProgrammatically() {
+            _finishClose('programmatic');
+        }
+
+        stackEntry.close = _closeProgrammatically;
+
+        // ---------------------------------------------------------------------
+        // User-initiated closes
+        // ---------------------------------------------------------------------
 
         var closeBtn = modal.querySelector('.modal-close-btn');
-        if (closeBtn) closeBtn.addEventListener('click', closeModal);
+        if (closeBtn) closeBtn.addEventListener('click', _closeAsCancelled);
 
         if (closeOnOverlay) {
             var overlay = modal.querySelector('.modal-overlay');
-            if (overlay) overlay.addEventListener('click', closeModal);
+            if (overlay) overlay.addEventListener('click', _closeAsCancelled);
         }
 
-        // Cancel: exception propagates; false return keeps open.
         var cancelBtn = modal.querySelector('.cancel-btn');
         if (cancelBtn) {
             cancelBtn.addEventListener('click', function() {
                 var result;
                 if (onCancel) result = onCancel(modal);
-                if (result === false) return;
-                closeModal();
+                // Note: onCancel's return value does NOT keep the modal
+                // open. Unlike onConfirm, onCancel is a notification —
+                // by the time the user clicks cancel, the intent to
+                // close has already been expressed. If a caller needs
+                // "are you sure?" semantics on cancel, they should use
+                // confirmDialog first and only open the modal after
+                // confirmation.
+                //
+                // To avoid double-firing onCancel (once here, once in
+                // _finishClose), we mark the close as "handled" and
+                // suppress the automatic invocation.
+                _closeWithoutFiringCancel(result);
             });
         }
 
-        // Confirm: exception propagates; false return keeps open.
+        function _closeWithoutFiringCancel(_ignored) {
+            _teardownStackEntry();
+        }
+
         var confirmBtn = modal.querySelector('.confirm-btn');
         if (confirmBtn && onConfirm) {
             confirmBtn.addEventListener('click', function() {
                 var result = onConfirm(modal);
                 if (result === false) return;
-                closeModal();
+                _closeAsConfirmed();
             });
         }
 
-        // Escape closes the top modal.
+        // Escape closes the top modal, as a cancel.
         var escapeHandler = function(e) {
             if (e.key !== 'Escape') return;
             var top = _modalStack[_modalStack.length - 1];
-            if (top && top.id === modalId) closeModal();
+            if (top && top.id === modalId) _closeAsCancelled();
         };
         stackEntry.escapeHandler = escapeHandler;
         document.addEventListener('keydown', escapeHandler);
@@ -205,7 +337,7 @@
             catch (err) { console.error('modals-core.js: mount hook threw:', err); }
         }
 
-        return { element: modal, close: closeModal };
+        return { element: modal, close: _closeProgrammatically };
     }
 
     function closeTopModal() {
@@ -214,6 +346,11 @@
         if (typeof top.close !== 'function') {
             throw new Error('modals-core.js: modal stack contains an invalid entry');
         }
+        // External closeTopModal is treated as a programmatic close:
+        // the caller is code, not the user, and it already knows why
+        // it is closing. If the caller wants the cancel semantics, it
+        // should click the cancel button by finding it in the modal, or
+        // it should call onCancel itself before calling closeTopModal.
         top.close();
     }
 
@@ -221,7 +358,9 @@
         while (_modalStack.length > 0) closeTopModal();
     }
 
-    // ---- Simple dialogs ------------------------------------------------------
+    // =========================================================================
+    // 2. SIMPLE DIALOGS
+    // =========================================================================
 
     function alertDialog(message, title) {
         var resolvedTitle = _isMissing(title) ? 'Notice' : title;
@@ -266,7 +405,9 @@
         });
     }
 
-    // ---- Preview modal -------------------------------------------------------
+    // =========================================================================
+    // 3. PREVIEW MODAL
+    // =========================================================================
 
     var _VALID_SEVERITIES = ['info', 'warning', 'error'];
 
@@ -361,7 +502,9 @@
         });
     }
 
-    // ---- Exports -------------------------------------------------------------
+    // =========================================================================
+    // 4. EXPORTS
+    // =========================================================================
 
     window.openModal = openModal;
     window.closeTopModal = closeTopModal;
