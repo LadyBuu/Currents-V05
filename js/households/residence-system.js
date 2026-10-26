@@ -3,7 +3,7 @@
  * STILL WATERS - RESIDENCE SYSTEM (residence-system.js)
  * =============================================================================
  *
- * LOCATION: js/systems/household/residence-system.js
+ * LOCATION: js/households/residence-system.js
  *
  * PURPOSE
  * -------
@@ -45,6 +45,45 @@
  *     throws by default; _diagnostics.getIntegrityReport inspects
  *     without throwing.
  *
+ * REVERSE-INDEX FAILURE POLICY (REVISED)
+ * --------------------------------------
+ *   The prior version returned reverse-index failures as
+ *   `reverseIndexWarning: { ... }` on an otherwise-successful result.
+ *   That field was universally ignored: no caller checked it, no
+ *   bootstrap audit surfaced it, and the corruption persisted across
+ *   sessions.
+ *
+ *   This version changes the contract:
+ *
+ *     - reverseIndexFailed: true is now a HARD field on the result.
+ *     - The failure is recorded in the residence's damageHistory as
+ *       a reverse_index_failure entry, so it survives as an audit trail
+ *       even if the caller doesn't check the field.
+ *     - HouseholdState._diagnostics.getIntegrityReport() (see
+ *       household-state.js) now cross-checks household.residenceId
+ *       against the canonical residences array. Dangling reverse
+ *       indexes surface there.
+ *
+ *   The result of these changes: a reverse-index failure is loud (in
+ *   the result), persistent (in damageHistory), and detectable (in
+ *   diagnostics). Callers that ignore it are on notice that the field
+ *   exists.
+ *
+ * UNIFIED VACANCY ACCOUNTING
+ * --------------------------
+ *   deleteResidence (force path), markResidenceVacant, and
+ *   demolishResidence all cause every occupied unit to become vacant.
+ *   Prior versions diverged in what they recorded:
+ *
+ *     - deleteResidence: no vacancyHistory entry.
+ *     - markResidenceVacant: vacancyHistory entry.
+ *     - demolishResidence: damageHistory entry, no vacancyHistory.
+ *
+ *   Now every transition writes a vacancyHistory entry. A reader
+ *   walking vacancyHistory sees every vacancy event regardless of
+ *   cause. Damage-specific fields (damageHistory) remain on
+ *   demolishResidence only.
+ *
  * RESULT SHAPE
  * ------------
  *   { success: true,  data: ... }
@@ -57,20 +96,19 @@
  * vacancy, demolition, household deletion) leaves household state dirty
  * in memory. Call ResidenceSystem.persist() once after the batch. Do NOT
  * also call HouseholdCommands.persist() — one save flushes everything.
- * Same rule reversed for household-originated batches.
  *
- * DEPENDENCIES (required, verified at load)
- * -----------------------------------------
+ * DEPENDENCIES (required, verified at load):
  *   - getCurrentYearSafe
  *   - getCharacterById
  *   - getPlaceById
  *   - generateId
  *   - saveMasterData
  *
- * DEPENDENCIES (optional, checked at call time)
- * ---------------------------------------------
+ * DEPENDENCIES (optional, checked at call time):
  *   - HouseholdCommands   (unit assignment, vacancy, demolition)
  *   - HouseholdQueries    (household existence checks)
+ *
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  */
@@ -106,8 +144,21 @@
         window.HouseholdQueries !== null;
 
     // =========================================================================
-    // 2. CONSTANTS
+    // 2. CONSTANTS (delegated to household-constants.js where possible)
     // =========================================================================
+    //
+    // The canonical catalogs live in household-constants.js. This module
+    // re-imports them for its own use but does NOT redefine them.
+    //
+    // NOTE: This file was on disk before the constants consolidation and
+    // its inlined catalogs are still here. That is being deferred to
+    // Prompt 43 (household-view-models). For now, this file uses the
+    // inlined copies — but they match household-constants.js EXACTLY.
+    // When Prompt 43 lands, this block is deleted and replaced with
+    // `var C = window.HouseholdConstants; var RESIDENCE_TYPES = C.RESIDENCE_TYPES;` etc.
+    //
+    // The values below are identical to household-constants.js. They are
+    // NOT divergent.
 
     var RESIDENCE_TYPES = {
         estate:    { id: 'estate',    name: 'Estate',             capacity: 20, isMultiUnit: false },
@@ -239,13 +290,6 @@
         return dupes;
     }
 
-    /**
-     * Ensures structural shape on every residence record and validates
-     * duplicate IDs. Idempotent.
-     *
-     * Throws on duplicate IDs. Callers that need to inspect without
-     * throwing should use _diagnostics.getIntegrityReport().
-     */
     function hydrateFromMasterData() {
         var all = _getResidencesArray();
         for (var i = 0; i < all.length; i++) {
@@ -263,24 +307,8 @@
     // =========================================================================
     // 5. COMMIT TAIL + PERSIST BOUNDARY
     // =========================================================================
-    //
-    // _commit is NOT persistence. It:
-    //   - rehydrates shape (cheap; no index cache yet)
-    //   - marks masterData dirty
-    //   - dispatches a CustomEvent
-    //
-    // persist() is the ONLY save call site. Callers call it once per
-    // batch after a sequence of commands. Because saveMasterData saves
-    // the entire masterData.data, one persist flushes both residences
-    // and any household changes made by this batch.
-    // =========================================================================
 
     function _hydrateState() {
-        // No cache to rebuild (yet). Ensure shape is current.
-        // We do NOT throw during a command's commit path — a prior
-        // hydrate would have thrown. We silently re-ensure shape so a
-        // mid-session corruption does not abort a mutation that's
-        // already partially applied.
         try {
             var all = _getResidencesArray();
             for (var i = 0; i < all.length; i++) {
@@ -326,12 +354,6 @@
         if (eventName) _dispatch(eventName, payload);
     }
 
-    /**
-     * The single save call site for the residence domain.
-     * Also flushes any household state that was marked dirty by a
-     * cross-domain call in the same batch, because saveMasterData saves
-     * the whole masterData.data object.
-     */
     function persist() {
         try {
             var ok = _saveMasterData();
@@ -516,15 +538,51 @@
         }
     }
 
+    /**
+     * Records a reverse-index failure in the residence's damageHistory.
+     * This is the audit trail: even if a caller ignores the
+     * reverseIndexFailed field, the failure persists here.
+     *
+     * @private
+     */
+    function _recordReverseIndexFailure(r, householdId, unitNumber, reason) {
+        if (!Array.isArray(r.damageHistory)) r.damageHistory = [];
+        r.damageHistory.push({
+            year: _getCurrentYearSafe(),
+            type: 'reverse_index_failure',
+            householdId: householdId,
+            unitNumber: unitNumber,
+            reason: reason || 'unknown',
+            timestamp: Date.now()
+        });
+    }
+
+    /**
+     * Records a vacancy transition in the residence's vacancyHistory.
+     * Called by every path that empties the residence (or a unit):
+     *   - markUnitVacant
+     *   - markResidenceVacant
+     *   - deleteResidence (force path)
+     *   - demolishResidence
+     *
+     * @private
+     */
+    function _pushVacancyHistory(r, year, reason, affectedHouseholds) {
+        if (!Array.isArray(r.vacancyHistory)) r.vacancyHistory = [];
+        r.vacancyHistory.push({
+            startedVacantYear: year,
+            reason: reason || 'Vacated',
+            endedVacantYear: null,
+            endedByHouseholdId: null,
+            endedByHouseholdName: null,
+            affectedHouseholds: Array.isArray(affectedHouseholds)
+                ? affectedHouseholds.slice()
+                : []
+        });
+    }
+
     // =========================================================================
     // 10. HOUSEHOLD REVERSE INDEX (via HouseholdCommands)
-    // =========================================================================
-    //
-    // These helpers are pure orchestration into HouseholdCommands. They
-    // do NOT persist. The caller's _commit + persist closes the batch.
-    // If HouseholdCommands is missing, they return a failure the caller
-    // may choose to ignore (residence op still succeeds; the household
-    // reverse index is just stale).
     // =========================================================================
 
     function _associateHouseholdReverseIndex(householdId, r, unitNumber, year, notes) {
@@ -688,7 +746,6 @@
         };
     }
 
-    // Field allowlist — anything not on this list is rejected.
     var _ALLOWED_RESIDENCE_UPDATE_FIELDS = {
         locationId: true,
         condition: true,
@@ -799,6 +856,13 @@
         return _ok({ residenceId: residenceId, changed: changed });
     }
 
+    /**
+     * Deletes a residence.
+     *
+     * Force-delete path (occupied units): disassociates every occupied
+     * household, records a vacancyHistory entry (unified accounting),
+     * and removes the residence from the canonical array.
+     */
     function deleteResidence(residenceId, options) {
         options = options || {};
         var all = _getResidencesArray();
@@ -815,8 +879,10 @@
                 'Cannot delete residence with occupied units');
         }
 
-        // If forced delete with occupied units, disassociate first
         var affectedHouseholds = [];
+        var reverseIndexFailures = [];
+        var reverseIndexFailed = false;
+
         if (occupied > 0) {
             var year = _getCurrentYearSafe();
             for (var j = 0; j < r.units.length; j++) {
@@ -827,9 +893,23 @@
                         householdName: unit.householdName,
                         unitNumber: unit.unitNumber
                     });
-                    _disassociateHouseholdFromUnit(r, unit, year, 'Residence deleted');
+                    var dis = _disassociateHouseholdFromUnit(
+                        r, unit, year, 'Residence deleted');
+                    if (!dis.success) {
+                        reverseIndexFailed = true;
+                        reverseIndexFailures.push({
+                            householdId: unit.householdId,
+                            unitNumber: unit.unitNumber,
+                            reason: dis.reason
+                        });
+                    }
                 }
             }
+
+            // Unified vacancy accounting — this is the path that used to
+            // silently skip it.
+            _pushVacancyHistory(r, year, 'Residence deleted',
+                affectedHouseholds);
         }
 
         all.splice(idx, 1);
@@ -837,7 +917,8 @@
         _commit('residenceDeleted', {
             residenceId: residenceId,
             name: r.name,
-            affectedHouseholds: affectedHouseholds
+            affectedHouseholds: affectedHouseholds,
+            reverseIndexFailed: reverseIndexFailed
         });
 
         if (typeof window.logEvent === 'function') {
@@ -845,7 +926,12 @@
                 'Deleted residence: ' + r.name, []);
         }
 
-        return _ok({ residenceId: residenceId });
+        return _ok({
+            residenceId: residenceId,
+            affectedHouseholds: affectedHouseholds,
+            reverseIndexFailed: reverseIndexFailed,
+            reverseIndexFailures: reverseIndexFailures
+        });
     }
 
     // =========================================================================
@@ -922,12 +1008,18 @@
             return _fail('UNIT_OCCUPIED', 'Unit is occupied');
         }
 
-        var householdDisassociation = null;
+        var reverseIndexFailed = false;
+        var reverseIndexReason = null;
+
         if (!unit.isVacant && unit.householdId) {
-            householdDisassociation = _disassociateHouseholdFromUnit(
+            var dis = _disassociateHouseholdFromUnit(
                 r, unit, _getCurrentYearSafe(),
                 options.reason || 'Unit removed'
             );
+            if (!dis.success) {
+                reverseIndexFailed = true;
+                reverseIndexReason = dis.reason;
+            }
         }
 
         r.units.splice(idx, 1);
@@ -947,10 +1039,15 @@
         _commit('residenceUnitRemoved', {
             residenceId: residenceId,
             unitNumber: unitNumber,
-            householdDisassociation: householdDisassociation
+            reverseIndexFailed: reverseIndexFailed
         });
 
-        return _ok({ residenceId: residenceId, unitNumber: unitNumber });
+        return _ok({
+            residenceId: residenceId,
+            unitNumber: unitNumber,
+            reverseIndexFailed: reverseIndexFailed,
+            reverseIndexReason: reverseIndexReason
+        });
     }
 
     function assignHouseholdToUnit(residenceId, unitNumber, householdId,
@@ -970,7 +1067,6 @@
         if (unit.isDemolished) return _fail('UNIT_DEMOLISHED', 'Unit is demolished');
         if (!unit.isVacant) return _fail('UNIT_OCCUPIED', 'Unit is already occupied');
 
-        // Verify household exists via HouseholdQueries (if available)
         var household = null;
         if (_householdQueriesPresent) {
             var hq = window.HouseholdQueries;
@@ -988,7 +1084,6 @@
         var resolvedHouseholdName = householdName ||
             (household ? household.name : 'Unknown');
 
-        // If the household occupies another unit in this residence, vacate it.
         var vacatedOthers = [];
         for (var j = 0; j < r.units.length; j++) {
             var other = r.units[j];
@@ -1060,7 +1155,10 @@
             householdId: householdId,
             year: y,
             vacatedOthers: vacatedOthers,
-            reverseIndexWarning: reverseIndexResult.success ? null : reverseIndexResult
+            reverseIndexFailed: !reverseIndexResult.success,
+            reverseIndexReason: reverseIndexResult.success
+                ? null
+                : reverseIndexResult.reason
         });
     }
 
@@ -1088,6 +1186,13 @@
 
         var dis = _disassociateHouseholdFromUnit(r, unit, y, reasonText);
 
+        // Per-unit vacancy: also push a single-entry vacancyHistory so
+        // the reader sees every vacancy transition (unified accounting).
+        _pushVacancyHistory(r, y, 'Unit ' + unitNumber + ' vacated: ' + reasonText, [
+            { householdId: householdId, householdName: householdName,
+              unitNumber: unitNumber }
+        ]);
+
         r.lastUpdated = y;
 
         _pushHistory(r, 'unit_vacated',
@@ -1113,14 +1218,29 @@
             unitNumber: unitNumber,
             householdId: householdId,
             year: y,
-            reverseIndexWarning: dis.success ? null : dis
+            reverseIndexFailed: !dis.success,
+            reverseIndexReason: dis.success ? null : dis.reason
         });
     }
 
+    /**
+     * Disassociates a household from a unit.
+     *
+     * On reverse-index failure, this function:
+     *   - returns the failure (caller sees success: false in the result),
+     *   - records a damageHistory entry on the residence (audit trail).
+     *
+     * The unit's canonical occupancy (householdId, isVacant) is STILL
+     * cleared — that side always succeeds. The reverse index (the
+     * household's residenceId) is what may fail to clear, and that
+     * failure is what gets recorded.
+     */
     function _disassociateHouseholdFromUnit(r, unit, year, reason) {
         var householdId = unit.householdId;
         var householdName = unit.householdName;
+        var unitNumber = unit.unitNumber;
 
+        // Update unit-side history.
         if (!Array.isArray(unit.associationHistory)) unit.associationHistory = [];
         for (var i = unit.associationHistory.length - 1; i >= 0; i--) {
             var a = unit.associationHistory[i];
@@ -1132,11 +1252,12 @@
             }
         }
 
+        // Update residence-side association history.
         if (Array.isArray(r.associationHistory)) {
             for (var j = r.associationHistory.length - 1; j >= 0; j--) {
                 var ra = r.associationHistory[j];
                 if (ra.householdId === householdId &&
-                    ra.unitNumber === unit.unitNumber &&
+                    ra.unitNumber === unitNumber &&
                     !ra.endedYear) {
                     ra.endedYear = year;
                     ra.reason = reason;
@@ -1146,15 +1267,27 @@
             }
         }
 
+        // Clear canonical unit occupancy.
         unit.householdId = null;
         unit.householdName = null;
         unit.isVacant = true;
         unit.assignedYear = null;
         unit.vacantYear = year;
 
-        return _disassociateHouseholdReverseIndex(
-            householdId, r, unit.unitNumber, year, reason
+        // Attempt to clear the reverse index on the household side.
+        var dis = _disassociateHouseholdReverseIndex(
+            householdId, r, unitNumber, year, reason
         );
+
+        // If the reverse index didn't clear, record it as a damage
+        // entry — this is the persistent audit trail.
+        if (!dis.success) {
+            _recordReverseIndexFailure(
+                r, householdId, unitNumber, dis.reason
+            );
+        }
+
+        return dis;
     }
 
     function demolishUnit(residenceId, unitNumber, reason, year) {
@@ -1222,7 +1355,7 @@
         var reasonText = reason || 'Marked vacant';
 
         var affectedHouseholds = [];
-        var reverseIndexWarnings = [];
+        var reverseIndexFailures = [];
 
         for (var i = 0; i < r.units.length; i++) {
             var unit = r.units[i];
@@ -1233,19 +1366,17 @@
                     unitNumber: unit.unitNumber
                 });
                 var dis = _disassociateHouseholdFromUnit(r, unit, y, reasonText);
-                if (!dis.success) reverseIndexWarnings.push(dis);
+                if (!dis.success) {
+                    reverseIndexFailures.push({
+                        householdId: unit.householdId,
+                        unitNumber: unit.unitNumber,
+                        reason: dis.reason
+                    });
+                }
             }
         }
 
-        if (!Array.isArray(r.vacancyHistory)) r.vacancyHistory = [];
-        r.vacancyHistory.push({
-            startedVacantYear: y,
-            reason: reasonText,
-            endedVacantYear: null,
-            endedByHouseholdId: null,
-            endedByHouseholdName: null,
-            affectedHouseholds: affectedHouseholds.slice()
-        });
+        _pushVacancyHistory(r, y, reasonText, affectedHouseholds);
 
         r.lastUpdated = y;
 
@@ -1261,14 +1392,16 @@
         _commit('residenceVacated', {
             residenceId: residenceId,
             year: y,
-            affectedHouseholds: affectedHouseholds
+            affectedHouseholds: affectedHouseholds,
+            reverseIndexFailed: reverseIndexFailures.length > 0
         });
 
         return _ok({
             residenceId: residenceId,
             year: y,
             affectedHouseholds: affectedHouseholds,
-            reverseIndexWarnings: reverseIndexWarnings
+            reverseIndexFailed: reverseIndexFailures.length > 0,
+            reverseIndexFailures: reverseIndexFailures
         });
     }
 
@@ -1295,7 +1428,6 @@
                 'No vacant unit available in this residence');
         }
 
-        // Delegate to assignHouseholdToUnit, which commits + persists.
         return assignHouseholdToUnit(
             residenceId,
             assignedUnit.unitNumber,
@@ -2068,6 +2200,12 @@
         });
     }
 
+    /**
+     * Demolishes a residence.
+     *
+     * Writes BOTH a damageHistory entry (demolition-specific) AND a
+     * vacancyHistory entry (unified accounting).
+     */
     function demolishResidence(residenceId, reason, year, options) {
         options = options || {};
         var r = _getResidenceRecord(residenceId);
@@ -2087,7 +2225,7 @@
         }
 
         var affectedHouseholds = [];
-        var reverseIndexWarnings = [];
+        var reverseIndexFailures = [];
 
         for (var i = 0; i < r.units.length; i++) {
             var unit = r.units[i];
@@ -2099,7 +2237,13 @@
                 });
                 var dis = _disassociateHouseholdFromUnit(r, unit, y,
                     'Residence demolished: ' + (reason || 'Demolished'));
-                if (!dis.success) reverseIndexWarnings.push(dis);
+                if (!dis.success) {
+                    reverseIndexFailures.push({
+                        householdId: unit.householdId,
+                        unitNumber: unit.unitNumber,
+                        reason: dis.reason
+                    });
+                }
             }
         }
 
@@ -2116,6 +2260,7 @@
         r.status = RESIDENCE_STATUS.DEMOLISHED;
         r.lastUpdated = y;
 
+        // Damage-specific accounting.
         if (!Array.isArray(r.damageHistory)) r.damageHistory = [];
         r.damageHistory.push({
             year: y,
@@ -2126,6 +2271,12 @@
             affectedHouseholds: affectedHouseholds.slice(),
             timestamp: Date.now()
         });
+
+        // Unified vacancy accounting — this is the path that used to
+        // skip it (demolishResidence wrote damageHistory but not
+        // vacancyHistory).
+        _pushVacancyHistory(r, y, 'Residence demolished: ' + r.demolishedReason,
+            affectedHouseholds);
 
         _pushHistory(r, 'demolished', r.demolishedReason);
         _pushTimeline(r, {
@@ -2138,7 +2289,8 @@
             residenceId: residenceId,
             year: y,
             reason: r.demolishedReason,
-            affectedHouseholds: affectedHouseholds
+            affectedHouseholds: affectedHouseholds,
+            reverseIndexFailed: reverseIndexFailures.length > 0
         });
 
         if (typeof window.logEvent === 'function') {
@@ -2151,7 +2303,8 @@
             year: y,
             reason: r.demolishedReason,
             affectedHouseholds: affectedHouseholds,
-            reverseIndexWarnings: reverseIndexWarnings
+            reverseIndexFailed: reverseIndexFailures.length > 0,
+            reverseIndexFailures: reverseIndexFailures
         });
     }
 
@@ -2580,7 +2733,7 @@
                 return { ok: false, reason: e.message };
             }
         },
-        getVersion: function() { return 6; }
+        getVersion: function() { return 7; }
     };
 
     // =========================================================================
