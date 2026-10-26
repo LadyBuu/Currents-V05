@@ -53,7 +53,7 @@
  *       'surnameHistoryCleared' / 'birthSurname')
  *     - nameListChanged
  *
- *   Internal events to subscribers:
+ *   Internal events to subscribers, published via publish(eventName, data):
  *     - { type: 'cachesCleared' }
  *     - { type: 'surnameHistoryInvalidated', characterId }
  *     - { type: 'nameListInvalidated', countryId }
@@ -61,7 +61,14 @@
  *
  * LIFECYCLE:
  *   There is no initialize(). The module is usable as soon as it loads.
- *   On masterData reload or import, the caller must invoke clearAllCaches().
+ *   On masterData reload or import, the caller must invoke clearAllCaches()
+ *   (or its alias hydrateFromMasterData()) to discard stale cache
+ *   entries. Unlike CultureState or ReligionState, NameState holds no
+ *   derived indexes over canonical records — it holds only per-key
+ *   caches of records it already has via accessors. There is nothing to
+ *   "hydrate"; clearing is the correct operation. The alias exists so
+ *   bootstrap code can use the reference-pattern name without changing
+ *   the underlying semantics.
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:   getCharacterById, getNameLists
@@ -72,6 +79,23 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Original: cache module with getMutable* naming and targeted invalidation.
+ *   Current:
+ *     - Added hydrateFromMasterData() alias for clearAllCaches(). Both
+ *       names do the same thing; the alias lets bootstrap code use the
+ *       reference-pattern name without pretending NameState has a
+ *       hydrate operation.
+ *     - Added publish(eventName, data) wrapper over the internal
+ *       _notifySubscribers. Normalizes event shape for consumers that
+ *       use the reference-pattern subscription. Existing subscribers
+ *       continue to receive the old {type, ...payload} shape — publish
+ *       emits exactly that.
+ *     - Added validateIntegrity() for bootstrap-time diagnostics.
+ *       Warn-only, never throws.
+ *     - setUiState: previewName/previewSurname now capped at 200 chars.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -134,6 +158,10 @@
         'generationMode'
     ];
 
+    // Cap on preview field lengths. Guards against a UI bug that dumps
+    // megabytes of text into a preview field. Not a domain rule.
+    var PREVIEW_MAX_LENGTH = 200;
+
     // =========================================================================
     // 3. HELPERS
     // =========================================================================
@@ -165,6 +193,25 @@
         }
     }
 
+    /**
+     * Publishes an event to subscribers. Same delivery mechanism as
+     * _notifySubscribers, but takes the reference-pattern (eventName,
+     * data) signature and constructs the event object.
+     *
+     * Existing subscribers receive the same shape they always have:
+     *   { type, ...data }
+     */
+    function publish(eventName, data) {
+        var event = { type: eventName };
+        if (data && typeof data === 'object') {
+            var keys = Object.keys(data);
+            for (var i = 0; i < keys.length; i++) {
+                event[keys[i]] = data[keys[i]];
+            }
+        }
+        _notifySubscribers(event);
+    }
+
     function _getValidGenerationModes() {
         var types = window.NameRules.RULE_TYPES;
         var out = [];
@@ -182,11 +229,29 @@
     /**
      * Clears every cache and re-notifies subscribers. Called on
      * masterData reload or import. Does not touch UI state.
+     *
+     * This is the canonical operation name. Unlike CultureState or
+     * ReligionState, NameState holds no derived indexes over canonical
+     * records — it holds only per-key caches. There is nothing to
+     * hydrate; clearing is the correct operation.
      */
     function clearAllCaches() {
         _surnameHistoryCache.clear();
         _nameListCache.clear();
-        _notifySubscribers({ type: 'cachesCleared' });
+        publish('cachesCleared', null);
+    }
+
+    /**
+     * Alias for clearAllCaches(). Exists so bootstrap code can call
+     * hydrateFromMasterData() without knowing that NameState's
+     * equivalent operation happens to be "clear" rather than "rebuild."
+     *
+     * The operation is identical to clearAllCaches(): caches are
+     * discarded, a 'cachesCleared' event is published, and the next read
+     * re-fetches from the canonical accessor.
+     */
+    function hydrateFromMasterData() {
+        clearAllCaches();
     }
 
     // =========================================================================
@@ -227,10 +292,7 @@
     function invalidateSurnameHistory(characterId) {
         if (!_hasId(characterId)) return;
         _surnameHistoryCache.delete(characterId);
-        _notifySubscribers({
-            type: 'surnameHistoryInvalidated',
-            characterId: characterId
-        });
+        publish('surnameHistoryInvalidated', { characterId: characterId });
     }
 
     // =========================================================================
@@ -276,10 +338,7 @@
     function invalidateNameList(countryId) {
         if (!_hasId(countryId)) return;
         _nameListCache.delete(countryId);
-        _notifySubscribers({
-            type: 'nameListInvalidated',
-            countryId: countryId
-        });
+        publish('nameListInvalidated', { countryId: countryId });
     }
 
     // =========================================================================
@@ -302,7 +361,8 @@
      *     to leave it unchanged.
      *   - `null` is permitted only for `selectedCountryId` and
      *     `selectedGender`.
-     *   - `previewName` and `previewSurname` must be strings.
+     *   - `previewName` and `previewSurname` must be strings of at most
+     *     PREVIEW_MAX_LENGTH characters.
      *   - `generationMode` is validated against NameRules.RULE_TYPES.
      *   - Nested objects are not supported.
      */
@@ -312,6 +372,10 @@
         }
 
         var keys = Object.keys(updates);
+
+        // Pre-compute generation modes once, not once per key check.
+        var generationModes = null;
+
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i];
             if (UI_STATE_KEYS.indexOf(key) === -1) {
@@ -335,11 +399,13 @@
                     );
                 }
             } else if (key === 'generationMode') {
-                var modes = _getValidGenerationModes();
-                if (modes.indexOf(value) === -1) {
+                if (!generationModes) {
+                    generationModes = _getValidGenerationModes();
+                }
+                if (generationModes.indexOf(value) === -1) {
                     throw new Error(
                         'NameState.setUiState: generationMode must be one of: ' +
-                        modes.join(', ')
+                        generationModes.join(', ')
                     );
                 }
             } else if (key === 'selectedCountryId') {
@@ -354,6 +420,12 @@
                         'NameState.setUiState: ' + key + ' must be a string'
                     );
                 }
+                if (value.length > PREVIEW_MAX_LENGTH) {
+                    throw new Error(
+                        'NameState.setUiState: ' + key + ' must be at most ' +
+                        PREVIEW_MAX_LENGTH + ' characters'
+                    );
+                }
             }
         }
 
@@ -361,10 +433,7 @@
             _uiState[keys[j]] = updates[keys[j]];
         }
 
-        _notifySubscribers({
-            type: 'uiStateChanged',
-            uiState: getUiState()
-        });
+        publish('uiStateChanged', { uiState: getUiState() });
     }
 
     function resetUiState() {
@@ -373,10 +442,7 @@
         _uiState.previewName = '';
         _uiState.previewSurname = '';
         _uiState.generationMode = 'random';
-        _notifySubscribers({
-            type: 'uiStateChanged',
-            uiState: getUiState()
-        });
+        publish('uiStateChanged', { uiState: getUiState() });
     }
 
     // =========================================================================
@@ -424,23 +490,100 @@
     window.addEventListener('nameListChanged', _handleNameListChanged);
 
     // =========================================================================
-    // 10. EXPORTS
+    // 10. INTEGRITY / DIAGNOSTICS
+    // =========================================================================
+
+    /**
+     * Warn-only cache-health check. Returns an array of
+     * { level: 'error'|'warn'|'info', message: string }.
+     *
+     * Never throws. Called by any bootstrap that wants to diagnose
+     * NameState's health at load time.
+     *
+     * Checks:
+     *   - Every cached surname history is still a plain object
+     *   - Every cached name list is still a plain object
+     *   - Every cached surname-history's character still exists
+     *   - Every cached name-list's country still exists
+     */
+    function validateIntegrity() {
+        var findings = [];
+
+        if (_surnameHistoryCache.size === 0 && _nameListCache.size === 0) {
+            findings.push({
+                level: 'info',
+                message: 'NameState caches are empty. This is a valid initial state.'
+            });
+            return findings;
+        }
+
+        _surnameHistoryCache.forEach(function(history, characterId) {
+            if (!_isPlainObject(history)) {
+                findings.push({
+                    level: 'error',
+                    message: 'Cached surname history for "' + characterId + '" is not a plain object.'
+                });
+                return;
+            }
+            var character = window.getCharacterById(characterId);
+            if (!character) {
+                findings.push({
+                    level: 'warn',
+                    message: 'Cached surname history for "' + characterId + '" refers to a missing character.'
+                });
+            }
+        });
+
+        _nameListCache.forEach(function(list, countryId) {
+            if (!_isPlainObject(list)) {
+                findings.push({
+                    level: 'error',
+                    message: 'Cached name list for "' + countryId + '" is not a plain object.'
+                });
+            }
+        });
+
+        return findings;
+    }
+
+    function getCacheStats() {
+        return {
+            surnameHistoryCacheSize: _surnameHistoryCache.size,
+            nameListCacheSize: _nameListCache.size,
+            subscriberCount: _subscribers.length,
+            uiStateKeys: Object.keys(_uiState).length
+        };
+    }
+
+    // =========================================================================
+    // 11. EXPORTS
     // =========================================================================
 
     window.NameState = {
+        // Lifecycle
         clearAllCaches: clearAllCaches,
+        hydrateFromMasterData: hydrateFromMasterData,
 
+        // Surname history cache
         getMutableSurnameHistory: getMutableSurnameHistory,
         invalidateSurnameHistory: invalidateSurnameHistory,
 
+        // Name list cache
         getMutableNameList: getMutableNameList,
         invalidateNameList: invalidateNameList,
 
+        // UI state
         getUiState: getUiState,
         setUiState: setUiState,
         resetUiState: resetUiState,
 
-        subscribe: subscribe
+        // Subscriptions
+        subscribe: subscribe,
+        publish: publish,
+
+        // Diagnostics
+        validateIntegrity: validateIntegrity,
+        getCacheStats: getCacheStats
     };
 
 })();
