@@ -6,11 +6,10 @@
  *
  * ECONOMY MODALS.
  *
- * This file contains the settlement economy UI modals built on the new
- * command and query architecture:
+ * This file contains the settlement economy UI modals:
  *
  *   - openTaxRateModal          : view and change tax rate / tariff / industry tax
- *   - openSpendingModal         : view and change military / infrastructure / education spending
+ *   - openSpendingModal         : view military / infrastructure / education spending
  *   - openJusticeModal          : view and change justice severity / watch
  *   - openDebtManagementModal   : view and manage debt (borrow / repay)
  *   - openFinancialReportModal  : current financial snapshot
@@ -19,7 +18,7 @@
  * It is a UI module. It:
  *   - reads through SettlementViewModels and query modules
  *   - calls commands for mutations
- *   - uses modals-core for the modal shell
+ *   - uses the core modal shell for presentation
  *   - does not read or write canonical settlement state directly
  *   - does not create settlement records
  *   - does not persist
@@ -33,15 +32,18 @@
  * Contract), §15 (ViewModel Contract), §16 (UI Contract), §21 (Fiscal
  * Contract), §32 (Completion Standard).
  *
- * Modal infrastructure expectation:
+ * Modal infrastructure:
  *
- *   This module expects `window.ModalsCore.openModal(options)` to
- *   return the created content container element, or null on failure.
- *   Event wiring is attached to that container, not to document.body or
- *   to global selectors. No setTimeout is used.
+ *   This module uses the CORE modals, not a ModalsCore namespace:
+ *     - window.openModal(options) -> { element, close }
+ *     - window.closeTopModal()
+ *     - window.showToast(message, type)
+ *     - window.confirmDialog(message, title, onConfirm)
  *
- *   If modals-core needs to change to support this contract, the change
- *   is in modals-core; this file only relies on the shape it needs.
+ *   `titleHtml` and `contentHtml` are the accepted option keys.
+ *   `title` and `content` are silently ignored by the core.
+ *
+ *   The content container for event delegation is `result.element`.
  *
  * =============================================================================
  */
@@ -53,7 +55,6 @@
     // 1. DEPENDENCIES
     // =========================================================================
 
-    function _getModalsCore()       { return window.ModalsCore; }
     function _getViewModels()       { return window.SettlementViewModels; }
     function _getSettlementQueries(){ return window.SettlementQueries; }
     function _getPlaceQueries()     { return window.PlaceQueries; }
@@ -95,24 +96,27 @@
         return _escapeHtml(value.toLocaleString());
     }
 
+    /**
+     * Opens a modal via the core modal shell. Returns the modal element,
+     * or null if openModal returned an unexpected shape.
+     */
     function _openModal(options) {
-        var result = _getModalsCore().openModal(options);
+        var result = window.openModal(options);
         if (!result) return null;
-        if (result.content && result.content.nodeType === 1) return result.content;
-        if (result.nodeType === 1) return result;
+        if (result.element && result.element.nodeType === 1) return result.element;
         return null;
     }
 
     function _closeTopModal() {
-        _getModalsCore().closeTopModal();
+        window.closeTopModal();
     }
 
     function _toast(message, type) {
-        _getModalsCore().showToast(message, type);
+        window.showToast(message, type);
     }
 
     function _confirm(message, title, onConfirm) {
-        _getModalsCore().confirmDialog(message, title, onConfirm);
+        window.confirmDialog(message, title, onConfirm);
     }
 
     // =========================================================================
@@ -147,8 +151,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Fiscal Policy: ' + _escapeHtml(summary.name || ''),
-            content: content,
+            titleHtml: 'Fiscal Policy: ' + _escapeHtml(summary.name || ''),
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -238,8 +242,8 @@
             '</div>';
 
         _openModal({
-            title: 'Spending: ' + _escapeHtml(summary.name || ''),
-            content: content,
+            titleHtml: 'Spending: ' + _escapeHtml(summary.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'medium',
@@ -294,8 +298,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Justice: ' + _escapeHtml(summary.name || ''),
-            content: content,
+            titleHtml: 'Justice: ' + _escapeHtml(summary.name || ''),
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function () {
@@ -392,8 +396,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Debt Management: ' + _escapeHtml(view.name || ''),
-            content: content,
+            titleHtml: 'Debt Management: ' + _escapeHtml(view.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'medium',
@@ -439,8 +443,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Repay Debt',
-            content: content,
+            titleHtml: 'Repay Debt',
+            contentHtml: content,
             confirmText: 'Repay',
             cancelText: 'Cancel',
             size: 'small',
@@ -501,8 +505,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Borrow',
-            content: content,
+            titleHtml: 'Borrow',
+            contentHtml: content,
             confirmText: 'Borrow',
             cancelText: 'Cancel',
             size: 'small',
@@ -574,8 +578,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Financial Report: ' + _escapeHtml(view.name || ''),
-            content: content,
+            titleHtml: 'Financial Report: ' + _escapeHtml(view.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
@@ -621,8 +625,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Efficiency: ' + _escapeHtml(view.name || ''),
-            content: content,
+            titleHtml: 'Efficiency: ' + _escapeHtml(view.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'medium',
