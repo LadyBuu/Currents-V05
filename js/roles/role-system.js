@@ -10,7 +10,7 @@
  * migrated.
  *
  * This file:
- *   - declares NO constants
+ *   - declares NO constants (except direct references to RoleConstants)
  *   - provides NO fallback implementations
  *   - returns NO fake empty data
  *   - contains NO business logic
@@ -20,6 +20,14 @@
  * not a compatibility feature; it is how the previous architecture survived
  * six refactors.
  *
+ * If a canonical module is present but the specific function being aliased
+ * is NOT exported by that module, this file also throws — because a shim
+ * that installs `window.foo = undefined` is worse than no shim at all:
+ * callers get a `TypeError: foo is not a function` at call time, far from
+ * the load site, with no breadcrumb back to the missing alias. The
+ * REQUIRED_FUNCTIONS check below enforces that every alias resolves to a
+ * callable function before it is installed.
+ *
  * Migration policy:
  *   Every alias below is one-way. New code must call RoleConstants,
  *   RoleState, RoleQueries, RoleCommands, SkillUtils directly. The aliases
@@ -28,6 +36,20 @@
  *
  *   To find remaining consumers:  grep -rn "window\.getRoles\b" js/
  *   (repeat for each alias; delete the alias when the count reaches zero.)
+ *
+ * KNOWN GAPS (documented, not fixed here):
+ *   modals-roles.js calls two RoleQueries functions that are not yet
+ *   exported by role-queries.js:
+ *
+ *     RQ.getOccupiedLocationIds(getLocation)
+ *     RQ.getEligibleCharactersForRole(roleId, options)
+ *
+ *   Both are used by the assign-role modal. Until they exist, that modal
+ *   fails at runtime. They are NOT aliased here, because aliasing an
+ *   undefined function would move the failure earlier without making
+ *   anything work. The fix belongs in role-queries.js.
+ *
+ *   This shim does not paper over them.
  *
  * =============================================================================
  */
@@ -39,35 +61,102 @@
     // 1. HARD DEPENDENCY CHECK
     // =========================================================================
 
-    var REQUIRED = [
+    var REQUIRED_MODULES = [
         ['RoleConstants', 'role-constants.js'],
         ['RoleState',     'role-state.js'],
         ['RoleQueries',   'role-queries.js'],
         ['RoleCommands',  'role-commands.js'],
         ['SkillUtils',    'skill-utils.js']
     ];
-    var missing = [];
-    for (var i = 0; i < REQUIRED.length; i++) {
-        if (typeof window[REQUIRED[i][0]] === 'undefined') {
-            missing.push(REQUIRED[i][0] + ' (' + REQUIRED[i][1] + ')');
+
+    var missingModules = [];
+    for (var i = 0; i < REQUIRED_MODULES.length; i++) {
+        if (typeof window[REQUIRED_MODULES[i][0]] === 'undefined') {
+            missingModules.push(REQUIRED_MODULES[i][0] + ' (' + REQUIRED_MODULES[i][1] + ')');
         }
     }
-    if (missing.length > 0) {
+    if (missingModules.length > 0) {
         throw new Error(
-            'role-system.js cannot install legacy aliases. Missing canonical modules: ' +
-            missing.join(', ')
+            'role-system.js cannot install legacy aliases. ' +
+            'Missing canonical modules: ' + missingModules.join(', ')
         );
     }
 
-    var RC = window.RoleConstants;
-    var RS = window.RoleState;
-    var RQ = window.RoleQueries;
+    var RC   = window.RoleConstants;
+    var RS   = window.RoleState;
+    var RQ   = window.RoleQueries;
     var RCMD = window.RoleCommands;
-    var SU = window.SkillUtils;
+    var SU   = window.SkillUtils;
 
     // =========================================================================
-    // 2. CONSTANTS (aliases onto RoleConstants)
+    // 2. FUNCTION RESOLUTION CHECK
     // =========================================================================
+    //
+    // Every alias below is installed only if the underlying function
+    // exists. Collect failures and throw once, with all missing functions
+    // named, so a single load attempt reports every gap.
+    //
+    // This block runs BEFORE any aliases are installed. If anything is
+    // missing, the whole shim refuses to install — partial aliasing is
+    // more dangerous than no aliasing.
+
+    var REQUIRED_FUNCTIONS = [
+        // RoleQueries
+        ['RoleQueries.getRoles',                        RQ.getRoles],
+        ['RoleQueries.searchRoles',                     RQ.searchRoles],
+        ['RoleQueries.getCharactersWithRole',           RQ.getCharactersWithRole],
+        ['RoleQueries.getCharactersWithRoleIds',        RQ.getCharactersWithRoleIds],
+        ['RoleQueries.getCharactersWithRoleDetails',    RQ.getCharactersWithRoleDetails],
+        ['RoleQueries.getRoleStatistics',               RQ.getRoleStatistics],
+        ['RoleQueries.getRoleCategoriesWithCounts',     RQ.getRoleCategoriesWithCounts],
+        ['RoleQueries.getRoleSpecializations',          RQ.getRoleSpecializations],
+        ['RoleQueries.getAllRoleSpecializations',       RQ.getAllRoleSpecializations],
+        ['RoleQueries.getSkillLevel',                   RQ.getSkillLevel],
+
+        // RoleCommands
+        ['RoleCommands.createRole',                     RCMD.createRole],
+        ['RoleCommands.updateRole',                     RCMD.updateRole],
+        ['RoleCommands.deleteRole',                     RCMD.deleteRole],
+        ['RoleCommands.setRoles',                       RCMD.setRoles],
+        ['RoleCommands.addCategory',                    RCMD.addCategory],
+        ['RoleCommands.updateCategory',                 RCMD.updateCategory],
+        ['RoleCommands.deleteCategory',                 RCMD.deleteCategory],
+        ['RoleCommands.assignRoleToCharacter',          RCMD.assignRoleToCharacter],
+        ['RoleCommands.removeRoleFromCharacter',        RCMD.removeRoleFromCharacter],
+        ['RoleCommands.updateCharacterSkill',           RCMD.updateCharacterSkill],
+        ['RoleCommands.recordCharacterSkillProgress',   RCMD.recordCharacterSkillProgress],
+        ['RoleCommands.bulkAssignRole',                 RCMD.bulkAssignRole],
+        ['RoleCommands.updateRoleSalary',               RCMD.updateRoleSalary],
+        ['RoleCommands.updateRoleLiteracyRequirement',  RCMD.updateRoleLiteracyRequirement],
+        ['RoleCommands.addRoleSpecialization',          RCMD.addRoleSpecialization],
+        ['RoleCommands.removeRoleSpecialization',       RCMD.removeRoleSpecialization],
+
+        // SkillUtils
+        ['SkillUtils.getTier',                          SU.getTier]
+    ];
+
+    var missingFunctions = [];
+    for (var f = 0; f < REQUIRED_FUNCTIONS.length; f++) {
+        if (typeof REQUIRED_FUNCTIONS[f][1] !== 'function') {
+            missingFunctions.push(REQUIRED_FUNCTIONS[f][0]);
+        }
+    }
+    if (missingFunctions.length > 0) {
+        throw new Error(
+            'role-system.js cannot install legacy aliases. ' +
+            'Canonical modules loaded, but the following functions are ' +
+            'missing: ' + missingFunctions.join(', ') + '. ' +
+            'Update the canonical modules before loading role-system.js.'
+        );
+    }
+
+    // =========================================================================
+    // 3. CONSTANTS (aliases onto RoleConstants)
+    // =========================================================================
+    //
+    // Constants are direct references to frozen objects. They are aliased
+    // rather than re-declared so there is exactly one canonical
+    // representation of each vocabulary in the tree.
 
     window.UNCATEGORIZED_ID   = RC.UNCATEGORIZED_ID;
     window.UNCATEGORIZED_NAME = RC.UNCATEGORIZED_NAME;
@@ -88,16 +177,17 @@
     window.LITERACY_LEVEL_NAMES = RC.LITERACY_LEVEL_NAMES;
     window.LITERACY_LEVEL_THRESHOLDS = RC.LITERACY_LEVEL_THRESHOLDS;
 
-    // Legacy name kept as an alias for the renamed constant.
+    // Legacy name aliases for renamed constants.
     window.SALARY_EXPERIENCE_BONUS_MAX = RC.SALARY_EXPERIENCE_BONUS_CAP;
     window.SALARY_EXPERIENCE_CAP = RC.SALARY_EXPERIENCE_YEARS_CAP;
 
-    // UNCATEGORIZED_ICON is deliberately NOT aliased. Icons are a UI concern
-    // and are provided by icons.js. Any caller still reading this global
-    // should be updated to resolve the icon through the icon system.
+    // UNCATEGORIZED_ICON is deliberately NOT aliased. Icons are a UI
+    // concern and are provided by icons.js. Any caller still reading
+    // this global should be updated to resolve the icon through the
+    // icon system.
 
     // =========================================================================
-    // 3. STATE ALIASES (read helpers onto RoleState)
+    // 4. STATE ALIASES (read helpers onto RoleState)
     // =========================================================================
 
     window.subscribeRoles = function (callback) {
@@ -125,26 +215,34 @@
     window._getRoleCategories = RS.getCategories;
 
     // =========================================================================
-    // 4. QUERY ALIASES (onto RoleQueries)
+    // 5. QUERY ALIASES (onto RoleQueries)
     // =========================================================================
 
     window.getRoles = RQ.getRoles;
     window.searchRoles = RQ.searchRoles;
     window.getCharactersWithRole = RQ.getCharactersWithRole;
+    window.getCharactersWithRoleIds = RQ.getCharactersWithRoleIds;
     window.getCharactersWithRoleDetails = RQ.getCharactersWithRoleDetails;
     window.getRoleStatistics = RQ.getRoleStatistics;
+    window.getRoleCategoriesWithCounts = RQ.getRoleCategoriesWithCounts;
+    window.getSkillLevel = RQ.getSkillLevel;
+
+    // Legacy shape: array of category objects. Derived from the canonical
+    // category-with-counts query so it stays consistent.
     window.getRoleCategoryList = function () {
-        // Legacy shape: array of category objects. Derived from the
-        // canonical category-with-counts query so it stays consistent.
         return RQ.getRoleCategoriesWithCounts().map(function (c) {
             return { id: c.id, name: c.name };
         });
     };
-    window.getRoleCategoriesWithCounts = RQ.getRoleCategoriesWithCounts;
+
+    // Specialization reads live in RoleQueries. Aliased here so pre-refactor
+    // callers that expected them on window continue to work.
+    window.getRoleSpecializations = RQ.getRoleSpecializations;
+    window.getAllRoleSpecializations = RQ.getAllRoleSpecializations;
+
     window.getTeachingThresholdName = function (level) {
         return SU.getTier(level).name;
     };
-    window.getSkillLevel = RQ.getSkillLevel;
 
     window._getCharactersWithRole = RQ.getCharactersWithRole;
     window._getCharactersWithRoleDetails = RQ.getCharactersWithRoleDetails;
@@ -155,7 +253,7 @@
     window._getSkillLevel = RQ.getSkillLevel;
 
     // =========================================================================
-    // 5. COMMAND ALIASES (onto RoleCommands)
+    // 6. COMMAND ALIASES (onto RoleCommands)
     // =========================================================================
 
     window.createRole = RCMD.createRole;
@@ -170,13 +268,12 @@
     window.assignRoleToCharacter = RCMD.assignRoleToCharacter;
     window.removeRoleFromCharacter = RCMD.removeRoleFromCharacter;
     window.updateCharacterSkill = RCMD.updateCharacterSkill;
+    window.recordCharacterSkillProgress = RCMD.recordCharacterSkillProgress;
     window.bulkAssignRole = RCMD.bulkAssignRole;
 
     window.updateRoleSalary = RCMD.updateRoleSalary;
     window.updateRoleLiteracyRequirement = RCMD.updateRoleLiteracyRequirement;
 
-    window.getRoleSpecializations = RQ.getRoleSpecializations;
-    window.getAllRoleSpecializations = RQ.getAllRoleSpecializations;
     window.addRoleSpecialization = RCMD.addRoleSpecialization;
     window.removeRoleSpecialization = RCMD.removeRoleSpecialization;
 
@@ -190,6 +287,7 @@
     window._assignRoleToCharacter = RCMD.assignRoleToCharacter;
     window._removeRoleFromCharacter = RCMD.removeRoleFromCharacter;
     window._updateCharacterSkill = RCMD.updateCharacterSkill;
+    window._recordCharacterSkillProgress = RCMD.recordCharacterSkillProgress;
     window._bulkAssignRole = RCMD.bulkAssignRole;
     window._updateRoleSalary = RCMD.updateRoleSalary;
     window._updateRoleLiteracyRequirement = RCMD.updateRoleLiteracyRequirement;
@@ -200,8 +298,14 @@
     // role-scoped use case. Any caller still using the old global should
     // migrate to one of those two.
 
+    // NOTE: window.getOccupiedLocationIds and window.getEligibleCharactersForRole
+    // are NOT aliased because RoleQueries does not yet export them. They
+    // are called directly on RQ by modals-roles.js, and that modal will
+    // fail at runtime until role-queries.js exports them. Documented in
+    // the module header under KNOWN GAPS.
+
     // =========================================================================
-    // 6. DELETED ALIASES (intentionally not reinstated)
+    // 7. DELETED ALIASES (intentionally not reinstated)
     // =========================================================================
     //
     // The following globals existed in the pre-refactor module and are
@@ -221,19 +325,21 @@
     // architecture survives the current refactor.
 
     // =========================================================================
-    // 7. DIAGNOSTIC
+    // 8. DIAGNOSTIC
     // =========================================================================
 
     if (window.console && typeof window.console.debug === 'function') {
         window.console.debug(
             'role-system.js: legacy aliases installed (compatibility shim). ' +
             'New code should use RoleConstants / RoleState / RoleQueries / ' +
-            'RoleCommands / SkillUtils directly.'
+            'RoleCommands / SkillUtils directly. ' +
+            'Known gaps: RQ.getOccupiedLocationIds, ' +
+            'RQ.getEligibleCharactersForRole (see modals-roles.js).'
         );
     }
 
     // =========================================================================
-    // 8. COMMONJS EXPORT
+    // 9. COMMONJS EXPORT
     // =========================================================================
 
     if (typeof module !== 'undefined' && module.exports) {
@@ -257,9 +363,13 @@
             getRoles: window.getRoles,
             searchRoles: window.searchRoles,
             getCharactersWithRole: window.getCharactersWithRole,
+            getCharactersWithRoleIds: window.getCharactersWithRoleIds,
             getCharactersWithRoleDetails: window.getCharactersWithRoleDetails,
             getRoleStatistics: window.getRoleStatistics,
             getRoleCategoriesWithCounts: window.getRoleCategoriesWithCounts,
+            getRoleCategoryList: window.getRoleCategoryList,
+            getRoleSpecializations: window.getRoleSpecializations,
+            getAllRoleSpecializations: window.getAllRoleSpecializations,
             getTeachingThresholdName: window.getTeachingThresholdName,
             getSkillLevel: window.getSkillLevel,
 
@@ -274,6 +384,7 @@
             assignRoleToCharacter: window.assignRoleToCharacter,
             removeRoleFromCharacter: window.removeRoleFromCharacter,
             updateCharacterSkill: window.updateCharacterSkill,
+            recordCharacterSkillProgress: window.recordCharacterSkillProgress,
             bulkAssignRole: window.bulkAssignRole,
             updateRoleSalary: window.updateRoleSalary,
             updateRoleLiteracyRequirement: window.updateRoleLiteracyRequirement,
