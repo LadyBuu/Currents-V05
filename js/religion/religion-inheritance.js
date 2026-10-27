@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION INHERITANCE (religion-inheritance.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-inheritance.js
+ * LOCATION: js/religion/religion-inheritance.js
  *
  * Thin adapter between the pure inheritance rule engine and the command that
  * assigns religion to a character.
