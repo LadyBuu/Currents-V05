@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION UI STATE (religion-ui-state.js)
  * =============================================================================
  * 
- * LOCATION: js/core/religion/religion-ui-state.js
+ * LOCATION: js/religion/religion-ui-state.js
  * 
  * UI-only state for the religion system:
  *   - Selected religion
