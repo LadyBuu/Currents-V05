@@ -92,14 +92,15 @@
  *     - missing/null           → []
  *     - non-array              → rejected
  *     - non-string entry       → rejected
- *     - unknown trait id       → rejected WHEN CHARACTER_TRAIT_VALUES is
- *                                loaded; skipped (structural check only)
- *                                when it is not, so the factory remains
- *                                usable in a bare test harness that
- *                                didn't load the vocabulary. Production
- *                                load order always has the vocabulary
- *                                before the factory.
+ *     - unknown trait id       → rejected
  *     - duplicates             → rejected
+ *
+ *   The canonical trait vocabulary (constants/character-traits.js,
+ *   window.CHARACTER_TRAIT_VALUES) is a HARD load-time dependency.
+ *   Loading character-factory.js without character-traits.js throws at
+ *   load time. There is no soft-fail path. This matches the rest of the
+ *   codebase: a missing vocabulary is a load-order bug, not a
+ *   recoverable runtime condition.
  *
  * PRE-BUILT VALIDATION (validateBuiltCharacter):
  *   createCharacterFromData inserts a caller-built record directly,
@@ -130,37 +131,55 @@
  *   re-run the full factory.
  *
  * DEPENDENCIES (REQUIRED):
- *   - ids.js:   generateId
+ *   - ids.js:               generateId
+ *   - constants/character-traits.js:
+ *                           CHARACTER_TRAIT_VALUES (validated at load time)
  *
  * DEPENDENCIES (OPTIONAL):
- *   - time.js:                isValidYear - used if present to validate
- *                             year fields.
- *   - constants/character-traits.js:
- *                             CHARACTER_TRAIT_VALUES - used if present to
- *                             validate individual trait ids. Absent in
- *                             bare test harnesses; present in production.
+ *   - time.js:              isValidYear - used if present to validate
+ *                           year fields.
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (Phase 1.4):
+ *     - CHARACTER_TRAIT_VALUES is now a HARD load-time dependency.
+ *       Loading character-factory.js without character-traits.js
+ *       throws.
+ *     - _validateTraits no longer soft-fails on missing vocabulary.
+ *       Unknown trait ids are always rejected.
+ *     - Header TRAITS section updated to state the new contract.
+ *     - Header DEPENDENCIES updated: character-traits.js is REQUIRED.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - Added `traits` as a character-owned array field:
  *         - FIELD_VALIDATORS entry validates shape and (when the
  *           vocabulary is loaded) trait ids.
  *         - _applyDefaults emits `traits: []` when not supplied.
  *         - validateBuiltCharacter now requires `traits` to be an
  *           array, matching the other domain-owned containers.
- *     - No other behavioural change.
  * =============================================================================
  */
 
 (function () {
     'use strict';
 
+    // =========================================================================
+    // 0. HARD DEPENDENCY CHECKS
+    // =========================================================================
+
     if (typeof window.generateId !== 'function') {
         throw new Error(
             'character-factory.js: ids.js must load first (generateId missing).'
+        );
+    }
+
+    if (!Array.isArray(window.CHARACTER_TRAIT_VALUES)) {
+        throw new Error(
+            'character-factory.js: character-traits.js must load first ' +
+            '(CHARACTER_TRAIT_VALUES missing). The factory requires the ' +
+            'canonical trait vocabulary; there is no soft-fail path.'
         );
     }
 
@@ -258,11 +277,9 @@
      * Validates the `traits` field.
      *
      * Structural checks (array, string entries, no duplicates) are
-     * always enforced. Trait-id checks are enforced only when the
-     * vocabulary is loaded, so the factory remains usable in a bare
-     * test harness. Production load order guarantees the vocabulary
-     * loads before this file, so in practice unknown ids are always
-     * rejected.
+     * enforced. Trait-id checks are enforced unconditionally: the
+     * vocabulary is a hard load-time dependency (see the dependency
+     * check at the top of the file).
      */
     function _validateTraits(value) {
         if (_isMissing(value)) return { ok: true, value: null };
@@ -270,7 +287,7 @@
             return { ok: false, reason: 'traits must be an array when provided' };
         }
 
-        var vocabularyAvailable = Array.isArray(window.CHARACTER_TRAIT_VALUES);
+        var vocabulary = window.CHARACTER_TRAIT_VALUES;
         var seen = {};
         var cleaned = [];
 
@@ -290,8 +307,7 @@
             }
             seen[entry] = true;
 
-            if (vocabularyAvailable
-                && window.CHARACTER_TRAIT_VALUES.indexOf(entry) === -1) {
+            if (vocabulary.indexOf(entry) === -1) {
                 return {
                     ok: false,
                     reason: 'traits[' + i + '] is not a known trait: ' + entry
