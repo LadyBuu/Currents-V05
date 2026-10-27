@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME STATISTICS UI (crime-ui-stats.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/crime-ui-stats.js
+ * LOCATION: js/crime/crime-ui-stats.js
  *
  * PURPOSE:
  *   Rendering for crime statistics panels, crime lists, vendetta lists, and
@@ -44,12 +44,13 @@
  *   - crime-constants.js: CrimeConstants
  *   - modals-crime.js: CrimeModals (for formatters and detail modals)
  *   - formatting.js: escapeHtml, formatYear
+ *   - icons.js: getIcon
  *   - accessors.js: getCharacterById, getPlaceById, getPlaceName
  *
  * Missing required dependencies fail loudly.
  *
  * ICON POLICY: No emojis. Icons come from icons.js via CrimeModals.iconForCrimeType
- * and _getIcon. Icons are not duplicated in this file.
+ * and getIcon. Icons are not duplicated in this file.
  *
  * =============================================================================
  */
@@ -73,10 +74,10 @@
     }
 
     function _getIcon(name) {
-        if (typeof window._getIcon !== 'function') {
-            throw new Error('[CrimeStatsUI] Required dependency _getIcon is not available.');
+        if (typeof window.getIcon !== 'function') {
+            throw new Error('[CrimeStatsUI] Required dependency getIcon is not available.');
         }
-        return window._getIcon(name);
+        return window.getIcon(name);
     }
 
     function _formatYear(year) {
