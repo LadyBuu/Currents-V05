@@ -9,6 +9,7 @@
  *
  * SCOPE:
  *   - Character-owned field updates
+ *   - Trait array management on the character record
  *   - Profession array management on the character record
  *   - Rank assignment array management on the character record
  *   - Surname history mutations
@@ -35,6 +36,8 @@
  *   - Education orchestration      -> education-commands.js
  *   - Rank policy                  -> rank-rules.js
  *   - Rank orchestration           -> rank-commands.js / rank-assignment.js
+ *   - Trait vocabulary             -> constants/character-traits.js
+ *   - Trait acquisition policy     -> caller (there is none)
  *
  * DEATH TRANSITION (markDeceased):
  *   markDeceased(characterId, deathData, options) is the ONLY function
@@ -76,6 +79,28 @@
  *                            omit it and get the wall-clock behaviour.
  *   }
  *
+ * TRAITS:
+ *   The character record carries `traits` as a domain-owned array of
+ *   canonical trait ids (see constants/character-traits.js). Traits are
+ *   writable only through this module's trait API:
+ *
+ *     getTraits(characterId)            -> string[]
+ *     hasTrait(characterId, traitId)    -> boolean
+ *     replaceTraits(characterId, list)  -> replace-all
+ *     addTrait(characterId, traitId)    -> idempotent add
+ *     removeTrait(characterId, traitId) -> idempotent remove
+ *
+ *   Traits are NOT character-owned from the perspective of the generic
+ *   updateCharacterFields path: `traits` is in _DOMAIN_OWNED_FIELDS so
+ *   that path refuses it. This is the same pattern professions and
+ *   rankAssignments follow. The single write mechanism is
+ *   CS.applyDomainFieldPatch.
+ *
+ *   Note on naming: `replaceTraits` is the canonical name, matching
+ *   `replaceProfessions`. `setTraits` is provided as a one-line alias
+ *   for callers that reach for the plan's original name; it does the
+ *   same thing.
+ *
  * EDUCATION FIELDS:
  *   Four character-owned fields are written only by this module:
  *
@@ -104,6 +129,10 @@
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
  *   - religion-commands.js (ReligionCommands)
  *   - mortality-rules.js (MortalityRules) — required for markDeceased only
+ *   - constants/character-traits.js (CHARACTER_TRAIT_VALUES) — used
+ *     defensively by trait commands to reject unknown ids at the write
+ *     boundary. When absent, the commands accept any non-empty string.
+ *     Production load order guarantees presence.
  *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?: string, ... }.
@@ -114,6 +143,16 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Trait API added: getTraits, hasTrait, replaceTraits, setTraits
+ *       (alias), addTrait, removeTrait.
+ *     - traits added to _DOMAIN_OWNED_FIELDS so the generic update path
+ *       refuses it.
+ *     - Trait writes route through CS.applyDomainFieldPatch, matching
+ *       the professions and rankAssignments pattern.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -226,6 +265,7 @@
     // =========================================================================
 
     var _DOMAIN_OWNED_FIELDS = {
+        traits: true,
         professions: true,
         rankAssignments: true,
         activeRankId: true,
@@ -321,7 +361,207 @@
     }
 
     // =========================================================================
-    // 5. DEATH TRANSITION (markDeceased)
+    // 5. TRAIT NORMALISATION AND WRITE
+    // =========================================================================
+    //
+    // Traits are canonical trait ids (see constants/character-traits.js).
+    // The write path uses CS.applyDomainFieldPatch — the same mechanism
+    // professions and rankAssignments use. The vocabulary check is
+    // defensive: if the constants file is not loaded, the commands
+    // accept any non-empty string. In production the vocabulary is
+    // always loaded before this file; the soft-fail behaviour exists so
+    // that a bare test harness that didn't load constants/ still works.
+
+    function _vocabularyAvailable() {
+        return Array.isArray(window.CHARACTER_TRAIT_VALUES);
+    }
+
+    function _validateTraitId(traitId) {
+        if (typeof traitId !== 'string' || traitId.length === 0) {
+            return { ok: false, reason: 'Trait id must be a non-empty string.' };
+        }
+        if (_vocabularyAvailable()
+            && window.CHARACTER_TRAIT_VALUES.indexOf(traitId) === -1) {
+            return { ok: false, reason: 'Unknown trait: "' + traitId + '".' };
+        }
+        return { ok: true };
+    }
+
+    /**
+     * Normalises a caller-supplied trait array.
+     *
+     * - Rejects non-arrays.
+     * - Rejects non-string entries.
+     * - Rejects duplicates.
+     * - Rejects unknown ids (when the vocabulary is loaded).
+     * - Returns a fresh array.
+     */
+    function _normaliseTraits(traits) {
+        if (!Array.isArray(traits)) {
+            return { ok: false, reason: 'traits must be an array.' };
+        }
+        var seen = {};
+        var out = [];
+        for (var i = 0; i < traits.length; i++) {
+            var entry = traits[i];
+            var check = _validateTraitId(entry);
+            if (!check.ok) {
+                return {
+                    ok: false,
+                    reason: 'traits[' + i + ']: ' + check.reason
+                };
+            }
+            if (seen[entry] === true) {
+                return {
+                    ok: false,
+                    reason: 'traits[' + i + '] is a duplicate: "' + entry + '".'
+                };
+            }
+            seen[entry] = true;
+            out.push(entry);
+        }
+        return { ok: true, traits: out };
+    }
+
+    function _writeTraits(characterId, nextTraits) {
+        var result = CS.applyDomainFieldPatch(characterId, {
+            traits: nextTraits
+        });
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'CharacterState refused the trait write.');
+        }
+        return _ok();
+    }
+
+    // =========================================================================
+    // 6. TRAIT API
+    // =========================================================================
+
+    /**
+     * Returns the character's traits as a fresh array. Missing character
+     * or missing/absent traits yields [].
+     */
+    function getTraits(characterId) {
+        if (!_hasId(characterId)) return [];
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.traits)) return [];
+        return character.traits.slice();
+    }
+
+    /**
+     * True iff the character currently has the given trait.
+     */
+    function hasTrait(characterId, traitId) {
+        if (!_hasId(characterId)) return false;
+        if (typeof traitId !== 'string' || traitId.length === 0) return false;
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character || !Array.isArray(character.traits)) return false;
+        return character.traits.indexOf(traitId) !== -1;
+    }
+
+    /**
+     * Replaces the character's entire trait array.
+     *
+     * Validates each entry (shape, deduplication, and — when the
+     * vocabulary is loaded — canonicality) before writing.
+     */
+    function replaceTraits(characterId, traits) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!Array.isArray(traits)) return _fail('traits must be an array.');
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var normalised = _normaliseTraits(traits);
+        if (!normalised.ok) return _fail(normalised.reason);
+
+        var writeResult = _writeTraits(characterId, normalised.traits);
+        if (!writeResult.success) return writeResult;
+
+        return _ok({ traits: normalised.traits.slice() });
+    }
+
+    /**
+     * Alias for replaceTraits, named to match the plan. Both names do
+     * the same thing; replaceTraits is canonical because it matches
+     * replaceProfessions.
+     */
+    function setTraits(characterId, traits) {
+        return replaceTraits(characterId, traits);
+    }
+
+    /**
+     * Adds a single trait. Idempotent: if the trait is already present,
+     * returns success with unchanged: true and does not write.
+     */
+    function addTrait(characterId, traitId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+
+        var check = _validateTraitId(traitId);
+        if (!check.ok) return _fail(check.reason);
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.traits)
+            ? character.traits.slice()
+            : [];
+
+        if (existing.indexOf(traitId) !== -1) {
+            return _ok({ traits: existing, unchanged: true });
+        }
+
+        existing.push(traitId);
+
+        var writeResult = _writeTraits(characterId, existing);
+        if (!writeResult.success) return writeResult;
+
+        return _ok({ traits: existing.slice(), unchanged: false });
+    }
+
+    /**
+     * Removes a single trait. Idempotent: if the trait is not present,
+     * returns success with unchanged: true and does not write.
+     */
+    function removeTrait(characterId, traitId) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (typeof traitId !== 'string' || traitId.length === 0) {
+            return _fail('Trait id must be a non-empty string.');
+        }
+
+        var character = CS._getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var existing = Array.isArray(character.traits)
+            ? character.traits.slice()
+            : [];
+
+        var idx = existing.indexOf(traitId);
+        if (idx === -1) {
+            return _ok({ traits: existing, unchanged: true });
+        }
+
+        existing.splice(idx, 1);
+
+        var writeResult = _writeTraits(characterId, existing);
+        if (!writeResult.success) return writeResult;
+
+        return _ok({ traits: existing.slice(), unchanged: false });
+    }
+
+    // =========================================================================
+    // 7. DEATH TRANSITION (markDeceased)
     // =========================================================================
 
     function _requireMortalityRules() {
@@ -440,7 +680,7 @@
     }
 
     // =========================================================================
-    // 6. PROFESSION NORMALISATION
+    // 8. PROFESSION NORMALISATION
     // =========================================================================
 
     function _normaliseNewProfession(data) {
@@ -486,7 +726,7 @@
     }
 
     // =========================================================================
-    // 7. PROFESSION API
+    // 9. PROFESSION API
     // =========================================================================
 
     function getProfession(characterId, professionId) {
@@ -776,7 +1016,7 @@
     }
 
     // =========================================================================
-    // 8. PROFESSION PRIMACY
+    // 10. PROFESSION PRIMACY
     // =========================================================================
 
     function setPrimaryProfession(characterId, professionId) {
@@ -834,7 +1074,7 @@
     }
 
     // =========================================================================
-    // 9. SURNAME HISTORY
+    // 11. SURNAME HISTORY
     // =========================================================================
 
     function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
@@ -953,7 +1193,7 @@
     }
 
     // =========================================================================
-    // 10. RELIGION ORCHESTRATION
+    // 12. RELIGION ORCHESTRATION
     // =========================================================================
 
     function _requireReligionCommands() {
@@ -1040,7 +1280,7 @@
     }
 
     // =========================================================================
-    // 11. EDUCATION CONTAINER INITIALISATION
+    // 13. EDUCATION CONTAINER INITIALISATION
     // =========================================================================
 
     function initializeEducationContainers(characterId) {
@@ -1086,7 +1326,7 @@
     }
 
     // =========================================================================
-    // 12. EDUCATION RECORD (character.education)
+    // 14. EDUCATION RECORD (character.education)
     // =========================================================================
 
     function _normaliseEducationEntry(current, incoming) {
@@ -1274,7 +1514,7 @@
     }
 
     // =========================================================================
-    // 13. EDUCATION HISTORY (character.educationHistory)
+    // 15. EDUCATION HISTORY (character.educationHistory)
     // =========================================================================
 
     function getEducationHistory(characterId) {
@@ -1317,7 +1557,7 @@
     }
 
     // =========================================================================
-    // 14. SUBJECT PROGRESS (character.subjectProgress)
+    // 16. SUBJECT PROGRESS (character.subjectProgress)
     // =========================================================================
 
     function getSubjectProgress(characterId, key) {
@@ -1450,7 +1690,7 @@
     }
 
     // =========================================================================
-    // 15. LITERACY (character.isLiterate)
+    // 17. LITERACY (character.isLiterate)
     // =========================================================================
 
     function isLiterate(characterId) {
@@ -1490,7 +1730,7 @@
     }
 
     // =========================================================================
-    // 16. RANK API - NORMALISATION
+    // 18. RANK API - NORMALISATION
     // =========================================================================
 
     function _normaliseNumberInfo(raw) {
@@ -1638,7 +1878,7 @@
     }
 
     // =========================================================================
-    // 17. RANK API - CONTAINER INITIALISATION
+    // 19. RANK API - CONTAINER INITIALISATION
     // =========================================================================
 
     function initializeRankContainers(characterId) {
@@ -1671,7 +1911,7 @@
     }
 
     // =========================================================================
-    // 18. RANK API - READS
+    // 20. RANK API - READS
     // =========================================================================
 
     function getRankAssignments(characterId) {
@@ -1727,7 +1967,7 @@
     }
 
     // =========================================================================
-    // 19. RANK API - WRITES
+    // 21. RANK API - WRITES
     // =========================================================================
 
     function addRankAssignment(characterId, assignmentData) {
@@ -2015,7 +2255,7 @@
     }
 
     // =========================================================================
-    // 20. EXPORTS
+    // 22. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
@@ -2024,6 +2264,13 @@
         updateCharacter: updateCharacter,
 
         markDeceased: markDeceased,
+
+        getTraits: getTraits,
+        hasTrait: hasTrait,
+        replaceTraits: replaceTraits,
+        setTraits: setTraits,
+        addTrait: addTrait,
+        removeTrait: removeTrait,
 
         getProfession: getProfession,
         getProfessions: getProfessions,
