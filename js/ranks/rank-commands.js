@@ -53,17 +53,35 @@
  * DEPENDENCIES (REQUIRED):
  *   - rank-state.js        (RankState)
  *   - rank-rules.js        (RankRules)
- *   - rank-queries.js      (RankQueries) — for getInheritanceSource
- *   - rank-assignment.js   (RankAssignment) — for getNextRankNumber,
- *                            renumberRankHolders, applySpouseInheritanceFixes,
- *                            updateRankSurnameRule, generateSurnameFromRankRule
+ *   - rank-queries.js      (RankQueries) — for getInheritanceSource and
+ *                            holder scans
+ *   - rank-assignment.js   (RankAssignment) — for getNextRankNumber and
+ *                            renumberRankHolders
  *   - character-commands.js (CharacterCommands) — for rank assignment writes
  *   - time.js              (getCurrentYear, isValidYear)
  *   - ids.js               (generateId)
  *   - storage.js           (saveMasterData)
  *
+ * DEPENDENCIES (OPTIONAL, used only if present):
+ *   - RomanceQueries.getActiveCommittedPartners — via RankQueries for
+ *     spouse inheritance source resolution
+ *   - FamilyQueries.getParents — via RankQueries for parent inheritance
+ *     source resolution
+ *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _requiredAssignmentMethods no longer requires
+ *       RankAssignment.applySpouseInheritanceFixes or
+ *       RankAssignment.updateRankSurnameRule. Neither method is called via
+ *       RA.* anywhere in this file: applySpouseInheritanceFixes uses
+ *       assignRankToCharacter directly, and updateRankSurnameRule uses
+ *       updateRank directly. The stale checks were causing a load-time
+ *       failure. The corresponding commands and their behaviour are
+ *       unchanged.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -129,11 +147,13 @@
         }
     }
 
+    // Only the two RankAssignment methods this file actually calls are
+    // required here. applySpouseInheritanceFixes and updateRankSurnameRule
+    // are commands on this module, not methods on RankAssignment; they use
+    // assignRankToCharacter and updateRank respectively.
     var _requiredAssignmentMethods = [
         'getNextRankNumber',
-        'renumberRankHolders',
-        'applySpouseInheritanceFixes',
-        'updateRankSurnameRule'
+        'renumberRankHolders'
     ];
     for (var _a = 0; _a < _requiredAssignmentMethods.length; _a++) {
         var _aName = _requiredAssignmentMethods[_a];
