@@ -14,6 +14,10 @@
  *   4. Expose window.Relationships as the single entry point.
  *   5. Verify internal consistency of the domain's key tables so that a
  *      typo cannot silently produce a domain with holes.
+ *   6. Verify that every method the domain dispatches to actually exists
+ *      on the namespace that owns it. This catches the entire class of
+ *      "a caller invokes Namespace.method() but Namespace doesn't export
+ *      method" bugs at load time, before any user action.
  *
  * No logic beyond verification. Fail loud. No fallbacks.
  *
@@ -21,6 +25,26 @@
  * after family-queries.js, family-rules.js, character-queries.js,
  * constants/character-traits.js, and any other external dependency.
  * See section 13 of the domain docs for the full HTML load order.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3.2):
+ *     - Added REQUIRED_METHODS: a per-namespace list of every method
+ *       the relationship domain dispatches to. The bootstrap verifies
+ *       each one is a function. Missing methods fail at load with a
+ *       message naming the namespace and method.
+ *       This catches:
+ *         - relationship-integrations.js calling
+ *           ProfessionalCommands.endApprenticeship (which lives on
+ *           ApprenticeshipCommands, not ProfessionalCommands) — a
+ *           live crash on any death with an active apprenticeship.
+ *         - relationship-finder-queries.js calling
+ *           FamilyQueries.getChildRelationships (which does not exist
+ *           on FamilyQueries) — a live crash on any finder traversal.
+ *       Both of those specific bugs were also fixed directly; the
+ *       manifest is the safety net that prevents their recurrence.
+ *     - No other behavioural change.
+ * =============================================================================
  */
 
 (function() {
@@ -108,7 +132,7 @@
     var REQUIRED_GLOBALS = [
         'getCharacterById',
         'getCharacters',
-        'getCurrentYearSafe',
+        'getCurrentYear',
         'calculateAge',
         'generateId',
         'markDataDirty',
@@ -132,13 +156,22 @@
     // professional commands will throw if called without them. This
     // matches the project's "fail loud at point of use" convention for
     // optional subsystems.
+    //
+    // ApprenticeshipCommands is the ONE exception: the death cascade in
+    // relationship-integrations.js dispatches to it. Its absence today
+    // means an apprenticeship never gets ended on death, which is a
+    // silent data-integrity problem rather than a loud crash. We treat
+    // its absence as a warning here (so the domain still loads), and
+    // relationship-integrations.js surfaces the absence in its own
+    // cleanup report.
     // -------------------------------------------------------------------------
 
     var CONDITIONAL_GLOBALS = [
         'SkillQueries',
         'SkillCommands',
         'MurderCommands',
-        'ExecutionCommands'
+        'ExecutionCommands',
+        'ApprenticeshipCommands'
     ];
 
     // -------------------------------------------------------------------------
@@ -157,6 +190,488 @@
         'showToast',
         'openModal',
         'closeTopModal'
+    ];
+
+    // -------------------------------------------------------------------------
+    // REQUIRED METHODS PER NAMESPACE (Phase 3.2)
+    //
+    // Every method the relationship domain dispatches to is listed here
+    // under the namespace that owns it. The bootstrap checks each one is
+    // a function. A missing method fails at load with a message naming
+    // the namespace and method.
+    //
+    // This catches the entire class of "caller invokes
+    // Namespace.method() but Namespace doesn't export method" bugs
+    // before any user action.
+    //
+    // Rules for adding entries:
+    //   - Add a method here if any module in this domain calls it.
+    //   - Do not add a method here if it is only called by external
+    //     consumers; that is the external consumer's bootstrap check.
+    //   - Include the method even if the current implementation guards
+    //     its call with `if (module && module.method)`. The bootstrap
+    //     check is what turns the guard into a fail-loud at load.
+    //   - If a method is genuinely optional (missing by design), do not
+    //     list it here; document the absence in the caller.
+    // -------------------------------------------------------------------------
+
+    var REQUIRED_METHODS = [
+        // -----------------------------------------------------------------
+        // Relationship core
+        // -----------------------------------------------------------------
+        ['RelationshipState', [
+            'snapshot',
+            'replaceAll',
+            'subscribe',
+            'allIds',
+            'all',
+            'getRecordCopy',
+            'idsForCharacter',
+            'idsForType',
+            'idsForPair',
+            'hasId',
+            'applyInserts',
+            'applyUpdates',
+            'applyRemovals',
+            '_getLiveRecord',
+            'validateIntegrity'
+        ]],
+        ['RelationshipQueries', [
+            'getById',
+            'exists',
+            'getBetween',
+            'getBetweenOfType',
+            'getActiveBetween',
+            'getActiveBetweenOfType',
+            'hasAnyBetween',
+            'hasActiveBetween',
+            'hasActiveBetweenOfType',
+            'countBetween',
+            'getMostRecentRelationship',
+            'getMostRecentRelationshipOfType',
+            'getForCharacter',
+            'getActiveForCharacter',
+            'countForCharacter',
+            'countActiveForCharacter',
+            'countByTypeForCharacter',
+            'getByType',
+            'getActiveByType',
+            'countByType',
+            'getAll',
+            'getActive',
+            'count',
+            'idsForCharacter',
+            'idsForType',
+            'idsForPair',
+            'allIds',
+            'getNeighborIds'
+        ]],
+        ['RelationshipCommands', [
+            'create',
+            'createBatch',
+            'update',
+            'end',
+            'setWidowed',
+            'remove',
+            'addAttribute',
+            'removeAttribute',
+            'endAllActiveForCharacter',
+            'removeAllReferencesTo'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Romance
+        // -----------------------------------------------------------------
+        ['RomanceRules', [
+            'isRomanticArchetype',
+            'isAffair',
+            'hasAttribute',
+            'minimumAge',
+            'isAgeValid',
+            'canTransition',
+            'validateAttributes',
+            'validateAttributesForCulture',
+            'canAddAttribute',
+            'canRemoveAttribute',
+            'canHaveMultiplePartners',
+            'classifyNewRelationship',
+            'resolveAttributes',
+            'canBreakUp',
+            'canBeWidowed'
+        ]],
+        ['RomanceQueries', [
+            'getRomanticRelationships',
+            'getActiveRomanticRelationships',
+            'hasActiveRomanticRelationship',
+            'hasActiveCommittedRelationship',
+            'countActiveRomanticPartners',
+            'getRomanticRelationshipsBetween',
+            'getActiveRomanticRelationshipsBetween',
+            'getActiveCommittedBetween',
+            'getAllCommittedBetween',
+            'hasActiveRomanticBetween',
+            'hasActiveCommittedBetween',
+            'getActiveCommittedPartners',
+            'getActiveRomanticPartners',
+            'countActiveCommittedPartners',
+            'getCommittedPartnerIds',
+            'getAffairs',
+            'getActiveAffairs',
+            'getAffairBetween',
+            'isAffair',
+            'isSecretRelationship',
+            'hasCommittedAttribute',
+            'hasActiveCommittedAttributeBetween',
+            'getCommittedAttributesBetween',
+            'getInstitution',
+            'getInstitutionBetween',
+            'hasActiveInstitution',
+            'getPrimaryInstitution',
+            'getMultiPartnerFacts',
+            'getRelationshipConflicts',
+            'getRomanceStats'
+        ]],
+        ['RomanceCommands', [
+            'startCasualDating',
+            'startOneNightStand',
+            'startCommittedRelationship',
+            'addCommittedAttribute',
+            'removeCommittedAttribute',
+            'breakUp',
+            'deathEndsRelationship',
+            'endAllRomanticForCharacter'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Friendship
+        // -----------------------------------------------------------------
+        ['FriendshipRules', [
+            'canCreate',
+            'canTransition',
+            'canChangeStrength',
+            'canRecordEvent',
+            'canRemove',
+            'validateAttributes',
+            'clampStrength',
+            'isValidStrength',
+            'strengthTier',
+            'isKnownEventType',
+            'isKnownEndReason',
+            'applyStrengthChange',
+            'applyEventImpact',
+            'boundEventHistory',
+            'buildInitialMetadata'
+        ]],
+        ['FriendshipQueries', [
+            'areFriends',
+            'getActiveFriendshipBetween',
+            'getLatestFriendshipBetween',
+            'getAllFriendshipsBetween',
+            'getFriendshipsForCharacter',
+            'getFriends',
+            'getFriendsSortedByStrength',
+            'getFriendCount',
+            'getBestFriend',
+            'getFriendshipStrength',
+            'getFriendshipStrengthById',
+            'getFriendshipTier',
+            'getMutualFriends',
+            'getFriendshipStats',
+            'getFriendshipEvents'
+        ]],
+        ['FriendshipCommands', [
+            'createFriendship',
+            'createMutualFriendships',
+            'increaseFriendshipStrength',
+            'decreaseFriendshipStrength',
+            'recordFriendshipEvent',
+            'removeFriendship'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Rivalry
+        // -----------------------------------------------------------------
+        ['RivalryRules', [
+            'canCreateRivalry',
+            'canCreateEnmity',
+            'canTransition',
+            'validateRivalryAttributes',
+            'validateEnmityAttributes'
+        ]],
+        ['RivalryQueries', [
+            'areRivals',
+            'areEnemies',
+            'areInConflict',
+            'getActiveRivalryBetween',
+            'getActiveEnmityBetween',
+            'getAllRivalriesBetween',
+            'getAllEnmitiesBetween',
+            'getRivalries',
+            'getEnmities',
+            'getConflicts',
+            'getRivalIds',
+            'getEnemyIds',
+            'getRivalryCount',
+            'getEnmityCount',
+            'getSharedRivals',
+            'getSharedEnemies',
+            'getSharedConflicts',
+            'getRivalryStats',
+            'getEnmityStats'
+        ]],
+        ['RivalryCommands', [
+            'createRivalry',
+            'createEnmity',
+            'endRivalry',
+            'endEnmity',
+            'escalateRivalryToEnmity',
+            'deEscalateEnmityToRivalry'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Jealousy
+        // -----------------------------------------------------------------
+        ['JealousyRules', [
+            'calculateJealousy',
+            'dominantType',
+            'adjustConfrontationLevel',
+            'determineConsequence',
+            'shouldConfrontAnnually',
+            'consequenceCreatesRivalry',
+            'consequenceIntensity'
+        ]],
+        ['JealousyQueries', [
+            'getJealousyBetween',
+            'findAllJealousyTargets',
+            'getPrimaryJealousyTarget',
+            'getConflictHistory',
+            'getActiveConflicts',
+            'getJealousyStats'
+        ]],
+        ['JealousyCommands', [
+            'triggerConfrontation',
+            'processAnnualJealousy'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Affair
+        // -----------------------------------------------------------------
+        ['AffairRules', [
+            'isValidAffairType',
+            'normalizeAffairType',
+            'calculateDiscoveryRisk',
+            'annualDiscoveryChance',
+            'evaluateDiscovery',
+            'eligibleConsequences',
+            'calculateReconciliationChance',
+            'evaluateReconciliation',
+            'calculateScandalImpact',
+            'getReputationImpact',
+            'canLegitimize',
+            'resolveLegitimizedAttributes'
+        ]],
+        ['AffairQueries', [
+            'getAffairs',
+            'getActiveAffairs',
+            'getDiscoveredAffairs',
+            'isHavingAffair',
+            'getAffairBetween',
+            'getAffairById',
+            'getAffairDuration',
+            'getAffairDiscoverer',
+            'getAffairDiscoveryCircumstances',
+            'getAffairDiscoveryYear',
+            'getDiscoveryRisk',
+            'getHighestRiskAffair',
+            'getAffairStatistics'
+        ]],
+        ['AffairCommands', [
+            'createAffair',
+            'rollDiscovery',
+            'applyConsequences',
+            'endAffair',
+            'legitimizeAffair',
+            'reconcileAfterAffair',
+            'endAllAffairsForCharacter'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Matchmaking
+        // -----------------------------------------------------------------
+        ['MatchmakingRules', [
+            'isValidPreference',
+            'passesGenderPreference',
+            'passesAgeGap',
+            'acceptanceChance',
+            'isEligibleSingle',
+            'isEligibleLateSpring'
+        ]],
+        ['MatchmakingQueries', [
+            'findSurpriseMatches',
+            'findLateSpringMatch',
+            'getEligibleSingles'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Professional
+        //
+        // NOTE: ProfessionalCommands does NOT export endApprenticeship /
+        // createApprenticeship / progressApprenticeship / completeApprenticeship.
+        // Those live on ApprenticeshipCommands (a separate module that
+        // is conditionally required). The methods listed here are the
+        // ones ProfessionalCommands actually owns.
+        // -----------------------------------------------------------------
+        ['ProfessionalRules', [
+            'isProfessionalArchetype',
+            'getTransitionTable',
+            'canTransition',
+            'validateAttributes',
+            'clampSkill',
+            'skillTier',
+            'canTeach',
+            'canCreateApprenticeship',
+            'canProgressApprenticeship',
+            'canCompleteApprenticeship',
+            'canCreateEmployment',
+            'canCreateGuildMembership'
+        ]],
+        ['ProfessionalQueries', [
+            'getApprentices',
+            'getApprenticeIds',
+            'isMaster',
+            'getApprenticeCount',
+            'getMasterRelationships',
+            'getMasterIds',
+            'getMaster',
+            'isApprentice',
+            'getApprenticeshipBetween',
+            'getApprenticeshipRoleId',
+            'getApprenticeshipRelationships',
+            'getExperts',
+            'getMasterships',
+            'getEmployees',
+            'getEmployeeIds',
+            'isEmployer',
+            'getEmployerRelationships',
+            'getEmployerIds',
+            'getEmployer',
+            'isEmployed',
+            'getEmploymentBetween',
+            'getGuildMembers',
+            'getGuildMemberIds',
+            'getGuildMemberships',
+            'getGuildIds',
+            'isInGuild',
+            'getGuildMembership',
+            'getGuildRank',
+            'getProfessionalRelationships',
+            'getProfessionalRelationshipsBetween',
+            'getProfessionalStats'
+        ]],
+        ['ProfessionalCommands', [
+            'createEdge',
+            'updateEdgeMetadata',
+            'updateEdgeFields',
+            'endEdge',
+            'removeEdge',
+            'createMastership',
+            'endMastership',
+            'createEmployment',
+            'updateEmployment',
+            'endEmployment',
+            'createGuildMembership',
+            'removeGuildMembership',
+            'setGuildRank'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Cross-domain prerequisites
+        //
+        // FamilyQueries is a required external dependency. Its methods
+        // are used by relationship-finder-queries.js. FamilyQueries has
+        // no getChildRelationships — the Finder calls getChildren.
+        // -----------------------------------------------------------------
+        ['FamilyQueries', [
+            'getEdge',
+            'getEdgesForParent',
+            'getEdgesForChild',
+            'getParents',
+            'getParentsByRole',
+            'getBiologicalParentIds',
+            'getLegalParentIds',
+            'getSocialParentIds',
+            'getAllParentIds',
+            'getChildren',
+            'getChildIds',
+            'getBiologicalChildIds',
+            'getLegalChildIds',
+            'getSiblingFacts',
+            'getSiblings',
+            'getGrandparentIds',
+            'getGrandchildIds',
+            'getGrandparents',
+            'getGrandchildren',
+            'getAncestorProvider',
+            'classifyKinship',
+            'isBloodRelated',
+            'getKinshipCloseness',
+            'getFirstCousinIds',
+            'getCousins',
+            'getAuntAndUncleIds',
+            'getNieceAndNephewIds',
+            'isFirstCousin',
+            'isAuntOrUncle',
+            'isNieceOrNephew',
+            'isGrandparent',
+            'isGrandchild',
+            'isOrphan',
+            'hasAnyParent'
+        ]],
+        ['FamilyRules', [
+            'normalizeParentRole',
+            'isBiological',
+            'isValidParentType',
+            'isValidParentRole',
+            'canSetParent',
+            'deriveSiblingship',
+            'classifyKinship',
+            'isBloodRelated',
+            'wouldCreateBiologicalCycle',
+            'isOrphan',
+            'hasAnyParent',
+            'canCreateAdoption'
+        ]],
+
+        // -----------------------------------------------------------------
+        // Finder + UI + integrations
+        // -----------------------------------------------------------------
+        ['RelationshipFinderQueries', [
+            'getReport',
+            'findConnectionPath',
+            'findCommonAncestors'
+        ]],
+        ['RelationshipUI', [
+            'archetypeName',
+            'archetypeShortName',
+            'archetypeIcon',
+            'archetypeColor',
+            'archetypeTense',
+            'attributeName',
+            'attributeIcon',
+            'attributeColor',
+            'statusName',
+            'statusIcon',
+            'categoryName',
+            'categoryIcon'
+        ]],
+        ['RelationshipIntegrations', [
+            'handleCharacterDeath',
+            'removeAllReferencesTo',
+            'getPartnershipProjection',
+            'getAllPartnershipProjections',
+            'processAnnualAffairDiscovery',
+            'processAnnualLifecycle'
+        ]]
     ];
 
     // -------------------------------------------------------------------------
@@ -222,12 +737,49 @@
     }
 
     // -------------------------------------------------------------------------
-    // INTERNAL CONSISTENCY
+    // METHOD-LEVEL VERIFICATION (Phase 3.2)
     //
-    // Checks that the vocabulary tables line up and that the domain's
-    // rules modules expose the transition tables and attribute sets
-    // they are expected to. A missing table is a load-order bug, not a
-    // runtime condition; failing loud here prevents silent divergence.
+    // Walks REQUIRED_METHODS and verifies every method exists as a
+    // function on its namespace. Returns an array of error strings,
+    // each of the form "Namespace.method is missing".
+    //
+    // The check is intentionally permissive about namespace absence:
+    // _verifyModules already reports a missing namespace. Adding a
+    // second "Namespace.method is missing" for every method of an
+    // already-reported namespace would flood the output. So if the
+    // namespace itself is missing, we skip its methods (the namespace
+    // error is the actionable one).
+    // -------------------------------------------------------------------------
+
+    function _verifyMethods() {
+        var errors = [];
+        for (var i = 0; i < REQUIRED_METHODS.length; i++) {
+            var namespaceName = REQUIRED_METHODS[i][0];
+            var methodNames = REQUIRED_METHODS[i][1];
+            var ns = window[namespaceName];
+
+            if (typeof ns === 'undefined' || ns === null) {
+                // Namespace missing — _verifyModules will report it.
+                // Do not double-report every method here.
+                continue;
+            }
+            if (typeof ns !== 'object' && typeof ns !== 'function') {
+                errors.push(namespaceName + ' is not an object or function');
+                continue;
+            }
+
+            for (var j = 0; j < methodNames.length; j++) {
+                var methodName = methodNames[j];
+                if (typeof ns[methodName] !== 'function') {
+                    errors.push(namespaceName + '.' + methodName + ' is missing');
+                }
+            }
+        }
+        return errors;
+    }
+
+    // -------------------------------------------------------------------------
+    // INTERNAL CONSISTENCY
     // -------------------------------------------------------------------------
 
     function _verifyVocabulary() {
@@ -305,6 +857,7 @@
         if (status.missingModules.length > 0 ||
             status.missingGlobals.length > 0 ||
             status.missingCultureRules.length > 0 ||
+            status.methodErrors.length > 0 ||
             status.vocabularyErrors.length > 0 ||
             status.domainTableErrors.length > 0) {
 
@@ -312,6 +865,7 @@
                 '\nMissing modules:\n' + _formatList(status.missingModules) +
                 '\nMissing required globals:\n' + _formatList(status.missingGlobals) +
                 '\nMissing CultureRules members:\n' + _formatList(status.missingCultureRules) +
+                '\nMissing methods:\n' + _formatList(status.methodErrors) +
                 '\nVocabulary errors:\n' + _formatList(status.vocabularyErrors) +
                 '\nDomain table errors:\n' + _formatList(status.domainTableErrors);
 
@@ -347,6 +901,7 @@
             missingCultureRules: _verifyCultureRules(),
             missingConditionals: _verifyConditionals(),
             missingOptional: _verifyOptional(),
+            methodErrors: _verifyMethods(),
             vocabularyErrors: _verifyVocabulary(),
             domainTableErrors: _verifyDomainTables()
         };
@@ -354,6 +909,7 @@
         var ok = status.missingModules.length === 0 &&
                  status.missingGlobals.length === 0 &&
                  status.missingCultureRules.length === 0 &&
+                 status.methodErrors.length === 0 &&
                  status.vocabularyErrors.length === 0 &&
                  status.domainTableErrors.length === 0;
 
@@ -371,7 +927,8 @@
             ok: verified.ok,
             modules: REQUIRED_MODULES.slice(),
             missingOptional: verified.status.missingOptional.slice(),
-            missingConditionals: verified.status.missingConditionals.slice()
+            missingConditionals: verified.status.missingConditionals.slice(),
+            methodErrors: verified.status.methodErrors.slice()
         };
     }
 
