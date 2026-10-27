@@ -18,9 +18,9 @@
  * No logic beyond verification. Fail loud. No fallbacks.
  *
  * LOAD THIS FILE LAST, after every other relationships/*.js file, and
- * after family-queries.js, family-rules.js, character-queries.js, and
- * any other external dependency. See section 13 of the domain docs for
- * the full HTML load order.
+ * after family-queries.js, family-rules.js, character-queries.js,
+ * constants/character-traits.js, and any other external dependency.
+ * See section 13 of the domain docs for the full HTML load order.
  */
 
 (function() {
@@ -86,6 +86,23 @@
     //
     // These are hard requirements. A relationship domain without
     // character accessors, ids, or current year cannot operate.
+    //
+    // CHARACTER_TRAITS / CHARACTER_TRAIT_VALUES are also hard requirements:
+    //   - jealousy-rules.js keys TRAIT_MODIFIERS off canonical trait ids
+    //     (violent, hot_headed, cowardly, calculating, jealous, secure,
+    //     patient). Without the vocabulary, none of those lookups fire and
+    //     the confrontation level silently loses its trait adjustments.
+    //   - affair-queries.js reads 'secretive' from character.traits to
+    //     compute discovery risk. Without the vocabulary, the secretive
+    //     modifier is silently skipped and discovery risk is understated.
+    //   - romance-commands.js no longer reads traits for multi-spouse
+    //     policy (see its MULTI-PARTNER POLICY header) — that decision
+    //     was made specifically so trait-vocabulary absence cannot change
+    //     romance behaviour. The two dependencies above are the remaining
+    //     reason the vocabulary is required here.
+    //
+    // A relationship domain without the trait vocabulary is a domain
+    // with holes. It must fail loud, not degrade quietly.
     // -------------------------------------------------------------------------
 
     var REQUIRED_GLOBALS = [
@@ -97,7 +114,9 @@
         'markDataDirty',
         'logEvent',
         'Random',
-        'CultureRules'
+        'CultureRules',
+        'CHARACTER_TRAITS',
+        'CHARACTER_TRAIT_VALUES'
     ];
 
     // CultureRules sub-requirements
