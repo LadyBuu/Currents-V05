@@ -67,6 +67,21 @@
  *   the old year for every iteration. That is fixed by making the
  *   clock-explicit contract visible here.
  *
+ * RANDOMNESS
+ * ----------
+ *   Every random draw routes through window.random from randomness.js.
+ *   randomness.js is a HARD load-time dependency: character-lifecycle.js
+ *   throws at load if window.random is not a function.
+ *
+ *   options.random is an OVERRIDE, not a substitute. Callers that need
+ *   deterministic replay (tests, scripted runs) pass options.random to
+ *   the specific call; the rest of the module continues to use
+ *   window.random. The override exists so that a single call can be
+ *   made deterministic without reseeding the global stream. It does
+ *   NOT let the module load without randomness.js.
+ *
+ *   Math.random is never called directly.
+ *
  * CROSS-DOMAIN DEATH DISPATCH:
  *   After CharacterCommands.markDeceased succeeds, three subsystems are
  *   notified, in this order:
@@ -92,6 +107,17 @@
  *   called from both _die (simulation path) and killCharacter (command
  *   path). This ensures the two paths cannot drift.
  *
+ *   LOAD ORDER NOTE:
+ *     This module loads before relationship-integrations.js in the
+ *     documented load order. The dispatch below is therefore a no-op
+ *     for the relationship domain unless relationship-integrations.js
+ *     registers a death handler via window.registerDeathHandler (added
+ *     in a later phase). Until that hook exists, the direct dispatch
+ *     stays here as the fallback for the modules that DO load before
+ *     this file (family, rank). The two dispatch paths are additive,
+ *     not redundant: the named dispatch handles the modules that load
+ *     first, the hook handles the modules that load after.
+ *
  * AGE CLASSIFICATION:
  *   LIFE_STAGES comes from constants/age-constants.js. It maps stage
  *   keys to { min, max, name, group }. AGE_GROUPS is an ordered array
@@ -110,7 +136,8 @@
  *   - character-state.js:        CharacterState
  *   - character-commands.js:     CharacterCommands (markDeceased)
  *   - mortality-rules.js:        MortalityRules
- *   - time.js:                   getCurrentYear
+ *   - time.js:                   getCurrentYear, isValidYear
+ *   - randomness.js:             random
  *
  * DEPENDENCIES (OPTIONAL, called only if loaded):
  *   - family-commands.js:              FamilyCommands.handleCharacterDeath
@@ -121,6 +148,23 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 1.6):
+ *     - randomness.js (window.random) is now a HARD load-time
+ *       dependency. The module throws at load if window.random is
+ *       not a function.
+ *     - _getRandomFn's docstring updated to clarify that
+ *       options.random is an override, not a substitute. The "no
+ *       random source available" branch is now unreachable at
+ *       runtime; kept as defense in depth.
+ *     - Header DEPENDENCIES (REQUIRED) updated to list randomness.js.
+ *     - Header RANDOMNESS section added.
+ *     - Header LOAD ORDER NOTE added under CROSS-DOMAIN DEATH
+ *       DISPATCH, documenting that the RelationshipIntegrations
+ *       dispatch is a no-op until registerDeathHandler is added in
+ *       Phase 3.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -154,6 +198,14 @@
     if (typeof window.isValidYear !== 'function') {
         throw new Error(
             'character-lifecycle.js: time.js (isValidYear) must load first.'
+        );
+    }
+    if (typeof window.random !== 'function') {
+        throw new Error(
+            'character-lifecycle.js: randomness.js must load first ' +
+            '(window.random missing). If you need a test-only override, ' +
+            'pass options.random to the specific call — but randomness.js ' +
+            'must still be loaded.'
         );
     }
 
@@ -190,14 +242,19 @@
     }
 
     /**
-     * Returns the random function to use.
+     * Returns the random function to use for a specific call.
      *
      * Precedence:
-     *   1. options.random (caller-supplied)
+     *   1. options.random (caller-supplied override)
      *   2. window.random (from randomness.js)
      *
-     * Falling back to Math.random would silently break seeded simulations,
-     * so this function throws if neither source is available.
+     * The second branch's throw is unreachable at runtime because the
+     * module load guard guarantees window.random exists. It is kept as
+     * defense in depth against a runtime that deletes window.random
+     * after load (which would be a bug, not a load condition).
+     *
+     * Do not use Math.random as a fallback here: it would silently
+     * break seeded simulations.
      */
     function _getRandomFn(options) {
         if (options && typeof options.random === 'function') {
@@ -208,7 +265,8 @@
         }
         throw new Error(
             'character-lifecycle.js: no random source available. ' +
-            'Pass options.random, or load randomness.js.'
+            'This should be unreachable — randomness.js is a required ' +
+            'load-time dependency. Check that nothing deleted window.random.'
         );
     }
 
@@ -265,6 +323,16 @@
     // Failures inside a sub-dispatch are swallowed. Each subsystem owns
     // its own state; a failure in one must not prevent the others from
     // running.
+    //
+    // LOAD ORDER NOTE:
+    //   This module loads before relationship-integrations.js in the
+    //   documented load order, so the RelationshipIntegrations branch
+    //   below is a no-op today. It becomes reachable once
+    //   relationship-integrations.js registers a death handler (Phase
+    //   3.34). Until then, the branch stays as documentation of the
+    //   intended contract and as a defensive dispatch in case the load
+    //   order is ever changed to put relationship-integrations.js
+    //   first.
 
     function _notifyCrossDomainDeath(characterId, year) {
         if (!_hasId(characterId)) return;
@@ -293,6 +361,10 @@
         // become widowed; others end. Notified before rank because rank
         // inheritance sources may resolve through a spouse who has just
         // died.
+        //
+        // NOTE: this branch is a no-op under the documented load order
+        // (relationship-integrations.js loads after character-lifecycle.js).
+        // See LOAD ORDER NOTE in the module header.
         if (window.RelationshipIntegrations
             && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
             try {
@@ -706,7 +778,7 @@
                 if (deaths.length >= maxDeaths) break;
 
                 var projection = living[i];
-                var live = CS._getLiveCharacterForMutation(projection.id);
+                var live = CS.getLiveCharacterForMutation(projection.id);
                 if (!live || live.isDeceased === true) continue;
 
                 var evaluation = _evaluateCharacterForYear(live, year, options);
@@ -757,7 +829,7 @@
             return { success: false, reason: 'deathData must be a plain object.' };
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) {
             return { success: false, reason: 'Character not found.' };
         }
@@ -796,7 +868,7 @@
             return { success: false, reason: 'options must be a plain object.' };
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) {
             return { success: false, reason: 'Character not found.' };
         }
@@ -837,7 +909,7 @@
         }
         if (options === undefined || options === null) options = {};
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) {
             return { success: false, reason: 'Character not found.' };
         }
