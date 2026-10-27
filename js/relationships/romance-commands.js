@@ -12,6 +12,9 @@
  *     relationships
  *   - affair classification at creation time (via RomanceRules and
  *     CultureRules)
+ *   - writing the initial affair metadata for affairs created via
+ *     startCommittedRelationship, so AffairQueries._projectAffair
+ *     always finds a value
  *   - adding and removing committed attributes (with cultural gating)
  *   - breaking up and widowing
  *   - one commit per logical operation
@@ -32,6 +35,57 @@
  *   - persistence (markDataDirty happens in RelationshipState)
  *   - randomness (no rolls here; discovery/consequence rolls live in
  *     affair-commands.js)
+ *
+ * AFFAIR METADATA
+ *
+ *   When classification === 'affair', the RC.create call writes the
+ *   initial affair metadata fields (affairType, discovered, etc.) so
+ *   that AffairQueries._projectAffair finds an explicit affairType
+ *   regardless of which code path created the affair.
+ *
+ *   AffairCommands.createAffair may subsequently overwrite or augment
+ *   this metadata via RelationshipCommands.update (see the COMMIT
+ *   SEMANTICS note in affair-commands.js). That second write is the
+ *   only place callers can override affairType away from the default
+ *   ('secret') or set publicBehavior.
+ *
+ *   The default affair type is defined as DEFAULT_AFFAIR_TYPE below.
+ *   It is a literal string ('secret') rather than
+ *   AffairRules.AFFAIR_TYPE.SECRET because affair-rules.js loads
+ *   AFTER romance-commands.js in the documented load order — importing
+ *   it here would invert the dependency graph. If the affair type
+ *   vocabulary ever changes, update BOTH this literal and
+ *   AffairRules.AFFAIR_TYPE.
+ *
+ * COMMIT SEMANTICS
+ *
+ *   Every command in this file commits exactly once:
+ *
+ *   startCasualDating                one commit (RC.create)
+ *   startOneNightStand               two commits (RC.create then RC.end;
+ *                                    the record is created then
+ *                                    immediately ended in the same
+ *                                    logical operation, since a
+ *                                    one-night stand is historical
+ *                                    from the start)
+ *   startCommittedRelationship       one commit (RC.create)
+ *   addCommittedAttribute            one commit (RC.addAttribute, which
+ *                                    delegates to RC.update)
+ *   removeCommittedAttribute         one commit (RC.removeAttribute, which
+ *                                    delegates to RC.update)
+ *   breakUp                          one commit (RC.end)
+ *   deathEndsRelationship            one commit (RC.setWidowed)
+ *   endAllRomanticForCharacter       N commits (one per ended
+ *                                    relationship; the loop is not
+ *                                    atomic across records — see
+ *                                    header of that function)
+ *
+ *   The startOneNightStand double-commit is disclosed above because
+ *   the two writes target the same record and the intermediate state
+ *   is a valid ongoing record. A crash between them leaves a valid
+ *   ongoing one-night-stand record, which is indistinguishable from
+ *   the record being created directly via startCasualDating with a
+ *   different archetype.
  *
  * Every command returns { success: true, ... } or
  * { success: false, code, message }. Never throws for domain errors.
@@ -65,9 +119,17 @@
     var ONE_NIGHT = A.ONE_NIGHT_STAND;
     var COMMITTED = A.COMMITTED;
 
-    // -------------------------------------------------------------------------
+    // Default affair type for affairs created via
+    // startCommittedRelationship. The literal is used instead of
+    // AffairRules.AFFAIR_TYPE.SECRET to avoid inverting the load order
+    // (affair-rules.js loads after romance-commands.js because
+    // AffairRules depends on RomanceRules). See the AFFAIR METADATA
+    // section of the module header.
+    var DEFAULT_AFFAIR_TYPE = 'secret';
+
+    // =========================================================================
     // DEPENDENCY WRAPPERS (fail loud, no fallbacks)
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function _getCharacter(id) {
         if (typeof window.getCharacterById !== 'function') {
@@ -114,7 +176,7 @@
         }
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // RANK POLICY
     //
     // The rank domain exports RankRules.allowsMultipleSpouses(rank) as the
@@ -125,7 +187,7 @@
     // module), the same answer is produced by reading the field directly.
     // The direct read is a fallback, not an alternate source of truth —
     // the field is the same field RankRules reads.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function _rankAllowsMultipleSpouses(rank) {
         if (!rank || typeof rank !== 'object') return false;
@@ -147,6 +209,10 @@
             }
         }
 
+        // NOTE: reads character.traits, which is not currently part of
+        // the canonical character schema. If/when traits are added to
+        // the character record, this branch activates. Until then it is
+        // inert. See the deferred traits work item.
         if (Array.isArray(character.traits) &&
             character.traits.indexOf('polygamous') !== -1) {
             facts.allowsMultipleByTrait = true;
@@ -155,9 +221,9 @@
         return facts;
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // CULTURE RESOLUTION
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function _resolveCultureId(character) {
         if (!character) return null;
@@ -167,9 +233,9 @@
         return null;
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // RESULT HELPERS
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function _fail(code, message) {
         return { success: false, code: code, message: message };
@@ -179,9 +245,47 @@
         return Object.assign({ success: true }, data || {});
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // COMMITTED METADATA
+    //
+    // Builds the metadata object for a newly-created committed relationship.
+    //
+    // The affair-specific fields (affairType, discovered, etc.) are only
+    // written when the relationship is classified as an affair, so that
+    // non-affair committed relationships never carry affair metadata.
+    //
+    // This is the single place in the codebase that decides what metadata
+    // a new affair carries at creation time. AffairCommands.createAffair
+    // reuses this path by calling startCommittedRelationship and then
+    // merging any caller-supplied overrides (affairType, publicBehavior)
+    // in a second commit — see the COMMIT SEMANTICS section of
+    // affair-commands.js.
+    // =========================================================================
+
+    function _buildCommittedMetadata(options, classification) {
+        var metadata = {
+            notes: typeof options.notes === 'string' ? options.notes : '',
+            classification: classification.classification,
+            classificationReason: classification.reason
+        };
+
+        if (classification.classification === 'affair') {
+            metadata.affairType = DEFAULT_AFFAIR_TYPE;
+            metadata.discovered = false;
+            metadata.discoveryYear = null;
+            metadata.discoveryCircumstances = null;
+            metadata.discovererId = null;
+            metadata.consequencesTriggered = false;
+            metadata.consequences = [];
+            metadata.publicBehavior = false;
+        }
+
+        return metadata;
+    }
+
+    // =========================================================================
     // INTERNAL: BASIC ROMANTIC CREATE
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function _createSimpleRomantic(archetype, idA, idB, startYear, notes) {
         var createResult = RC.create({
@@ -201,9 +305,9 @@
         return _ok({ relationship: rel });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // CASUAL DATING
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function startCasualDating(idA, idB, options) {
         options = options || {};
@@ -247,9 +351,9 @@
         return result;
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // ONE NIGHT STAND
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function startOneNightStand(idA, idB, options) {
         options = options || {};
@@ -290,7 +394,8 @@
         if (!createResult.success) return createResult;
 
         // One-night stands end immediately; the record is historical from
-        // the start. This is a single logical operation.
+        // the start. Two commits for this command (create then end); see
+        // the COMMIT SEMANTICS section of the module header.
         var endResult = RC.end(
             createResult.relationship.relationshipId || createResult.relationship.id,
             startYear,
@@ -315,12 +420,18 @@
         return _ok({ relationship: oneNightProjection || endResult.relationship });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // COMMITTED RELATIONSHIP
     //
     // Full pipeline: gather facts, classify, resolve attributes, validate
     // structurally and culturally, then write.
-    // -------------------------------------------------------------------------
+    //
+    // When the classification is 'affair', _buildCommittedMetadata
+    // writes the initial affair metadata fields, so AffairQueries sees
+    // an explicit affairType regardless of which path created the affair.
+    //
+    // One commit.
+    // =========================================================================
 
     /**
      * options: {
@@ -391,6 +502,9 @@
 
         // Cultural gating: only consulted if any cultural attribute is
         // present. Universal-only requests skip CultureRules entirely.
+        // RomanceRules.validateAttributesForCulture is the sole
+        // cultural-gating entry point; it consults CultureRules at call
+        // time and fails loudly if CultureRules is missing.
         var hasCultural = false;
         for (var i = 0; i < resolved.length; i++) {
             if (window.RELATIONSHIP_TYPES.isCulturalAttribute(resolved[i])) {
@@ -418,11 +532,7 @@
             status: STATUS.ONGOING,
             startYear: startYear,
             attributes: resolved,
-            metadata: {
-                notes: typeof options.notes === 'string' ? options.notes : '',
-                classification: classification.classification,
-                classificationReason: classification.reason
-            }
+            metadata: _buildCommittedMetadata(options, classification)
         });
         if (!createResult.success) return createResult;
 
@@ -444,14 +554,17 @@
         });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // ATTRIBUTE MANAGEMENT
     //
     // Adding or removing an attribute on a committed relationship.
     // Structural validation via RomanceRules; cultural gating via
     // RomanceRules.validateAttributesForCulture when the attribute is
     // cultural.
-    // -------------------------------------------------------------------------
+    //
+    // One commit (delegates to RC.addAttribute / RC.removeAttribute,
+    // both of which delegate to RC.update).
+    // =========================================================================
 
     function addCommittedAttribute(relationshipId, attribute, options) {
         options = options || {};
@@ -533,9 +646,11 @@
         return _ok({ relationship: refreshed });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // BREAKUP
-    // -------------------------------------------------------------------------
+    //
+    // One commit (RC.end).
+    // =========================================================================
 
     /**
      * options: { endYear?, reason? }
@@ -577,9 +692,11 @@
         return _ok({ relationship: window.RelationshipQueries.getById(relationshipId) });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // WIDOWING
-    // -------------------------------------------------------------------------
+    //
+    // One commit (RC.setWidowed).
+    // =========================================================================
 
     /**
      * options: { deathYear? }
@@ -618,15 +735,20 @@
         return _ok({ relationship: window.RelationshipQueries.getById(relationshipId) });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // BULK: END ALL ROMANTIC RELATIONSHIPS FOR A CHARACTER
     //
     // Used by life-death integration when the relationship command
-    // surface is being invoked from outside romance. One commit per
-    // relationship ended (via RC.end / RC.setWidowed); the loop is not
-    // atomic across records. Documented in the same spirit as
-    // children-commands.js recordPregnancyAttempts.
-    // -------------------------------------------------------------------------
+    // surface is being invoked from outside romance.
+    //
+    // COMMIT SEMANTICS: N commits, one per relationship ended (via
+    // RC.end / RC.setWidowed). The loop is not atomic across records.
+    // Documented in the same spirit as children-commands.js
+    // recordPregnancyAttempts. A partial failure leaves some
+    // relationships ended and others still active; callers that need
+    // atomicity across all records must compose their own batch (which
+    // is not currently exposed by the domain).
+    // =========================================================================
 
     /**
      * options: {
@@ -679,9 +801,9 @@
         });
     }
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     window.RomanceCommands = {
         startCasualDating: startCasualDating,
