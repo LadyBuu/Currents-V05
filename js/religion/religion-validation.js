@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION VALIDATION (religion-validation.js)
  * =============================================================================
  * 
- * LOCATION: js/core/religion/religion-validation.js
+ * LOCATION: js/religion/religion-validation.js
  * 
  * Structural and legalistic validation for religion inputs.
  * 
