@@ -14,6 +14,8 @@
  *   - Role search (name + notes substring)
  *   - Full role list (canonical read pass-through)
  *   - Characters who hold a given role, with skill details
+ *   - Characters eligible for a role (assign-modal filter)
+ *   - Occupied location id enumeration (assign-modal filter)
  *   - Per-role statistics: total holders, average skill, tier counts
  *   - Category list with role counts
  *   - Specialization catalogue (per-role and global union)
@@ -38,6 +40,12 @@
  *     getCharactersWithRoleDetails is a defensive projection (from
  *     CharacterQueries.getCharacterSummary). No live canonical objects
  *     leave this module.
+ *   - getEligibleCharactersForRole takes a caller-supplied `getLocation`
+ *     resolver. This module does not know how location is resolved
+ *     (world.js, accessors.js, an override on the projection) — the
+ *     caller decides and the resolver is invoked per candidate. If the
+ *     resolver is absent, location filtering is skipped for candidates
+ *     whose location cannot be determined.
  *
  * TIER CLASSIFICATION:
  *   Where the caller asks for a "tier" (untrained, novice, apprentice,
@@ -205,6 +213,18 @@
             }
         }
         return counts;
+    }
+
+    /**
+     * Best-effort full name for a character projection. Used only for
+     * substring search. Does not fabricate; missing fields fall through
+     * to whatever the projection carries.
+     */
+    function _fullName(character) {
+        if (!character) return '';
+        var name = typeof character.name === 'string' ? character.name : '';
+        var surname = typeof character.surname === 'string' ? character.surname : '';
+        return (name + ' ' + surname).trim();
     }
 
     // =========================================================================
@@ -521,8 +541,8 @@
         // Sort by skill level descending, then by name ascending.
         out.sort(function (a, b) {
             if (b.skillLevel !== a.skillLevel) return b.skillLevel - a.skillLevel;
-            var an = (a.character.fullName || a.character.name || '').toLowerCase();
-            var bn = (b.character.fullName || b.character.name || '').toLowerCase();
+            var an = _fullName(a.character).toLowerCase();
+            var bn = _fullName(b.character).toLowerCase();
             return an.localeCompare(bn);
         });
 
@@ -554,7 +574,144 @@
     }
 
     // =========================================================================
-    // 6. ROLE STATISTICS
+    // 6. ASSIGN-MODAL CANDIDATE ENUMERATION
+    // =========================================================================
+    //
+    // These two functions exist to support modals-roles.js's assign-role
+    // modal. They are read-only and take all their inputs explicitly:
+    //
+    //   - getLocation(character) is a caller-supplied resolver. This
+    //     module does not know how location is resolved. The resolver
+    //     returns a location id, or null/undefined for "unknown".
+    //
+    //   - The candidate list is built from CharacterState (defensive
+    //     projections), filtered in-memory. There is no character index
+    //     for "location + gender + name" combinations, and role
+    //     assignment is a rare operation, so an O(n) scan is fine.
+
+    /**
+     * Returns the distinct location ids currently occupied by at least
+     * one non-deceased character, as resolved by the caller's
+     * getLocation function.
+     *
+     * @param {Function} getLocation - (characterProjection) => locationId | null
+     * @returns {string[]} sorted, deduplicated location ids
+     */
+    function getOccupiedLocationIds(getLocation) {
+        var characters = window.CharacterState.getAllCharacters();
+        if (!Array.isArray(characters)) return [];
+        if (typeof getLocation !== 'function') return [];
+
+        var seen = {};
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            if (!c || c.isDeceased === true) continue;
+            var loc = getLocation(c);
+            if (!_hasId(loc)) continue;
+            seen[loc] = true;
+        }
+
+        var out = Object.keys(seen);
+        out.sort(function (a, b) { return a.localeCompare(b); });
+        return out;
+    }
+
+    /**
+     * Returns character projections eligible for assignment to the given
+     * role, filtered by the supplied options. Used by the assign-role
+     * modal to render the candidate list.
+     *
+     * Eligibility:
+     *   - character is not deceased
+     *   - matches the role's genderRestriction (if restricted)
+     *   - matches the search substring against name + surname
+     *   - matches the caller-supplied location filter
+     *
+     * The role's literacy requirement is NOT checked here. That is
+     * enforced by RoleCommands.assignRoleToCharacter at write time, so
+     * the modal can show all gender-compatible candidates and let the
+     * command reject the assignment with a clear error if literacy is
+     * insufficient. Filtering on literacy here would hide candidates
+     * that could become eligible after a future education event, and
+     * would require the modal to know about literacy — which it should
+     * not.
+     *
+     * Options:
+     *   {
+     *     search?:      string       // substring against name+surname
+     *     gender?:      'all' | 'male' | 'female'
+     *     locationId?:  string | 'all'
+     *     getLocation?: Function     // required when locationId !== 'all'
+     *   }
+     *
+     * @param {string} roleId
+     * @param {Object} [options]
+     * @returns {Array<Object>} character projections, sorted by name
+     */
+    function getEligibleCharactersForRole(roleId, options) {
+        if (!_hasId(roleId)) return [];
+        var role = findRoleById(roleId);
+        if (!role) return [];
+
+        options = options || {};
+        var search = typeof options.search === 'string'
+            ? options.search.trim().toLowerCase()
+            : '';
+        var genderFilter = options.gender === 'male' || options.gender === 'female'
+            ? options.gender
+            : 'all';
+        var locationFilter = _hasId(options.locationId) && options.locationId !== 'all'
+            ? options.locationId
+            : null;
+        var getLocation = typeof options.getLocation === 'function'
+            ? options.getLocation
+            : null;
+
+        var characters = window.CharacterState.getAllCharacters();
+        if (!Array.isArray(characters)) return [];
+
+        var roleGender = role.genderRestriction === 'male' || role.genderRestriction === 'female'
+            ? role.genderRestriction
+            : 'both';
+
+        var out = [];
+
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            if (!c || !_hasId(c.id)) continue;
+            if (c.isDeceased === true) continue;
+
+            // Gender restriction from the role.
+            if (roleGender === 'male' && c.gender !== 'male') continue;
+            if (roleGender === 'female' && c.gender !== 'female') continue;
+
+            // Gender filter from the caller.
+            if (genderFilter !== 'all' && c.gender !== genderFilter) continue;
+
+            // Search substring against name + surname.
+            if (search.length > 0) {
+                var haystack = _fullName(c).toLowerCase();
+                if (haystack.indexOf(search) === -1) continue;
+            }
+
+            // Location filter.
+            if (locationFilter !== null) {
+                if (getLocation === null) continue;
+                var loc = getLocation(c);
+                if (loc !== locationFilter) continue;
+            }
+
+            out.push(c);
+        }
+
+        out.sort(function (a, b) {
+            return _fullName(a).localeCompare(_fullName(b));
+        });
+        return out;
+    }
+
+    // =========================================================================
+    // 7. ROLE STATISTICS
     // =========================================================================
 
     /**
@@ -674,7 +831,7 @@
     }
 
     // =========================================================================
-    // 7. RANK SUMMARY (for character summaries)
+    // 8. RANK SUMMARY (for character summaries)
     // =========================================================================
     //
     // The character summary projection wants a human-readable rank
@@ -717,7 +874,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.RoleQueries = {
@@ -741,6 +898,10 @@
         getCharactersWithRoleIds: getCharactersWithRoleIds,
         getCharactersWithRole: getCharactersWithRole,
         getCharactersWithRoleDetails: getCharactersWithRoleDetails,
+
+        // Assign-modal candidate enumeration
+        getOccupiedLocationIds: getOccupiedLocationIds,
+        getEligibleCharactersForRole: getEligibleCharactersForRole,
 
         // Skill reads
         getSkillLevel: getSkillLevel,
