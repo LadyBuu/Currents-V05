@@ -1,10 +1,10 @@
 # SETTLEMENT SYSTEM — ARCHITECTURE AND REFERENCE
 
-Version 5.0
+Version 5.1
 Status: current
 Scope: settlement domain and its direct integrations
 Purpose: reference for the settlement system as it is implemented
-Supersedes: settlement-docs.txt v4.0
+Supersedes: settlement-docs.txt v5.0
 
 This document describes the settlement system after the architectural
 refactor defined by the Settlement Architecture Contracts. It documents
@@ -140,7 +140,7 @@ UI
     modals-settlement-economy.js
     modals-settlement-roles.js
 
-Deleted (replaced by the modules above)
+Deleted
     settlement-commands-core.js
     settlement-commands-writes.js
     settlement-commands-annual.js
@@ -152,6 +152,19 @@ Deleted (replaced by the modules above)
     settlement-government.js
     settlement-budget.js
     settlement-crud.js
+    modals-settlement.js         (in trash/)
+    settlement-commands.js       (in trash/)
+    settlement-economy.js        (in trash/)
+
+The pre-refactor files listed above are gone. No HTML file should
+reference them. If a script tag for any of them still exists, it is a
+load error: the referenced file does not exist, and the module it was
+meant to provide is now owned by the corresponding command / query /
+modal module named in the sections below.
+
+No "trash" directory exists under js/ or js/settlement/. If one is
+present, it contains abandoned pre-refactor files that must not be
+loaded or trusted.
 
 ---
 
@@ -440,6 +453,33 @@ UI modules do not:
 
 Opening a tab is observational. Rendering does not change the world.
 
+Modal infrastructure:
+
+    Settlement UI modules call the CORE modal shell directly:
+
+        window.openModal(options)     -> { element, close }
+        window.closeTopModal()
+        window.showToast(message, type)
+        window.confirmDialog(message, title, onConfirm)
+
+    These are the functions exported by js/core/modals-core.js and
+    js/core/ui.js. There is no window.ModalsCore namespace, and no
+    settlement module may introduce one.
+
+    The option keys accepted by openModal are:
+
+        titleHtml   : trusted HTML string for the modal title
+        contentHtml : trusted HTML string for the modal body
+
+    The option keys `title` and `content` are NOT read by the core
+    modal shell. Settlement modals must use titleHtml / contentHtml.
+    A modal that passes title / content will render with the default
+    title ("Modal") and an empty body.
+
+    The container to attach event delegation to is result.element, not
+    result.content and not a bare HTMLElement. A modal that reads the
+    wrong field will silently fail to wire its buttons.
+
 ---
 
 # 11. RANK CONTRACT
@@ -637,7 +677,13 @@ five times and labeling them with different years.
 
 World time is supplied by the Time domain:
 
-    window.Time.getCurrentYear()
+    window.getCurrentYear()
+
+This is the canonical current-year accessor. The deprecated
+window.getCurrentYearSafe alias exists for migration only and must NOT
+be used by settlement modules. A settlement module that calls
+window.getCurrentYearSafe is a bug, even if the alias is currently
+present.
 
 No settlement module invents a current year. The pattern
 
@@ -1032,6 +1078,23 @@ The settlement refactor is complete when:
     - All domain definitions have one authoritative owner.
     - Documentation matches the architecture actually implemented.
 
+Additional mechanical requirements introduced in v5.1:
+
+    - No settlement module calls window.getCurrentYearSafe. The
+      canonical accessor is window.getCurrentYear.
+    - No settlement module invents a current year. The fallback
+      pattern `return 1250;` does not exist.
+    - No settlement UI module references window.ModalsCore. The core
+      modal shell is accessed through window.openModal,
+      window.closeTopModal, window.showToast, window.confirmDialog.
+    - No settlement modal call site passes `title:` or `content:` to
+      window.openModal. The accepted keys are titleHtml and contentHtml.
+    - No settlement modal call site reads `result.content` from
+      window.openModal. The modal element is `result.element`.
+    - No HTML file references a deleted settlement script. The file
+      inventory in §2 is authoritative.
+    - No `trash/` directory exists under `js/` or `js/settlement/`.
+
 ---
 
 # 28. AMENDMENT RULE
@@ -1064,6 +1127,32 @@ The incorrect sequence is:
     pretend nothing happened
 
 The settlement system has had enough of those.
+
+---
+
+# 29. VERSION HISTORY
+
+| Version | Date       | Notes                                                                                                    |
+|---------|------------|----------------------------------------------------------------------------------------------------------|
+| 5.0     | 2026-10-16 | Post-refactor baseline. Hydrate-from-masterData. Clone returns. Command-commit helper. Definitions split. |
+| 5.1     | 2026-10-27 | Modal infrastructure fix. getCurrentYearSafe removal. Legacy file inventory reconciliation.              |
+
+v5.1 changes:
+    - modals-settlement-core.js, modals-settlement-economy.js, and
+      modals-settlement-roles.js no longer reference window.ModalsCore.
+      All openModal calls now use titleHtml / contentHtml, and event
+      wiring reads result.element.
+    - All settlement modules that used window.getCurrentYearSafe now
+      use window.getCurrentYear. The `return 1250;` fallbacks that
+      existed in three legacy files are gone with those files.
+    - §2 file inventory updated: the six pre-refactor legacy files are
+      confirmed deleted. The pre-refactor files under trash/ are also
+      gone.
+    - §18 time contract updated to name window.getCurrentYear as the
+      canonical accessor.
+    - §27 completion standard extended with mechanical requirements.
+    - §10 ViewModel/UI contract extended with an explicit modal
+      infrastructure subsection.
 
 ---
 
