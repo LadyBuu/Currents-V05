@@ -73,6 +73,25 @@
  *   the field is exposed as an array and callers use indexOf. That
  *   matches how professions and rankAssignments are exposed.
  *
+ * DEATH CAUSE:
+ *   Both projections expose the death information as two fields:
+ *
+ *     deathCause        stable category id (natural | disease |
+ *                       accident | murder | execution | childbed_fever |
+ *                       unknown), or null
+ *     deathCauseDetail  free-text detail ('Consumption', 'Treason',
+ *                       'Old age'), or null
+ *
+ *   Both fields are null for living characters. Callers that need only
+ *   the category can ignore the detail; callers that need the specific
+ *   cause ('Consumption') read the detail.
+ *
+ *   The character record carries both fields (CharacterState._project
+ *   also exposes them). getCharacterSummary omitted deathCauseDetail
+ *   in the previous revision, which meant any UI showing a deceased
+ *   character could not distinguish the category from the detail.
+ *   That gap is closed here.
+ *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
  *   - Invalid explicit input throws.
@@ -95,10 +114,18 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (Phase 1.3):
+ *     - getCharacterSummary now exposes deathCauseDetail (previously
+ *       omitted). Non-breaking addition.
+ *     - getCharacterFacts now exposes deathCause and deathCauseDetail
+ *       (previously omitted). Non-breaking addition; cross-domain
+ *       consumers (mortality statistics, succession, inheritance)
+ *       can distinguish category from detail.
+ *     - Header DEATH CAUSE section added.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - getCharacterSummary.traits and getCharacterFacts.traits added
  *       as defensive copies of the projection's traits array.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -429,6 +456,9 @@
             birthYear: _isMissing(projection.birthYear) ? null : projection.birthYear,
             deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
             deathCause: _isMissing(projection.deathCause) ? null : projection.deathCause,
+            deathCauseDetail: _isMissing(projection.deathCauseDetail)
+                ? null
+                : projection.deathCauseDetail,
             isDeceased: projection.isDeceased === true,
             traits: _copyTraits(projection),
             location: null,
@@ -470,6 +500,10 @@
             age: _age(projection),
             isDeceased: projection.isDeceased === true,
             deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
+            deathCause: _isMissing(projection.deathCause) ? null : projection.deathCause,
+            deathCauseDetail: _isMissing(projection.deathCauseDetail)
+                ? null
+                : projection.deathCauseDetail,
             traits: _copyTraits(projection),
             currentLocationId: projection.currentLocationId || null,
             household: projection.household || null,
