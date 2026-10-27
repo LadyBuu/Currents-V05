@@ -58,18 +58,22 @@
  *   Professional archetypes are directional. When checking whether an
  *   active edge already exists between two characters, the check MUST
  *   be directional (A → B). A reversed edge (B → A) is a different
- *   relationship and must not be treated as a duplicate. The check
- *   helpers below (getActiveDirectionalEdge, getGuildMembershipForMember)
- *   enforce this.
+ *   relationship and must not be treated as a duplicate. The helper
+ *   _getActiveDirectionalEdge enforces this.
  *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js    (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
  *   - relationship-commands.js (RelationshipCommands)
  *   - relationship-queries.js  (RelationshipQueries — used by end/update)
  *   - professional-rules.js    (ProfessionalRules)
- *   - professional-queries.js  (ProfessionalQueries)
  *   - character-queries.js     (getCharacterById)
  *   - time.js                  (getCurrentYearSafe)
+ *
+ *   ProfessionalQueries is NOT a dependency of this module. Existence
+ *   checks are done through RelationshipQueries (via the directional
+ *   helper), and final projections are read through
+ *   RelationshipQueries.getById. ProfessionalQueries is a sibling
+ *   read-side module; ProfessionalCommands does not consult it.
  *
  * =============================================================================
  */
@@ -97,12 +101,6 @@
         throw new Error(
             'professional-commands.js requires professional-rules.js ' +
             '(ProfessionalRules) first.'
-        );
-    }
-    if (!window.ProfessionalQueries) {
-        throw new Error(
-            'professional-commands.js requires professional-queries.js ' +
-            '(ProfessionalQueries) first.'
         );
     }
     if (!window.RELATIONSHIP_ARCHETYPES) {
@@ -133,12 +131,10 @@
     var RC = window.RelationshipCommands;
     var RQ = window.RelationshipQueries;
     var PR = window.ProfessionalRules;
-    var PQ = window.ProfessionalQueries;
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    var APPRENTICESHIP   = A.APPRENTICESHIP;
     var MASTERSHIP       = A.MASTERSHIP;
     var EMPLOYMENT       = A.EMPLOYMENT;
     var GUILD_MEMBERSHIP = A.GUILD_MEMBERSHIP;
@@ -201,7 +197,7 @@
     }
 
     // =========================================================================
-    // 4. DIRECTIONAL EDGE LOOKUP HELPERS
+    // 4. DIRECTIONAL EDGE LOOKUP
     // =========================================================================
     //
     // Professional archetypes are directional: A → B. The generic
@@ -210,7 +206,7 @@
     // (friendship, rivalry, committed) but wrong for professional edges:
     // an "employer → employee" check must not match "employee → employer."
     //
-    // These helpers do the directional filter once, so every command
+    // This helper does the directional filter once, so every command
     // that needs "does this specific directional edge exist" gets a
     // consistent answer.
 
@@ -249,6 +245,7 @@
      * @param {number} [args.startYear]
      * @param {Object} [args.metadata]
      * @param {string} [args.status]
+     * @returns {{ success: boolean, relationshipId?: string, code?: string, message?: string }}
      */
     function createEdge(args) {
         if (!args || typeof args !== 'object') {
@@ -300,7 +297,9 @@
             );
         }
 
-        return _ok({ relationshipId: createResult.relationship.relationshipId });
+        // RelationshipCommands.create returns { relationship: <projection> }.
+        // The projection carries .id, not .relationshipId.
+        return _ok({ relationshipId: createResult.relationship.id });
     }
 
     /**
