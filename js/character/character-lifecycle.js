@@ -141,6 +141,31 @@
  *   normal browser session nothing calls unregister; the handler lives
  *   for the lifetime of the page.
  *
+ * PER-CHARACTER DEATH FAILURES (advanceMortality):
+ *   When a death evaluation produces a result, the mutation is
+ *   delegated to CharacterCommands.markDeceased. That call can fail
+ *   for per-character reasons (invalid year, already-deceased race,
+ *   invalid cause id) that are NOT load-order bugs and do NOT indicate
+ *   that the simulation should stop.
+ *
+ *   advanceMortality therefore catches per-character death failures,
+ *   records them in result.skipped, and CONTINUES evaluating the
+ *   remaining characters and years. This is a change from the previous
+ *   behaviour, which threw and aborted the entire multi-year loop on
+ *   the first such failure.
+ *
+ *   The throw contract is preserved for the failure modes that ARE
+ *   load-order bugs: missing CharacterLifecycle dependency, missing
+ *   randomness.js, and — via the dependency guards — anything else
+ *   the module cannot proceed without. Only per-character death
+ *   validation failures are absorbed into the result.
+ *
+ *   killCharacter retains the throw-through contract: it is a single
+ *   explicit death command, and a caller asking it to kill one
+ *   character wants to know if that character could not be killed.
+ *   advanceMortality is a simulation driver, and a single bad character
+ *   should not stop the simulation.
+ *
  * AGE CLASSIFICATION:
  *   LIFE_STAGES comes from constants/age-constants.js. It maps stage
  *   keys to { min, max, name, group }. AGE_GROUPS is an ordered array
@@ -173,7 +198,30 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 3.13):
+ *   Current revision:
+ *     - advanceMortality now catches per-character death failures
+ *       (markDeceased returning { success: false }) and records them
+ *       in result.skipped instead of throwing and aborting the loop.
+ *       The previous behaviour aborted the entire multi-year
+ *       simulation on the first per-character failure (e.g. a corrupt
+ *       birthYear, a race with another caller marking the character
+ *       dead, or a stale cause id). That is a per-character data
+ *       problem, not a load-order bug, and it should not stop the
+ *       simulation. See PER-CHARACTER DEATH FAILURES in the header.
+ *     - _die now returns a structured { ok, reason?, deathResult? }
+ *       result instead of throwing. Callers check `ok` and decide what
+ *       to do. killCharacter wraps the same primitive and converts a
+ *       non-ok result into a thrown Error, preserving its existing
+ *       throw-through contract for explicit commands.
+ *     - result.skipped added to advanceMortality's return shape. Empty
+ *       array when no deaths were skipped.
+ *     - killCharacter's behaviour is unchanged: it throws on a
+ *       per-character failure. The internal primitive _die no longer
+ *       throws; killCharacter converts a { ok: false } result back to
+ *       a thrown Error.
+ *     - Header PER-CHARACTER DEATH FAILURES section added.
+ *     - No other behavioural change.
+ *   Previous revision (Phase 3.13):
  *     - Added registerDeathHandler(fn). A module that loads after this
  *       file can register a death handler; every successful death
  *       invokes every registered handler, after the named cross-domain
@@ -183,17 +231,11 @@
  *     - _dispatchDeathEffects now invokes registered handlers after
  *       _notifyCrossDomainDeath. Handler exceptions are caught and
  *       logged; they do not stop subsequent handlers or propagate.
- *     - Header DEATH HANDLER HOOK section added.
- *     - No other behavioural change.
  *   Previous revision (Phase 1.6):
  *     - randomness.js (window.random) is now a HARD load-time
  *       dependency.
  *     - _getRandomFn's docstring updated to clarify that
  *       options.random is an override, not a substitute.
- *     - Header DEPENDENCIES (REQUIRED) updated to list randomness.js.
- *     - Header LOAD ORDER NOTE added under CROSS-DOMAIN DEATH
- *       DISPATCH, documenting that the RelationshipIntegrations
- *       dispatch is a no-op until registerDeathHandler is added.
  * =============================================================================
  */
 
@@ -743,8 +785,26 @@
     }
 
     // =========================================================================
-    // 8. DEATH TRANSITION (SIMULATION PATH)
+    // 8. DEATH TRANSITION (INTERNAL PRIMITIVE)
     // =========================================================================
+    //
+    // _die returns a structured result:
+    //
+    //   { ok: true,  deathResult: <markDeceased result> }
+    //   { ok: false, reason: <string> }
+    //
+    // It does NOT throw. Per-character death failures are a data problem
+    // (invalid year, already-deceased race, invalid cause), not a
+    // load-order bug. The caller decides how to surface them:
+    //
+    //   - advanceMortality records failures in result.skipped and
+    //     continues (see PER-CHARACTER DEATH FAILURES in the header).
+    //   - killCharacter converts a non-ok result into a thrown Error,
+    //     preserving its explicit-command throw-through contract.
+    //
+    // _die assumes the death is being applied because mortality
+    // evaluation already decided the character dies; the only failure
+    // modes are the ones markDeceased itself refuses.
 
     function _die(character, year, evaluation) {
         var deathData = {
@@ -768,12 +828,12 @@
             year
         );
         if (!deathResult || deathResult.success !== true) {
-            throw new Error(
-                'character-lifecycle.js: markDeceased failed for '
-                + character.id
-                + ': '
-                + (deathResult && deathResult.reason ? deathResult.reason : 'unknown')
-            );
+            return {
+                ok: false,
+                reason: (deathResult && deathResult.reason)
+                    ? deathResult.reason
+                    : 'markDeceased failed with no reason'
+            };
         }
 
         _dispatchDeathEffects(
@@ -783,7 +843,7 @@
             evaluation.causeDetail
         );
 
-        return deathResult;
+        return { ok: true, deathResult: deathResult };
     }
 
     // =========================================================================
@@ -796,6 +856,14 @@
     //
     // The caller decides whether to advance the world clock. See the
     // CLOCK CONTRACT in the module header for the rationale.
+    //
+    // PER-CHARACTER FAILURE ISOLATION:
+    //   A per-character death failure (markDeceased returns
+    //   { success: false }) is recorded in result.skipped and the loop
+    //   continues. The previous behaviour threw and aborted the entire
+    //   multi-year simulation on the first such failure.
+    //
+    //   See PER-CHARACTER DEATH FAILURES in the module header.
 
     /**
      * Evaluates mortality for N years ahead of startYear.
@@ -817,7 +885,8 @@
      *   finalYear?: number,
      *   yearsAdvanced?: number,
      *   deaths?: Array,
-     *   deathCount?: number
+     *   deathCount?: number,
+     *   skipped?: Array<{ characterId, name, year, reason }>
      * }}
      */
     function advanceMortality(yearsAdvanced, options) {
@@ -850,6 +919,7 @@
         }
 
         var deaths = [];
+        var skipped = [];
         var maxDeaths = typeof options.maxDeaths === 'number'
             ? options.maxDeaths
             : Infinity;
@@ -873,7 +943,19 @@
                 var evaluation = _evaluateCharacterForYear(live, year, options);
                 if (!evaluation.died) continue;
 
-                _die(live, year, evaluation);
+                var dieResult = _die(live, year, evaluation);
+                if (!dieResult.ok) {
+                    // Per-character failure: record and continue. See
+                    // PER-CHARACTER DEATH FAILURES in the module header.
+                    skipped.push({
+                        characterId: live.id,
+                        name: live.name,
+                        year: year,
+                        reason: dieResult.reason
+                    });
+                    continue;
+                }
+
                 deaths.push({
                     characterId: live.id,
                     name: live.name,
@@ -892,7 +974,8 @@
             finalYear: finalYear,
             yearsAdvanced: yearsAdvanced,
             deaths: deaths,
-            deathCount: deaths.length
+            deathCount: deaths.length,
+            skipped: skipped
         };
     }
 
@@ -909,6 +992,21 @@
      *   - dispatches cross-domain consequences (family + relationship
      *     + rank + registered handlers),
      *   - logs the death event.
+     *
+     * THROW CONTRACT:
+     *   A per-character failure (markDeceased returns
+     *   { success: false }) is converted into a thrown Error. This is
+     *   the opposite of advanceMortality, which absorbs the same
+     *   failure into result.skipped. Rationale: killCharacter is an
+     *   explicit "kill this one character" command; a caller asking
+     *   it wants to know the outcome. advanceMortality is a simulation
+     *   driver; a single bad character should not stop it.
+     *
+     *   The previous internal _die threw on per-character failures,
+     *   which made this contract work by accident but also made
+     *   advanceMortality abort. The two behaviours are now decoupled:
+     *   _die returns a structured result; each caller decides what to
+     *   do with a non-ok result.
      */
     function killCharacter(characterId, deathData) {
         if (!_hasId(characterId)) {
