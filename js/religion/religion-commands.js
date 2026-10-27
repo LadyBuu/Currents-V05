@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION COMMANDS (religion-commands.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-commands.js
+ * LOCATION: js/religion/religion-commands.js
  *
  * All write operations for religion management.
  *
@@ -19,6 +19,10 @@
  * directly. The modal (or the caller) calls ReligionCommands.persist() once
  * per batch. persist() is the single save site in this module.
  *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
+ *
  * DEPENDENCIES:
  *   - religion-state.js       (primitives, publish)
  *   - religion-queries.js     (reads)
@@ -26,7 +30,7 @@
  *   - religion-rules.js       (eligibility rules)
  *   - accessors.js            (getCharacterById, getPlaceById)
  *   - ids.js                  (generateId)
- *   - time.js                 (getCurrentYearSafe)
+ *   - time.js                 (getCurrentYear)
  *   - storage.js              (saveMasterData — via persist only)
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
@@ -128,10 +132,12 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('ReligionCommands requires time.getCurrentYearSafe.');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'religion-commands.js requires time.js (getCurrentYear).'
+            );
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _save() {
@@ -1361,9 +1367,9 @@
                 'Check script tag order (accessors.js must load first).'
             );
         }
-        if (typeof window.getCurrentYearSafe !== 'function') {
+        if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
-                'religion-commands.js loaded but window.getCurrentYearSafe is missing. ' +
+                'religion-commands.js loaded but window.getCurrentYear is missing. ' +
                 'Check script tag order (time.js must load first).'
             );
         }
