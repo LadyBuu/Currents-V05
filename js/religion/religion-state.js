@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION STATE (religion-state.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-state.js
+ * LOCATION: js/religion/religion-state.js
  *
  * Derived indexes, subscriptions, and mutation primitives for religion data.
  *
