@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME & VENDETTA QUERIES (crime-queries.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/crime-queries.js
+ * LOCATION: js/crime/crime-queries.js
  *
  * PURPOSE:
  *   Application-facing read API for crime and vendetta data. This module
@@ -48,10 +48,14 @@
  *     Resolved vendettas are INCLUDED by default. Callers pass
  *     { includeResolved: false } to exclude them. This matches CrimeState.
  *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
+ *
  * DEPENDENCIES (required, verified at load):
  *   - CrimeConstants
  *   - CrimeState
- *   - getCurrentYearSafe
+ *   - getCurrentYear
  *   - getPlaceById (optional; used only for location labels in aggregated
  *     stats — absence degrades the label to 'Unknown', not the metric)
  *   - getLocationPopulationCount (optional; used for burden metrics —
@@ -80,8 +84,8 @@
     if (!State) {
         throw new Error('crime-queries.js requires CrimeState');
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
-        throw new Error('crime-queries.js requires getCurrentYearSafe');
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('crime-queries.js requires getCurrentYear');
     }
 
     // =========================================================================
@@ -89,7 +93,12 @@
     // =========================================================================
 
     function _getCurrentYear() {
-        return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'crime-queries.js requires time.js (getCurrentYear).'
+            );
+        }
+        return window.getCurrentYear();
     }
 
     function _getPlaceById(id) {
