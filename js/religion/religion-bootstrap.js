@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION BOOTSTRAP (religion-bootstrap.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-bootstrap.js
+ * LOCATION: js/religion/religion-bootstrap.js
  *
  * Load-time verification and initialization for the religion subsystem.
  *
@@ -34,6 +34,10 @@
  * A failure here means a script tag is missing or out of order. It does
  * NOT mean the data is wrong — that is validateIntegrity's job, and it
  * warns rather than throws.
+ *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used and is NOT verified.
  *
  * LOAD ORDER
  * ----------
@@ -158,7 +162,7 @@
         ['generateId',     function() { return window.generateId; },          'function'],
         ['markDataDirty',  function() { return window.markDataDirty; },       'function'],
         ['saveMasterData', function() { return window.saveMasterData; },      'function'],
-        ['getCurrentYearSafe', function() { return window.getCurrentYearSafe; }, 'function'],
+        ['getCurrentYear', function() { return window.getCurrentYear; },      'function'],
         ['getCharacterById', function() { return window.getCharacterById; },  'function'],
         ['getCharacters',  function() { return window.getCharacters; },       'function'],
         ['getPlaceById',   function() { return window.getPlaceById; },        'function'],
