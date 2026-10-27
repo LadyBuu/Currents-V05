@@ -1,5 +1,9 @@
 /**
- * affair-queries.js
+ * =============================================================================
+ * STILL WATERS - AFFAIR QUERIES (affair-queries.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/affair-queries.js
  *
  * Semantic reads for affairs.
  *
@@ -12,8 +16,24 @@
  * Depends on RelationshipQueries, RomanceQueries, RomanceRules,
  * AffairRules.
  *
+ * PROJECTION CONTRACT
+ *
+ *   Every field on an affair projection is a value that was actually
+ *   written to the relationship record. This module does NOT invent
+ *   defaults for missing metadata fields.
+ *
+ *   In particular: affairType is written by AffairCommands.createAffair
+ *   (when the caller supplies one) and by
+ *   RomanceCommands.startCommittedRelationship (which always writes
+ *   AR.AFFAIR_TYPE.SECRET for affairs created via that path). If
+ *   affairType is absent from metadata, the projection returns null —
+ *   this indicates a record that was written outside both sanctioned
+ *   paths, which is a bug to be surfaced, not a value to be hidden.
+ *
  * Load order: after relationship-queries.js, romance-queries.js,
  * romance-rules.js, affair-rules.js.
+ *
+ * =============================================================================
  */
 
 (function() {
@@ -29,7 +49,11 @@
     var STATUS = window.RELATIONSHIP_STATUS;
 
     if (!RQ || !RoQ || !RR || !AR || !A || !ATTR || !STATUS) {
-        throw new Error('affair-queries.js: relationship-queries.js, romance-queries.js, romance-rules.js, affair-rules.js must load first');
+        throw new Error(
+            'affair-queries.js: relationship-queries.js, ' +
+            'romance-queries.js, romance-rules.js, affair-rules.js ' +
+            'must load first'
+        );
     }
 
     var COMMITTED = A.COMMITTED;
@@ -91,6 +115,10 @@
 
     // -------------------------------------------------------------------------
     // PROJECTION
+    //
+    // Every field returned here is a value that was written to the
+    // record. Missing fields are surfaced as null, not filled with
+    // defaults. See PROJECTION CONTRACT in the module header.
     // -------------------------------------------------------------------------
 
     function _projectAffair(romanceProjection) {
@@ -111,7 +139,7 @@
             attributes: record.attributes.slice(),
             affairType: typeof meta.affairType === 'string'
                 ? meta.affairType
-                : AR.AFFAIR_TYPE.SECRET,
+                : null,
             discovered: !!meta.discovered,
             discoveryYear: typeof meta.discoveryYear === 'number'
                 ? meta.discoveryYear
@@ -308,7 +336,12 @@
             if (a.status === STATUS.ENDED) ended++;
             if (a.discovered) discovered++;
 
-            var type = a.affairType;
+            // affairType may be null for records written outside the
+            // sanctioned creation paths. Bucket those under 'unknown'
+            // rather than silently attributing them to any type.
+            var type = (typeof a.affairType === 'string' && a.affairType.length > 0)
+                ? a.affairType
+                : 'unknown';
             typeBreakdown[type] = (typeBreakdown[type] || 0) + 1;
 
             var rec = RQ.getById(a.relationshipId);
@@ -384,5 +417,9 @@
 
         getAffairStatistics: getAffairStatistics
     };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.AffairQueries;
+    }
 
 })();
