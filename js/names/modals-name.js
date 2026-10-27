@@ -17,6 +17,7 @@
  *   - Modal lifecycle → modals-core.js
  *   - Presentation CSS → name-modals.css
  *   - Confirmation dialogs → modals-core.js (confirmDialog)
+ *   - Year formatting → formatting.js (formatYear)
  *
  * SEMANTIC RULES:
  *   - This module is pure UI. It reads via NameQueries, mutates via
@@ -27,7 +28,10 @@
  *   - Presentation is owned by CSS. No inline style attributes.
  *   - Events are delegated on the modal root, scoped via data-action.
  *   - The generated name is held in local state, not read back from DOM.
- *   - Year 0 is preserved in year rendering.
+ *   - Year formatting delegates to formatting.js's formatYear. The
+ *     modal's "no year" fallback ('—') is preserved as a display
+ *     convention; every other year value is rendered by the canonical
+ *     formatter, which handles year 0 and BC years correctly.
  *   - No browser confirm(). Confirmation goes through confirmDialog.
  *   - No Unicode arrows in buttons. Icons come from icons.js.
  *   - Canonical strings in innerHTML are escaped.
@@ -93,7 +97,7 @@
  *     .name-modal__error
  *
  * DEPENDENCIES (REQUIRED):
- *   - formatting.js:    escapeHtml
+ *   - formatting.js:    escapeHtml, formatYear
  *   - icons.js:         Icons
  *   - modals-core.js:   openModal, confirmDialog
  *   - name-queries.js:  NameQueries
@@ -108,12 +112,17 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Original: pure UI with commands that saved themselves.
- *   Current:
+ *   Prior revision:
  *     - NameCommands.persist() called after every successful command
  *       path in the surname management modal. Persist failure is a
  *       toast, not a throw.
  *     - _renderError auto-clear documented as deliberate deferral.
  *     - Load-time dependency verification requires NameCommands.persist.
+ *   Current revision:
+ *     - _formatYear delegates to window.formatYear. Year 0 and BC
+ *       years are now rendered by the canonical formatter instead of
+ *       String(year). The modal's '—' fallback for missing year is
+ *       preserved. formatYear added to the dependency guard.
  *     - No other behavioural change.
  * =============================================================================
  */
@@ -128,6 +137,7 @@
     function _requireDependencies() {
         var requiredFns = [
             'escapeHtml',
+            'formatYear',
             'openModal',
             'confirmDialog',
             'getCountryPlaces'
@@ -195,9 +205,24 @@
         return svg;
     }
 
+    /**
+     * Formats a year for display inside the modal.
+     *
+     * Missing (null/undefined) uses the caller-supplied missingText,
+     * defaulting to an em-dash. Every other value delegates to
+     * formatting.js's formatYear, which handles:
+     *   - year 0 → '0' (or '*' if useAsteriskForZero is passed)
+     *   - negative years → '100 BC'
+     *   - non-finite / non-integer numbers → '?'
+     *   - non-number values → '?'
+     *
+     * The delegate keeps the modal's "no year recorded" display
+     * distinct from formatYear's "?" (which means "invalid year,"
+     * not "missing year").
+     */
     function _formatYear(year, missingText) {
-        if (_isMissing(year)) return missingText || 'Unknown';
-        return String(year);
+        if (_isMissing(year)) return missingText || '—';
+        return window.formatYear(year);
     }
 
     function _displaySurname(surname) {
