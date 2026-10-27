@@ -20,6 +20,7 @@
  *   - Base-name extraction → name-rules.js (canonical owner)
  *   - Presentation → modals / UI
  *   - Randomness implementation → randomness.js
+ *   - Family graph traversal → family-queries.js
  *
  * SEMANTIC RULES:
  *   - Missing input returns null (singular) or [] (collection).
@@ -46,10 +47,15 @@
  *     maternal_grandfather, maternal_grandmother,
  *     paternal_great_grandfather, maternal_great_grandfather
  *
- *   _resolveAncestor is recursive but bounded: each slot is a fixed
- *   path through the ancestor graph (father→father→father, etc.). There
- *   are no arbitrary-depth slots, so recursion terminates at the leaves
- *   of the slot grammar.
+ *   _resolveAncestor walks one step at a time via FamilyQueries. Each
+ *   slot is a fixed composition of _getParentByRole calls:
+ *
+ *     father                     = _getParentByRole(char.id, 'father')
+ *     paternal_grandfather       = _getParentByRole(father.id, 'father')
+ *     paternal_great_grandfather = _getParentByRole(pgf.id, 'father')
+ *
+ *   There are no arbitrary-depth slots, so recursion terminates at the
+ *   leaves of the slot grammar.
  *
  *   getAncestorData(character, slot) returns
  *     { id, firstName, surname }
@@ -65,6 +71,25 @@
  *   resolve to the same ancestor (e.g. a consanguineous marriage), the
  *   name is returned once.
  *
+ * PARENTAGE SOURCE:
+ *   Parentage is NOT stored on the character record. It lives in
+ *   FamilyState as parentChildEdges, and is read through FamilyQueries.
+ *   The character record's historical fields (motherId, fatherId,
+ *   adoptedParents, etc.) were removed when parentage moved to the
+ *   edge model; this module must not read them.
+ *
+ *   FamilyQueries is an OPTIONAL dependency of this module:
+ *     - present  → ancestor lookups resolve correctly
+ *     - absent   → ancestor lookups return null (name-only environments
+ *                  continue to function; ancestor-based rule types
+ *                  produce no surname, which is the documented
+ *                  "no usable data" outcome, not a fabrication)
+ *
+ *   Production load order always loads family-queries.js before this
+ *   module (per the character subsystem's bootstrap). The optional
+ *   status exists so that bare test harnesses and name-generation-only
+ *   paths still work without pulling in the family subsystem.
+ *
  * NAME STATE:
  *   NamesState is an OPTIONAL cache hint. The character record is
  *   canonical. If NamesState is present, reads consult it first; if
@@ -78,29 +103,43 @@
  *   on the alias would couple this read path to the alias being
  *   installed.
  *
+ * CLONING:
+ *   _clone delegates to window.deepClone (collections.js) when
+ *   available. deepClone handles cycles and unsafe keys, which the
+ *   local implementation does not. The local implementation is retained
+ *   as a fallback for bare test harnesses that do not load
+ *   collections.js. In production the delegation path is always taken.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:  getNameLists, getCharacterById
  *   - randomness.js: pickRandom
  *   - world.js:      getCharacterCountryId, getCountryIdForPlace
  *
  * DEPENDENCIES (OPTIONAL):
- *   - name-state.js: NamesState (cache hint only)
+ *   - collections.js:   deepClone — used when present, local fallback
+ *                       otherwise
+ *   - family-queries.js: FamilyQueries.getParentsByRole — required for
+ *                        ancestor lookups; absence yields null
+ *   - name-state.js:    NamesState (cache hint only)
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Original: cache-hint-based read module with defensive clone.
- *   Prior revision:
+ *   Prior revisions:
  *     - Error messages name the failing level (accessor vs. data).
  *     - Ancestor recursion bounded-by-grammar documented.
  *     - getAncestorNames dedup reason documented.
- *   Current revision:
  *     - Cache-hint lookup migrated from window.NameState (singular) to
- *       window.NamesState (plural), matching name-state.js's primary
- *       export. The singular name is a backward-compat alias and must
- *       not be relied upon by internal consumers.
- *     - No behavioural change beyond the rename.
+ *       window.NamesState (plural).
+ *   Current revision:
+ *     - _resolveAncestor no longer reads character.fatherId /
+ *       character.motherId. Those fields were removed when parentage
+ *       moved to parentChildEdges. Ancestor resolution now delegates to
+ *       FamilyQueries.getParentsByRole, which is an optional dependency.
+ *     - _clone delegates to window.deepClone when available.
+ *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -169,14 +208,15 @@
     }
 
     /**
-     * Deep-clones plain objects and arrays. Primitives pass through.
-     * Used to hand callers a projection they cannot use to mutate
-     * canonical data.
+     * Local clone fallback used when collections.js's deepClone is not
+     * loaded. Handles primitives, arrays, and plain objects. Does NOT
+     * handle cycles — callers must guarantee acyclic input (name lists
+     * and surname histories are always acyclic by schema).
      */
-    function _clone(value) {
+    function _localClone(value) {
         if (Array.isArray(value)) {
             var arr = [];
-            for (var i = 0; i < value.length; i++) arr.push(_clone(value[i]));
+            for (var i = 0; i < value.length; i++) arr.push(_localClone(value[i]));
             return arr;
         }
         if (_isPlainObject(value)) {
@@ -185,11 +225,26 @@
             for (var j = 0; j < keys.length; j++) {
                 var k = keys[j];
                 if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
-                out[k] = _clone(value[k]);
+                out[k] = _localClone(value[k]);
             }
             return out;
         }
         return value;
+    }
+
+    /**
+     * Deep-clones plain objects and arrays. Primitives pass through.
+     * Used to hand callers a projection they cannot use to mutate
+     * canonical data.
+     *
+     * Delegates to window.deepClone when available (handles cycles and
+     * unsafe keys). Falls back to the local implementation otherwise.
+     */
+    function _clone(value) {
+        if (typeof window.deepClone === 'function') {
+            return window.deepClone(value);
+        }
+        return _localClone(value);
     }
 
     // =========================================================================
@@ -352,64 +407,109 @@
     }
 
     // =========================================================================
-    // 5. ANCESTOR DATA
+    // 5. PARENTAGE SOURCE (FamilyQueries bridge)
+    // =========================================================================
+    //
+    // Parentage is read through FamilyQueries, not the character record.
+    // FamilyQueries is an optional dependency: absent in bare test
+    // harnesses, present in production. When absent, every ancestor
+    // lookup returns null — which is the documented "no usable data"
+    // outcome for ancestor-based rule types.
+
+    function _familyAvailable() {
+        return typeof window.FamilyQueries !== 'undefined'
+            && typeof window.FamilyQueries.getParentsByRole === 'function';
+    }
+
+    /**
+     * Returns the biological parent projection for the given role, or
+     * null when:
+     *   - FamilyQueries is not loaded
+     *   - the character has no parent in that role
+     *   - the parent record cannot be resolved
+     *
+     * Only biological parentage is considered. Legal and social parents
+     * do not participate in ancestor chains for naming purposes.
+     */
+    function _getParentByRole(characterId, role) {
+        if (!_hasId(characterId)) return null;
+        if (role !== 'father' && role !== 'mother') return null;
+        if (!_familyAvailable()) return null;
+
+        var roles = window.FamilyQueries.getParentsByRole(characterId);
+        if (!roles) return null;
+
+        var list = role === 'father' ? roles.fathers : roles.mothers;
+        if (!Array.isArray(list)) return null;
+
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] && list[i].parentType === 'biological') {
+                return window.getCharacterById(list[i].parentId);
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 6. ANCESTOR DATA
     // =========================================================================
 
     /**
      * Resolves one ancestor slot relative to the starting character.
      *
-     * The recursion is bounded by the ancestor slot grammar — each slot
-     * is a fixed path (father→father→father for paternal great-grandfather,
-     * for example). There is no arbitrary-depth slot, so this terminates.
+     * Each slot is a fixed composition of _getParentByRole calls:
+     *   father                     = one step from char
+     *     paternal_grandfather     = two steps (father, father)
+     *     paternal_great_grandfather = three steps (father, father, father)
+     *   mother                     = one step from char
+     *     maternal_grandfather     = two steps (mother, father)
+     *     maternal_great_grandfather = three steps (mother, father, father)
+     *
+     * The recursion is bounded by the slot grammar; there is no
+     * arbitrary-depth slot, so this terminates.
      */
     function _resolveAncestor(character, slot) {
-        if (!character) return null;
+        if (!character || !_hasId(character.id)) return null;
 
         if (slot === 'father') {
-            return _hasId(character.fatherId)
-                ? window.getCharacterById(character.fatherId)
-                : null;
+            return _getParentByRole(character.id, 'father');
         }
         if (slot === 'mother') {
-            return _hasId(character.motherId)
-                ? window.getCharacterById(character.motherId)
-                : null;
+            return _getParentByRole(character.id, 'mother');
         }
         if (slot === 'paternal_grandfather') {
-            var father = _resolveAncestor(character, 'father');
-            return father && _hasId(father.fatherId)
-                ? window.getCharacterById(father.fatherId)
-                : null;
+            var father = _getParentByRole(character.id, 'father');
+            if (!father || !_hasId(father.id)) return null;
+            return _getParentByRole(father.id, 'father');
         }
         if (slot === 'paternal_grandmother') {
-            var father2 = _resolveAncestor(character, 'father');
-            return father2 && _hasId(father2.motherId)
-                ? window.getCharacterById(father2.motherId)
-                : null;
+            var father2 = _getParentByRole(character.id, 'father');
+            if (!father2 || !_hasId(father2.id)) return null;
+            return _getParentByRole(father2.id, 'mother');
         }
         if (slot === 'maternal_grandfather') {
-            var mother = _resolveAncestor(character, 'mother');
-            return mother && _hasId(mother.fatherId)
-                ? window.getCharacterById(mother.fatherId)
-                : null;
+            var mother = _getParentByRole(character.id, 'mother');
+            if (!mother || !_hasId(mother.id)) return null;
+            return _getParentByRole(mother.id, 'father');
         }
         if (slot === 'maternal_grandmother') {
-            var mother2 = _resolveAncestor(character, 'mother');
-            return mother2 && _hasId(mother2.motherId)
-                ? window.getCharacterById(mother2.motherId)
-                : null;
+            var mother2 = _getParentByRole(character.id, 'mother');
+            if (!mother2 || !_hasId(mother2.id)) return null;
+            return _getParentByRole(mother2.id, 'mother');
         }
         if (slot === 'paternal_great_grandfather') {
-            var pgf = _resolveAncestor(character, 'paternal_grandfather');
-            return pgf && _hasId(pgf.fatherId)
-                ? window.getCharacterById(pgf.fatherId)
-                : null;
+            var father3 = _getParentByRole(character.id, 'father');
+            if (!father3 || !_hasId(father3.id)) return null;
+            var pgf = _getParentByRole(father3.id, 'father');
+            if (!pgf || !_hasId(pgf.id)) return null;
+            return _getParentByRole(pgf.id, 'father');
         }
         if (slot === 'maternal_great_grandfather') {
-            var mgf = _resolveAncestor(character, 'maternal_grandfather');
-            return mgf && _hasId(mgf.fatherId)
-                ? window.getCharacterById(mgf.fatherId)
-                : null;
+            var mother3 = _getParentByRole(character.id, 'mother');
+            if (!mother3 || !_hasId(mother3.id)) return null;
+            var mgf = _getParentByRole(mother3.id, 'father');
+            if (!mgf || !_hasId(mgf.id)) return null;
+            return _getParentByRole(mgf.id, 'father');
         }
         return null;
     }
@@ -491,7 +591,7 @@
     }
 
     // =========================================================================
-    // 6. SURNAME HISTORY
+    // 7. SURNAME HISTORY
     // =========================================================================
     //
     // The canonical owner of surname history is the character record. This
@@ -593,7 +693,7 @@
     }
 
     // =========================================================================
-    // 7. COUNTRY RULES AND RESOLUTION
+    // 8. COUNTRY RULES AND RESOLUTION
     // =========================================================================
 
     /**
@@ -634,7 +734,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.NameQueries = {
