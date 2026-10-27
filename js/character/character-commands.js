@@ -112,6 +112,18 @@
  *   The generic updateCharacterFields / updateCharactersFields refuse
  *   these four fields. Use the dedicated writers below.
  *
+ *   Read-side contract:
+ *   - getEducationRecord(id, institutionId) returns a CLONE of the
+ *     per-institution entry. Mutating the returned object does not
+ *     affect canonical state. This matches CharacterState._project's
+ *     deep-clone contract; the previous revision returned the live
+ *     canonical entry, which let callers silently corrupt state.
+ *   - getEducationRecords(id) returns an array of CLONED entries, one
+ *     per institution.
+ *   - getSubjectProgress(id, key) returns a CLONE of the per-subject
+ *     entry. Same guarantee.
+ *   - getAllSubjectProgress(id) returns an array of CLONED entries.
+ *
  * RANK FIELDS:
  *   Three character-owned fields are written only by this module:
  *
@@ -122,8 +134,22 @@
  *   The generic updateCharacterFields / updateCharactersFields refuse
  *   these three fields. Use the dedicated writers below.
  *
+ * READ CONTRACT (ALL ID-SHAPED READS):
+ *   Every read function in this module returns a fresh object. None of
+ *   them leak the live canonical object returned by
+ *   CharacterState.getLiveCharacterForMutation. If you add a new read
+ *   function, clone whatever you return from the live record.
+ *
+ *   The single exception is CharacterState.getLiveCharacterForMutation
+ *   itself — it is the module's sanctioned back door for mutation code
+ *   (this file and CharacterDeletionCommands). Public reads in this
+ *   file never use it directly to return data; they use it to locate
+ *   the record, then clone from it.
+ *
  * DEPENDENCIES (REQUIRED):
- *   - character-state.js: CharacterState
+ *   - character-state.js: CharacterState (getLiveCharacterForMutation,
+ *                         updateCharacter, updateCharacters,
+ *                         applyDomainFieldPatch, getAllCharacters)
  *   - time.js: getCurrentYear, isValidYear
  *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
@@ -145,14 +171,30 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (Phase 1.2):
+ *     - Renamed every _getLiveCharacterForMutation call to
+ *       getLiveCharacterForMutation (matching CharacterState's
+ *       Phase 1.1 public rename). _requiredStateMethods now checks
+ *       for getLiveCharacterForMutation.
+ *     - getEducationRecord now returns a cloned entry instead of the
+ *       live canonical object. The previous revision leaked the live
+ *       reference and violated CharacterState's projection contract.
+ *     - getSubjectProgress now returns a cloned entry. Same fix.
+ *     - getProfession now returns a cloned entry. Same fix; the live
+ *       reference was surfaced by professional-queries._skillLevel,
+ *       which read from it directly.
+ *     - getEducationRecords and getAllSubjectProgress use the same
+ *       normalisation helpers, so all four readers return the same
+ *       shape.
+ *     - Header READ CONTRACT section added.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - Trait API added: getTraits, hasTrait, replaceTraits, setTraits
  *       (alias), addTrait, removeTrait.
  *     - traits added to _DOMAIN_OWNED_FIELDS so the generic update path
  *       refuses it.
  *     - Trait writes route through CS.applyDomainFieldPatch, matching
  *       the professions and rankAssignments pattern.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -171,7 +213,7 @@
         'updateCharacter',
         'updateCharacters',
         'applyDomainFieldPatch',
-        '_getLiveCharacterForMutation',
+        'getLiveCharacterForMutation',
         'getAllCharacters'
     ];
     for (var _m = 0; _m < _requiredStateMethods.length; _m++) {
@@ -445,7 +487,7 @@
      */
     function getTraits(characterId) {
         if (!_hasId(characterId)) return [];
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.traits)) return [];
         return character.traits.slice();
     }
@@ -456,7 +498,7 @@
     function hasTrait(characterId, traitId) {
         if (!_hasId(characterId)) return false;
         if (typeof traitId !== 'string' || traitId.length === 0) return false;
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.traits)) return false;
         return character.traits.indexOf(traitId) !== -1;
     }
@@ -471,7 +513,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!Array.isArray(traits)) return _fail('traits must be an array.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -505,7 +547,7 @@
         var check = _validateTraitId(traitId);
         if (!check.ok) return _fail(check.reason);
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -537,7 +579,7 @@
             return _fail('Trait id must be a non-empty string.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -597,7 +639,7 @@
             return _fail('options must be a plain object when provided.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeceased === true) {
             return _fail('Character is already deceased.');
@@ -682,6 +724,18 @@
     // =========================================================================
     // 8. PROFESSION NORMALISATION
     // =========================================================================
+    //
+    // _normaliseNewProfession serves two purposes:
+    //   1. As a WRITE normaliser: builds the canonical profession record
+    //      from caller input (addProfession) or from a raw record
+    //      (replaceProfessions).
+    //   2. As a READ cloner: getProfession, getProfessions, and the
+    //      getProfessions-based aggregation functions call it to
+    //      return a fresh object. This is the same cloner used on the
+    //      write path, so the read shape and write shape are
+    //      identical. The name says "new" for historical reasons but
+    //      the function is a pure normaliser; it does not require or
+    //      imply that the record is new.
 
     function _normaliseNewProfession(data) {
         return {
@@ -729,45 +783,41 @@
     // 9. PROFESSION API
     // =========================================================================
 
+    /**
+     * Returns a CLONE of the character's profession record for the given
+     * role id, or null. Mutating the returned object does not affect
+     * canonical state.
+     *
+     * The previous revision returned character.professions[idx]
+     * directly, which leaked the live canonical object.
+     */
     function getProfession(characterId, professionId) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(professionId)) return null;
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return null;
 
         var idx = _findProfessionIndex(character.professions, professionId);
         if (idx === -1) return null;
-        return character.professions[idx];
+        return _normaliseNewProfession(character.professions[idx]);
     }
 
+    /**
+     * Returns CLONES of every profession record for the character.
+     * Mutating the returned array or its entries does not affect
+     * canonical state.
+     */
     function getProfessions(characterId) {
         if (!_hasId(characterId)) return [];
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.professions)) return [];
 
         var out = [];
         for (var i = 0; i < character.professions.length; i++) {
             var p = character.professions[i];
             if (!p) continue;
-            out.push({
-                id: p.id,
-                name: p.name,
-                skillLevel: p.skillLevel,
-                startYear: _isMissing(p.startYear) ? null : p.startYear,
-                primary: p.primary === true,
-                notes: typeof p.notes === 'string' ? p.notes : '',
-                specs: Array.isArray(p.specs) ? p.specs.slice() : [],
-                baseSalary: typeof p.baseSalary === 'number' ? p.baseSalary : 0,
-                customSalary: _isMissing(p.customSalary) ? null : p.customSalary,
-                salaryHistory: Array.isArray(p.salaryHistory)
-                    ? p.salaryHistory.slice()
-                    : [],
-                salaryLastCalculated: _isMissing(p.salaryLastCalculated)
-                    ? null
-                    : p.salaryLastCalculated,
-                paysSalary: p.paysSalary === undefined ? true : p.paysSalary === true
-            });
+            out.push(_normaliseNewProfession(p));
         }
         return out;
     }
@@ -794,7 +844,7 @@
             return _fail('customSalary must be a non-negative number or null.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -826,7 +876,7 @@
         if (!_hasId(professionId)) return _fail('Profession id is required.');
         if (!_isPlainObject(updates)) return _fail('Updates must be a plain object.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -912,7 +962,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(professionId)) return _fail('Profession id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -943,7 +993,7 @@
         var affectedIds = [];
 
         for (var i = 0; i < projections.length; i++) {
-            var live = CS._getLiveCharacterForMutation(projections[i].id);
+            var live = CS.getLiveCharacterForMutation(projections[i].id);
             if (!live) continue;
             if (!Array.isArray(live.professions)) continue;
             if (_findProfessionIndex(live.professions, professionId) === -1) continue;
@@ -957,7 +1007,7 @@
         var applied = [];
         for (var j = 0; j < affectedIds.length; j++) {
             var id = affectedIds[j];
-            var live = CS._getLiveCharacterForMutation(id);
+            var live = CS.getLiveCharacterForMutation(id);
             if (!live || !Array.isArray(live.professions)) continue;
 
             var next = live.professions.slice();
@@ -983,7 +1033,7 @@
             return _fail('professions must be an array.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
 
         var seen = {};
@@ -1023,7 +1073,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(professionId)) return _fail('Profession id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1052,7 +1102,7 @@
     function clearPrimaryProfession(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
 
         var existing = Array.isArray(character.professions)
@@ -1087,7 +1137,7 @@
             return _fail('Options must be a plain object.');
         }
 
-        var character = CS._getLiveCharacterForMutation(id);
+        var character = CS.getLiveCharacterForMutation(id);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1151,7 +1201,7 @@
     function revertCharacterSurnameChange(id) {
         if (!_hasId(id)) return _fail('Character id is required.');
 
-        var character = CS._getLiveCharacterForMutation(id);
+        var character = CS.getLiveCharacterForMutation(id);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1207,7 +1257,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(religionId)) return _fail('Religion id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1257,7 +1307,7 @@
     function removeCharacterReligion(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1286,7 +1336,7 @@
     function initializeEducationContainers(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
 
         var patch = {};
@@ -1328,6 +1378,12 @@
     // =========================================================================
     // 14. EDUCATION RECORD (character.education)
     // =========================================================================
+    //
+    // Read contract: getEducationRecord returns a CLONE of the per-
+    // institution entry. The previous revision returned the live
+    // canonical object, which let callers mutate state through the
+    // reader. Same pattern as _normaliseNewProfession on the profession
+    // side.
 
     function _normaliseEducationEntry(current, incoming) {
         var base = _isPlainObject(current) ? current : {};
@@ -1363,7 +1419,7 @@
     }
 
     function _writeEducationEntry(characterId, institutionId, entry) {
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
 
         var education = _isPlainObject(character.education)
@@ -1383,21 +1439,35 @@
         return _ok();
     }
 
+    /**
+     * Returns a CLONE of the character's education entry for the given
+     * institution, or null.
+     *
+     * The previous revision returned character.education[institutionId]
+     * directly. Callers could mutate the live canonical entry and
+     * silently corrupt state. Now the entry is normalised through
+     * _normaliseEducationEntry, which builds a fresh object.
+     */
     function getEducationRecord(characterId, institutionId) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(institutionId)) return null;
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return null;
         if (!_isPlainObject(character.education)) return null;
 
         var entry = character.education[institutionId];
-        return _isPlainObject(entry) ? entry : null;
+        if (!_isPlainObject(entry)) return null;
+        return _normaliseEducationEntry(entry, {});
     }
 
+    /**
+     * Returns CLONES of every education entry for the character, one per
+     * institution. Each entry carries an `institutionId` field.
+     */
     function getEducationRecords(characterId) {
         if (!_hasId(characterId)) return [];
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !_isPlainObject(character.education)) return [];
 
         var out = [];
@@ -1405,7 +1475,9 @@
             if (!Object.prototype.hasOwnProperty.call(character.education, institutionId)) continue;
             var entry = character.education[institutionId];
             if (!_isPlainObject(entry)) continue;
-            out.push(Object.assign({ institutionId: institutionId }, entry));
+            var cloned = _normaliseEducationEntry(entry, {});
+            cloned.institutionId = institutionId;
+            out.push(cloned);
         }
         return out;
     }
@@ -1415,7 +1487,7 @@
         if (!_hasId(institutionId)) return _fail('Institution id is required.');
         if (!_isPlainObject(data)) return _fail('Enrollment data must be a plain object.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1448,7 +1520,7 @@
         if (!_hasId(institutionId)) return _fail('Institution id is required.');
         if (!_isPlainObject(data)) return _fail('Graduation data must be a plain object.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1483,7 +1555,7 @@
         if (!_hasId(institutionId)) return _fail('Institution id is required.');
         if (!_isPlainObject(data)) return _fail('Withdrawal data must be a plain object.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1519,7 +1591,7 @@
 
     function getEducationHistory(characterId) {
         if (!_hasId(characterId)) return [];
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.educationHistory)) return [];
         return character.educationHistory.slice();
     }
@@ -1530,7 +1602,7 @@
             return _fail('History entry must be a plain object.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1559,22 +1631,47 @@
     // =========================================================================
     // 16. SUBJECT PROGRESS (character.subjectProgress)
     // =========================================================================
+    //
+    // Read contract: getSubjectProgress returns a CLONE of the per-key
+    // entry. The previous revision returned the live canonical object.
 
+    function _normaliseSubjectProgressEntry(current) {
+        if (!_isPlainObject(current)) return null;
+        return {
+            level: _isValidProficiencyLevel(current.level) ? current.level : 0,
+            lastStudied: _isMissing(current.lastStudied) ? null : current.lastStudied,
+            source: _isMissing(current.source) ? null : String(current.source),
+            type: current.type === 'role' ? 'role' : 'subject',
+            roleId: current.type === 'role' && _hasId(current.roleId)
+                ? current.roleId
+                : null
+        };
+    }
+
+    /**
+     * Returns a CLONE of the character's subject progress entry for the
+     * given key, or null.
+     */
     function getSubjectProgress(characterId, key) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(key)) return null;
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return null;
         if (!_isPlainObject(character.subjectProgress)) return null;
 
         var entry = character.subjectProgress[key];
-        return _isPlainObject(entry) ? entry : null;
+        if (!_isPlainObject(entry)) return null;
+        return _normaliseSubjectProgressEntry(entry);
     }
 
+    /**
+     * Returns CLONES of every subject progress entry for the character,
+     * one per key. Each entry carries a `key` field.
+     */
     function getAllSubjectProgress(characterId) {
         if (!_hasId(characterId)) return [];
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !_isPlainObject(character.subjectProgress)) return [];
 
         var out = [];
@@ -1582,7 +1679,9 @@
             if (!Object.prototype.hasOwnProperty.call(character.subjectProgress, key)) continue;
             var entry = character.subjectProgress[key];
             if (!_isPlainObject(entry)) continue;
-            out.push(Object.assign({ key: key }, entry));
+            var cloned = _normaliseSubjectProgressEntry(entry);
+            cloned.key = key;
+            out.push(cloned);
         }
         return out;
     }
@@ -1594,7 +1693,7 @@
             return _fail('Initial progress must be a plain object.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1606,7 +1705,10 @@
 
         var existing = progress[key];
         if (_isPlainObject(existing)) {
-            return _ok({ created: false, progress: existing });
+            return _ok({
+                created: false,
+                progress: _normaliseSubjectProgressEntry(existing)
+            });
         }
 
         var level = _isValidProficiencyLevel(initial.level) ? initial.level : 0;
@@ -1645,7 +1747,7 @@
             return _fail('Progress patch must be a plain object.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1695,7 +1797,7 @@
 
     function isLiterate(characterId) {
         if (!_hasId(characterId)) return false;
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return false;
         return character.isLiterate === true;
     }
@@ -1706,7 +1808,7 @@
             return _fail('value must be a boolean.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -1884,7 +1986,7 @@
     function initializeRankContainers(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
 
         var needsAssignments = !Array.isArray(character.rankAssignments);
@@ -1916,7 +2018,7 @@
 
     function getRankAssignments(characterId) {
         if (!_hasId(characterId)) return [];
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.rankAssignments)) return [];
 
         var out = [];
@@ -1932,7 +2034,7 @@
         if (!_hasId(characterId)) return null;
         if (!_hasId(rankId)) return null;
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.rankAssignments)) return null;
 
         var idx = _findRankAssignmentIndex(character.rankAssignments, rankId);
@@ -1942,7 +2044,7 @@
 
     function getActiveRank(characterId) {
         if (!_hasId(characterId)) return null;
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.rankAssignments)) return null;
 
         var idx = _findActiveRankAssignmentIndex(character.rankAssignments);
@@ -1954,7 +2056,7 @@
         if (!_hasId(characterId)) return false;
         if (!_hasId(rankId)) return false;
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character || !Array.isArray(character.rankAssignments)) return false;
 
         for (var i = 0; i < character.rankAssignments.length; i++) {
@@ -1979,7 +2081,7 @@
             return _fail('rankId is required.');
         }
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -2044,7 +2146,7 @@
         if (!_hasId(rankId)) return _fail('rankId is required.');
         if (!_isPlainObject(patch)) return _fail('Patch must be a plain object.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -2127,7 +2229,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -2166,7 +2268,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -2197,7 +2299,7 @@
         if (!_hasId(characterId)) return _fail('Character id is required.');
         if (!_hasId(rankId)) return _fail('rankId is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
         if (character.isDeleted === true) {
             return _fail('Character is soft-deleted. Restore first to modify.');
@@ -2233,7 +2335,7 @@
     function clearActiveRank(characterId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
 
-        var character = CS._getLiveCharacterForMutation(characterId);
+        var character = CS.getLiveCharacterForMutation(characterId);
         if (!character) return _fail('Character not found.');
 
         if (!_hasId(character.activeRankId)) {
