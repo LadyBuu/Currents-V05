@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION CONSTANTS (religion-constants.js)
  * =============================================================================
  * 
- * LOCATION: js/core/religion/religion-constants.js
+ * LOCATION: js/religion/religion-constants.js
  * 
  * Central registry of ALL religion-related vocabulary and default templates.
  * Pure constants - no dependencies. Does not provide display names; those live
@@ -225,7 +225,7 @@
 
     // =========================================================================
     // 9. COMMONJS EXPORT
-    // =========================================================================
+    // =============================================================================
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = {
