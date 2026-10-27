@@ -1,5 +1,7 @@
 /**
- * affair-commands.js
+ * =============================================================================
+ * STILL WATERS - AFFAIR COMMANDS (affair-commands.js)
+ * =============================================================================
  *
  * Mutation boundary for affairs.
  *
@@ -18,11 +20,12 @@
  *   - bulk ending all affairs for a character
  *
  * Depends on:
- *   - RomanceCommands for creation
- *   - RomanceRules, RomanceQueries for existence and attribute lookup
+ *   - RomanceCommands, RomanceRules, RomanceQueries for creation and
+ *     attribute lookup
+ *   - RelationshipCommands for state writes
+ *   - RelationshipQueries for record reads (required — see §0)
  *   - AffairRules for policy
  *   - AffairQueries for projections and discovery risk
- *   - RelationshipCommands for state writes
  *   - MurderCommands and ExecutionCommands if present (optional
  *     cross-domain; absence degrades consequence handling gracefully)
  *
@@ -31,6 +34,37 @@
  *   - persistence (markDataDirty happens in RelationshipState)
  *   - the definition of "affair" (RomanceRules.isAffair is sole owner)
  *
+ * COMMIT SEMANTICS
+ *
+ *   All commands in this module commit exactly once, with one
+ *   documented exception:
+ *
+ *   createAffair performs TWO commits:
+ *     1. RomanceCommands.startCommittedRelationship (which commits the
+ *        committed record)
+ *     2. RelationshipCommands.update (which merges the affair-specific
+ *        metadata into the same record)
+ *
+ *   This is a known deviation from "one command = one commit" and is
+ *   intentional for the same reason as children-commands.js's
+ *   recordPregnancyAttempts: threading an initialMetadata option
+ *   through startCommittedRelationship's full classification +
+ *   cultural-gating pipeline would require every path in that function
+ *   to be aware of a concern that does not apply to non-affair
+ *   committed relationships. Callers who need atomicity must call
+ *   RomanceCommands.startCommittedRelationship directly and merge
+ *   metadata in a subsequent RelationshipCommands.update.
+ *
+ *   All other public commands in this file are single-commit.
+ *
+ *   The record is never in an inconsistent state between the two
+ *   commits: startCommittedRelationship produces a valid committed
+ *   relationship with the SECRET attribute (i.e. an affair with
+ *   default metadata), and the second commit upgrades the metadata in
+ *   place. A crash between commits leaves a valid affair record with
+ *   default metadata, which is indistinguishable from an affair
+ *   created directly via RomanceCommands with forceAffair: true.
+ *
  * Randomness:
  *   Every roll is either caller-supplied or drawn from window.Random.
  *   Never uses Math.random() directly.
@@ -38,14 +72,18 @@
  * Every command returns { success: true, ... } or
  * { success: false, code, message }. Never throws for domain errors.
  *
- * Load order: after relationship-commands.js, romance-commands.js,
- * romance-rules.js, romance-queries.js, affair-rules.js, affair-queries.js.
+ * Load order: after relationship-commands.js, relationship-queries.js,
+ * romance-commands.js, romance-rules.js, romance-queries.js,
+ * affair-rules.js, affair-queries.js.
+ *
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
     var RC   = window.RelationshipCommands;
+    var RQ   = window.RelationshipQueries;
     var RoC  = window.RomanceCommands;
     var RR   = window.RomanceRules;
     var RoQ  = window.RomanceQueries;
@@ -56,8 +94,13 @@
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
     var STATUS = window.RELATIONSHIP_STATUS;
 
-    if (!RC || !RoC || !RR || !RoQ || !AR || !AQ || !A || !ATTR || !STATUS) {
-        throw new Error('affair-commands.js: relationship-commands.js, romance-commands.js, romance-rules.js, romance-queries.js, affair-rules.js, affair-queries.js must load first');
+    if (!RC || !RQ || !RoC || !RR || !RoQ || !AR || !AQ || !A || !ATTR || !STATUS) {
+        throw new Error(
+            'affair-commands.js: relationship-commands.js, ' +
+            'relationship-queries.js, romance-commands.js, ' +
+            'romance-rules.js, romance-queries.js, affair-rules.js, ' +
+            'affair-queries.js must load first'
+        );
     }
 
     var COMMITTED = A.COMMITTED;
@@ -131,10 +174,13 @@
     // -------------------------------------------------------------------------
     // CREATE
     //
+    // See COMMIT SEMANTICS in the module header. Two commits.
+    //
     // options: {
     //   affairType?: 'secret' | 'open' | 'emotional' | 'one_night',
     //   startYear?,
     //   isScandalous?: boolean,
+    //   publicBehavior?: boolean,
     //   notes?: string
     // }
     //
@@ -160,6 +206,7 @@
             ? options.startYear
             : _getCurrentYear();
 
+        // Commit 1: create the committed relationship carrying SECRET.
         var romanceResult = RoC.startCommittedRelationship(idA, idB, {
             startYear: startYear,
             forceAffair: true,
@@ -171,6 +218,9 @@
         var relId = romanceResult.relationship.relationshipId
             || romanceResult.relationship.id;
 
+        // Commit 2: upgrade metadata with affair-specific fields.
+        // Failure here leaves a valid affair with default metadata —
+        // see COMMIT SEMANTICS in the module header for the rationale.
         var metaUpdate = RC.update(relId, {
             metadata: {
                 affairType: affairType,
@@ -183,7 +233,17 @@
                 publicBehavior: !!options.publicBehavior
             }
         });
-        if (!metaUpdate.success) return metaUpdate;
+        if (!metaUpdate.success) {
+            // The affair exists but its metadata could not be written.
+            // Return the failure with the relationship id so the caller
+            // can retry the metadata write via RelationshipCommands.update
+            // without recreating the relationship.
+            return _fail(
+                metaUpdate.code || 'META_WRITE_FAILED',
+                'Affair created (relationshipId: ' + relId +
+                ') but metadata write failed: ' + (metaUpdate.message || 'unknown')
+            );
+        }
 
         var charA = _getCharacter(idA);
         var charB = _getCharacter(idB);
@@ -218,7 +278,7 @@
             return _fail('MISSING_ID', 'relationshipId required');
         }
 
-        var rec = RC ? window.RelationshipQueries.getById(relationshipId) : null;
+        var rec = RQ.getById(relationshipId);
         if (!rec) return _fail('NOT_FOUND', 'relationship not found');
         if (rec.type !== COMMITTED) {
             return _fail('NOT_AFFAIR', 'not a committed relationship');
@@ -316,7 +376,7 @@
             return _fail('MISSING_ID', 'relationshipId required');
         }
 
-        var rec = window.RelationshipQueries.getById(relationshipId);
+        var rec = RQ.getById(relationshipId);
         if (!rec) return _fail('NOT_FOUND', 'relationship not found');
         if (rec.type !== COMMITTED) {
             return _fail('NOT_AFFAIR', 'not a committed relationship');
@@ -572,7 +632,7 @@
             return _fail('MISSING_ID', 'relationshipId required');
         }
 
-        var rec = window.RelationshipQueries.getById(relationshipId);
+        var rec = RQ.getById(relationshipId);
         if (!rec) return _fail('NOT_FOUND', 'relationship not found');
         if (rec.type !== COMMITTED) return _fail('NOT_AFFAIR', 'not committed');
         if (!RR.isAffair(rec.attributes)) return _fail('NOT_AFFAIR', 'not an affair');
@@ -612,7 +672,7 @@
             return _fail('MISSING_ID', 'relationshipId required');
         }
 
-        var rec = window.RelationshipQueries.getById(relationshipId);
+        var rec = RQ.getById(relationshipId);
         if (!rec) return _fail('NOT_FOUND', 'relationship not found');
         if (rec.type !== COMMITTED) return _fail('NOT_AFFAIR', 'not committed');
 
@@ -673,7 +733,7 @@
             'An affair was legitimized in ' + year,
             [_getCharacter(rec.participantA), _getCharacter(rec.participantB)]);
 
-        return _ok({ relationship: window.RelationshipQueries.getById(relationshipId) });
+        return _ok({ relationship: RQ.getById(relationshipId) });
     }
 
     // -------------------------------------------------------------------------
@@ -697,7 +757,7 @@
             return _fail('MISSING_ID', 'wrongedPartyId required');
         }
 
-        var rec = window.RelationshipQueries.getById(relationshipId);
+        var rec = RQ.getById(relationshipId);
         if (!rec) return _fail('NOT_FOUND', 'relationship not found');
 
         var wronged = _getCharacter(wrongedPartyId);
