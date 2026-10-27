@@ -14,6 +14,8 @@
  *     and relationship domains through their query APIs
  *   - computes per-rank holder statistics
  *   - exposes surname-rule and spouse-inheritance reads
+ *   - provides the canonical normalisation of FamilyQueries parent/child
+ *     results, shared with rank-assignment.js and rank-issues.js
  *
  * This file does NOT:
  *   - mutate state (goes through RankQueries -> RankState clones)
@@ -33,26 +35,98 @@
  *   - Reads are reentrant. No _processing guard.
  *   - Invalid explicit input throws. Missing optional input returns empty.
  *
- * DEPENDENCIES (REQUIRED):
+ * DEPENDENCIES (REQUIRED, load-time):
  *   - rank-state.js       (RankState)
  *   - rank-rules.js       (RankRules)
+ *   - rank-constants.js   (RANK_LEVELS, AVAILABLE_SYMBOLS) — hard required
  *   - character-state.js  (CharacterState) — projection source
- *   - character-queries.js (CharacterQueries) — for age reads via calculateAge
  *   - time.js             (getCurrentYear, calculateAge)
+ *
+ *   rank-constants.js was previously optional: getRankLevelName and
+ *   getRankLevelDescription fell back to a hardcoded, abbreviated
+ *   description table when RANK_LEVELS was absent. That fallback has
+ *   been removed. Rank level names and descriptions are canonical data,
+ *   not a query-side responsibility to reconstruct. A missing
+ *   RANK_LEVELS is a load-order bug, not a runtime degradation case.
+ *
+ *   The load guard throws if RANK_LEVELS or AVAILABLE_SYMBOLS is
+ *   missing. rank-bootstrap.js also verifies RANK_LEVELS as a required
+ *   global (see the plan's Phase 9). Both checks together make a
+ *   missing rank-constants.js loud at boot.
  *
  * DEPENDENCIES (REQUIRED AT CALL TIME, not at load):
  *   - RomanceQueries.getActiveCommittedPartners — for inheritance source
  *     resolution when the rank's inheritanceSource is 'spouse'
  *   - FamilyQueries.getParents — for inheritance source resolution when the
- *     rank's inheritanceSource is 'parent'
+ *     rank's inheritanceSource is 'parent'; also used by getParentIds
+ *   - FamilyQueries.getChildIds or getChildren — for getChildIds
  *
- * DEPENDENCIES (OPTIONAL, used only if present):
- *   - RelationshipQueries.getById — for deep inheritance source reads
- *     (only when a rank's source is a specific rank id, not a rank type)
+ *   These are checked at call time. If absent, the affected query
+ *   returns null / [] / 'global' as documented per function. The rank
+ *   catalogue itself (getRank, getAllRanks, etc.) does not depend on
+ *   them and works even in a bare test harness.
+ *
+ * STRUCTURAL vs SEMANTIC READS:
+ *   - Structural reads (who holds which rank, how many, per-gender counts,
+ *     per-age-band counts) read only character projections and rank
+ *     records. No cross-domain dependency.
+ *   - Semantic reads (who passed this rank down) require RomanceQueries
+ *     and/or FamilyQueries. Missing either is a legitimate "cannot
+ *     resolve" state, not a fabrication case. Return null / [] rather
+ *     than a made-up value.
+ *
+ * NORMALISATION SHARED WITH rank-assignment.js AND rank-issues.js:
+ *   FamilyQueries.getParents may return any of:
+ *     - { father: <ref>, mother: <ref> }    (object with two refs)
+ *     - [<edge>, <edge>, ...]                (array of edges)
+ *     - [<character>, <character>, ...]     (array of projections)
+ *     - ['charId1', 'charId2', ...]         (array of strings)
+ *
+ *   Each ref may be:
+ *     - a string id
+ *     - { id, activeRankId }                (projection)
+ *     - { parentId, parentType, ... }       (edge)
+ *     - { id }                              (id-only shape)
+ *
+ *   _normaliseParentRef handles all of the above and is used by:
+ *     - getInheritanceSource (in this file)
+ *     - getParentIds (in this file, exported for reuse)
+ *
+ *   getChildIds (in this file, exported) normalises getChildIds /
+ *   getChildren from FamilyQueries into a plain string[].
+ *
+ *   The three call sites (rank-queries, rank-assignment, rank-issues)
+ *   previously had three slightly different inline normalisers. This
+ *   file is the single source now.
  *
  * ICON POLICY: No emojis. Level icons come from icons.js via
  * window.getRankLevelIcon(priority). No inline Unicode level glyphs.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - Header STRUCTURAL vs SEMANTIC section added.
+ *     - getRankLevelIcon documented as degrade-to-empty.
+ *   Current revision (Phase 3):
+ *     - rank-constants.js promoted to a hard load-time dependency.
+ *       RANK_LEVELS missing throws at load; AVAILABLE_SYMBOLS missing
+ *       throws at load.
+ *     - _getRankLevels deleted. getRankLevelName and
+ *       getRankLevelDescription read window.RANK_LEVELS directly.
+ *       Missing keys still fall back to 'Level N' / 'Custom rank level'
+ *       as before — that is a per-priority fallback, not a table
+ *       reconstruction.
+ *     - getParentIds(characterId) added. Single normaliser for
+ *       FamilyQueries.getParents' multiple shapes. Exported so
+ *       rank-assignment.js and rank-issues.js can delegate.
+ *     - getChildIds(characterId) added. Wraps FamilyQueries.getChildIds
+ *       / getChildren with the same normalisation. Exported for the
+ *       same reason.
+ *     - _normaliseParentRef documented as the internal single-source
+ *       normaliser; still private, consumed by getParentIds and
+ *       getInheritanceSource.
+ *     - No public signature change, no public return-shape change for
+ *       existing functions. Two new exports added.
  * =============================================================================
  */
 
@@ -68,6 +142,16 @@
     }
     if (!window.RankRules) {
         throw new Error('rank-queries.js requires rank-rules.js to load first.');
+    }
+    if (typeof window.RANK_LEVELS === 'undefined') {
+        throw new Error(
+            'rank-queries.js requires rank-constants.js (RANK_LEVELS missing).'
+        );
+    }
+    if (!Array.isArray(window.AVAILABLE_SYMBOLS)) {
+        throw new Error(
+            'rank-queries.js requires rank-constants.js (AVAILABLE_SYMBOLS missing).'
+        );
     }
     if (!window.CharacterState) {
         throw new Error('rank-queries.js requires character-state.js to load first.');
@@ -146,30 +230,24 @@
     // 4. LEVEL HELPERS
     // =========================================================================
     //
-    // Level name and description come from RANK_LEVELS (constants).
-    // Level icon comes from icons.js via window.getRankLevelIcon, which
-    // maps priority -> SVG icon. The two are separate concerns: constants
-    // describe the level; icons supply the visual.
-
-    function _getRankLevels() {
-        return window.RANK_LEVELS || {
-            1: { name: 'Sovereign', description: 'Highest level' },
-            2: { name: 'High Noble', description: 'Dukes, princes' },
-            3: { name: 'Noble', description: 'Counts, earls' },
-            4: { name: 'Gentry', description: 'Knights' },
-            5: { name: 'Commoner', description: 'Common people' }
-        };
-    }
+    // Level name and description come from RANK_LEVELS (rank-constants.js),
+    // which is a hard load-time dependency. Level icon comes from icons.js
+    // via window.getRankLevelIcon, which maps priority -> SVG. The two are
+    // separate concerns: constants describe the level; icons supply the
+    // visual.
+    //
+    // Per-priority fallbacks ('Level N', 'Custom rank level') are retained
+    // for robustness against a RANK_LEVELS map that does not define every
+    // priority 1..10. They are NOT a table reconstruction; the canonical
+    // table is always window.RANK_LEVELS.
 
     function getRankLevelName(priority) {
-        var levels = _getRankLevels();
-        var level = levels[priority];
+        var level = window.RANK_LEVELS[priority];
         return level ? level.name : 'Level ' + priority;
     }
 
     function getRankLevelDescription(priority) {
-        var levels = _getRankLevels();
-        var level = levels[priority];
+        var level = window.RANK_LEVELS[priority];
         return level ? level.description : 'Custom rank level';
     }
 
@@ -179,6 +257,11 @@
      * Delegates to window.getRankLevelIcon (icons.js). If icons.js is not
      * loaded, returns the empty string. Level icons are presentation; the
      * absence of icons.js is not a query failure.
+     *
+     * Note: rank-bootstrap.js treats getRankLevelIcon as a required global.
+     * In production, this function always returns SVG markup. The
+     * empty-string fallback exists for bare test harnesses that load only
+     * the query layer.
      */
     function getRankLevelIcon(priority) {
         if (typeof window.getRankLevelIcon === 'function') {
@@ -189,9 +272,7 @@
     }
 
     function getAvailableSymbols() {
-        var symbols = window.AVAILABLE_SYMBOLS;
-        if (Array.isArray(symbols) && symbols.length > 0) return symbols.slice();
-        return ['⟡'];
+        return window.AVAILABLE_SYMBOLS.slice();
     }
 
     // =========================================================================
@@ -261,7 +342,6 @@
      */
     function getRankHolderStats(rankId) {
         var holders = getCharactersWithRank(rankId, false);
-        var currentYear = window.getCurrentYear();
 
         var male = 0;
         var female = 0;
@@ -546,8 +626,14 @@
      *      projection.
      *   2. Object with { parentId, parentType, ... } — an edge record.
      *   3. String character id — bare id.
+     *   4. Object with { id } only — id-only shape (defensive).
      *
      * Returns { id, activeRankId } or null.
+     *
+     * This is the internal normaliser. Callers should use getParentIds()
+     * for "give me the parent ids" and getInheritanceSource() for
+     * "who passed this rank down". _normaliseParentRef is not exported;
+     * it is a shared internal primitive for those two.
      */
     function _normaliseParentRef(ref) {
         if (!ref) return null;
@@ -582,6 +668,141 @@
         }
 
         return null;
+    }
+
+    /**
+     * Returns the parent character ids of a character, normalised across
+     * FamilyQueries.getParents' multiple return shapes:
+     *
+     *   - { father: <ref>, mother: <ref> }    (object with two refs)
+     *   - [<edge>, <edge>, ...]                (array of edges)
+     *   - [<character>, <character>, ...]     (array of projections)
+     *   - ['charId1', 'charId2', ...]         (array of strings)
+     *
+     * Each ref may be a string id, a projection with { id, activeRankId },
+     * an edge with { parentId, parentType }, or an id-only object { id }.
+     *
+     * Shared with rank-assignment.js (for numbering group filtering) and
+     * rank-issues.js (for child inheritance detection). Single
+     * implementation to avoid drift.
+     *
+     * Returns [] when:
+     *   - FamilyQueries is unavailable
+     *   - the character has no parents
+     *   - the character id is invalid
+     *   - FamilyQueries.getParents throws
+     *
+     * Deduplicated. A parent appearing twice in the edge list appears once
+     * in the result.
+     *
+     * @param {string} characterId
+     * @returns {string[]}
+     */
+    function getParentIds(characterId) {
+        if (!_hasId(characterId)) return [];
+        var family = _getFamilyQueries();
+        if (!family || typeof family.getParents !== 'function') return [];
+
+        var parents;
+        try {
+            parents = family.getParents(characterId);
+        } catch (e) {
+            return [];
+        }
+        if (!parents) return [];
+
+        var ids = [];
+        var seen = {};
+
+        function push(normalised) {
+            if (!normalised || !_hasId(normalised.id)) return;
+            if (seen[normalised.id]) return;
+            seen[normalised.id] = true;
+            ids.push(normalised.id);
+        }
+
+        if (Array.isArray(parents)) {
+            for (var i = 0; i < parents.length; i++) {
+                push(_normaliseParentRef(parents[i]));
+            }
+        } else if (_isPlainObject(parents)) {
+            if (parents.father) push(_normaliseParentRef(parents.father));
+            if (parents.mother) push(_normaliseParentRef(parents.mother));
+        }
+        return ids;
+    }
+
+    /**
+     * Returns the child character ids of a character.
+     *
+     * Tries FamilyQueries.getChildIds first; falls back to
+     * FamilyQueries.getChildren. Normalises the multiple return shapes
+     * (array of ids, array of projections, array of edges).
+     *
+     * Shared with rank-issues.js (for child inheritance detection).
+     *
+     * Returns [] when:
+     *   - FamilyQueries is unavailable
+     *   - the character has no children
+     *   - the character id is invalid
+     *   - both getChildIds and getChildren throw
+     *
+     * @param {string} characterId
+     * @returns {string[]}
+     */
+    function getChildIds(characterId) {
+        if (!_hasId(characterId)) return [];
+        var family = _getFamilyQueries();
+        if (!family) return [];
+
+        if (typeof family.getChildIds === 'function') {
+            try {
+                var ids = family.getChildIds(characterId);
+                if (Array.isArray(ids)) {
+                    var out = [];
+                    var seen = {};
+                    for (var i = 0; i < ids.length; i++) {
+                        var id = ids[i];
+                        if (!_hasId(id)) continue;
+                        if (seen[id]) continue;
+                        seen[id] = true;
+                        out.push(id);
+                    }
+                    return out;
+                }
+            } catch (e) {
+                // fall through to getChildren
+            }
+        }
+
+        if (typeof family.getChildren === 'function') {
+            try {
+                var children = family.getChildren(characterId);
+                if (!Array.isArray(children)) return [];
+                var out2 = [];
+                var seen2 = {};
+                for (var j = 0; j < children.length; j++) {
+                    var c = children[j];
+                    if (!c) continue;
+                    var cid = null;
+                    if (typeof c === 'string' && c.length > 0) {
+                        cid = c;
+                    } else if (_hasId(c.id)) {
+                        cid = c.id;
+                    } else if (_hasId(c.childId)) {
+                        cid = c.childId;
+                    }
+                    if (!cid) continue;
+                    if (seen2[cid]) continue;
+                    seen2[cid] = true;
+                    out2.push(cid);
+                }
+                return out2;
+            } catch (e2) {
+                return [];
+            }
+        }
+        return [];
     }
 
     /**
@@ -645,7 +866,6 @@
             }
             if (!parents) return null;
 
-            // getParents may return { father, mother } or an array of edges.
             var candidates = [];
             if (Array.isArray(parents)) {
                 candidates = parents.slice();
@@ -739,6 +959,11 @@
         // Spouse inheritance
         getSpouseInheritanceRanks: getSpouseInheritanceRanks,
         getReceivedSpouseInheritanceRanks: getReceivedSpouseInheritanceRanks,
+
+        // Parent/child normalisation (shared with rank-assignment and
+        // rank-issues). Single source for FamilyQueries' multiple shapes.
+        getParentIds: getParentIds,
+        getChildIds: getChildIds,
 
         // Inheritance source (canonical)
         getInheritanceSource: getInheritanceSource,
