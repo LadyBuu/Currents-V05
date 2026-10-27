@@ -22,9 +22,11 @@
  *   - Population statistics          -> character-statistics.js
  *   - Relationship semantics         -> future relationship domain
  *   - Rank semantics                 -> ranks/rank-queries.js
+ *   - Location semantics and
+ *     resolution                     -> world.js
+ *   - Presentation                   -> character-ui-list.js, modals
  *   - Mutation                       -> character-commands.js
  *   - Persistence                    -> storage.js
- *   - Presentation                   -> character-ui-list.js, modals
  *
  * FAMILY DELEGATION:
  *   Family queries delegate to FamilyQueries when it is loaded. The
@@ -58,6 +60,51 @@
  *   accessors. If either layer is unavailable, rank is null. The raw
  *   activeRankId is exposed separately as rankId.
  *
+ * LOCATION DISPLAY:
+ *   getCharacterSummary.location is a STABLE SHAPE PLACEHOLDER. It is
+ *   always null. It exists so that summary consumers have a uniform
+ *   field to read, and so that a future presentation-layer module can
+ *   populate it without changing the summary shape.
+ *
+ *   The summary does NOT resolve location display strings, and it never
+ *   will. Resolution belongs to world.js, which owns the canonical
+ *   place-lookup, hierarchy walk, and current-location resolution
+ *   (including the character.currentLocationId override and the
+ *   moves-based fallback). Baking a resolved display string into the
+ *   summary would force one policy choice (e.g. "the place's own name"
+ *   vs "the country ancestor" vs "the full breadcrumb") on every
+ *   consumer, and would couple this read layer to the location domain —
+ *   both of which are out of scope per the module header.
+ *
+ *   Consumers that need to display a character's location MUST use
+ *   locationId (below) and resolve through world.js:
+ *
+ *       var summary = CharacterQueries.getCharacterSummary(id);
+ *       if (!summary) return;
+ *
+ *       var place = world.getCurrentPlace(
+ *           CharacterState.getCharacter(summary.id)
+ *       );
+ *       var display = place
+ *           ? place.displayName
+ *           : (summary.locationId ? 'Unknown location' : 'No location');
+ *
+ *   `summary.locationId` is the raw currentLocationId, exactly as stored
+ *   on the character record. It may be a dangling reference (a place
+ *   that once existed and has since been deleted). Consumers who need
+ *   to distinguish "no location recorded" from "recorded location
+ *   missing" check locationId against the resolved place: if locationId
+ *   is non-null but the resolved place is null, the reference is
+ *   dangling. This matches world.js's DANGING LOCATION REFERENCES
+ *   contract.
+ *
+ *   A future presentation-layer module (e.g. character-presentation.js)
+ *   may add a `getCharacterLocationDisplay(characterId)` helper that
+ *   centralizes the resolution. Until that module exists, every consumer
+ *   resolves through world.js directly. Do NOT re-introduce a fabricated
+ *   `location` string in the summary — that was the exact bug this
+ *   header section exists to prevent.
+ *
  * TRAITS:
  *   getCharacterSummary.traits and getCharacterFacts.traits are fresh
  *   arrays cloned from the character projection. Traits are canonical
@@ -88,9 +135,9 @@
  *
  *   The character record carries both fields (CharacterState._project
  *   also exposes them). getCharacterSummary omitted deathCauseDetail
- *   in the previous revision, which meant any UI showing a deceased
+ *   in an earlier revision, which meant any UI showing a deceased
  *   character could not distinguish the category from the detail.
- *   That gap is closed here.
+ *   That gap was closed in Phase 1.3.
  *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
@@ -106,23 +153,46 @@
  *   - time.js                (calculateAge, getCurrentYear, isValidYear)
  *
  * DEPENDENCIES (OPTIONAL, present in the current codebase):
- *   - character-commands.js  (CharacterCommands)
- *   - family-queries.js      (FamilyQueries)
- *   - accessors.js           (getRankById)
+ *   - character-commands.js  (CharacterCommands) — used by
+ *                            getCharacterSummary for profession and
+ *                            rank display resolution
+ *   - family-queries.js      (FamilyQueries) — used by
+ *                            getCharacterSummary for family counts
+ *                            and by the family delegate functions
+ *   - accessors.js           (getRankById) — used by
+ *                            getCharacterSummary for rank display
+ *                            fallback
+ *
+ * NOTE ON world.js:
+ *   world.js is NOT a dependency of this module. Location resolution
+ *   belongs to world.js, and this module deliberately does not pull it
+ *   in. Consumers resolve via world.getCurrentPlace() using the
+ *   summary's locationId. See LOCATION DISPLAY above.
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 1.3):
- *     - getCharacterSummary now exposes deathCauseDetail (previously
- *       omitted). Non-breaking addition.
- *     - getCharacterFacts now exposes deathCause and deathCauseDetail
- *       (previously omitted). Non-breaking addition; cross-domain
- *       consumers (mortality statistics, succession, inheritance)
- *       can distinguish category from detail.
+ *   Current revision:
+ *     - Header LOCATION DISPLAY section added. The section explicitly
+ *       documents that getCharacterSummary.location is a stable shape
+ *       placeholder that is always null, that this module does not
+ *       resolve location display strings, and that consumers must
+ *       resolve via world.js using locationId. The section exists to
+ *       prevent a future contributor from "fixing" the always-null
+ *       field by fabricating a display string inside this module.
+ *     - Inline comment on the `location` field expanded to match the
+ *       header.
+ *     - Added explicit out-of-scope entry: "Location semantics and
+ *       resolution -> world.js".
+ *     - DEPENDENCIES section clarified: world.js is NOT a dependency
+ *       of this module.
+ *     - No behavioural change. Every function's signature, return
+ *       shape, and runtime behaviour are unchanged.
+ *   Previous revision (Phase 1.3):
+ *     - getCharacterSummary now exposes deathCauseDetail.
+ *     - getCharacterFacts now exposes deathCause and deathCauseDetail.
  *     - Header DEATH CAUSE section added.
- *     - No other behavioural change.
  *   Previous revision:
  *     - getCharacterSummary.traits and getCharacterFacts.traits added
  *       as defensive copies of the projection's traits array.
@@ -461,8 +531,22 @@
                 : projection.deathCauseDetail,
             isDeceased: projection.isDeceased === true,
             traits: _copyTraits(projection),
+
+            // STABLE SHAPE PLACEHOLDER. Always null. This module does not
+            // resolve location display strings. Consumers use locationId
+            // and resolve through world.js. See LOCATION DISPLAY in the
+            // module header for the resolution pattern. Do NOT populate
+            // this field with a fabricated string here — that couples
+            // this read layer to the location domain and forces a
+            // display-policy choice on every consumer.
             location: null,
+
+            // Raw currentLocationId from the character record. May be a
+            // dangling reference (a place that once existed and has since
+            // been deleted); check against world.getCurrentPlace() to
+            // distinguish "no location" from "recorded location missing".
             locationId: projection.currentLocationId || null,
+
             rank: rankDisplay,
             rankId: projection.activeRankId || null,
             household: projection.household || null,
