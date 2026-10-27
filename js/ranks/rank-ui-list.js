@@ -27,7 +27,10 @@
  * PRESENTATION CONTRACT:
  *   - No emojis. Icons come from Icons.NAME via _icon(). Missing icon throws.
  *   - No inline style attributes. Every element carries a semantic class.
- *   - Every interpolated string is escaped, including rank symbols.
+ *     Indentation for the hierarchy is driven by data-depth, with CSS
+ *     owning the pixel values.
+ *   - Every interpolated string is escaped via window.escapeHtml, including
+ *     rank symbols. formatting.js is a hard dependency.
  *   - Event handling is delegated: one listener per container, tracked in a
  *     WeakMap, replaced on re-render.
  *   - Rows are native <button> elements. Keyboard-accessible by default.
@@ -37,16 +40,85 @@
  *   kind, options). refreshAll() re-renders only registered containers. No
  *   DOM-walking heuristic.
  *
- * DEPENDENCIES (REQUIRED):
- *   - rank-queries.js       (RankQueries)
- *   - rank-state.js         (RankState)
- *   - icons.js              (Icons)
- *   - formatting.js         (escapeHtml, or _escapeHtml)
+ * RETURN VALUE CONTRACT:
+ *   Every renderer returns either an HTML string (on success) or null/false
+ *   (on failure), consistently within its own API:
+ *
+ *     - renderRankList(container, options)          -> boolean
+ *     - renderRankHierarchy(container, options)     -> boolean
+ *     - renderRankTree(container, options)          -> boolean
+ *     - renderRankSelector(container, options)      -> boolean
+ *     - renderRankCard(rankId, container?, options?) -> string | null
+ *     - renderRankStatistics(rankId, container?, options?) -> string | null
+ *
+ *   The list/hierarchy/tree/selector renderers write to a container and
+ *   return true/false to signal whether the write occurred. The card and
+ *   statistics renderers can either return HTML (when called without a
+ *   container) or write to a container and return the HTML. Both return
+ *   null when the rank is missing. This is the pattern Phase 7 fixed for
+ *   renderRankStatistics (was false/html/true); it now matches
+ *   renderRankCard.
+ *
+ * HIERARCHY CSS CONTRACT:
+ *   The hierarchy renderer emits elements with class "rank-hierarchy-node"
+ *   and attribute data-depth="N" (N is the nesting level, 0 for roots).
+ *   Presentation is owned by CSS via rules such as:
+ *
+ *     .rank-hierarchy-node[data-depth="0"] { padding-left: 0; }
+ *     .rank-hierarchy-node[data-depth="1"] { padding-left: 20px; }
+ *     .rank-hierarchy-node[data-depth="2"] { padding-left: 40px; }
+ *     .rank-hierarchy-node[data-depth="3"] { padding-left: 60px; }
+ *     .rank-hierarchy-node[data-depth="4"] { padding-left: 80px; }
+ *
+ *   Deeper hierarchies (depth >= 5) can use a CSS variable approach:
+ *
+ *     .rank-hierarchy-node { padding-left: calc(var(--rank-depth, 0) * 20px); }
+ *
+ *   In the second case, the renderer must also emit
+ *     style="--rank-depth: N"
+ *   on the node. The current implementation uses explicit data-depth and
+ *   relies on CSS rules for depths 0-4 (the practical maximum for a rank
+ *   hierarchy). If the world ever supports deeper hierarchies, extend the
+ *   CSS rules or switch to the variable approach.
+ *
+ *   The previous revision emitted style="margin-left: Npx" on every node,
+ *   which violated the file's own no-inline-styles policy. The data-depth
+ *   approach restores the policy and makes the indentation themeable.
+ *
+ * DEPENDENCIES (REQUIRED, load-time):
+ *   - rank-queries.js  (RankQueries)
+ *   - rank-state.js    (RankState)
+ *   - formatting.js    (escapeHtml) — was previously optional with a local
+ *                       fallback; the fallback has been removed.
+ *   - icons.js         (Icons)
  *
  * DEPENDENCIES (OPTIONAL, used only if present):
- *   - modals-rank.js        (RankModals) — for click handlers
- *   - character-queries.js  (CharacterQueries) — not used here
+ *   - modals-rank.js   (RankModals) — for default click handlers. If
+ *                       absent, the default click handler is a no-op for
+ *                       'edit' and 'details', and the caller must supply
+ *                       its own onAction handlers.
  *
+ * ICON POLICY: Uses icons.js. No emojis.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - _escapeHtml given a three-tier fallback (escapeHtml -> _escapeHtml
+ *       -> local implementation). This was a defensive pattern that hid
+ *       a missing formatting.js behind a silent local copy.
+ *   Current revision (Phase 7):
+ *     - formatting.js promoted to a hard load-time dependency.
+ *       _escapeHtml deleted; _esc now calls window.escapeHtml directly.
+ *     - _renderHierarchyNode replaces style="margin-left: Npx" with
+ *       data-depth="N". CSS owns the indentation. See HIERARCHY CSS
+ *       CONTRACT in the header.
+ *     - renderRankStatistics return value normalized: was false on
+ *       missing rank, HTML when container omitted, true when written to
+ *       container. Now: null on missing rank, HTML in all success cases.
+ *       Matches renderRankCard.
+ *     - Header PRESENTATION CONTRACT, RETURN VALUE CONTRACT, and
+ *       HIERARCHY CSS CONTRACT sections added.
+ *     - No public signature change for existing renderers.
  * =============================================================================
  */
 
@@ -62,6 +134,11 @@
     }
     if (!window.RankState) {
         throw new Error('rank-ui-list.js requires rank-state.js to load first.');
+    }
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'rank-ui-list.js requires formatting.js (escapeHtml missing).'
+        );
     }
     if (!window.Icons) {
         throw new Error('rank-ui-list.js requires icons.js to load first.');
@@ -82,24 +159,8 @@
         return v === undefined || v === null;
     }
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
     function _esc(v) {
-        return _escapeHtml(_isMissing(v) ? '' : String(v));
+        return window.escapeHtml(_isMissing(v) ? '' : String(v));
     }
 
     function _icon(name) {
@@ -261,9 +322,9 @@
             case 'selector':
                 return renderRankSelector(containerId, entry.options);
             case 'card':
-                return renderRankCard(entry.options.rankId, containerId, entry.options);
+                return renderRankCard(entry.options.rankId, containerId, entry.options) !== null;
             case 'stats':
-                return renderRankStatistics(entry.options.rankId, containerId, entry.options);
+                return renderRankStatistics(entry.options.rankId, containerId, entry.options) !== null;
             default:
                 return false;
         }
@@ -416,6 +477,10 @@
     //
     // Single-rank card. Returns HTML string when called with just a rank id,
     // or renders into a container when called with (rankId, containerOrId).
+    //
+    // Return value:
+    //   - null             when the rank does not exist
+    //   - HTML string      on success (both container and no-container forms)
 
     function renderRankCard(rankId, containerOrId, options) {
         if (!_hasId(rankId)) return null;
@@ -507,6 +572,9 @@
     //
     // Renders the parent-child rank hierarchy as a nested tree of nodes. Each
     // node is a native <button> carrying data-rank-action.
+    //
+    // Indentation is owned by CSS via the data-depth attribute. See
+    // HIERARCHY CSS CONTRACT in the header.
 
     function renderRankHierarchy(containerOrId, options) {
         options = options || {};
@@ -548,9 +616,9 @@
     function _renderHierarchyNode(node, depth, showActions) {
         if (!node || !_hasId(node.id)) return '';
 
-        var indent = depth * 20;
+        // Indentation via data-depth; CSS rules own the pixel values.
         var html = '<div class="rank-hierarchy-node" ' +
-            'style="margin-left:' + indent + 'px;">' +
+            'data-depth="' + _esc(depth) + '">' +
             '<div class="rank-hierarchy-row">' +
                 '<button type="button" class="rank-hierarchy-row__main" ' +
                     'data-rank-action="details" ' +
@@ -712,13 +780,22 @@
     // =========================================================================
     // 11. RENDER — STATISTICS
     // =========================================================================
+    //
+    // Return value:
+    //   - null          when the rank does not exist or container is invalid
+    //   - HTML string   on success (both container and no-container forms)
+    //
+    // Matches renderRankCard. The previous revision returned false for the
+    // missing-rank case, HTML for the no-container case, and true for the
+    // written-to-container case — three different shapes for the same
+    // operation.
 
     function renderRankStatistics(rankId, containerOrId, options) {
         options = options || {};
-        if (!_hasId(rankId)) return false;
+        if (!_hasId(rankId)) return null;
 
         var rank = RQ.getRank(rankId);
-        if (!rank) return false;
+        if (!rank) return null;
 
         var stats = RQ.getRankHolderStats(rankId);
 
@@ -732,7 +809,7 @@
         }
 
         var container = _resolveContainer(containerOrId);
-        if (!container) return false;
+        if (!container) return null;
 
         container.innerHTML = html;
 
@@ -741,7 +818,7 @@
                 rankId: rankId
             }));
         }
-        return true;
+        return html;
     }
 
     function _renderStatsGrid(stats) {
