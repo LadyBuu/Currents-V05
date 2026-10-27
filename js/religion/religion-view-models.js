@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION VIEW MODELS (religion-view-models.js)
  * =============================================================================
  * 
- * LOCATION: js/core/religion/religion-view-models.js
+ * LOCATION: js/religion/religion-view-models.js
  * 
  * Prepares UI-ready view models from canonical religion data by calling
  * ReligionQueries. This is the boundary between the query layer and the
