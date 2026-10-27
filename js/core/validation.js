@@ -34,6 +34,15 @@
  *     throw. Missing dependencies throw (see _requireTimeConstants).
  *     "Total" is bounded by that contract.
  *
+ * PARENTAGE:
+ *   The character record no longer carries parentage fields. The
+ *   historical compatibility mirrors (motherId, fatherId, children,
+ *   adoptedParents, adoptedChildren) were removed when parentage
+ *   moved to parentChildEdges (family-state.js). This module does
+ *   NOT validate them: they are not part of the schema, and the
+ *   integrity tooling is responsible for reporting any pre-migration
+ *   data that still contains them.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.MIN_YEAR, TIME_CONSTANTS.MAX_YEAR
  *
@@ -42,6 +51,21 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 2.6):
+ *     - Removed the dead motherId/fatherId checks from validateCharacter.
+ *       The character record no longer carries these fields; parentage
+ *       lives in FamilyState (parentChildEdges). The checks were reading
+ *       fields that storage-schema.js explicitly says are ignored.
+ *     - Removed the parent-existence block from validateCharacter's
+ *       context.existingCharacterIds section (also dead for the same
+ *       reason).
+ *     - Removed 'motherId' and 'fatherId' from
+ *       ENTITY_SCHEMAS.character.optional.
+ *     - The household string check is preserved (household is a live
+ *       character field, not a parentage mirror).
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -329,12 +353,14 @@ function validateCharacter(char, context) {
         errors.push(yearCheck.message);
     }
 
-    // --- Reference ID syntax ---
-    // Mother / father / household are character-or-household IDs; we check
-    // syntax only. Existence belongs to accessors / integrity.
-    _checkReferenceId(char.motherId, 'Mother ID', isValidCharacterId, errors);
-    _checkReferenceId(char.fatherId, 'Father ID', isValidCharacterId, errors);
-
+    // --- Household ---
+    //
+    // Phase 2.6: the motherId/fatherId syntax checks that used to live
+    // here were removed. Those fields are not part of the character
+    // record any more; parentage lives in parentChildEdges. The
+    // household field remains character-owned (see
+    // _CHARACTER_OWNED_FIELDS in character-state.js), so it is still
+    // validated for string-ness.
     if (char.household !== undefined && char.household !== null
         && typeof char.household !== 'string') {
         errors.push('Household must be a string');
@@ -358,18 +384,8 @@ function validateCharacter(char, context) {
         errors.push('Duplicate character ID: ' + char.id);
     }
 
-    // --- Reference existence checks (only when caller supplies ID sets
-    //     representing the world's canonical ID space, not the import) ---
-    if (context.existingCharacterIds && typeof context.existingCharacterIds.has === 'function') {
-        if (char.motherId !== undefined && char.motherId !== null
-            && !context.existingCharacterIds.has(char.motherId)) {
-            errors.push('Mother "' + char.motherId + '" does not exist');
-        }
-        if (char.fatherId !== undefined && char.fatherId !== null
-            && !context.existingCharacterIds.has(char.fatherId)) {
-            errors.push('Father "' + char.fatherId + '" does not exist');
-        }
-    }
+    // Phase 2.6: the mother/father existence block that used to live
+    // here was removed. See the module header's PARENTAGE section.
 
     return { isValid: errors.length === 0, errors: errors };
 }
@@ -1052,7 +1068,7 @@ var ENTITY_SCHEMAS = {
         required: ['id', 'name'],
         optional: [
             'surname', 'gender', 'attraction', 'birthYear', 'isDeceased', 'deathYear',
-            'deathCause', 'birthplaceId', 'household', 'notes', 'motherId', 'fatherId',
+            'deathCause', 'birthplaceId', 'household', 'notes',
             'adoptedParents', 'rankAssignments', 'relationships', 'friends', 'moves',
             'professions', 'apprentices', 'isMaster', 'masterId', 'masterProfessionId',
             'apprenticeshipDetails', 'friendshipDetails', 'appearance', 'epithet'
