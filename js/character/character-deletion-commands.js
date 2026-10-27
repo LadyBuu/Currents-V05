@@ -15,6 +15,8 @@
  *   - purgeSoftDeletedCharacters()       hard delete every soft-deleted record
  *   - bulkDeleteCharacters(ids, soft)    batch delete
  *   - getSoftDeletedCharacters()         read helper (colocated)
+ *   - registerDeleteHandler(fn)          register a cross-domain delete hook
+ *                                        (Phase 3.13b)
  *
  * OUT OF SCOPE:
  *   - Creation            -> character-creation-commands.js
@@ -77,6 +79,42 @@
  *   references a now-deleted character id; that is a bug in the domain,
  *   not a reason to refuse the delete.
  *
+ * DELETE HANDLER HOOK (Phase 3.13b):
+ *   The named cleanup table above only reaches the domains whose
+ *   modules load before this file. Under the documented load order,
+ *   that means FamilyCommands, ChildrenCommands, RankIssues, and
+ *   HouseholdCommands — but NOT RelationshipIntegrations and NOT
+ *   ApprenticeshipCommands (both of which load after
+ *   character-deletion-commands.js).
+ *
+ *   To close that gap, this module exposes registerDeleteHandler(fn).
+ *   Any module that loads after this file may register a handler.
+ *   Every hard delete invokes every registered handler exactly once,
+ *   after the death of the record and after the named cleanup table
+ *   has run.
+ *
+ *   RelationshipIntegrations registers itself at load time (see
+ *   relationship-integrations.js's REGISTRATION HOOKS section).
+ *
+ *   Handler contract:
+ *     fn(characterId) -> any
+ *   The return value is ignored. Exceptions are caught and logged. A
+ *   throwing handler does not prevent subsequent handlers from
+ *   running, and does not propagate out of the deletion.
+ *
+ *   The handler registration is additive with the named cleanup
+ *   table: a domain that registers via the hook AND is present in the
+ *   named table will be called twice on the same delete. That is safe
+ *   because the command layer is idempotent per character id —
+ *   removeAllReferencesTo refuses nothing (it silently skips records
+ *   that no longer reference the character) and the second call is a
+ *   no-op.
+ *
+ *   Registration returns an unregister function. Callers who need to
+ *   tear down (test harnesses, hot reload) should call it. In a
+ *   normal browser session nothing calls unregister; the handler
+ *   lives for the lifetime of the page.
+ *
  * NAMING NOTE:
  *   The relationship domain's cross-domain hook is exported by
  *   js/relationships/relationship-integration.js under the namespace
@@ -110,7 +148,7 @@
  *                          CharacterState.removeCharacters,
  *                          CharacterState.applyDomainFieldPatch,
  *                          CharacterState.getAllCharacters,
- *                          CharacterState._getLiveCharacterForMutation)
+ *                          CharacterState.getLiveCharacterForMutation)
  *
  * DEPENDENCIES (OPTIONAL, called only if present):
  *   - family-commands.js          (FamilyCommands.removeAllReferencesTo)
@@ -125,6 +163,26 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3.13b):
+ *     - Added registerDeleteHandler(fn). A module that loads after this
+ *       file can register a delete handler; every hard delete invokes
+ *       every registered handler, after the death of the record and
+ *       after the named cleanup table. This closes the load-order gap
+ *       that made the RelationshipIntegrations entry of _CLEANUP_TARGETS
+ *       a no-op under the documented load order.
+ *     - _hardDeleteInternal and _bulkHardDelete now invoke
+ *       _invokeDeleteHandlers(characterId) after _dispatchCleanup.
+ *       _purgeSoftDeletedCharacters invokes it per purged id after the
+ *       cleanup loop.
+ *     - Header DELETE HANDLER HOOK section added.
+ *     - No other behavioural change.
+ *   Previous revisions:
+ *     - Fixed the relationship cleanup target name (PLURAL
+ *       "RelationshipIntegrations", not the singular form).
+ *     - Soft-delete writes routed through applyDomainFieldPatch
+ *       (isDeleted and deletedAt are domain-owned).
  * =============================================================================
  */
 
@@ -148,7 +206,7 @@
         'removeCharacters',
         'applyDomainFieldPatch',
         'getAllCharacters',
-        '_getLiveCharacterForMutation'
+        'getLiveCharacterForMutation'
     ];
     for (var _m = 0; _m < _required.length; _m++) {
         if (typeof CS[_required[_m]] !== 'function') {
@@ -156,6 +214,59 @@
                 'character-deletion-commands.js: CharacterState.' +
                 _required[_m] + ' is required.'
             );
+        }
+    }
+
+    // =========================================================================
+    // 0b. DELETE HANDLER REGISTRY (Phase 3.13b)
+    // =========================================================================
+    //
+    // See DELETE HANDLER HOOK in the module header. Handlers registered
+    // here run after the named cross-domain cleanup table on every
+    // hard delete.
+
+    var _deleteHandlers = [];
+
+    /**
+     * Registers a function to be called on every hard delete.
+     *
+     * @param {Function} fn - called as fn(characterId)
+     * @returns {Function} unregister function
+     * @throws {Error} if fn is not a function
+     */
+    function registerDeleteHandler(fn) {
+        if (typeof fn !== 'function') {
+            throw new Error(
+                'character-deletion-commands.js: registerDeleteHandler requires a function.'
+            );
+        }
+        _deleteHandlers.push(fn);
+        return function unregister() {
+            var idx = _deleteHandlers.indexOf(fn);
+            if (idx !== -1) _deleteHandlers.splice(idx, 1);
+        };
+    }
+
+    /**
+     * Invokes every registered delete handler with (characterId).
+     * Handler exceptions are caught and logged. A throwing handler
+     * does not prevent subsequent handlers from running.
+     *
+     * @private
+     */
+    function _invokeDeleteHandlers(characterId) {
+        if (_deleteHandlers.length === 0) return;
+        var snapshot = _deleteHandlers.slice();
+        for (var i = 0; i < snapshot.length; i++) {
+            try {
+                snapshot[i](characterId);
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'character-deletion-commands.js: delete handler threw:', e
+                    );
+                }
+            }
         }
     }
 
@@ -193,7 +304,7 @@
 
     function _getLive(id) {
         if (!_hasId(id)) return null;
-        return CS._getLiveCharacterForMutation(id);
+        return CS.getLiveCharacterForMutation(id);
     }
 
     // =========================================================================
@@ -303,6 +414,11 @@
         }
 
         var cleanup = _dispatchCleanup(characterId);
+
+        // Phase 3.13b: invoke registered delete handlers after the
+        // named cleanup table. This reaches the domains that load
+        // after this file (notably the relationship domain).
+        _invokeDeleteHandlers(characterId);
 
         return _ok({
             deletedId: characterId,
@@ -421,6 +537,9 @@
                 characterId: toPurge[j],
                 report: _dispatchCleanup(toPurge[j])
             });
+            // Phase 3.13b: invoke registered delete handlers per purged
+            // character, matching the per-character cleanup pattern.
+            _invokeDeleteHandlers(toPurge[j]);
         }
 
         return {
@@ -537,6 +656,9 @@
                 characterId: existingIds[j],
                 report: _dispatchCleanup(existingIds[j])
             });
+            // Phase 3.13b: invoke registered delete handlers per
+            // removed character.
+            _invokeDeleteHandlers(existingIds[j]);
         }
 
         return {
@@ -575,8 +697,21 @@
 
         bulkDeleteCharacters: bulkDeleteCharacters,
 
-        getSoftDeletedCharacters: getSoftDeletedCharacters
+        getSoftDeletedCharacters: getSoftDeletedCharacters,
+
+        // Phase 3.13b: register a delete handler. Exposed on the
+        // CharacterDeletionCommands namespace AND on window (below) so
+        // a caller can reach it either way.
+        registerDeleteHandler: registerDeleteHandler
     };
+
+    // Phase 3.13b: expose registerDeleteHandler on window so that
+    // modules that load after this file (notably
+    // relationship-integrations.js) can register without assuming the
+    // CharacterDeletionCommands namespace is populated. Both paths are
+    // equivalent; the window global is the one the relationship
+    // integration's registration block checks for.
+    window.registerDeleteHandler = registerDeleteHandler;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.CharacterDeletionCommands;
