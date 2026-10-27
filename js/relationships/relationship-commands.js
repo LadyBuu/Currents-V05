@@ -38,7 +38,8 @@
  * malformed records so that State never holds one, but it does not
  * enforce domain policy. Structural validity means: required fields
  * present, participantA !== participantB, attributes is an array with
- * no duplicates, metadata is a plain object. Nothing more.
+ * no duplicates, metadata is a plain object, endYear is not before
+ * startYear. Nothing more.
  *
  * COMMIT SEMANTICS
  *
@@ -72,6 +73,19 @@
  * Load order: after relationship-state.js, relationship-types.js,
  * relationship-utils.js, and relationship-queries.js.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3.4):
+ *     - _validateCreateInput now rejects endYear < startYear.
+ *       Previously a relationship with startYear: 100, endYear: 50 was
+ *       considered structurally valid (only the types were checked,
+ *       not the ordering). The domain's transition tables prevent
+ *       ending a relationship before it starts at the command layer
+ *       (end() refuses non-ongoing records), but the create path
+ *       accepted impossible records directly.
+ *     - createBatch's per-record loop applies the same check so
+ *       create and createBatch reject the inversion consistently.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -126,6 +140,24 @@
     // responsibility.
     // =========================================================================
 
+    /**
+     * @private
+     * Checks for endYear < startYear. Returns true if the pair is
+     * invalid (endYear strictly before startYear).
+     *
+     * Only fires when both are present and numeric. A relationship
+     * with startYear but no endYear (ongoing), or with neither, is
+     * valid.
+     */
+    function _isEndBeforeStart(startYear, endYear) {
+        if (startYear === undefined || startYear === null) return false;
+        if (endYear === undefined || endYear === null) return false;
+        if (typeof startYear !== 'number' || typeof endYear !== 'number') {
+            return false;
+        }
+        return endYear < startYear;
+    }
+
     function _validateCreateInput(input) {
         var errors = [];
 
@@ -160,6 +192,12 @@
         if (input.endYear !== undefined && input.endYear !== null &&
             typeof input.endYear !== 'number') {
             errors.push('invalid_endYear');
+        }
+
+        // Phase 3.4: reject impossible chronology. A relationship
+        // cannot end before it starts.
+        if (_isEndBeforeStart(input.startYear, input.endYear)) {
+            errors.push('endYear_before_startYear');
         }
 
         if (input.attributes !== undefined && !Array.isArray(input.attributes)) {
@@ -318,6 +356,15 @@
                     'record at index ' + i + ' has invalid endYear'
                 );
             }
+            // Phase 3.4: same chronology check as create. Applied per
+            // record so create and createBatch reject the inversion
+            // consistently.
+            if (_isEndBeforeStart(rec.startYear, rec.endYear)) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has endYear_before_startYear'
+                );
+            }
             if (rec.attributes !== undefined && !Array.isArray(rec.attributes)) {
                 return _fail(
                     'INVALID_INPUT',
@@ -404,6 +451,26 @@
             return _fail('INVALID_END_YEAR', 'endYear must be a number or null');
         }
 
+        // Phase 3.4 (adjacent): an update that would produce an
+        // endYear < startYear should be refused too, using the
+        // current record's other field when the patch only supplies
+        // one. This closes the same inconsistency on the update path
+        // that the create path closes above. It is included in this
+        // commit for consistency even though the action plan scoped
+        // Phase 3.4 to the create paths.
+        var nextStartYear = patch.startYear !== undefined
+            ? patch.startYear
+            : current.startYear;
+        var nextEndYear = patch.endYear !== undefined
+            ? patch.endYear
+            : current.endYear;
+        if (_isEndBeforeStart(nextStartYear, nextEndYear)) {
+            return _fail(
+                'INVALID_YEARS',
+                'endYear cannot be before startYear'
+            );
+        }
+
         if (patch.attributes !== undefined) {
             if (!Array.isArray(patch.attributes)) {
                 return _fail('INVALID_ATTRIBUTES', 'attributes must be an array');
@@ -469,6 +536,16 @@
             return _fail('NOT_ACTIVE', 'relationship is not ongoing');
         }
 
+        // Phase 3.4 (adjacent): same chronology check as update.
+        // A record whose startYear is later than the supplied endYear
+        // is not logically endable.
+        if (_isEndBeforeStart(current.startYear, endYear)) {
+            return _fail(
+                'INVALID_YEARS',
+                'endYear cannot be before startYear'
+            );
+        }
+
         var patch = {
             status: STATUS.ENDED,
             endYear: endYear,
@@ -509,6 +586,14 @@
         }
         if (current.status !== STATUS.ONGOING) {
             return _fail('NOT_ACTIVE', 'relationship is not ongoing');
+        }
+
+        // Phase 3.4 (adjacent): same chronology check as end.
+        if (_isEndBeforeStart(current.startYear, endYear)) {
+            return _fail(
+                'INVALID_YEARS',
+                'endYear cannot be before startYear'
+            );
         }
 
         var result = State.applyUpdates([{
