@@ -31,6 +31,8 @@
  *   - Rows are native buttons. They are keyboard-accessible by default.
  *   - The row-class option is additive. It never replaces the base class
  *     that event delegation depends on.
+ *   - Optional lookups (culture badge) are gated on the caller's options
+ *     BEFORE they run. A disabled feature does not execute its resolver.
  *
  * REQUIRED CSS:
  *   This module emits the following classes. The stylesheet must define
@@ -60,7 +62,7 @@
  * DEPENDENCIES (REQUIRED):
  *   - formatting.js (escapeHtml)
  *   - CharacterQueries (getCharacterSummary, searchCharacters)
- *   - accessors.js (getCharacters)
+ *   - character-system.js OR accessors.js (getCharacters)
  *
  * DEPENDENCIES (OPTIONAL):
  *   - CultureQueries.getCultureDisplay(cultureId) — for culture badges
@@ -69,6 +71,23 @@
  * ICON POLICY: Uses SVG from icons.js if available. No emojis. No Unicode
  * gender symbols.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 1.7):
+ *     - _requireDependencies accepts character-system.js or accessors.js
+ *       as the provider of window.getCharacters. The previous message
+ *       named only accessors.js, which was misleading after
+ *       character-system.js became the canonical override.
+ *     - _renderRow and renderCharacterCard check options.showCulture
+ *       BEFORE calling _cultureBadgeText. Previously the culture
+ *       display was resolved for every row even when the badge was
+ *       disabled, which forced CultureQueries.getCultureDisplay to run
+ *       unconditionally.
+ *     - Header DEPENDENCIES updated: character-system.js is listed
+ *       alongside accessors.js as the provider of getCharacters.
+ *     - Header SEMANTIC RULES adds the "optional lookups are gated"
+ *       clause.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -87,7 +106,8 @@
         }
         if (typeof window.getCharacters !== 'function') {
             throw new Error(
-                'character-ui-list.js: accessors.js must load first.'
+                'character-ui-list.js: character-system.js (or accessors.js) ' +
+                'must load first (getCharacters missing).'
             );
         }
         if (typeof window.CharacterQueries === 'undefined') {
@@ -130,6 +150,9 @@
      *
      * If CultureQueries is not loaded, returns ''. If the culture cannot
      * be resolved, returns ''. No fallback character or emoji.
+     *
+     * Callers MUST gate this on options.showCulture. The badge should
+     * only be resolved when the badge will be rendered.
      */
     function _cultureBadgeText(cultureId) {
         if (!_hasId(cultureId)) return '';
@@ -184,11 +207,14 @@
             html += '</span>';
         }
 
-        var cultureText = _cultureBadgeText(character.cultureId);
-        if (options.showCulture && cultureText) {
-            html += '<span class="character-row__culture-badge">'
-                 + _esc(cultureText)
-                 + '</span>';
+        // Culture badge — gated on options.showCulture BEFORE resolving.
+        if (options.showCulture) {
+            var cultureText = _cultureBadgeText(character.cultureId);
+            if (cultureText) {
+                html += '<span class="character-row__culture-badge">'
+                     + _esc(cultureText)
+                     + '</span>';
+            }
         }
         html += '</span>';
 
@@ -354,14 +380,19 @@
      * Returns an HTML string for a single character card.
      *
      * @param {Object} character
+     * @param {Object} [options]
+     * @param {boolean} [options.showCulture] - default true
      * @returns {string}
      */
-    function renderCharacterCard(character) {
+    function renderCharacterCard(character, options) {
         if (!character || !_hasId(character.id)) {
             return '<div class="character-card character-card--missing">'
                  + 'Character not found'
                  + '</div>';
         }
+
+        if (_isMissing(options)) options = {};
+        var showCulture = options.showCulture !== false;
 
         var summary = window.CharacterQueries.getCharacterSummary(character.id);
         if (!summary) {
@@ -380,11 +411,14 @@
              + '</h4>';
         html += '<div class="character-card__badges">';
 
-        var cultureText = _cultureBadgeText(character.cultureId);
-        if (cultureText) {
-            html += '<span class="character-card__culture-badge">'
-                 + _esc(cultureText)
-                 + '</span>';
+        // Culture badge — gated on options.showCulture BEFORE resolving.
+        if (showCulture) {
+            var cultureText = _cultureBadgeText(character.cultureId);
+            if (cultureText) {
+                html += '<span class="character-card__culture-badge">'
+                     + _esc(cultureText)
+                     + '</span>';
+            }
         }
 
         var statusClass = summary.isDeceased
