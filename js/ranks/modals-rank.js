@@ -26,9 +26,45 @@
  *   - read character.relationships, character.professions, or any other
  *     embedded domain container directly — those come off the projection
  *
+ * MODAL CALLBACK API (from modals-core.js):
+ *   openModal(options) returns { element, close }.
+ *
+ *   The CALLBACKS receive the modal DOM element, NOT the handle:
+ *
+ *     onMount(root)      // root is the modal DOM element
+ *     onOpen(root)       // alias for onMount
+ *     onConfirm(root)    // root is the modal DOM element
+ *     onCancel(root)     // root is the modal DOM element
+ *
+ *   Inside the callbacks, use `root.querySelector('#id')` for scoped
+ *   input reads. Do NOT use `root.element.querySelector(...)` — the
+ *   argument is already the DOM element, not a `{ element }` wrapper.
+ *
+ *   This file was previously written against the handle shape:
+ *
+ *     onOpen: function (modal) {
+ *         var root = modal.element;       // WRONG — modal is the DOM element
+ *     }
+ *
+ *   The `modal.element` access threw on every modal open, silently
+ *   caught by modals-core.js for onOpen and propagated to the browser
+ *   console for onConfirm. The net effect was that every rank modal
+ *   opened but no confirm button worked. Fixed in this revision: every
+ *   onOpen and onConfirm handler now uses the parameter directly.
+ *
+ *   If you need the handle's `close()` inside a callback, do NOT reach
+ *   for it on the parameter. Instead:
+ *
+ *     var modalHandle = window.openModal({ ... });
+ *     // inside onConfirm:
+ *     modalHandle.close();     // explicit programmatic close
+ *
+ *   or call `window.closeTopModal()`. Both are documented in
+ *   modals-core.js's CALLBACK CONTRACT section.
+ *
  * MODAL INPUT READS:
- *   Every modal reads its inputs via modal.element.querySelector('#id'),
- *   NOT document.getElementById('#id'). The modal-scoped read is required
+ *   Every modal reads its inputs via root.querySelector('#id'), NOT
+ *   document.getElementById('#id'). The modal-scoped read is required
  *   because:
  *
  *     1. Multiple rank modals can be open simultaneously (the modal stack
@@ -43,7 +79,7 @@
  *
  *   The helpers _readValue, _readChecked, _readNumber all take a root
  *   element (the modal) as their first argument. Every call site passes
- *   modal.element.
+ *   the callback parameter directly.
  *
  * DEPENDENCIES (REQUIRED, must load first):
  *   - modals-core.js        (openModal, closeTopModal)
@@ -72,7 +108,7 @@
  *   policy across the tree is classes-only; the exceptions here are a
  *   known deferral documented in the rank-doc's Known Deferrals section.
  *
- *   The correctness fixes in this revision (modal input scoping,
+ *   The correctness fixes in this revision (modal callback API,
  *   options shadowing, escapeHtml requirement, DEFAULT_SYMBOL,
  *   RANK_LEVELS requirement, enum reference in dropdown builders) are
  *   independent of the inline-style extraction. Extracting ~200 lines
@@ -88,48 +124,28 @@
  * REFACTOR HISTORY:
  *   Previous revision:
  *     - _escapeHtml given a three-tier fallback. Now hard-requires
- *       formatting.js (see current revision).
- *   Current revision (Phase 8):
+ *       formatting.js (see Phase 8).
+ *   Phase 8:
  *     - #22 (correctness): openAssignRankModal::onConfirm no longer
  *       shadows the outer `options` parameter with a local `var options`.
- *       The inner variable is renamed to `assignOptions`. The caller's
- *       onComplete callback now fires. (Pre-fix: the callback was never
- *       invoked because `options.onComplete` was undefined on the inner
- *       object.)
  *     - #2, #21 (correctness): _readValue, _readChecked, _readNumber now
- *       take a root element as their first argument and use
- *       root.querySelector. Every call site passes modal.element. The
- *       document.getElementById pattern is removed. This eliminates the
- *       multi-modal contamination bug where two open modals would both
- *       read the first modal's inputs.
- *     - _escapeHtml deleted. formatting.js is now a REQUIRED load-time
- *       dependency. _esc delegates to window.escapeHtml directly.
- *     - ui.js promoted to REQUIRED. showToast is used unconditionally.
- *       _toast prefers _showToast (deprecated alias) for backward
- *       compatibility with any environment that has ui.js loaded but
- *       reverted to the old alias, then falls back to showToast. If both
- *       are absent, throw — silent no-op was a UX hole.
+ *       take a root element as their first argument.
+ *     - _escapeHtml deleted. formatting.js is now REQUIRED.
+ *     - ui.js promoted to REQUIRED.
  *     - DEFAULT_SYMBOL derived from window.DEFAULT_RANK.symbol at load.
- *       All hardcoded '⟡' literals replaced with DEFAULT_SYMBOL.
- *     - _buildPriorityOptions no longer falls back to [1, 2, 3, 4, 5]
- *       when RANK_LEVELS is empty. RANK_LEVELS is required, and its
- *       priority keys are used directly. A bare test harness that lacks
- *       RANK_LEVELS fails at load, matching rank-queries.js.
- *     - _buildNumberingTypeOptions, _buildNumberingGroupOptions, and
- *       _buildInheritanceSourceOptions read their string values from
- *       window.NUMBERING_TYPE, window.NUMBERING_GROUP, and
- *       window.INHERITANCE_SOURCE respectively. Pre-fix they hardcoded
- *       'reign' / 'ordinal' / 'roman' etc. as literals.
- *     - _buildGenderOptions keeps its literals ('either' / 'male' /
- *       'female') with a comment pointing to
- *       RankRules._isValidGenderRestriction as the source of truth.
- *       Gender restriction is a small, stable enum; the constants module
- *       does not export it, and adding a new export for three values is
- *       not worth the churn.
- *     - Inline style attributes retained. See INLINE STYLES section
- *       above for the deferral.
- *     - Header updated: MODAL INPUT READS section, INLINE STYLES
- *       deferral, DEPENDENCIES list with all REQUIRED modules.
+ *     - _buildPriorityOptions no longer falls back to [1, 2, 3, 4, 5].
+ *     - Enum dropdowns read from window.NUMBERING_TYPE etc.
+ *   Current revision (Phase 8.1):
+ *     - CRITICAL (compatibility with modals-core.js): every onOpen and
+ *       onConfirm callback now uses the parameter directly as the root
+ *       element. Previously every callback declared `var root =
+ *       modal.element;` which was always undefined because
+ *       modals-core.js passes the DOM element, not a `{ element }`
+ *       handle. The `try/catch` in modals-core.js swallowed the onOpen
+ *       throw, but onConfirm's throw propagated and left the modal open
+ *       with no way to save. This made the entire rank UI unusable.
+ *       See MODAL CALLBACK API in the header.
+ *     - Header MODAL CALLBACK API section added.
  *     - No public signature change.
  * =============================================================================
  */
@@ -204,10 +220,7 @@
 
     /**
      * Shows a toast. Prefers _showToast (deprecated alias) for backward
-     * compatibility, falls back to showToast (primary export). Both come
-     * from ui.js, which is a REQUIRED dependency. If neither exists, this
-     * throws — a silent no-op would leave the user with no feedback on a
-     * command failure, which is a UX hole, not a graceful degradation.
+     * compatibility, falls back to showToast (primary export).
      */
     function _toast(message, type) {
         if (typeof window._showToast === 'function') {
@@ -253,10 +266,9 @@
     // first argument and uses querySelector. This is required for
     // correctness when two modals are open simultaneously.
     //
-    // Pre-fix versions used document.getElementById, which read from the
-    // whole page. Two open create-rank modals would both find the first
-    // modal's input by id, and the second modal's confirm would read the
-    // first modal's values.
+    // The root is the CALLBACK PARAMETER from modals-core.js (the DOM
+    // element). It is NOT `modal.element` — see MODAL CALLBACK API in the
+    // header.
 
     function _readValue(root, id) {
         if (!root) return '';
@@ -282,10 +294,7 @@
     // =========================================================================
 
     /**
-     * Default symbol derived from rank-constants.js. Using DEFAULT_RANK.symbol
-     * instead of a hardcoded '⟡' keeps the fallback in one place: if the
-     * default ever changes, every dropdown, every saved rank, and every
-     * render site picks up the new value.
+     * Default symbol derived from rank-constants.js.
      */
     var DEFAULT_SYMBOL = (window.DEFAULT_RANK && window.DEFAULT_RANK.symbol) || '⟡';
 
@@ -311,13 +320,10 @@
      * Builds the priority select options.
      *
      * Reads priority keys directly from window.RANK_LEVELS. No fallback
-     * list: RANK_LEVELS is required at load, and rank-queries.js also
-     * requires it. A bare test harness that lacks RANK_LEVELS fails at
-     * load, matching rank-queries.js's behavior.
+     * list: RANK_LEVELS is required at load.
      *
      * The option label is the level name alone. No glyph is rendered in
-     * the dropdown; the previous inline Unicode level indicator was
-     * removed when RANK_LEVELS[*].icon was stripped.
+     * the dropdown.
      */
     function _buildPriorityOptions(selected) {
         var levels = window.RANK_LEVELS;
@@ -340,11 +346,7 @@
      * Gender restriction options.
      *
      * The literals ('either' / 'male' / 'female') match
-     * RankRules._isValidGenderRestriction. Gender restriction is a small,
-     * stable enum that rank-constants.js does not export. Adding a new
-     * export for three values is not worth the churn. If the enum ever
-     * grows, both this list and RankRules._isValidGenderRestriction must
-     * be updated together.
+     * RankRules._isValidGenderRestriction.
      */
     function _buildGenderOptions(selected) {
         var opts = [
@@ -361,13 +363,6 @@
         return html;
     }
 
-    /**
-     * Numbering type options. Values come from window.NUMBERING_TYPE
-     * (rank-constants.js), not hardcoded literals. If a new numbering type
-     * is added to the constants module, this dropdown picks it up only
-     * after the labels below are updated — which is the correct behavior:
-     * the constant establishes the value; the modal establishes the label.
-     */
     function _buildNumberingTypeOptions(selected) {
         var types = window.NUMBERING_TYPE
             || { REIGN: 'reign', ORDINAL: 'ordinal', ROMAN: 'roman' };
@@ -587,9 +582,8 @@
             contentHtml: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
-            onOpen: function (modal) {
-                var root = modal.element;
-
+            onOpen: function (root) {
+                // root is the modal DOM element (see MODAL CALLBACK API).
                 var numbered = root.querySelector('#rankNumbered');
                 var numberingFields = root.querySelector('#rankNumberingFields');
                 if (numbered && numberingFields) {
@@ -621,12 +615,9 @@
                     nameInput.select();
                 }
             },
-            onConfirm: function (modal) {
-                // Scoped reads: modal.element is the ONLY valid root.
-                // document.getElementById would find another open modal's
-                // input by collision.
-                var root = modal.element;
-
+            onConfirm: function (root) {
+                // root is the modal DOM element. Scoped reads via
+                // root.querySelector are the ONLY valid reads here.
                 var numbered = _readChecked(root, 'rankNumbered');
                 var inheritanceSource = _readValue(root, 'rankInheritanceSource') || 'none';
                 var sourceRankId = inheritanceSource === 'none'
@@ -871,9 +862,8 @@
             contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onOpen: function (modal) {
-                var root = modal.element;
-
+            onOpen: function (root) {
+                // root is the modal DOM element.
                 var numbered = root.querySelector('#rankEditNumbered');
                 var numberingFields = root.querySelector('#rankEditNumberingFields');
                 if (numbered && numberingFields) {
@@ -899,9 +889,8 @@
                     });
                 }
             },
-            onConfirm: function (modal) {
-                var root = modal.element;
-
+            onConfirm: function (root) {
+                // root is the modal DOM element.
                 var numbered = _readChecked(root, 'rankEditNumbered');
                 var inheritanceSource = _readValue(root, 'rankEditInheritanceSource') || 'none';
                 var sourceRankId = inheritanceSource === 'none'
@@ -977,16 +966,6 @@
     //   'bulk'    — many characters are selected via checkboxes
     //
     // Default mode is 'single'.
-    //
-    // #22 FIX: the onConfirm handler previously declared a local
-    // `var options` that shadowed the outer options parameter. The line
-    // `if (typeof options.onComplete === 'function')` then checked the
-    // INNER object, which had no onComplete property. The caller's
-    // onComplete callback never fired.
-    //
-    // The fix renames the inner variable to `assignOptions`. The outer
-    // `options` parameter is now correctly referenced throughout
-    // onConfirm, including the onComplete invocation.
 
     function openAssignRankModal(options) {
         options = options || {};
@@ -1074,11 +1053,10 @@
             return selectedCharacterIds.indexOf(id) !== -1;
         }
 
-        // Modal-scoped state: modalRoot is captured once in onOpen and
-        // passed to the render helpers. This preserves the multi-modal
-        // isolation: two open assign-rank modals would otherwise both
-        // query document.getElementById('#assignRankList') and get the
-        // first modal's list.
+        // modalRootRef is captured once in onOpen and used by every
+        // render helper. Two open assign-rank modals would otherwise
+        // both query document.getElementById('#assignRankList') and get
+        // the first modal's list.
         var modalRootRef = null;
 
         function _q(id) {
@@ -1230,8 +1208,9 @@
             contentHtml: assignModalContent,
             confirmText: mode === 'bulk' ? 'Assign to Selected' : 'Assign',
             cancelText: 'Cancel',
-            onOpen: function (modal) {
-                modalRootRef = modal.element;
+            onOpen: function (root) {
+                // root is the modal DOM element.
+                modalRootRef = root;
 
                 function refreshInfo() {
                     var info = _q('assignRankInfo');
@@ -1300,10 +1279,8 @@
                 refreshInfo();
                 renderList();
             },
-            onConfirm: function (modal) {
-                // Scoped reads. modal.element is the ONLY valid root.
-                var root = modal.element;
-
+            onConfirm: function (root) {
+                // root is the modal DOM element.
                 if (!_hasId(selectedRankId)) {
                     _toast('Please select a rank.', 'error');
                     return false;
@@ -1316,11 +1293,9 @@
                 var notes = _readValue(root, 'assignRankNotes');
                 var assignedYear = _readNumber(root, 'assignRankYear', _currentYear());
 
-                // #22 FIX: renamed from `options` to `assignOptions`.
-                // The old name shadowed the function parameter, causing
-                // `options.onComplete` below to check the inner object
-                // (which had no onComplete property). The caller's
-                // onComplete callback never fired.
+                // Renamed from `options` to `assignOptions`. The old name
+                // shadowed the function parameter, causing
+                // `options.onComplete` below to check the inner object.
                 var assignOptions = {
                     notes: notes,
                     assignedYear: assignedYear
@@ -1365,9 +1340,6 @@
                     }
                 }
 
-                // #22 FIX: outer `options` correctly referenced here.
-                // Pre-fix, this line checked the inner `assignOptions`
-                // object, which had no onComplete property.
                 if (typeof options.onComplete === 'function') {
                     options.onComplete(result);
                 }
