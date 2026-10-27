@@ -14,6 +14,7 @@
  *   - Family semantics → FamilyAccessors / FamilyStatistics
  *   - Age calculation → time.js (via CharacterQueries)
  *   - Culture display → CultureQueries
+ *   - Location display resolution → world.js (see LOCATION RESOLUTION)
  *   - Presentation CSS → the stylesheet (see character-ui.css)
  *   - Modal workflows → modals-character.js
  *   - Mutation → CharacterCommands
@@ -21,18 +22,61 @@
  *
  * SEMANTIC RULES:
  *   - This module does NOT compute domain values. It calls
- *     CharacterQueries for projections and renders them.
+ *     CharacterQueries for projections and world.js for location
+ *     resolution, then renders what it received.
  *   - Presentation is owned by CSS. This module produces semantic markup
  *     with classes. It does NOT emit inline style attributes.
  *   - All strings interpolated into HTML are escaped, including
- *     appearance fields and any values returned by query projections.
+ *     appearance fields, location display strings, and any values
+ *     returned by query projections.
  *   - Row interaction is delegated: one listener on the container, not
  *     one per row.
  *   - Rows are native buttons. They are keyboard-accessible by default.
  *   - The row-class option is additive. It never replaces the base class
  *     that event delegation depends on.
- *   - Optional lookups (culture badge) are gated on the caller's options
- *     BEFORE they run. A disabled feature does not execute its resolver.
+ *   - Optional lookups (culture badge, location display) are gated on
+ *     the caller's options BEFORE they run. A disabled feature does not
+ *     execute its resolver.
+ *
+ * LOCATION RESOLUTION:
+ *   `CharacterQueries.getCharacterSummary().location` is a STABLE SHAPE
+ *   PLACEHOLDER that is ALWAYS null. It is not a bug — it is the
+ *   contract. Location display resolution belongs to world.js, not to
+ *   the character query layer. See character-queries.js's LOCATION
+ *   DISPLAY header section for the rationale.
+ *
+ *   This module therefore resolves location display strings itself,
+ *   through world.js:
+ *
+ *     summary.locationId           raw currentLocationId (may be dangling)
+ *     world.getCurrentPlace(char)  canonical resolution (honors the
+ *                                  currentLocationId override and the
+ *                                  moves-based fallback)
+ *     place.displayName            the display string
+ *
+ *   Three states are distinguished and rendered differently:
+ *
+ *     no location recorded      summary.locationId === null
+ *                               → fallback text ("No location")
+ *     recorded but dangling     locationId non-null, resolved place null
+ *                               → fallback text ("Unknown location")
+ *     resolved                  place non-null
+ *                               → place.displayName
+ *
+ *   The distinction matters: "this character has no recorded location"
+ *   and "this character's recorded location no longer exists" are
+ *   different data problems, and a UI that collapses them into
+ *   "Unknown" hides the second one.
+ *
+ *   If world.js is not loaded (bare test harness), resolution returns
+ *   null and the fallback text is used. This module does not throw for
+ *   a missing optional resolver — the character list still renders, and
+ *   location fields simply show the fallback. This is different from
+ *   the query layer's culture badge, which is also optional but
+ *   resolves to '' (empty string) rather than a fallback text, because
+ *   the culture badge is a supplementary piece of decoration while
+ *   location is a first-class field in the card grid and the row
+ *   details line.
  *
  * REQUIRED CSS:
  *   This module emits the following classes. The stylesheet must define
@@ -67,27 +111,47 @@
  * DEPENDENCIES (OPTIONAL):
  *   - CultureQueries.getCultureDisplay(cultureId) — for culture badges
  *     If absent, culture badges are omitted.
+ *   - world.getCurrentPlace(character) — for location display resolution
+ *     If absent, location fields render the fallback text
+ *     ("No location"/"Unknown location") based on summary.locationId.
  *
  * ICON POLICY: Uses SVG from icons.js if available. No emojis. No Unicode
  * gender symbols.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 1.7):
+ *   Current revision:
+ *     - Location display resolution added. The card grid's Location
+ *       field previously rendered 'Unknown' unconditionally because
+ *       summary.location was always null (it is a stable shape
+ *       placeholder, documented in character-queries.js). The list
+ *       row's location detail was silently skipped for the same reason.
+ *       Both now resolve through world.getCurrentPlace(character),
+ *       using summary.locationId as the input. Three states are
+ *       distinguished: no location recorded, recorded but dangling,
+ *       and resolved. See LOCATION RESOLUTION in the header.
+ *     - _resolveLocationDisplay(summary, character, options) helper
+ *       added. Returns a string suitable for direct rendering after
+ *       escaping, or '' when the caller disabled location display.
+ *     - _renderRow now uses the resolver for its location detail line.
+ *       Previously checked `if (options.showLocation && summary.location)`
+ *       which never fired because summary.location is always null.
+ *     - renderCharacterCard now uses the resolver for its Location
+ *       field. Previously emitted `_esc(summary.location || 'Unknown')`
+ *       which always emitted 'Unknown' for every character.
+ *     - Header LOCATION RESOLUTION section added.
+ *     - DEPENDENCIES list updated: world.getCurrentPlace added as
+ *       OPTIONAL.
+ *     - No public signature change, no public return-shape change.
+ *   Phase 1.7:
  *     - _requireDependencies accepts character-system.js or accessors.js
- *       as the provider of window.getCharacters. The previous message
- *       named only accessors.js, which was misleading after
- *       character-system.js became the canonical override.
+ *       as the provider of window.getCharacters.
  *     - _renderRow and renderCharacterCard check options.showCulture
- *       BEFORE calling _cultureBadgeText. Previously the culture
- *       display was resolved for every row even when the badge was
- *       disabled, which forced CultureQueries.getCultureDisplay to run
- *       unconditionally.
- *     - Header DEPENDENCIES updated: character-system.js is listed
+ *       BEFORE calling _cultureBadgeText.
+ *     - Header DEPENDENCIES updated: character-system.js listed
  *       alongside accessors.js as the provider of getCharacters.
  *     - Header SEMANTIC RULES adds the "optional lookups are gated"
  *       clause.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -171,6 +235,59 @@
         return '';
     }
 
+    /**
+     * Resolves a display string for a character's current location, or ''.
+     *
+     * Inputs:
+     *   summary    — CharacterQueries.getCharacterSummary result.
+     *                summary.locationId is the raw currentLocationId
+     *                (may be dangling). summary.location is always null
+     *                and is never read here — see LOCATION RESOLUTION in
+     *                the module header.
+     *   character  — the raw character object the row/card is rendering.
+     *                Passed to world.getCurrentPlace(character) so the
+     *                resolver honors the currentLocationId override and
+     *                the moves-based fallback (which need more than just
+     *                the id).
+     *   options    — the caller-supplied options. Used to check
+     *                options.showLocation before doing any work.
+     *
+     * Returns:
+     *   ''                 when options.showLocation === false (caller
+     *                      disabled the field; do not render it at all)
+     *   'No location'      when the character has no recorded location
+     *   'Unknown location' when the character's recorded location is a
+     *                      dangling reference (id present, resolved
+     *                      place missing)
+     *   place.displayName  when the location resolves
+     *
+     * The three non-empty cases are the caller's three distinct UI
+     * states. This helper returns the display string only; the caller
+     * decides how to render it (separator, styling, etc.).
+     */
+    function _resolveLocationDisplay(summary, character, options) {
+        if (options && options.showLocation === false) return '';
+        if (!summary) return '';
+
+        var locationId = summary.locationId;
+        if (!_hasId(locationId)) return 'No location';
+
+        // world.js is an optional resolver. If it is absent, the location
+        // exists (locationId is non-null) but we cannot resolve the
+        // display string. Return the dangling-state text rather than
+        // fabricating a name.
+        if (typeof window.getCurrentPlace !== 'function') {
+            return 'Unknown location';
+        }
+
+        var place = window.getCurrentPlace(character);
+        if (!place) return 'Unknown location';
+        if (typeof place.displayName !== 'string' || place.displayName.length === 0) {
+            return 'Unknown location';
+        }
+        return place.displayName;
+    }
+
     // =========================================================================
     // 2. ROW RENDERING
     // =========================================================================
@@ -221,7 +338,12 @@
         // Details line
         var details = [];
         if (options.showAge) details.push(_formatAge(summary.age));
-        if (options.showLocation && summary.location) details.push(summary.location);
+
+        if (options.showLocation) {
+            var locationText = _resolveLocationDisplay(summary, character, options);
+            if (locationText) details.push(locationText);
+        }
+
         if (_hasId(character.household)) details.push(character.household);
 
         if (details.length > 0) {
@@ -382,6 +504,7 @@
      * @param {Object} character
      * @param {Object} [options]
      * @param {boolean} [options.showCulture] - default true
+     * @param {boolean} [options.showLocation] - default true
      * @returns {string}
      */
     function renderCharacterCard(character, options) {
@@ -393,6 +516,7 @@
 
         if (_isMissing(options)) options = {};
         var showCulture = options.showCulture !== false;
+        var showLocation = options.showLocation !== false;
 
         var summary = window.CharacterQueries.getCharacterSummary(character.id);
         if (!summary) {
@@ -446,11 +570,18 @@
              + _esc(summary.gender || 'Unknown')
              + '</div></div>';
 
-        html += '<div class="character-card__field">'
-             + '<div class="character-card__field-label">Location</div>'
-             + '<div class="character-card__field-value">'
-             + _esc(summary.location || 'Unknown')
-             + '</div></div>';
+        // Location field. showLocation === false omits the field entirely
+        // (not an empty row); when true, the resolver returns the display
+        // string or one of the two fallbacks ('No location' / 'Unknown
+        // location') so the field is never silently blank.
+        if (showLocation) {
+            var locationText = _resolveLocationDisplay(summary, character, options);
+            html += '<div class="character-card__field">'
+                 + '<div class="character-card__field-label">Location</div>'
+                 + '<div class="character-card__field-value">'
+                 + _esc(locationText || 'No location')
+                 + '</div></div>';
+        }
 
         html += '</div>'; // grid
 
