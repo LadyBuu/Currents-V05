@@ -29,7 +29,7 @@
  *   - Random selection uses randomness.js. No Math.random anywhere.
  *   - Random results are never cached.
  *   - Returned objects are defensive clones. Mutation for commands goes
- *     through NameState, not through this module.
+ *     through NamesState, not through this module.
  *   - This module is read-only.
  *   - No recursion guard.
  *
@@ -66,11 +66,17 @@
  *   name is returned once.
  *
  * NAME STATE:
- *   NameState is an OPTIONAL cache hint. The character record is
- *   canonical. If NameState is present, reads consult it first; if not,
- *   reads fall through to the character record directly. State's
+ *   NamesState is an OPTIONAL cache hint. The character record is
+ *   canonical. If NamesState is present, reads consult it first; if
+ *   not, reads fall through to the character record directly. State's
  *   accessors are named getMutable* to make the mutability contract
  *   explicit; this module uses them as a cache hint and then clones.
+ *
+ *   The lookup is on window.NamesState (plural), which is the
+ *   name-state.js primary export. window.NameState (singular) is a
+ *   backward-compat alias and is not consulted here, because relying
+ *   on the alias would couple this read path to the alias being
+ *   installed.
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:  getNameLists, getCharacterById
@@ -78,18 +84,23 @@
  *   - world.js:      getCharacterCountryId, getCountryIdForPlace
  *
  * DEPENDENCIES (OPTIONAL):
- *   - name-state.js: NameState (cache hint only)
+ *   - name-state.js: NamesState (cache hint only)
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Original: cache-hint-based read module with defensive clone.
- *   Current:
+ *   Prior revision:
  *     - Error messages name the failing level (accessor vs. data).
  *     - Ancestor recursion bounded-by-grammar documented.
  *     - getAncestorNames dedup reason documented.
- *     - No behavioural change.
+ *   Current revision:
+ *     - Cache-hint lookup migrated from window.NameState (singular) to
+ *       window.NamesState (plural), matching name-state.js's primary
+ *       export. The singular name is a backward-compat alias and must
+ *       not be relied upon by internal consumers.
+ *     - No behavioural change beyond the rename.
  * =============================================================================
  */
 
@@ -484,7 +495,7 @@
     // =========================================================================
     //
     // The canonical owner of surname history is the character record. This
-    // module reads it, optionally through the NameState cache, and returns
+    // module reads it, optionally through the NamesState cache, and returns
     // a defensive copy so callers cannot mutate canonical data by accident.
     //
     // Three failure modes, three responses:
@@ -496,9 +507,9 @@
     function _readSurnameHistory(characterId) {
         if (!_hasId(characterId)) return null;
 
-        if (typeof window.NameState !== 'undefined'
-            && typeof window.NameState.getMutableSurnameHistory === 'function') {
-            var cached = window.NameState.getMutableSurnameHistory(characterId);
+        if (typeof window.NamesState !== 'undefined'
+            && typeof window.NamesState.getMutableSurnameHistory === 'function') {
+            var cached = window.NamesState.getMutableSurnameHistory(characterId);
             if (cached) return cached;
         }
 
