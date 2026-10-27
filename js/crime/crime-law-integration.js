@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME LAW INTEGRATION (crime-law-integration.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/crime-law-integration.js
+ * LOCATION: js/crime/crime-law-integration.js
  *
  * PURPOSE:
  *   The boundary between the Crime domain and the two law systems
@@ -75,9 +75,40 @@
  *   Precedence is applied inside evaluateAction. There is no separate
  *   "apply supremacy afterwards" step.
  *
- * DEPENDENCIES (required):
- *   - ReligionLaws (or ReligionState as documented fallback source for laws)
- *   - GovernmentLaws (or SettlementState.getCivilLaws as documented fallback)
+ * CANONICAL LAW SOURCES (settlement domain, post-refactor):
+ *
+ *   Civil laws:
+ *     SettlementLawQueries.getCivilLaws(locationId)      ← canonical
+ *     GovernmentLaws.getCivilLaws(locationId)            ← alternative
+ *
+ *   The previous version of this file also probed
+ *   SettlementState.getCivilLaws and SettlementQueries.getCivilLaws.
+ *   Neither exists on those modules. The probes were dead code and have
+ *   been removed. If a build still exposes GovernmentLaws, that is
+ *   accepted as an alternative — but SettlementLawQueries is now the
+ *   primary source.
+ *
+ *   Religious laws:
+ *     ReligionLaws.getLawsByReligion(religionId)         ← canonical
+ *     ReligionState.getLawsByReligion(religionId)        ← alternative
+ *
+ *   Dominant religion:
+ *     SettlementReligionQueries.getDominantReligion(loc) ← canonical
+ *     SettlementState.getDominantReligion(locationId)    ← alternative
+ *
+ *   The previous version of _getDominantReligion had a silent
+ *   `return null` fallback when neither source was available. In a
+ *   theocracy that meant religious laws were silently skipped, and a
+ *   murder that violated religious law could be recorded as lawful.
+ *   crime-docs.txt §19 prohibits silent failure. The fallback has been
+ *   removed: if no source for the dominant religion exists and the
+ *   settlement context requires it (theocracy), evaluateAction throws
+ *   loudly.
+ *
+ * DEPENDENCIES (required at call time; no fabricated fallbacks):
+ *   - ReligionLaws (or ReligionState) as documented above
+ *   - SettlementLawQueries (or GovernmentLaws) as documented above
+ *   - SettlementReligionQueries (or SettlementState) as documented above
  *   - getCharacterById, getCurrentLocationId
  *   - SettlementState.getSettlementData
  *
@@ -130,6 +161,9 @@
     }
 
     function _getReligionLaws(religionId) {
+        // Canonical source first. ReligionLaws is verified by
+        // crime-bootstrap.js as a required module. ReligionState is
+        // accepted as an alternative during migration.
         if (typeof window.ReligionLaws !== 'undefined' &&
             typeof window.ReligionLaws.getLawsByReligion === 'function') {
             return window.ReligionLaws.getLawsByReligion(religionId);
@@ -142,31 +176,47 @@
     }
 
     function _getCivilLaws(locationId) {
+        // Canonical source first. SettlementLawQueries is verified by
+        // crime-bootstrap.js as a required module. GovernmentLaws is
+        // accepted as an alternative during migration.
+        //
+        // The previous version also probed SettlementState.getCivilLaws
+        // and SettlementQueries.getCivilLaws. Neither method exists on
+        // those modules; both probes were dead code. Removed.
+        if (typeof window.SettlementLawQueries !== 'undefined' &&
+            typeof window.SettlementLawQueries.getCivilLaws === 'function') {
+            return window.SettlementLawQueries.getCivilLaws(locationId);
+        }
         if (typeof window.GovernmentLaws !== 'undefined' &&
             typeof window.GovernmentLaws.getCivilLaws === 'function') {
             return window.GovernmentLaws.getCivilLaws(locationId);
-        }
-        if (typeof window.SettlementState !== 'undefined' &&
-            typeof window.SettlementState.getCivilLaws === 'function') {
-            return window.SettlementState.getCivilLaws(locationId);
-        }
-        if (typeof window.SettlementQueries !== 'undefined' &&
-            typeof window.SettlementQueries.getCivilLaws === 'function') {
-            return window.SettlementQueries.getCivilLaws(locationId);
         }
         throw new Error('[CrimeLawIntegration] No source for civil laws is available.');
     }
 
     function _getDominantReligion(locationId) {
+        // Canonical source first. SettlementReligionQueries is verified by
+        // crime-bootstrap.js as a required module. SettlementState is
+        // accepted as an alternative during migration.
+        //
+        // There is NO silent `return null` fallback. If neither source
+        // exists, this function throws. The previous version returned
+        // null silently, which meant a theocracy would skip religious law
+        // and a murder that violated religious law could be recorded as
+        // lawful. crime-docs.txt §19 prohibits silent failure.
+        if (typeof window.SettlementReligionQueries !== 'undefined' &&
+            typeof window.SettlementReligionQueries.getDominantReligion === 'function') {
+            return window.SettlementReligionQueries.getDominantReligion(locationId);
+        }
         if (typeof window.SettlementState !== 'undefined' &&
             typeof window.SettlementState.getDominantReligion === 'function') {
             return window.SettlementState.getDominantReligion(locationId);
         }
-        if (typeof window.SettlementQueries !== 'undefined' &&
-            typeof window.SettlementQueries.getDominantReligion === 'function') {
-            return window.SettlementQueries.getDominantReligion(locationId);
-        }
-        return null;
+        throw new Error(
+            '[CrimeLawIntegration] No source for dominant religion is available. ' +
+            'Cannot evaluate religious law without SettlementReligionQueries ' +
+            '(or SettlementState.getDominantReligion).'
+        );
     }
 
     function _getReligionName(religionId) {
