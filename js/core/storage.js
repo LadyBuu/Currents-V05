@@ -15,12 +15,13 @@
  *   - Debounced save scheduling via markDataDirty
  *
  * OUT OF SCOPE:
- *   - Schema shape and default data → storage-schema.js
- *   - Migration between schema versions → database.js (or the schema module
- *     if migration is co-located there)
- *   - Export/download → exportUtils.js
- *   - Cache invalidation → mutation boundaries
- *   - UI feedback → caller
+ *   - Schema shape and default data -> storage-schema.js
+ *   - Migration between schema versions -> database.js (or the schema
+ *     module if migration is co-located there)
+ *   - Export/download -> exportUtils.js
+ *   - Cache invalidation orchestration -> mutation boundaries (but
+ *     storage.js performs the invalidation at the cross-tab boundary)
+ *   - UI feedback -> caller
  *   - Cross-tab conflict prevention beyond "do not discard dirty state"
  *
  * SEMANTIC RULES:
@@ -31,8 +32,15 @@
  *     debounce fires automatically.
  *
  *   - saveMasterData() is the canonical synchronous persistence
- *     operation. It returns true only if the write actually succeeded.
+ *     operation. It returns true ONLY if the write actually succeeded.
  *     It clears any pending debounced save (the write just happened).
+ *
+ *   - saveMasterDataOrThrow() is a wrapper for callers that prefer
+ *     throw-on-failure semantics. The underlying saveMasterData() does
+ *     NOT throw on write failure; it returns false. Domain persist()
+ *     implementations that return { success, reason } MUST inspect the
+ *     boolean return value; they must not assume that a caught
+ *     exception means "save failed." See DOMAIN PERSIST CONTRACT below.
  *
  *   - scheduleSave() is exposed for callers that want to schedule a
  *     save without marking dirty (rare; the debounce is normally
@@ -50,7 +58,7 @@
  *     attempted). Callers that want to report a save failure reason
  *     read this after saveMasterData() returns false.
  *
- *   - load: no entry → defaults; valid entry → load; corrupt entry →
+ *   - load: no entry -> defaults; valid entry -> load; corrupt entry ->
  *     signal failure without replacing window.masterData.
  *
  *   - import: does not report success if validation or save failed.
@@ -61,6 +69,34 @@
  *   - cross-tab: does not silently overwrite unsaved local changes, but
  *     also does not prevent a later overwrite. See CROSS-TAB CONFLICT.
  *
+ * DOMAIN PERSIST CONTRACT (IMPORTANT):
+ *   Domain persist() functions (name-commands.js, rank-commands.js,
+ *   education-commands.js, etc.) return { success, reason? }. They MUST
+ *   use one of these two patterns:
+ *
+ *     Pattern A (recommended, used by rank-commands.js):
+ *       var ok = window.saveMasterData();
+ *       if (ok === true) return { success: true };
+ *       var err = window.getLastSaveError();
+ *       return { success: false, reason: err ? err.message : 'unknown' };
+ *
+ *     Pattern B (used by nothing today, but supported):
+ *       try {
+ *           window.saveMasterDataOrThrow();
+ *           return { success: true };
+ *       } catch (e) {
+ *           return { success: false, reason: e.message };
+ *       }
+ *
+ *   Pattern C (BROKEN, was used by name-commands.js pre-fix):
+ *       try {
+ *           window.saveMasterData();   // return value discarded
+ *           return { success: true };  // always success
+ *       } catch (e) { ... }
+ *
+ *   Pattern C silently reports success on every failed save. Do not
+ *   reintroduce it. The name-commands.js bug was exactly this pattern.
+ *
  * CROSS-TAB CONFLICT:
  *   The policy is: "do not automatically discard unsaved local changes."
  *   It is NOT: "prevent two tabs from overwriting each other's data."
@@ -69,15 +105,29 @@
  *   changes. Preventing that requires a revision/compare-before-write
  *   strategy, which is out of scope for this module.
  *
+ * CROSS-TAB CACHE INVALIDATION:
+ *   When a cross-tab reload replaces window.masterData, the accessor
+ *   cache (accessors.js) is stale. This module invalidates it via
+ *   window.invalidateAccessorCaches() BEFORE dispatching
+ *   masterDataUpdated, so every domain that hydrates from the event
+ *   sees a fresh accessor cache. Domains that hydrate from the event
+ *   do NOT need their own invalidation call; doing so is redundant but
+ *   harmless.
+ *
+ *   This invalidation is the storage module's responsibility, not the
+ *   domain's, because storage owns the "reload" operation. It is the
+ *   only place where a reload can originate (cross-tab, import, reset
+ *   with force), and every reload path must go through it.
+ *
  * PERSISTENCE TRIGGER (IMPORTANT):
  *   Every domain that mutates canonical data calls window.markDataDirty().
- *   That call now schedules a debounced save. The result:
+ *   That call schedules a debounced save. The result:
  *
- *     - CharacterState._emitChange  → markDataDirty → scheduled save
- *     - FamilyCommands._commit      → markDataDirty → scheduled save
- *     - ChildrenCommands._commit    → markDataDirty → scheduled save
- *     - RelationshipState._markDirty → markDataDirty → scheduled save
- *     - RoleState._syncToMasterData → markDataDirty → scheduled save
+ *     - CharacterState._emitChange  -> markDataDirty -> scheduled save
+ *     - FamilyCommands._commit      -> markDataDirty -> scheduled save
+ *     - ChildrenCommands._commit    -> markDataDirty -> scheduled save
+ *     - RelationshipState._markDirty -> markDataDirty -> scheduled save
+ *     - RoleState._syncToMasterData -> markDataDirty -> scheduled save
  *
  *   The role domain additionally calls RoleCommands.persist(), which
  *   invokes saveMasterData() synchronously after user actions (modal
@@ -93,7 +143,7 @@
  *   storage-schema.js, which is a required dependency.
  *
  * MIGRATION:
- *   storage.js orchestrates the load → migrate → normalize → install
+ *   storage.js orchestrates the load -> migrate -> normalize -> install
  *   pipeline. Actual migration transformations live with the schema.
  *   Assigning the current version label to a legacy envelope is NOT
  *   migration; if the persisted data is at an older schema version,
@@ -105,11 +155,35 @@
  *                        STORAGE_SCHEMA_VERSION
  *
  * OPTIONAL:
- *   - validation.js: validateImportData (used by import; if absent, import
- *                    rejects the file rather than installing unvalidated data)
+ *   - accessors.js:      invalidateAccessorCaches (used at cross-tab reload)
+ *   - validation.js:     validateImportData (used by import; if absent,
+ *                        import rejects the file rather than installing
+ *                        unvalidated data)
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P1 + P2 from the rank module plan):
+ *     - saveMasterDataOrThrow() wrapper added. saveMasterData() continues
+ *       to return a boolean and NOT throw on write failure. The DOMAIN
+ *       PERSIST CONTRACT section documents the correct and incorrect
+ *       patterns for domain persist() implementations.
+ *     - Cross-tab reload now calls window.invalidateAccessorCaches()
+ *       before dispatching masterDataUpdated. This fixes the stale
+ *       accessor cache that every hydrating domain was inheriting.
+ *     - _processImport now wraps validateImportData() in try/catch.
+ *       A validator that throws is now treated as a validation failure,
+ *       not as an uncaught exception that leaves masterData half-swapped.
+ *     - _processImport now calls invalidateAccessorCaches() after a
+ *       successful save, matching the cross-tab reload path.
+ *     - resetMasterData() now calls invalidateAccessorCaches() after a
+ *       successful save, matching the cross-tab reload path.
+ *     - Header documentation expanded with DOMAIN PERSIST CONTRACT and
+ *       CROSS-TAB CACHE INVALIDATION sections.
+ *     - No other behavioural change. The load path, save path, debounce
+ *       timing, and import pipeline are unchanged except for the added
+ *       cache invalidation and try/catch.
  * =============================================================================
  */
 
@@ -366,6 +440,10 @@
      * This is the canonical persistence operation. If a debounced save
      * was pending, it is cancelled (the write just happened synchronously).
      *
+     * Does NOT throw on write failure. Returns false and records the
+     * failure in _lastSaveError. See DOMAIN PERSIST CONTRACT in the header
+     * for the correct and incorrect patterns for domain persist() wrappers.
+     *
      * On failure, getLastSaveError() returns the underlying Error.
      *
      * @returns {boolean}
@@ -393,6 +471,24 @@
         _lastSaveError = result.error || new Error('unknown save failure');
         console.error('storage.js: save failed:', _lastSaveError);
         return false;
+    }
+
+    /**
+     * Saves masterData to localStorage immediately, throwing on failure.
+     *
+     * Wrapper around saveMasterData() for callers that prefer
+     * throw-on-failure semantics. Use this when the caller's error
+     * handling is try/catch-based. Do NOT use this as a substitute for
+     * saveMasterData() in a domain persist() that must inspect the boolean
+     * return — both patterns work, but the boolean pattern is preferred
+     * for its explicitness.
+     *
+     * @throws {Error} if the save fails
+     * @returns {true}
+     */
+    function saveMasterDataOrThrow() {
+        if (saveMasterData()) return true;
+        throw _lastSaveError || new Error('saveMasterData failed');
     }
 
     /**
@@ -512,10 +608,14 @@
      * saves.
      *
      * Pipeline:
-     *   parse → recognize format → normalize → validate → install → save
+     *   parse -> recognize format -> normalize -> validate -> install -> save
      *
      * Does NOT report success if validation or save failed. On save
      * failure, the prior in-memory state is restored.
+     *
+     * A validator that throws is treated as a validation failure (not an
+     * uncaught exception). This prevents a broken validation.js from
+     * leaving masterData half-swapped between the old and new payload.
      *
      * @param {Function} [onComplete] - callback(result):
      *   { ok: true, charCount }
@@ -611,14 +711,32 @@
         // If validation.js isn't loaded, reject rather than installing
         // unvalidated data.
         if (typeof window.validateImportData === 'function') {
-            var validation = window.validateImportData(envelope);
-            if (!validation.isValid) {
+            var validation;
+            try {
+                validation = window.validateImportData(envelope);
+            } catch (validatorError) {
+                // A throwing validator is a validation failure, not an
+                // uncaught exception. Do not let it escape the pipeline
+                // and leave masterData half-swapped.
+                return {
+                    ok: false,
+                    error: 'validation-failed',
+                    message: 'Import validation threw: ' +
+                        (validatorError && validatorError.message
+                            ? validatorError.message
+                            : String(validatorError))
+                };
+            }
+            if (!validation || validation.isValid !== true) {
+                var errors = validation && Array.isArray(validation.errors)
+                    ? validation.errors
+                    : [];
                 return {
                     ok: false,
                     error: 'validation-failed',
                     message: 'Import validation failed: ' +
-                        validation.errors.slice(0, 5).join('; ') +
-                        (validation.errors.length > 5 ? ' (and more)' : '')
+                        errors.slice(0, 5).join('; ') +
+                        (errors.length > 5 ? ' (and more)' : '')
                 };
             }
         } else {
@@ -648,6 +766,14 @@
                         : 'unknown')
             };
         }
+
+        // Successful import: the accessor cache is stale because
+        // masterData.data was replaced wholesale. Invalidate it so every
+        // domain reads fresh data. Domains that subscribe to
+        // masterDataUpdated will also rehydrate; the invalidate is
+        // performed here so the cache is consistent even before the
+        // event fires.
+        _invalidateAccessorCaches();
 
         var charCount = Array.isArray(envelope.data.characters)
             ? envelope.data.characters.length
@@ -688,6 +814,12 @@
                         : 'save-failed'
                 };
             }
+
+            // Successful reset: masterData.data was replaced wholesale.
+            // Invalidate the accessor cache so every domain reads fresh
+            // data.
+            _invalidateAccessorCaches();
+
             return { ok: true };
         } catch (e) {
             console.error('storage.js: reset failed:', e);
@@ -725,6 +857,19 @@
 
                 var result = loadMasterData();
                 if (result.ok) {
+                    // The in-memory masterData is now the freshly-loaded
+                    // payload. The accessor cache still holds records
+                    // from the pre-reload payload, so it is stale.
+                    //
+                    // Invalidate BEFORE dispatching masterDataUpdated so
+                    // that every domain that hydrates from the event
+                    // (character-state, family-state, children-state,
+                    // rank-state, etc.) sees a fresh accessor cache.
+                    //
+                    // Domains do NOT need their own invalidation call.
+                    // Doing so is redundant but harmless.
+                    _invalidateAccessorCaches();
+
                     try {
                         window.dispatchEvent(new CustomEvent('masterDataUpdated', {
                             detail: { source: 'cross-tab' }
@@ -738,7 +883,34 @@
     }
 
     // =========================================================================
-    // 11. INITIALIZATION
+    // 11. CACHE INVALIDATION HELPER
+    // =========================================================================
+
+    /**
+     * Invalidates the accessor cache (accessors.js), if present.
+     *
+     * Called at every reload boundary:
+     *   - successful cross-tab reload
+     *   - successful import
+     *   - successful reset
+     *
+     * Failure to invalidate means accessors.getCharacterById (and every
+     * other getXById) returns records from the pre-reload payload.
+     * Downstream consumers read stale data.
+     *
+     * Defensive: if accessors.js is not loaded, the call is a no-op. In
+     * that case there is no cache to invalidate.
+     *
+     * @private
+     */
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+    }
+
+    // =========================================================================
+    // 12. INITIALIZATION
     // =========================================================================
     //
     // Dependencies are required. If they aren't loaded, we throw. The
@@ -752,7 +924,7 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.STORAGE_CONFIG = STORAGE_CONFIG;
@@ -763,7 +935,8 @@
     window.loadMasterData = loadMasterData;
     window.reloadMasterData = reloadMasterData;
     window.forceReloadData = forceReloadData; // deprecated alias
-    window.saveMasterData = saveMasterData;   // synchronous, truthful
+    window.saveMasterData = saveMasterData;   // synchronous, returns boolean
+    window.saveMasterDataOrThrow = saveMasterDataOrThrow; // synchronous, throws
     window.scheduleSave = scheduleSave;       // debounced, non-claiming
     window.flushPendingSave = flushPendingSave;
 
