@@ -77,6 +77,12 @@
  *   HouseholdState.setUIState(key, value)
  *   HouseholdState.updateUIState(updates)
  *
+ *   Facade compatibility surface (reads/writes core/state.js):
+ *   HouseholdState.selectedHouseholdId  (get/set)
+ *   HouseholdState.setSelectedHousehold(id)
+ *   HouseholdState.hasSelectedHousehold()
+ *   HouseholdState.reset()
+ *
  * INTERNAL API (HouseholdState._internal)
  * ---------------------------------------
  *   Only HouseholdCommands and HouseholdQueries should call these.
@@ -96,6 +102,19 @@
  *   HouseholdState._internal.getXCanonical(id)  → getXRecord(id)
  *   HouseholdState._internal.loadData()         → hydrateFromMasterData()
  *
+ * NAMESPACE OWNERSHIP
+ * -------------------
+ *   This file is the SINGLE owner of window.HouseholdState. The historical
+ *   js/core/household-state.js UI shim has been deleted. The shim's
+ *   surface (selectedHouseholdId, setSelectedHousehold,
+ *   hasSelectedHousehold, reset) is provided here as a compatibility block
+ *   that delegates to the module's own UI-state store.
+ *
+ *   A collision guard at the bottom of this file throws if
+ *   window.HouseholdState was already defined by another module when this
+ *   file loads. That makes any future accidental duplication loud instead
+ *   of silent.
+ *
  * DEPENDENCIES (REQUIRED at load):
  *   - storage.js (window.masterData)
  *
@@ -112,6 +131,24 @@
 
 (function() {
     'use strict';
+
+    // =========================================================================
+    // 0. COLLISION GUARD
+    // =========================================================================
+    //
+    // If another module has already claimed window.HouseholdState, refuse to
+    // load. Silent clobbering is how the location/role/rank/household
+    // namespace collisions happened. The core UI shim has been removed;
+    // there must be exactly one HouseholdState in the tree.
+
+    if (typeof window.HouseholdState !== 'undefined'
+        && window.HouseholdState.__owner !== 'households/household-state.js') {
+        throw new Error(
+            'households/household-state.js: window.HouseholdState is already ' +
+            'defined by another module. The historical core UI shim must be ' +
+            'deleted, not loaded alongside this file.'
+        );
+    }
 
     // =========================================================================
     // 1. DEPENDENCY VERIFICATION (load time)
@@ -533,6 +570,55 @@
     }
 
     // =========================================================================
+    // 7b. FACADE COMPATIBILITY SURFACE
+    // =========================================================================
+    //
+    // The historical js/core/household-state.js exposed selectedHouseholdId,
+    // setSelectedHousehold, hasSelectedHousehold, and reset as top-level
+    // properties/methods. That file has been deleted; the surface is
+    // provided here so core/state.js continues to work unchanged.
+    //
+    // These delegates read/write _state.uiState.selectedHouseholdId.
+    // They are the ONLY reason this module exposes a UI-shaped surface
+    // beyond getUIState()/setUIState()/updateUIState(); the canonical
+    // storage remains the UI-state store.
+
+    function _getSelectedHouseholdId() {
+        return _state.uiState.selectedHouseholdId;
+    }
+
+    function _setSelectedHouseholdId(value) {
+        _state.uiState.selectedHouseholdId = value;
+        publish('uiStateChange', {
+            key: 'selectedHouseholdId',
+            value: value
+        });
+    }
+
+    function setSelectedHousehold(id) {
+        _setSelectedHouseholdId(id);
+    }
+
+    function hasSelectedHousehold() {
+        return _state.uiState.selectedHouseholdId !== null;
+    }
+
+    function reset() {
+        updateUIState({
+            selectedHouseholdId: null,
+            selectedCharacterId: null,
+            selectedPositionId: null,
+            filters: {
+                searchTerm: '',
+                statusFilter: 'all',
+                locationFilter: 'all'
+            },
+            viewMode: 'list',
+            expandedHouseholds: {}
+        });
+    }
+
+    // =========================================================================
     // 8. INTERNAL MUTATION SEAM
     // =========================================================================
 
@@ -884,6 +970,9 @@
     // =========================================================================
 
     var HouseholdState = {
+        // Namespace ownership marker — see collision guard at top.
+        __owner: 'households/household-state.js',
+
         // Public: lifecycle
         subscribe: subscribe,
         invalidateCache: invalidateCache,
@@ -902,6 +991,13 @@
         getUIState: getUIState,
         setUIState: setUIState,
         updateUIState: updateUIState,
+
+        // Facade compatibility surface (core/state.js reads these).
+        get selectedHouseholdId() { return _getSelectedHouseholdId(); },
+        set selectedHouseholdId(v) { _setSelectedHouseholdId(v); },
+        setSelectedHousehold: setSelectedHousehold,
+        hasSelectedHousehold: hasSelectedHousehold,
+        reset: reset,
 
         // Internal: mutation boundary (Commands only)
         _internal: {
