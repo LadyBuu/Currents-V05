@@ -8,6 +8,7 @@
  *   - Collect input
  *   - Render projections from ApprenticeshipQueries
  *   - Call ApprenticeshipCommands
+ *   - Persist via ApprenticeshipCommands.persist()
  *   - Display results
  *
  * NO direct relationship.metadata access.
@@ -15,6 +16,25 @@
  * NO policy decisions (thresholds come from Rules).
  * NO Math.random(). No timers. No global document.querySelectorAll.
  * All DOM queries are scoped to the modal's own subtree.
+ *
+ * PERSISTENCE
+ *
+ *   ApprenticeshipCommands no longer flushes on every mutation. This
+ *   module is the batch boundary: after a successful command, it calls
+ *   ApprenticeshipCommands.persist() once. If the disk save fails, a
+ *   warning toast is shown but the in-memory mutation stands — same
+ *   policy as modals-roles.js (_persistAndWarn).
+ *
+ *   Every command handler that mutates state MUST follow this pattern:
+ *
+ *       var result = C.someCommand(...);
+ *       if (!result.success) { _showToast(...); return false; }
+ *       _persistAndWarn(successMessage);
+ *       // proceed with UI updates
+ *
+ *   Missing _persistAndWarn means the user's action lives only in
+ *   memory until the next markDataDirty-triggering action. That is a
+ *   bug. All mutating handlers below call it.
  *
  * CONFIRMATION DIALOG CONTRACT
  *
@@ -118,7 +138,34 @@
     }
 
     // =========================================================================
-    // 3. PRESENTATION HELPERS
+    // 3. PERSISTENCE HELPER
+    // =========================================================================
+    //
+    // Runs ApprenticeshipCommands.persist() and toasts a warning if the
+    // disk write failed. The in-memory write is already done; this only
+    // reports whether it reached storage. Never rolls back.
+    //
+    // Mirrors modals-roles.js's _persistAndWarn. See PERSISTENCE in the
+    // module header for the rationale.
+
+    function _persistAndWarn(successMessage) {
+        var persistResult = C.persist();
+        if (!persistResult.success) {
+            _showToast(
+                'Change saved in memory, but disk save failed: ' +
+                (persistResult.reason || 'unknown'),
+                'warning'
+            );
+            return false;
+        }
+        if (successMessage) {
+            _showToast(successMessage, 'success');
+        }
+        return true;
+    }
+
+    // =========================================================================
+    // 4. PRESENTATION HELPERS
     // =========================================================================
 
     function _personLine(char) {
@@ -143,7 +190,7 @@
     }
 
     // =========================================================================
-    // 4. CREATE MODAL
+    // 5. CREATE MODAL
     // =========================================================================
 
     function openCreateApprenticeshipModal(master, candidate, onSuccess) {
@@ -248,7 +295,7 @@
                 });
 
                 if (result.success) {
-                    _showToast('Apprenticeship created', 'success');
+                    _persistAndWarn('Apprenticeship created');
                     _closeTopModal();
                     if (typeof onSuccess === 'function') onSuccess(result.data);
                     return true;
@@ -260,7 +307,7 @@
     }
 
     // =========================================================================
-    // 5. EDIT MODAL
+    // 6. EDIT MODAL
     // =========================================================================
 
     function openEditApprenticeshipModal(masterId, apprenticeId, roleId, onSuccess) {
@@ -341,7 +388,7 @@
                 });
 
                 if (result.success) {
-                    _showToast('Apprenticeship updated', 'success');
+                    _persistAndWarn('Apprenticeship updated');
                     _closeTopModal();
                     if (typeof onSuccess === 'function') onSuccess(result.data);
                     return true;
@@ -359,6 +406,7 @@
                     masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
                 );
                 if (result.success) {
+                    _persistAndWarn(null);
                     _showToast('Progressed by ' + result.data.gained, 'success');
                     var input = document.getElementById('editSkillLevel');
                     if (input) input.value = result.data.newSkill;
@@ -375,7 +423,7 @@
                 _confirm('Complete this apprenticeship?', function () {
                     var result = C.completeApprenticeship(masterId, apprenticeId, roleId);
                     if (result.success) {
-                        _showToast('Apprenticeship completed', 'success');
+                        _persistAndWarn('Apprenticeship completed');
                         _closeTopModal();
                         if (typeof onSuccess === 'function') onSuccess(result.data);
                     } else {
@@ -387,7 +435,7 @@
     }
 
     // =========================================================================
-    // 6. DETAILS MODAL
+    // 7. DETAILS MODAL
     // =========================================================================
 
     function openApprenticeshipDetailsModal(masterId, apprenticeId, roleId, onClose) {
@@ -497,6 +545,7 @@
                     masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
                 );
                 if (result.success) {
+                    _persistAndWarn(null);
                     _showToast('Progressed by ' + result.data.gained, 'success');
                     _closeTopModal();
                     openApprenticeshipDetailsModal(
@@ -517,7 +566,7 @@
                         masterId, apprenticeId, roleId
                     );
                     if (result.success) {
-                        _showToast('Completed', 'success');
+                        _persistAndWarn('Completed');
                         _closeTopModal();
                         if (typeof onClose === 'function') onClose(result.data);
                     } else {
@@ -527,7 +576,7 @@
             });
         }
 
-        // Terminate — now requires roleId
+        // Terminate — requires roleId
         var terminateBtn = document.getElementById('terminateAppBtn');
         if (terminateBtn) {
             terminateBtn.addEventListener('click', function () {
@@ -536,6 +585,7 @@
                         masterId, apprenticeId, roleId, 'Terminated by user'
                     );
                     if (result.success) {
+                        _persistAndWarn(null);
                         _showToast('Terminated', 'info');
                         _closeTopModal();
                         if (typeof onClose === 'function') onClose(result.data);
@@ -548,7 +598,7 @@
     }
 
     // =========================================================================
-    // 7. MASTER TREE MODAL
+    // 8. MASTER TREE MODAL
     // =========================================================================
 
     function openViewMasterTreeModal(masterId, onClose) {
@@ -623,7 +673,7 @@
     }
 
     // =========================================================================
-    // 8. FIND MASTER BY LOCATION MODAL
+    // 9. FIND MASTER BY LOCATION MODAL
     // =========================================================================
 
     function openFindMasterByLocationModal(locationId, roleId, onSelect) {
@@ -696,7 +746,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.openCreateApprenticeshipModal   = openCreateApprenticeshipModal;
