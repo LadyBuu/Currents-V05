@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME & VENDETTA STATE (crime-state.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/crime-state.js
+ * LOCATION: js/crime/crime-state.js
  *
  * PURPOSE:
  *   Single domain authority for crime and vendetta records. Owns storage,
@@ -56,10 +56,14 @@
  *   Codes are from CrimeConstants.CODES. This is the same contract the
  *   Command layer uses. State commands and Command commands share it.
  *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
+ *
  * DEPENDENCIES (required, verified at load):
  *   - CrimeConstants
  *   - generateId
- *   - getCurrentYearSafe
+ *   - getCurrentYear
  *   - markDataDirty
  *   - getCharacterById
  *   - getHouseholdById
@@ -86,8 +90,8 @@
     if (typeof window.generateId !== 'function') {
         throw new Error('crime-state.js requires generateId');
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
-        throw new Error('crime-state.js requires getCurrentYearSafe');
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('crime-state.js requires getCurrentYear');
     }
     if (typeof window.markDataDirty !== 'function') {
         throw new Error('crime-state.js requires markDataDirty');
@@ -119,7 +123,15 @@
     // 2. INTERNAL HELPERS
     // =========================================================================
 
-    function _now() { return window.getCurrentYearSafe(); }
+    function _now() {
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'crime-state.js requires time.js (getCurrentYear).'
+            );
+        }
+        return window.getCurrentYear();
+    }
+
     function _ok(data) { return { success: true, data: data }; }
     function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
 
@@ -366,7 +378,7 @@
         var savedVendettas = Array.isArray(d.vendettas) ? d.vendettas : [];
 
         var nextCrimes = _emptyCrimeIndexes();
-        var nextVendettas = _emptyVendettas();
+        var nextVendettas = _emptyVendettaIndexes();
 
         for (var i = 0; i < savedCrimes.length; i++) {
             var crime = savedCrimes[i];
@@ -399,10 +411,6 @@
     // Legacy alias. Used during migration from the pre-refactor surface.
     function _initialize() {
         hydrateFromMasterData(false);
-    }
-
-    function _emptyVendettas() {
-        return _emptyVendettaIndexes();
     }
 
     // =========================================================================
@@ -1128,7 +1136,7 @@
         if (_mutatingState) return false;
 
         _state.crimes = _emptyCrimeIndexes();
-        _state.vendettas = _emptyVendettas();
+        _state.vendettas = _emptyVendettaIndexes();
         _state.initialized = false;
 
         try {
