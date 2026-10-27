@@ -24,7 +24,42 @@
  *   - randomness
  *   - cultural gating (callers consult CultureRules)
  *
+ * MULTI-PARTNER FACTS (DECISION RECORD)
+ *
+ *   Multi-spouse permission is rank-only. The canonical source is
+ *   rank.allowsMultipleSpouses, surfaced through
+ *   RomanceCommands._getExternalMultiPartnerFacts as
+ *   externalFacts.allowsMultipleByRank.
+ *
+ *   `allowsMultipleByTrait` is preserved in the returned facts shape
+ *   for one revision as a pass-through of the caller-supplied
+ *   externalFacts field, which romance-commands supplies as a
+ *   hardcoded `false`. It carries no behavioural weight: the
+ *   RomanceRules.canHaveMultiplePartners condition that reads it will
+ *   always see `false`. It and its consumers are removed together in
+ *   the follow-up, alongside the corresponding initializer in
+ *   romance-commands.js and the condition in romance-rules.js.
+ *
+ *   When the field is supplied as `undefined` (a direct caller that
+ *   did not go through romance-commands), the `!!` coercion yields
+ *   `false`. That is intentional: there is no code path in the current
+ *   tree that can legitimately produce `true`, so a caller that
+ *   supplies the field is doing so as a legacy exercise, not as a
+ *   policy decision.
+ *
  * Load order: after relationship-queries.js and romance-rules.js.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getMultiPartnerFacts docstring updated to document the
+ *       rank-only multi-partner policy and the interim
+ *       allowsMultipleByTrait behaviour.
+ *     - No behavioural change to any function. The field is still
+ *       returned with the same coercion; callers that went through
+ *       romance-commands observe `false` for it because that module
+ *       now supplies `false`.
+ * =============================================================================
  */
 
 (function() {
@@ -341,6 +376,21 @@
 
     // -------------------------------------------------------------------------
     // MULTI-PARTNER FACTS
+    //
+    // The caller supplies `externalFacts` — facts that only the caller
+    // can know: rank-based multi-spouse permission, trait-based
+    // permission, etc. See MULTI-PARTNER FACTS in the module header for
+    // the rank-only decision and the interim allowsMultipleByTrait
+    // behaviour.
+    //
+    // Shape returned:
+    //   {
+    //     existingCommittedCount,
+    //     anyPolyamorous,
+    //     allowsMultipleByRank,     boolean, from externalFacts
+    //     allowsMultipleByTrait     boolean, from externalFacts
+    //                               (interim — always false in practice)
+    //   }
     // -------------------------------------------------------------------------
 
     function getMultiPartnerFacts(characterId, externalFacts) {
