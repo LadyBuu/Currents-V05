@@ -44,6 +44,29 @@
  *   persist() exactly once at the end. Single-operation callers may call
  *   persist() immediately after a successful command.
  *
+ * PERSIST CONTRACT (Pattern A from storage.js):
+ *   RankCommands.persist() uses the boolean-inspection pattern documented
+ *   in storage.js's DOMAIN PERSIST CONTRACT section:
+ *
+ *     var ok = window.saveMasterData();
+ *     if (ok === true) return { success: true };
+ *     var lastError = window.getLastSaveError();
+ *     return {
+ *         success: false,
+ *         reason: lastError && lastError.message
+ *             ? lastError.message
+ *             : 'saveMasterData returned false'
+ *     };
+ *
+ *   saveMasterData() returns a boolean and does NOT throw on write
+ *   failure. The boolean must be inspected. On false, getLastSaveError()
+ *   provides the underlying Error so the caller can surface the actual
+ *   failure reason (quota exceeded, JSON serialization failure, storage
+ *   disabled) rather than a generic message.
+ *
+ *   Pattern C (the historical broken pattern that silently reported
+ *   success on every failed save) must not be reintroduced.
+ *
  * CONTRACT:
  *   Every public command returns { success: true, ... } or
  *   { success: false, reason: string, ... }. Never throws for domain errors.
@@ -60,7 +83,7 @@
  *   - character-commands.js (CharacterCommands) — for rank assignment writes
  *   - time.js              (getCurrentYear, isValidYear)
  *   - ids.js               (generateId)
- *   - storage.js           (saveMasterData)
+ *   - storage.js           (saveMasterData, getLastSaveError)
  *
  * DEPENDENCIES (OPTIONAL, used only if present):
  *   - RomanceQueries.getActiveCommittedPartners — via RankQueries for
@@ -73,6 +96,23 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - persist() now reads getLastSaveError() when saveMasterData()
+ *       returns false. The actual failure reason (quota exceeded,
+ *       serialization failure, storage disabled) is surfaced in the
+ *       returned reason field instead of the generic
+ *       'saveMasterData returned false'. Matches the documented
+ *       behaviour in rank-doc.md §10 ("carrying
+ *       getLastSaveError().message when available") and matches
+ *       storage.js's DOMAIN PERSIST CONTRACT Pattern A.
+ *     - getLastSaveError added to the load-time dependency check.
+ *       If storage.js does not export it, that is a load-order bug
+ *       (storage.js must always export it per its module header).
+ *     - Header PERSIST CONTRACT section added, documenting the
+ *       Pattern A form with the getLastSaveError() branch.
+ *     - No public signature change, no public return-shape change.
+ *       Callers of persist() already inspect { success, reason? }.
+ *       The reason string becomes more informative on failure.
+ *   Previous revision:
  *     - _requiredAssignmentMethods no longer requires
  *       RankAssignment.applySpouseInheritanceFixes or
  *       RankAssignment.updateRankSurnameRule. Neither method is called via
@@ -81,7 +121,6 @@
  *       updateRank directly. The stale checks were causing a load-time
  *       failure. The corresponding commands and their behaviour are
  *       unchanged.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -118,6 +157,13 @@
     }
     if (typeof window.saveMasterData !== 'function') {
         throw new Error('rank-commands.js requires storage.js (saveMasterData).');
+    }
+    if (typeof window.getLastSaveError !== 'function') {
+        throw new Error(
+            'rank-commands.js requires storage.js (getLastSaveError). ' +
+            'This is the canonical failure-reason accessor documented in ' +
+            'storage.js\'s DOMAIN PERSIST CONTRACT.'
+        );
     }
 
     var RS = window.RankState;
@@ -227,14 +273,28 @@
      * already mutated in-memory state and called markDataDirty via RankState.
      * persist() is the caller's explicit "I am done; write it out" signal.
      *
-     * Returns { success: true } if the write succeeded, { success: false,
-     * reason } otherwise.
+     * Uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
+     * inspect the boolean return, and on failure read getLastSaveError()
+     * for the actual cause. saveMasterData() does NOT throw on write
+     * failure; it returns false and stores the Error for the caller to
+     * retrieve.
+     *
+     * Returns { success: true } if the write succeeded, or
+     * { success: false, reason } carrying the underlying failure message
+     * (quota exceeded, serialization failure, storage disabled) when
+     * available, or a generic message otherwise.
      */
     function persist() {
         try {
             var ok = window.saveMasterData();
             if (ok === true) return _ok();
-            return _fail('saveMasterData returned false');
+
+            var lastError = window.getLastSaveError();
+            return _fail(
+                (lastError && lastError.message)
+                    ? lastError.message
+                    : 'saveMasterData returned false'
+            );
         } catch (e) {
             return _fail(e && e.message ? e.message : 'saveMasterData threw');
         }
@@ -609,8 +669,6 @@
                     numberInfo = RA.getNextRankNumber(
                         rankId,
                         characterId,
-                        character.name,
-                        character.gender,
                         sourceId
                     );
                 } catch (e) {
