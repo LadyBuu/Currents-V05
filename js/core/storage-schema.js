@@ -47,11 +47,31 @@
  *   the input is already at SCHEMA_VERSION, or is being brought to the
  *   current shape by the storage load path.
  *
+ * TRAITS:
+ *   The character record carries a domain-owned `traits` array. It is
+ *   NOT defaulted by the factory alone: old saves written before the
+ *   field existed must also receive `traits: []` on load, without a
+ *   migration pass. _ensureArrayField(char, 'traits') covers both:
+ *   - factory output already has it (no-op)
+ *   - old saves get [] appended here
+ *
+ *   Contents are owned by CharacterCommands (trait API). This module
+ *   guarantees the container is an array; it does not validate that
+ *   the entries are canonical trait ids. That is the factory's job at
+ *   build time and the trait commands' job at write time.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.DEFAULT_YEAR, MIN_YEAR, MAX_YEAR
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _ensureArrayField(char, 'traits') added to normalizeMasterData.
+ *       Old saves gain traits: [] on load. No migration version bump;
+ *       the field is additive and defaults safely.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -300,6 +320,7 @@
             var char = out.characters[c];
             if (!char || typeof char !== 'object') continue;
 
+            _ensureArrayField(char, 'traits');
             _ensureArrayField(char, 'relationships');
             _ensureArrayField(char, 'friends');
             _ensureArrayField(char, 'moves');
