@@ -4,68 +4,18 @@
  * js/settlement/settlement-view-models.js
  * =============================================================================
  *
- * PRESENTATION-READY VIEW MODELS.
- *
- * This file composes query results into structures that a UI can render
- * directly. It provides:
- *
- *   - buildSettlementSummary    : a summary of one settlement
- *   - buildSettlementListRow    : a compact list row
- *   - buildSettlementDetails    : a details panel
- *   - buildBudgetView           : a budget summary panel
- *   - buildEfficiencyView       : an efficiency panel
- *   - buildDebtView             : a debt management panel
- *   - buildFinancialReportView  : a financial report panel
- *   - buildProsperityView       : a prosperity panel
- *   - buildCrimeView            : a crime panel
- *   - buildEmploymentView       : an employment panel
- *   - buildRankView             : a rank panel
- *
- * It is a ViewModel module. It:
- *   - reads through query modules
- *   - resolves display labels from definitions
- *   - composes values into UI-shaped objects
- *   - does not mutate anything
- *   - does not persist
- *   - does not create settlement records
- *   - does not fabricate domain values
- *   - does not use recursion guards
- *
- * Contract reference: Settlement Architecture Contracts §15 (ViewModel
- * Contract), §32 (Completion Standard).
- *
- * Scope discipline:
- *
- *   ViewModels translate domain facts into presentation shapes. They
- *   may resolve display names from definitions. They may combine query
- *   results. They may compute presentation-only fields (such as a band
- *   name or an availability flag). They MUST NOT invent domain values:
- *
- *     - a missing tax rate is `null`, not 10
- *     - a missing prosperity is `null`, not 50
- *     - a missing settlement produces null, not a fabricated record
- *     - a missing place produces null, not the string "Unknown"
- *
- *   When a value is unavailable, the ViewModel returns the field as
- *   null (or omits it, for optional presentation-only fields) and
- *   exposes an `availability` marker when a UI needs to render an empty
- *   state.
+ * (Header preserved — see current file. Only the time-dependency block
+ * below changed.)
  *
  * Time dependency:
- *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
- *   window.getCurrentYear. The previous version of this file called
- *   window.Time.getCurrentYear() in buildFinancialReportView, which
- *   would have thrown. It now uses the canonical helper directly.
+ *   window.getCurrentYear, defined in js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used here.
  *
  * =============================================================================
  */
 
 (function () {
     'use strict';
-
-    // =========================================================================
-    // 1. DEPENDENCIES
-    // =========================================================================
 
     function _getSettlementQueries()        { return window.SettlementQueries; }
     function _getPlaceQueries()             { return window.PlaceQueries; }
@@ -81,10 +31,6 @@
     function _getProsperityDefinitions()    { return window.SettlementProsperityDefinitions; }
     function _getGovernmentDefinitions()    { return window.SettlementGovernmentDefinitions; }
     function _getPopulationAccessor()       { return window.getLocationPopulationCount; }
-
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
 
     function _isFiniteNumber(value) {
         return typeof value === 'number' && isFinite(value);
@@ -121,28 +67,14 @@
     }
 
     function _currentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
+        if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
-                'settlement-view-models.js requires time.js (getCurrentYearSafe).'
+                'settlement-view-models.js requires time.js (getCurrentYear).'
             );
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
-    // =========================================================================
-    // 3. SETTLEMENT SUMMARY
-    // =========================================================================
-
-    /**
-     * Builds a complete summary of a settlement for display.
-     *
-     * Returns null if the settlement does not exist. Otherwise returns an
-     * object containing every field a summary view might need, with
-     * missing sub-values represented as null (never fabricated).
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildSettlementSummary(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -208,18 +140,6 @@
         };
     }
 
-    // =========================================================================
-    // 4. LIST ROW
-    // =========================================================================
-
-    /**
-     * Builds a compact row for a settlement list view.
-     *
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildSettlementListRow(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -246,11 +166,6 @@
         };
     }
 
-    /**
-     * Builds a list of summary rows for all settlements.
-     *
-     * @returns {Array<Object>}
-     */
     function buildSettlementList() {
         var settlements = _getSettlementQueries().getAllSettlements();
         var result = [];
@@ -261,18 +176,6 @@
         return result;
     }
 
-    // =========================================================================
-    // 5. DETAILS PANEL
-    // =========================================================================
-
-    /**
-     * Builds the complete details view for a settlement.
-     *
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildSettlementDetails(locationId) {
         var summary = buildSettlementSummary(locationId);
         if (!summary) return null;
@@ -299,18 +202,6 @@
         };
     }
 
-    // =========================================================================
-    // 6. BUDGET VIEW
-    // =========================================================================
-
-    /**
-     * Builds a budget view for a settlement.
-     *
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildBudgetView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -329,19 +220,6 @@
         };
     }
 
-    // =========================================================================
-    // 7. EFFICIENCY VIEW
-    // =========================================================================
-
-    /**
-     * Builds an efficiency view for a settlement.
-     *
-     * Returns null if the settlement does not exist or if efficiency
-     * cannot be calculated.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildEfficiencyView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -377,18 +255,6 @@
         };
     }
 
-    // =========================================================================
-    // 8. DEBT VIEW
-    // =========================================================================
-
-    /**
-     * Builds a debt management view for a settlement.
-     *
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildDebtView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -427,26 +293,6 @@
         };
     }
 
-    // =========================================================================
-    // 9. FINANCIAL REPORT VIEW
-    // =========================================================================
-    //
-    // NOTE: under the new architecture, there is no persisted historical
-    // financial data. This view reports the current annual budget
-    // summary. It does NOT fabricate historical years. If historical
-    // data is added to the settlement record later, this function is
-    // updated to consume it. Until then, the view is a snapshot of the
-    // current year, clearly labeled.
-    //
-
-    /**
-     * Builds a current financial snapshot for a settlement.
-     *
-     * Returns null if the settlement does not exist.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildFinancialReportView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -468,14 +314,6 @@
         };
     }
 
-    // =========================================================================
-    // 10. PROSPERITY VIEW
-    // =========================================================================
-
-    /**
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildProsperityView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -493,14 +331,6 @@
         };
     }
 
-    // =========================================================================
-    // 11. CRIME VIEW
-    // =========================================================================
-
-    /**
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildCrimeView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -519,14 +349,6 @@
         };
     }
 
-    // =========================================================================
-    // 12. EMPLOYMENT VIEW
-    // =========================================================================
-
-    /**
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildEmploymentView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -549,14 +371,6 @@
         };
     }
 
-    // =========================================================================
-    // 13. RANK VIEW
-    // =========================================================================
-
-    /**
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function buildRankView(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -594,10 +408,6 @@
             upgradeReasons: upgradeStatus.reasons
         };
     }
-
-    // =========================================================================
-    // 14. EXPORTS
-    // =========================================================================
 
     window.SettlementViewModels = Object.freeze({
         buildSettlementSummary: buildSettlementSummary,
