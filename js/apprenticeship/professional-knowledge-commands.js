@@ -15,10 +15,32 @@
  *   { success: true,  data: {...} }
  *   { success: false, code: '...', reason: '...' }
  *
+ * PERSISTENCE
+ *
+ *   preserveKnowledgeOnDeath does NOT call saveMasterData. It mutates
+ *   in-memory state via CharacterCommands.addProfession /
+ *   updateProfession, which fire markDataDirty through the character
+ *   mutation boundary. The caller is responsible for flushing at the
+ *   end of the enclosing batch.
+ *
+ *   This matters because knowledge preservation is typically invoked as
+ *   one step in a larger death cascade that also ends relationships,
+ *   deprecates ranks, closes family edges, and records the death
+ *   itself. If this command flushed eagerly and the cascade failed at
+ *   a later step, the knowledge preservation would be committed while
+ *   the death was not — a half-transaction.
+ *
+ *   Callers of preserveKnowledgeOnDeath must ensure that a flush
+ *   happens after the cascade completes successfully. The character
+ *   subsystem's death flow already does this at its own boundary.
+ *
+ *   assessKnowledgeLoss is a pure read and never mutates. It does not
+ *   flush.
+ *
  * DEPENDENCIES:
  *   - getCharacterById / getRoleById / getCurrentYearSafe / calculateAge
- *   - CharacterCommands.addProfession / updateProfession
- *   - saveMasterData
+ *   - CharacterCommands.addProfession / updateProfession / getProfession
+ *
  * =============================================================================
  */
 
@@ -35,7 +57,6 @@
     function _getCharacterById(id) { return _dep('getCharacterById', window.getCharacterById)(id); }
     function _getRoleById(id)      { return _dep('getRoleById', window.getRoleById)(id); }
     function _getCurrentYear()     { return _dep('getCurrentYearSafe', window.getCurrentYearSafe)(); }
-    function _saveMasterData()     { return _dep('saveMasterData', window.saveMasterData)(); }
 
     function _addProfession(cid, data) {
         return _dep('CharacterCommands.addProfession',
@@ -61,7 +82,8 @@
     function fail(code, reason) { return { success: false, code: code, reason: reason }; }
 
     function _notify(eventName, payload) {
-        if (typeof window.dispatchEvent === 'function') {
+        if (typeof window.dispatchEvent === 'function'
+            && typeof window.CustomEvent === 'function') {
             window.dispatchEvent(new CustomEvent(eventName, { detail: payload || {} }));
         }
     }
@@ -73,20 +95,46 @@
      * Uses CharacterCommands for all profession mutations so that the
      * character-commands ownership contract on `character.professions` is
      * respected.
+     *
+     * Does NOT flush to storage. See PERSISTENCE in the module header.
+     * The caller flushes at the end of the enclosing batch.
+     *
+     * Idempotency: the inherited skill level is always
+     *   floor(originalLevel * 0.5)
+     *
+     * If the heir already holds the role at a level >= the inherited
+     * level, no update is applied. If the heir holds the role at a
+     * lower level, the heir is raised to the inherited level. Repeated
+     * calls (which should not happen, but could if a caller retries
+     * after a cascade failure) therefore converge to the same state —
+     * the highest inherited level per role wins.
+     *
+     * @param {string} dyingId
+     * @param {string} heirId
+     * @returns {{ success: boolean, data?: { preserved: Array }, code?: string, reason?: string }}
      */
     function preserveKnowledgeOnDeath(dyingId, heirId) {
         var dying = _getCharacterById(dyingId);
         var heir = _getCharacterById(heirId);
         if (!dying) return fail('DYING_NOT_FOUND', 'Dying character not found');
         if (!heir) return fail('HEIR_NOT_FOUND', 'Heir not found');
-        if (!Array.isArray(dying.professions) || dying.professions.length === 0) {
+
+        // The character projection may or may not include professions.
+        // Read them through CharacterCommands to be certain. This mirrors
+        // the fix in apprenticeship-queries.getTeachableSkills.
+        var dyingProfessions = (window.CharacterCommands
+            && typeof window.CharacterCommands.getProfessions === 'function')
+            ? window.CharacterCommands.getProfessions(dyingId)
+            : [];
+
+        if (!Array.isArray(dyingProfessions) || dyingProfessions.length === 0) {
             return ok({ preserved: [] });
         }
 
         var preserved = [];
 
-        for (var i = 0; i < dying.professions.length; i++) {
-            var prof = dying.professions[i];
+        for (var i = 0; i < dyingProfessions.length; i++) {
+            var prof = dyingProfessions[i];
             var skillLevel = typeof prof.skillLevel === 'number' ? prof.skillLevel : 0;
             if (skillLevel < 10) continue;
 
@@ -99,7 +147,9 @@
 
             if (existing) {
                 // Never downgrade the heir's existing skill.
-                var existingLevel = typeof existing.skillLevel === 'number' ? existing.skillLevel : 0;
+                var existingLevel = typeof existing.skillLevel === 'number'
+                    ? existing.skillLevel
+                    : 0;
                 if (existingLevel < inheritedLevel) {
                     var updateResult = _updateProfession(heirId, roleId, {
                         skillLevel: inheritedLevel
@@ -127,18 +177,28 @@
         }
 
         if (preserved.length > 0) {
-            _saveMasterData();
             _notify('knowledgePreserved', {
                 dyingId: dyingId,
                 heirId: heirId,
                 preserved: preserved
             });
-            _notify('characterUpdated', {});
+            _notify('characterUpdated', {
+                action: 'preserveKnowledgeOnDeath',
+                dyingId: dyingId,
+                heirId: heirId
+            });
         }
 
         return ok({ preserved: preserved });
     }
 
+    /**
+     * Assesses the risk of knowledge loss if the character dies. Pure
+     * read; never mutates, never flushes.
+     *
+     * @param {string} characterId
+     * @returns {{ success: boolean, data?: Object, code?: string, reason?: string }}
+     */
     function assessKnowledgeLoss(characterId) {
         var char = _getCharacterById(characterId);
         if (!char) return fail('CHARACTER_NOT_FOUND', 'Character not found');
@@ -147,10 +207,15 @@
         var ageFactor = (age == null) ? 0 : Math.min(1, Math.max(0, (age - 50) / 50));
         var baseRisk = ageFactor * 0.5;
 
+        var professions = (window.CharacterCommands
+            && typeof window.CharacterCommands.getProfessions === 'function')
+            ? window.CharacterCommands.getProfessions(characterId)
+            : [];
+
         var skills = [];
-        if (Array.isArray(char.professions)) {
-            for (var i = 0; i < char.professions.length; i++) {
-                var prof = char.professions[i];
+        if (Array.isArray(professions)) {
+            for (var i = 0; i < professions.length; i++) {
+                var prof = professions[i];
                 var skillLevel = typeof prof.skillLevel === 'number' ? prof.skillLevel : 0;
                 var lossRisk = baseRisk * (1 - (skillLevel / 100));
                 skills.push({
