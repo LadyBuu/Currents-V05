@@ -1,5 +1,9 @@
 /**
- * relationship-integrations.js
+ * =============================================================================
+ * STILL WATERS - RELATIONSHIP INTEGRATIONS (relationship-integrations.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/relationship-integrations.js
  *
  * Cross-domain wiring owned by the relationship domain.
  *
@@ -8,7 +12,8 @@
  * call. It contains no policy of its own: every function delegates to
  * the appropriate domain command or query.
  *
- * DISPATCH MODEL:
+ * DISPATCH MODEL
+ *
  *   The character subsystem dispatches directly. It does NOT route
  *   through a listener registry.
  *
@@ -27,11 +32,11 @@
  *     character, across romance, friendship, rivalry, and professional
  *   - hard-delete cleanup: remove every relationship record that
  *     references a deleted character
- *   - marriage / institutional projections consumed by MortalityQueries
- *     and CharacterQueries (so that non-romance domains do not reach
- *     into relationship attributes directly)
+ *   - partnership projections available for cross-domain consumers
+ *     (see PARTNERSHIP PROJECTIONS below)
  *   - annual affair discovery pass over the whole population, for
  *     callers that want a single entry point
+ *   - annual lifecycle aggregate covering jealousy and affair discovery
  *
  * Does NOT own:
  *   - state access (goes through commands and queries)
@@ -39,7 +44,50 @@
  *   - persistence (markDataDirty happens in RelationshipState)
  *   - randomness (the annual affair pass uses window.Random)
  *
+ * PARTNERSHIP PROJECTIONS
+ *
+ *   getPartnershipProjection(characterId) and
+ *   getAllPartnershipProjections() expose a character's current
+ *   institutional partnership state without requiring the caller to
+ *   reach into relationship attributes directly. The projection answers:
+ *
+ *       "What institutional markers does this character's current
+ *        committed relationship carry, if any?"
+ *
+ *   It does NOT answer:
+ *
+ *       "Is this character married?"
+ *
+ *   Marriage is culture-dependent; a caller that needs legal weight
+ *   must consult CultureRules in addition to the projection. The
+ *   projection returns institution ids (e.g. 'married', 'handfasted'),
+ *   not legal-status answers.
+ *
+ *   These functions are AVAILABLE FOR CONSUMPTION, not currently
+ *   consumed by any module in the tree. The intended consumers are
+ *   MortalityQueries (for widow status on death records) and
+ *   CharacterQueries (for a partnership block in getCharacterSummary).
+ *   Neither consumes the projection today because:
+ *
+ *     - character-queries.js loads before the relationship domain; a
+ *       direct call from getCharacterSummary would invert the load
+ *       order. Wiring it in requires either lazy dispatch through
+ *       window.RelationshipIntegrations (weakens the fail-loud
+ *       contract) or a new character-ui module that composes both
+ *       domains after load. That is a design decision deferred to the
+ *       UI layer.
+ *
+ *     - mortality-queries.js does not currently have a use case for
+ *       the projection beyond what it already derives from the
+ *       character record. Widow-state queries, if added, would
+ *       consume it.
+ *
+ *   Until a consumer exists, the doc says "available for consumption"
+ *   rather than "consumed by". If you wire a consumer in, update this
+ *   section to name it.
+ *
  * CONTRACT
+ *
  *   Every hook returns { success: true, ... } or
  *   { success: false, code, message }. Never throws for domain errors.
  *   Missing subordinate modules are a load-time failure: this file
@@ -47,6 +95,8 @@
  *
  * Load order: after every other relationships/*.js file. Before
  * relationships-bootstrap.js.
+ *
+ * =============================================================================
  */
 
 (function() {
@@ -69,7 +119,10 @@
 
     if (!RC || !RoC || !RoQ || !FrC || !FQ || !RvC || !RvQ ||
         !PrC || !PQ || !AQ || !AC || !A || !STATUS) {
-        throw new Error('relationship-integrations.js: all relationship domain modules must load first');
+        throw new Error(
+            'relationship-integrations.js: all relationship domain ' +
+            'modules must load first'
+        );
     }
 
     var ROMANTIC_ARCHETYPES = {};
@@ -77,9 +130,9 @@
     ROMANTIC_ARCHETYPES[A.ONE_NIGHT_STAND] = true;
     ROMANTIC_ARCHETYPES[A.COMMITTED]       = true;
 
-    // -------------------------------------------------------------------------
-    // DEPENDENCY WRAPPERS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 1. DEPENDENCY WRAPPERS
+    // =========================================================================
 
     function _getCurrentYear() {
         if (typeof window.getCurrentYearSafe !== 'function') {
@@ -126,25 +179,37 @@
         return Object.assign({ success: true }, data || {});
     }
 
-    // -------------------------------------------------------------------------
-    // DEATH TERMINATION
+    // =========================================================================
+    // 2. DEATH TERMINATION
     //
     // Called by CharacterLifecycle.killCharacter (via
     // CharacterLifecycle._notifyCrossDomainDeath). Ends every active
     // relationship the deceased character participates in, across every
     // archetype.
     //
-    // Romance: widowed if the relationship is committed; ended otherwise.
-    // Friendship, rivalry, enmity, professional: ended with reason
-    // 'death_of_participant'.
+    // ROMANCE
+    //   Delegates the whole loop to RomanceCommands.endAllRomanticForCharacter
+    //   with widowedInstead: true. That command ends every active
+    //   romantic relationship the character participates in, using
+    //   widowed for committed and ended for casual/one-night. The
+    //   aggregate report is then reshaped from that command's
+    //   { ended, failed, count, failedCount, mode } into this module's
+    //   per-domain { widowed, ended, failed } shape.
     //
-    // One commit per domain; the whole operation is not atomic across
-    // domains because the domain commands each own their own state.
-    // This matches the project's rule that a single logical mutation is
-    // one command, and life-death is a multi-domain event.
+    // FRIENDSHIP / RIVALRY / PROFESSIONAL
+    //   Each ends its active records individually. These domains do
+    //   not expose a batch command for death, and their
+    //   per-archetype end functions are already the natural unit of
+    //   work.
+    //
+    // ONE COMMIT PER DOMAIN
+    //   The whole operation is not atomic across domains because each
+    //   domain command owns its own state. This matches the project's
+    //   rule that a single logical mutation is one command, and
+    //   life-death is a multi-domain event.
     //
     // options: { deathYear? }
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function handleCharacterDeath(characterId, options) {
         options = options || {};
@@ -167,23 +232,44 @@
         };
 
         // ---- ROMANCE ----
-        var romantic = RoQ.getActiveRomanticRelationships(characterId);
-        for (var i = 0; i < romantic.length; i++) {
-            var r = romantic[i];
-            var result;
-            if (r.isCommitted) {
-                result = RoC.deathEndsRelationship(r.relationshipId, {
-                    deathYear: deathYear
+        //
+        // Delegate the whole romantic-cascade to the domain command.
+        // Reshape the result. The command distinguishes committed
+        // (widowed) from non-committed (ended) internally; the split
+        // is not exposed on its return value, so we re-derive it by
+        // projecting each ended id's record type. That is a cheap
+        // projection: getById on the relationship query.
+        var romanceActive = RoQ.getActiveRomanticRelationships(characterId);
+        if (romanceActive.length > 0) {
+            var romanceBatch = RoC.endAllRomanticForCharacter(characterId, {
+                endYear: deathYear,
+                reason: 'death_of_participant',
+                widowedInstead: true
+            });
+
+            if (!romanceBatch.success) {
+                summary.romance.failed.push({
+                    id: null,
+                    code: romanceBatch.code || 'ROMANCE_BATCH_FAILED',
+                    message: romanceBatch.message || 'unknown'
                 });
-                if (result.success) summary.romance.widowed.push(r.relationshipId);
-                else summary.romance.failed.push({ id: r.relationshipId, code: result.code, message: result.message });
             } else {
-                result = RoC.breakUp(r.relationshipId, {
-                    endYear: deathYear,
-                    reason: 'death_of_participant'
-                });
-                if (result.success) summary.romance.ended.push(r.relationshipId);
-                else summary.romance.failed.push({ id: r.relationshipId, code: result.code, message: result.message });
+                // The batch command reports which relationship ids it
+                // ended. Classify each one into the widowed vs ended
+                // buckets by looking up its archetype (committed →
+                // widowed, anything else → ended).
+                for (var i = 0; i < romanceBatch.ended.length; i++) {
+                    var relId = romanceBatch.ended[i];
+                    var relRecord = window.RelationshipQueries.getById(relId);
+                    if (relRecord && relRecord.type === A.COMMITTED) {
+                        summary.romance.widowed.push(relId);
+                    } else {
+                        summary.romance.ended.push(relId);
+                    }
+                }
+                for (var f = 0; f < romanceBatch.failed.length; f++) {
+                    summary.romance.failed.push(romanceBatch.failed[f]);
+                }
             }
         }
 
@@ -198,7 +284,11 @@
                 reason: 'death_of_participant'
             });
             if (fResult.success) summary.friendship.ended.push(fr.relationshipId);
-            else summary.friendship.failed.push({ id: fr.relationshipId, code: fResult.code, message: fResult.message });
+            else summary.friendship.failed.push({
+                id: fr.relationshipId,
+                code: fResult.code,
+                message: fResult.message
+            });
         }
 
         // ---- RIVALRY / ENMITY ----
@@ -211,7 +301,11 @@
                 reason: 'death_of_participant'
             });
             if (rvResult.success) summary.rivalry.ended.push(rv.relationshipId);
-            else summary.rivalry.failed.push({ id: rv.relationshipId, code: rvResult.code, message: rvResult.message });
+            else summary.rivalry.failed.push({
+                id: rv.relationshipId,
+                code: rvResult.code,
+                message: rvResult.message
+            });
         }
 
         var enemies = RvQ.getEnmities(characterId);
@@ -223,7 +317,11 @@
                 reason: 'death_of_participant'
             });
             if (enResult.success) summary.rivalry.ended.push(en.relationshipId);
-            else summary.rivalry.failed.push({ id: en.relationshipId, code: enResult.code, message: enResult.message });
+            else summary.rivalry.failed.push({
+                id: en.relationshipId,
+                code: enResult.code,
+                message: enResult.message
+            });
         }
 
         // ---- PROFESSIONAL ----
@@ -252,10 +350,18 @@
                     reason: 'death_of_participant'
                 });
             } else {
-                endResult = { success: false, code: 'UNSUPPORTED_TYPE', message: 'unsupported professional type' };
+                endResult = {
+                    success: false,
+                    code: 'UNSUPPORTED_TYPE',
+                    message: 'unsupported professional type'
+                };
             }
             if (endResult.success) summary.professional.ended.push(p.relationshipId);
-            else summary.professional.failed.push({ id: p.relationshipId, code: endResult.code, message: endResult.message });
+            else summary.professional.failed.push({
+                id: p.relationshipId,
+                code: endResult.code,
+                message: endResult.message
+            });
         }
 
         var totalEnded =
@@ -278,8 +384,8 @@
         return _ok(summary);
     }
 
-    // -------------------------------------------------------------------------
-    // HARD-DELETE CLEANUP
+    // =========================================================================
+    // 3. HARD-DELETE CLEANUP
     //
     // Called by CharacterDeletionCommands.deleteCharacter and by
     // CharacterDeletionCommands.purgeSoftDeletedCharacters. Removes
@@ -287,7 +393,7 @@
     // hard remove, not an end; the record ceases to exist.
     //
     // One State batch, one markDataDirty, one subscriber notification.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function removeAllReferencesTo(characterId) {
         if (typeof characterId !== 'string' || characterId.length === 0) {
@@ -301,22 +407,13 @@
         });
     }
 
-    // -------------------------------------------------------------------------
-    // MARRIAGE PROJECTIONS
+    // =========================================================================
+    // 4. PARTNERSHIP PROJECTIONS
     //
-    // Consumed by MortalityQueries, CharacterQueries, and any other
-    // domain that needs a character's institutional partnership state
-    // without reaching into relationship attributes directly.
-    //
-    // The relationship domain answers:
-    //   "What institutional markers does this character's current
-    //    committed relationship carry, if any?"
-    //
-    // It does NOT answer:
-    //   "Is this character married?" — that is culture-dependent and
-    //   the caller must consult CultureRules if the answer needs legal
-    //   weight.
-    // -------------------------------------------------------------------------
+    // See PARTNERSHIP PROJECTIONS in the module header for the current
+    // consumption status and the load-order constraint that prevents
+    // CharacterQueries from consuming this projection directly.
+    // =========================================================================
 
     function getPartnershipProjection(characterId) {
         if (typeof characterId !== 'string' || characterId.length === 0) {
@@ -367,8 +464,8 @@
         return out;
     }
 
-    // -------------------------------------------------------------------------
-    // ANNUAL AFFAIR DISCOVERY PASS
+    // =========================================================================
+    // 5. ANNUAL AFFAIR DISCOVERY PASS
     //
     // Rolls discovery for every active affair in the population. Called
     // by the annual tick, if one exists, or by any caller that wants a
@@ -379,7 +476,7 @@
     //   rollProvider?: () => number,
     //   maxDiscoveries?: number
     // }
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function processAnnualAffairDiscovery(options) {
         options = options || {};
@@ -441,8 +538,8 @@
         });
     }
 
-    // -------------------------------------------------------------------------
-    // ANNUAL LIFECYCLE AGGREGATE
+    // =========================================================================
+    // 6. ANNUAL LIFECYCLE AGGREGATE
     //
     // One call for the annual tick that covers relationship-driven
     // annual processing: jealousy confrontations and affair discovery.
@@ -455,7 +552,7 @@
     //   maxConfrontations?: number,
     //   maxDiscoveries?: number
     // }
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function processAnnualLifecycle(options) {
         options = options || {};
@@ -466,7 +563,12 @@
             : _roll;
 
         // Jealousy
-        var jealousy = { confrontations: [], skipped: [], confrontationCount: 0, skippedCount: 0 };
+        var jealousy = {
+            confrontations: [],
+            skipped: [],
+            confrontationCount: 0,
+            skippedCount: 0
+        };
         if (window.JealousyCommands &&
             typeof window.JealousyCommands.processAnnualJealousy === 'function') {
             var j = window.JealousyCommands.processAnnualJealousy({
@@ -494,13 +596,20 @@
         return _ok({
             year: year,
             jealousy: jealousy,
-            affairs: affairs.success ? affairs : { discoveries: [], attempts: [], discoveryCount: 0, attemptCount: 0 }
+            affairs: affairs.success
+                ? affairs
+                : {
+                    discoveries: [],
+                    attempts: [],
+                    discoveryCount: 0,
+                    attemptCount: 0
+                }
         });
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 7. EXPORTS
+    // =========================================================================
 
     window.RelationshipIntegrations = {
         handleCharacterDeath: handleCharacterDeath,
@@ -513,22 +622,27 @@
         processAnnualLifecycle: processAnnualLifecycle
     };
 
-    // -------------------------------------------------------------------------
-    // DISPATCH MODEL
+    // =========================================================================
+    // 8. DISPATCH MODEL
     //
     // This module does not register itself anywhere. The character
     // subsystem calls the two lifecycle functions directly:
     //
     //   CharacterLifecycle.killCharacter
-    //       -> RelationshipIntegrations.handleCharacterDeath(characterId, { deathYear })
+    //       -> RelationshipIntegrations.handleCharacterDeath(
+    //              characterId, { deathYear })
     //
     //   CharacterDeletionCommands.deleteCharacter
     //       -> RelationshipIntegrations.removeAllReferencesTo(characterId)
     //
     // There is no listener registry. Adding a new cross-domain
     // consequence means editing the character subsystem's dispatch
-    // table, which is exactly where the knowledge of "what happens when
-    // a character dies" belongs.
-    // -------------------------------------------------------------------------
+    // table, which is exactly where the knowledge of "what happens
+    // when a character dies" belongs.
+    // =========================================================================
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.RelationshipIntegrations;
+    }
 
 })();
