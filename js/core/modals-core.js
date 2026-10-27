@@ -74,6 +74,26 @@
  * ICON POLICY: Uses SVG from icons.js. No emojis.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Cancel button click path now routes through _closeAsCancelled,
+ *       which fires onCancel via _fireCancel (contained). Previously
+ *       the cancel button called onCancel directly, assigned the
+ *       unused return to a local `result`, and then called
+ *       _closeWithoutFiringCancel(result) which discarded it. Two
+ *       problems:
+ *         (a) The `result` variable was dead code.
+ *         (b) A throwing onCancel propagated out of the click handler,
+ *             which meant the modal did NOT close. This contradicted
+ *             the documented contract ("A throwing onCancel must not
+ *             prevent the modal from closing").
+ *       The cancel button now behaves identically to the overlay and
+ *       Escape paths: it fires onCancel through _fireCancel (which
+ *       contains exceptions) and then closes as cancelled.
+ *     - _closeWithoutFiringCancel removed; it existed only to support
+ *       the old cancel-button path.
+ *     - No other behavioural change.
+ * =============================================================================
  */
 
 (function() {
@@ -280,6 +300,17 @@
         // ---------------------------------------------------------------------
         // User-initiated closes
         // ---------------------------------------------------------------------
+        //
+        // Every user-close path routes through the corresponding
+        // _closeAsX helper. The helpers contain onCancel via _fireCancel,
+        // so a throwing onCancel can never leave the modal open or
+        // propagate out of a DOM event handler.
+        //
+        // The cancel button, overlay click, close (X) button click, and
+        // Escape key all close as CANCELLED and therefore all fire
+        // onCancel — through _fireCancel, which contains exceptions.
+        // The confirm button closes as CONFIRMED, which does not fire
+        // onCancel.
 
         var closeBtn = modal.querySelector('.modal-close-btn');
         if (closeBtn) closeBtn.addEventListener('click', _closeAsCancelled);
@@ -291,26 +322,7 @@
 
         var cancelBtn = modal.querySelector('.cancel-btn');
         if (cancelBtn) {
-            cancelBtn.addEventListener('click', function() {
-                var result;
-                if (onCancel) result = onCancel(modal);
-                // Note: onCancel's return value does NOT keep the modal
-                // open. Unlike onConfirm, onCancel is a notification —
-                // by the time the user clicks cancel, the intent to
-                // close has already been expressed. If a caller needs
-                // "are you sure?" semantics on cancel, they should use
-                // confirmDialog first and only open the modal after
-                // confirmation.
-                //
-                // To avoid double-firing onCancel (once here, once in
-                // _finishClose), we mark the close as "handled" and
-                // suppress the automatic invocation.
-                _closeWithoutFiringCancel(result);
-            });
-        }
-
-        function _closeWithoutFiringCancel(_ignored) {
-            _teardownStackEntry();
+            cancelBtn.addEventListener('click', _closeAsCancelled);
         }
 
         var confirmBtn = modal.querySelector('.confirm-btn');
