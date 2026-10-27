@@ -9,11 +9,15 @@
  * characters who hold each role.
  *
  * SCOPE:
- *   - Role lookup by name
- *   - Roles filtered by category
+ *   - Role lookup by name / id
+ *   - Roles filtered by category / gender / literacy
+ *   - Role search (name + notes substring)
  *   - Full role list (canonical read pass-through)
  *   - Characters who hold a given role, with skill details
  *   - Per-role statistics: total holders, average skill, tier counts
+ *   - Category list with role counts
+ *   - Specialization catalogue (per-role and global union)
+ *   - Skill level reads for a (character, role) pair
  *   - Rank summary string for a rank id (used by the character
  *     summary projection)
  *
@@ -77,6 +81,7 @@
  *   - character-state.js:    CharacterState
  *   - character-commands.js: CharacterCommands
  *   - character-queries.js:  CharacterQueries
+ *   - role-state.js:         RoleState (for category listing)
  *
  * DEPENDENCIES (OPTIONAL, called only if loaded):
  *   - skill-utils.js:        SkillUtils (getSkillLevelName, getTier,
@@ -101,7 +106,8 @@
             'getRoles',
             'CharacterState',
             'CharacterCommands',
-            'CharacterQueries'
+            'CharacterQueries',
+            'RoleState'
         ];
         var missing = [];
         for (var i = 0; i < required.length; i++) {
@@ -151,7 +157,7 @@
         if (!_skillUtilsLoaded()) return '';
         if (!_isFiniteNumber(skillLevel)) return '';
         var tier = window.SkillUtils.getTier(skillLevel);
-        return tier && typeof tier.key === 'string' ? tier.key : '';
+        return tier && typeof tier.id === 'string' ? tier.id : '';
     }
 
     function _getTeachingThreshold() {
@@ -176,10 +182,7 @@
         var keys = [];
         for (var k in thresholds) {
             if (!Object.prototype.hasOwnProperty.call(thresholds, k)) continue;
-            var entry = thresholds[k];
-            if (!entry || typeof entry !== 'object') continue;
-            if (typeof entry.key === 'string') keys.push(entry.key);
-            else if (typeof entry.name === 'string') keys.push(k.toLowerCase());
+            keys.push(k.toLowerCase());
         }
         return keys;
     }
@@ -274,6 +277,10 @@
                 && r.requiresLiteracy === true) {
                 continue;
             }
+            if (Array.isArray(filters.excludeIds)
+                && filters.excludeIds.indexOf(r.id) !== -1) {
+                continue;
+            }
 
             out.push(r);
         }
@@ -285,8 +292,112 @@
         return getRoles({ category: categoryId });
     }
 
+    /**
+     * Search roles by name or notes substring (case-insensitive).
+     * Optional filters narrow the result further.
+     *
+     * @param {string} query
+     * @param {Object} [filters] - same shape as getRoles' filter object
+     * @returns {Array<Object>}
+     */
+    function searchRoles(query, filters) {
+        if (typeof query !== 'string' || query.trim() === '') {
+            return getRoles(filters);
+        }
+        var needle = query.trim().toLowerCase();
+        var base = getRoles(filters);
+
+        var out = [];
+        for (var i = 0; i < base.length; i++) {
+            var r = base[i];
+            var nameMatch = r.name && r.name.toLowerCase().indexOf(needle) !== -1;
+            var notesMatch = r.notes && r.notes.toLowerCase().indexOf(needle) !== -1;
+            if (nameMatch || notesMatch) out.push(r);
+        }
+        return out;
+    }
+
+    /**
+     * Returns the list of category records with role counts.
+     * Categories with zero roles are still listed.
+     *
+     * @returns {Array<{ id: string, name: string, roleCount: number }>}
+     */
+    function getRoleCategoriesWithCounts() {
+        var categories = window.RoleState.getCategories();
+        var roles = getRoles({});
+
+        var counts = {};
+        for (var i = 0; i < roles.length; i++) {
+            var cat = roles[i].category || null;
+            if (!cat) continue;
+            counts[cat] = (counts[cat] || 0) + 1;
+        }
+
+        var out = [];
+        for (var key in categories) {
+            if (!Object.prototype.hasOwnProperty.call(categories, key)) continue;
+            var c = categories[key];
+            out.push({
+                id: c.id,
+                name: c.name,
+                roleCount: counts[key] || 0
+            });
+        }
+
+        out.sort(function (a, b) {
+            return a.name.localeCompare(b.name);
+        });
+        return out;
+    }
+
     // =========================================================================
-    // 3. CHARACTERS HOLDING A ROLE
+    // 3. SPECIALIZATION CATALOGUE
+    // =========================================================================
+
+    /**
+     * Returns the specializations array of a single role, as a copy.
+     * Returns [] for a missing role or a role with no specializations.
+     */
+    function getRoleSpecializations(roleId) {
+        if (!_hasId(roleId)) return [];
+        var role = findRoleById(roleId);
+        if (!role) return [];
+        if (!Array.isArray(role.specializations)) return [];
+        return role.specializations.slice();
+    }
+
+    /**
+     * Returns the union of every specialization across every role in the
+     * catalogue, as a sorted array of strings. Case-insensitive uniqueness
+     * is applied; the first casing encountered wins.
+     */
+    function getAllRoleSpecializations() {
+        var roles = getRoles({});
+        var seen = {};
+        var out = [];
+
+        for (var i = 0; i < roles.length; i++) {
+            var specs = roles[i].specializations;
+            if (!Array.isArray(specs)) continue;
+            for (var j = 0; j < specs.length; j++) {
+                var spec = specs[j];
+                if (typeof spec !== 'string' || spec.length === 0) continue;
+                var key = spec.toLowerCase();
+                if (seen[key]) continue;
+                seen[key] = true;
+                out.push(spec);
+            }
+        }
+
+        out.sort(function (a, b) {
+            return a.localeCompare(b);
+        });
+        return out;
+    }
+
+    // =========================================================================
+    // 4. CHARACTERS HOLDING A ROLE
     // =========================================================================
 
     /**
@@ -419,7 +530,31 @@
     }
 
     // =========================================================================
-    // 4. ROLE STATISTICS
+    // 5. SKILL LEVEL READS
+    // =========================================================================
+
+    /**
+     * Returns the character's skill level for a given role, or null if
+     * the character does not hold that role. Returns 0 when the
+     * profession entry exists but carries a non-numeric skillLevel.
+     *
+     * Thin wrapper over CharacterCommands.getProfession. The canonical
+     * skill write path is RoleCommands.updateCharacterSkill /
+     * recordCharacterSkillProgress; this is the read side.
+     *
+     * @param {string} characterId
+     * @param {string} roleId
+     * @returns {number|null}
+     */
+    function getSkillLevel(characterId, roleId) {
+        if (!_hasId(characterId) || !_hasId(roleId)) return null;
+        var profession = window.CharacterCommands.getProfession(characterId, roleId);
+        if (!profession) return null;
+        return _isFiniteNumber(profession.skillLevel) ? profession.skillLevel : 0;
+    }
+
+    // =========================================================================
+    // 6. ROLE STATISTICS
     // =========================================================================
 
     /**
@@ -539,7 +674,7 @@
     }
 
     // =========================================================================
-    // 5. RANK SUMMARY (for character summaries)
+    // 7. RANK SUMMARY (for character summaries)
     // =========================================================================
     //
     // The character summary projection wants a human-readable rank
@@ -582,7 +717,7 @@
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     window.RoleQueries = {
@@ -593,11 +728,22 @@
         // Lists
         getRoles: getRoles,
         getRolesByCategory: getRolesByCategory,
+        searchRoles: searchRoles,
+
+        // Categories
+        getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
+
+        // Specializations
+        getRoleSpecializations: getRoleSpecializations,
+        getAllRoleSpecializations: getAllRoleSpecializations,
 
         // Characters holding a role
         getCharactersWithRoleIds: getCharactersWithRoleIds,
         getCharactersWithRole: getCharactersWithRole,
         getCharactersWithRoleDetails: getCharactersWithRoleDetails,
+
+        // Skill reads
+        getSkillLevel: getSkillLevel,
 
         // Aggregation
         getRoleStatistics: getRoleStatistics,
