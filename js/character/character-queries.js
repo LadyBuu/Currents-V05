@@ -18,6 +18,7 @@
  * OUT OF SCOPE:
  *   - Family graph semantics         -> family-queries.js
  *   - Profession semantics           -> character-commands.js (reads)
+ *   - Trait semantics                -> character-commands.js (reads)
  *   - Population statistics          -> character-statistics.js
  *   - Relationship semantics         -> future relationship domain
  *   - Rank semantics                 -> ranks/rank-queries.js
@@ -57,6 +58,21 @@
  *   accessors. If either layer is unavailable, rank is null. The raw
  *   activeRankId is exposed separately as rankId.
  *
+ * TRAITS:
+ *   getCharacterSummary.traits and getCharacterFacts.traits are fresh
+ *   arrays cloned from the character projection. Traits are canonical
+ *   trait ids (see constants/character-traits.js). Both projections
+ *   include the field because both are consumed by code that needs
+ *   trait access:
+ *
+ *     summary — for UI and card rendering (character-ui-list, modals)
+ *     facts   — for cross-domain rules and calculations
+ *               (jealousy-queries, affair-queries, settlement)
+ *
+ *   No accessor is added here for individual traits (e.g. hasTrait) —
+ *   the field is exposed as an array and callers use indexOf. That
+ *   matches how professions and rankAssignments are exposed.
+ *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
  *   - Invalid explicit input throws.
@@ -77,6 +93,12 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getCharacterSummary.traits and getCharacterFacts.traits added
+ *       as defensive copies of the projection's traits array.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -135,6 +157,15 @@
         var name = typeof projection.name === 'string' ? projection.name : '';
         var surname = typeof projection.surname === 'string' ? projection.surname : '';
         return (name + ' ' + surname).trim();
+    }
+
+    /**
+     * Returns a defensive copy of the traits array from a character
+     * projection. Missing/malformed yields [].
+     */
+    function _copyTraits(projection) {
+        if (!projection || !Array.isArray(projection.traits)) return [];
+        return projection.traits.slice();
     }
 
     function _validateStringArgument(value, name, allowMissing) {
@@ -399,6 +430,7 @@
             deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
             deathCause: _isMissing(projection.deathCause) ? null : projection.deathCause,
             isDeceased: projection.isDeceased === true,
+            traits: _copyTraits(projection),
             location: null,
             locationId: projection.currentLocationId || null,
             rank: rankDisplay,
@@ -438,6 +470,7 @@
             age: _age(projection),
             isDeceased: projection.isDeceased === true,
             deathYear: _isMissing(projection.deathYear) ? null : projection.deathYear,
+            traits: _copyTraits(projection),
             currentLocationId: projection.currentLocationId || null,
             household: projection.household || null,
             activeRankId: projection.activeRankId || null,
