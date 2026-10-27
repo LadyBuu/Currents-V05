@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME MODALS (modals-crime.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/modals-crime.js
+ * LOCATION: js/crime/modals-crime.js
  *
  * PURPOSE:
  *   Modal dialogs for crime and vendetta operations. This layer collects
@@ -31,18 +31,43 @@
  *     save boundary and this modal calls it exactly once per batch.
  *   - It does not use a module-wide "processing" guard.
  *
+ * MODAL INFRASTRUCTURE (core/modals-core.js):
+ *
+ *   window.openModal(options) -> { element, close }
+ *     Accepted option keys:  titleHtml, contentHtml, confirmText,
+ *                            cancelText, onMount, onConfirm, size, ...
+ *     The core ignores `title` and `content`. Modals must use
+ *     `titleHtml` / `contentHtml` or the modal will render with the
+ *     default title ("Modal") and an empty body.
+ *     `onMount(root)` is called after DOM insertion with the modal
+ *     element. `onConfirm(root)` is called on confirm; return false to
+ *     keep the modal open.
+ *
+ *   window.closeTopModal()
+ *   window.showToast(message, type)   (from ui.js)
+ *   window.escapeHtml(str)            (from formatting.js)
+ *   window.getIcon(name)              (from icons.js)
+ *
+ *   The deprecated window._escapeHtml, window._showToast, and
+ *   window._getIcon aliases are NOT used in this file.
+ *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
+ *
  * DEPENDENCIES (required, verified at load):
  *   - CrimeConstants, CrimeCommands, CrimeQueries, CrimeViewModels
- *   - openModal / closeTopModal / _escapeHtml / _getIcon / _showToast
+ *   - window.openModal, window.closeTopModal
+ *   - window.escapeHtml, window.getIcon, window.showToast
  *   - openCharacterSelector
  *   - openHouseholdSelector
  *   - getFilteredLocationOptions
  *   - getCharacterById, getHouseholdById, getPlaceById
- *   - getCurrentYearSafe
+ *   - getCurrentYear
  *
  * Missing required dependencies fail loudly at load.
  *
- * ICON POLICY: No emojis. Icons come from icons.js via _getIcon, and the
+ * ICON POLICY: No emojis. Icons come from icons.js via getIcon, and the
  * icon NAME for a crime type comes from CrimeViewModels.crimeIconName.
  *
  * =============================================================================
@@ -71,14 +96,14 @@
     if (typeof window.closeTopModal !== 'function') {
         throw new Error('modals-crime.js requires closeTopModal');
     }
-    if (typeof window._escapeHtml !== 'function') {
-        throw new Error('modals-crime.js requires _escapeHtml');
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error('modals-crime.js requires escapeHtml');
     }
-    if (typeof window._getIcon !== 'function') {
-        throw new Error('modals-crime.js requires _getIcon');
+    if (typeof window.getIcon !== 'function') {
+        throw new Error('modals-crime.js requires getIcon');
     }
-    if (typeof window._showToast !== 'function') {
-        throw new Error('modals-crime.js requires _showToast');
+    if (typeof window.showToast !== 'function') {
+        throw new Error('modals-crime.js requires showToast');
     }
     if (typeof window.openCharacterSelector !== 'function') {
         throw new Error('modals-crime.js requires openCharacterSelector');
@@ -89,8 +114,8 @@
     if (typeof window.getFilteredLocationOptions !== 'function') {
         throw new Error('modals-crime.js requires getFilteredLocationOptions');
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
-        throw new Error('modals-crime.js requires getCurrentYearSafe');
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('modals-crime.js requires getCurrentYear');
     }
     if (typeof window.getCharacterById !== 'function') {
         throw new Error('modals-crime.js requires getCharacterById');
@@ -106,12 +131,12 @@
     // 1. HELPERS
     // =========================================================================
 
-    function _icon(name) { return window._getIcon(name); }
+    function _icon(name) { return window.getIcon(name); }
 
     function _commitAndPersist() {
         var p = Commands.persist();
         if (!p.success) {
-            window._showToast(
+            window.showToast(
                 'Saved in memory, but persisting failed: ' + (p.reason || 'unknown'),
                 'warning'
             );
@@ -122,7 +147,7 @@
         return '' +
             '<div style="padding: 8px; background: var(--bg3); border-radius: 6px;">' +
             '<div style="font-size: 0.5rem; color: var(--dim);">' +
-            window._escapeHtml(label) +
+            window.escapeHtml(label) +
             '</div>' +
             '<div style="font-size: 0.75rem;">' + valueHtml + '</div>' +
             '</div>';
@@ -137,7 +162,7 @@
         return '' +
             '<div>' +
             '<label style="display:block;font-size:0.65rem;color:var(--accent);margin-bottom:4px;">' +
-            window._escapeHtml(label) +
+            window.escapeHtml(label) +
             '</label>' +
             innerHtml +
             '</div>';
@@ -145,15 +170,15 @@
 
     function _textInput(id, value, placeholder) {
         return '<input type="text" id="' + id + '" value="' +
-            window._escapeHtml(value == null ? '' : value) +
-            '" placeholder="' + window._escapeHtml(placeholder || '') +
+            window.escapeHtml(value == null ? '' : value) +
+            '" placeholder="' + window.escapeHtml(placeholder || '') +
             '" style="width:100%;padding:6px 8px;background:var(--bg);' +
             'border:1px solid var(--border);border-radius:6px;font-size:0.7rem;">';
     }
 
     function _numberInput(id, value) {
         return '<input type="number" id="' + id + '" value="' +
-            window._escapeHtml(value == null ? '' : String(value)) +
+            window.escapeHtml(value == null ? '' : String(value)) +
             '" style="width:100%;padding:6px 8px;background:var(--bg);' +
             'border:1px solid var(--border);border-radius:6px;font-size:0.7rem;">';
     }
@@ -162,7 +187,7 @@
         return '<textarea id="' + id + '" rows="' + (rows || 2) + '" ' +
             'style="width:100%;padding:6px 8px;background:var(--bg);' +
             'border:1px solid var(--border);border-radius:6px;font-size:0.65rem;resize:vertical;">' +
-            window._escapeHtml(value == null ? '' : value) + '</textarea>';
+            window.escapeHtml(value == null ? '' : value) + '</textarea>';
     }
 
     function _selectButton(id, displayId, placeholder, iconName) {
@@ -170,7 +195,7 @@
             'padding:8px;background:var(--bg3);border:1px solid var(--border);' +
             'border-radius:6px;cursor:pointer;font-size:0.7rem;text-align:left;">' +
             _icon(iconName) + ' <span id="' + displayId + '">' +
-            window._escapeHtml(placeholder) + '</span></button>';
+            window.escapeHtml(placeholder) + '</span></button>';
     }
 
     function _buildLocationOptions(selectedId) {
@@ -184,8 +209,8 @@
             if (!Object.prototype.hasOwnProperty.call(methods, key)) continue;
             var m = methods[key];
             var sel = selectedName === m.name ? ' selected' : '';
-            opts += '<option value="' + window._escapeHtml(m.name) + '"' + sel + '>' +
-                window._escapeHtml(m.name) + '</option>';
+            opts += '<option value="' + window.escapeHtml(m.name) + '"' + sel + '>' +
+                window.escapeHtml(m.name) + '</option>';
         }
         return opts;
     }
@@ -195,7 +220,7 @@
     // =========================================================================
 
     function openMurderModal(options) {
-        var vm = VM.toMurderModalViewModel(options || {}, window.getCurrentYearSafe());
+        var vm = VM.toMurderModalViewModel(options || {}, window.getCurrentYear());
 
         var content =
             '<div style="margin-bottom:12px;">' +
@@ -239,8 +264,8 @@
             '</div>';
 
         return window.openModal({
-            title: vm.title,
-            content: content,
+            titleHtml: vm.title,
+            contentHtml: content,
             confirmText: 'Record Murder',
             cancelText: 'Cancel',
             onMount: function(root) {
@@ -306,7 +331,7 @@
         var victimId = root.querySelector('#crimeVictimId').value;
         var killerId = root.querySelector('#crimeKillerId').value;
         var yearRaw = root.querySelector('#crimeYear').value;
-        var year = yearRaw === '' ? window.getCurrentYearSafe() : parseInt(yearRaw, 10);
+        var year = yearRaw === '' ? window.getCurrentYear() : parseInt(yearRaw, 10);
         var locationId = root.querySelector('#crimeLocation').value || null;
         var reasonRaw = root.querySelector('#crimeReason').value;
         var reason = reasonRaw === '' ? null : reasonRaw;
@@ -314,13 +339,13 @@
         var notesRaw = root.querySelector('#crimeNotes').value;
         var notes = notesRaw === '' ? null : notesRaw;
 
-        if (!victimId) { window._showToast('Please select a victim', 'error'); return false; }
-        if (!killerId) { window._showToast('Please select a killer', 'error'); return false; }
+        if (!victimId) { window.showToast('Please select a victim', 'error'); return false; }
+        if (!killerId) { window.showToast('Please select a killer', 'error'); return false; }
         if (victimId === killerId) {
-            window._showToast('Victim and killer cannot be the same', 'error');
+            window.showToast('Victim and killer cannot be the same', 'error');
             return false;
         }
-        if (isNaN(year)) { window._showToast('Year must be a number', 'error'); return false; }
+        if (isNaN(year)) { window.showToast('Year must be a number', 'error'); return false; }
 
         var result = Commands.triggerMurder(victimId, killerId, {
             year: year,
@@ -331,12 +356,12 @@
         });
 
         if (!result.success) {
-            window._showToast('Failed to record murder: ' + result.reason, 'error');
+            window.showToast('Failed to record murder: ' + result.reason, 'error');
             return false;
         }
 
         _commitAndPersist();
-        window._showToast('Murder recorded', 'success');
+        window.showToast('Murder recorded', 'success');
         window.closeTopModal();
         if (typeof options.onComplete === 'function') options.onComplete(result.data);
         return true;
@@ -347,7 +372,7 @@
     // =========================================================================
 
     function openExecutionModal(options) {
-        var vm = VM.toExecutionModalViewModel(options || {}, window.getCurrentYearSafe());
+        var vm = VM.toExecutionModalViewModel(options || {}, window.getCurrentYear());
 
         var content =
             '<div style="margin-bottom:12px;">' +
@@ -385,8 +410,8 @@
             '</div>';
 
         return window.openModal({
-            title: vm.title,
-            content: content,
+            titleHtml: vm.title,
+            contentHtml: content,
             confirmText: 'Record Execution',
             cancelText: 'Cancel',
             onMount: function(root) {
@@ -428,7 +453,7 @@
     function _submitExecution(root, options, vm) {
         var condemnedId = root.querySelector('#crimeCondemnedId').value;
         var yearRaw = root.querySelector('#crimeExecYear').value;
-        var year = yearRaw === '' ? window.getCurrentYearSafe() : parseInt(yearRaw, 10);
+        var year = yearRaw === '' ? window.getCurrentYear() : parseInt(yearRaw, 10);
         var locationId = root.querySelector('#crimeExecLocation').value || null;
         var reasonRaw = root.querySelector('#crimeExecReason').value;
         var reason = reasonRaw === '' ? null : reasonRaw;
@@ -438,10 +463,10 @@
         var notes = notesRaw === '' ? null : notesRaw;
 
         if (!condemnedId) {
-            window._showToast('Please select a condemned character', 'error');
+            window.showToast('Please select a condemned character', 'error');
             return false;
         }
-        if (isNaN(year)) { window._showToast('Year must be a number', 'error'); return false; }
+        if (isNaN(year)) { window.showToast('Year must be a number', 'error'); return false; }
 
         var result = Commands.triggerExecution(condemnedId, {
             year: year,
@@ -452,12 +477,12 @@
         });
 
         if (!result.success) {
-            window._showToast('Failed to record execution: ' + result.reason, 'error');
+            window.showToast('Failed to record execution: ' + result.reason, 'error');
             return false;
         }
 
         _commitAndPersist();
-        window._showToast('Execution recorded', 'success');
+        window.showToast('Execution recorded', 'success');
         window.closeTopModal();
         if (typeof options.onComplete === 'function') options.onComplete(result.data);
         return true;
@@ -468,7 +493,7 @@
     // =========================================================================
 
     function openVendettaModal(options) {
-        var vm = VM.toVendettaModalViewModel(options || {}, window.getCurrentYearSafe());
+        var vm = VM.toVendettaModalViewModel(options || {}, window.getCurrentYear());
 
         var content =
             _detailGrid([
@@ -497,8 +522,8 @@
             '</div>';
 
         return window.openModal({
-            title: vm.title,
-            content: content,
+            titleHtml: vm.title,
+            contentHtml: content,
             confirmText: 'Create Vendetta',
             cancelText: 'Cancel',
             onMount: function(root) {
@@ -562,21 +587,21 @@
         var householdAId = root.querySelector('#crimeHouseholdAId').value;
         var householdBId = root.querySelector('#crimeHouseholdBId').value;
         var yearRaw = root.querySelector('#crimeVendettaYear').value;
-        var year = yearRaw === '' ? window.getCurrentYearSafe() : parseInt(yearRaw, 10);
+        var year = yearRaw === '' ? window.getCurrentYear() : parseInt(yearRaw, 10);
         var causeRaw = root.querySelector('#crimeVendettaCause').value;
         var cause = causeRaw === '' ? null : causeRaw;
         var notesRaw = root.querySelector('#crimeVendettaNotes').value;
         var notes = notesRaw === '' ? null : notesRaw;
 
         if (!householdAId || !householdBId) {
-            window._showToast('Please select both households', 'error');
+            window.showToast('Please select both households', 'error');
             return false;
         }
         if (householdAId === householdBId) {
-            window._showToast('Households cannot be the same', 'error');
+            window.showToast('Households cannot be the same', 'error');
             return false;
         }
-        if (isNaN(year)) { window._showToast('Year must be a number', 'error'); return false; }
+        if (isNaN(year)) { window.showToast('Year must be a number', 'error'); return false; }
 
         // createBloodFeud takes character ids and derives households.
         // For a manual vendetta the modal calls the state-level command
@@ -605,12 +630,12 @@
         });
 
         if (!result.success) {
-            window._showToast('Failed to create vendetta: ' + result.reason, 'error');
+            window.showToast('Failed to create vendetta: ' + result.reason, 'error');
             return false;
         }
 
         _commitAndPersist();
-        window._showToast('Vendetta created', 'success');
+        window.showToast('Vendetta created', 'success');
         window.closeTopModal();
         if (typeof options.onComplete === 'function') options.onComplete(result.data);
         return true;
@@ -623,7 +648,7 @@
     function openCrimeDetailsModal(crimeId) {
         var crime = Queries.getCrime(crimeId);
         if (!crime) {
-            window._showToast('Crime not found', 'error');
+            window.showToast('Crime not found', 'error');
             return null;
         }
 
@@ -643,56 +668,56 @@
             locationName: locationName
         });
         if (!vm) {
-            window._showToast('Crime details unavailable', 'error');
+            window.showToast('Crime details unavailable', 'error');
             return null;
         }
 
         var cells = [
-            _detail('Type', window._escapeHtml(vm.typeLabel)),
-            _detail('Year', window._escapeHtml(vm.yearLabel)),
-            _detail('Perpetrator', window._escapeHtml(vm.perpetratorName)),
-            _detail('Victim', window._escapeHtml(vm.victimName || 'None')),
-            _detail('Location', window._escapeHtml(vm.locationName || 'Unknown')),
-            _detail('Reason', window._escapeHtml(vm.reason || 'Unknown')),
-            _detail('Status', window._escapeHtml(vm.statusLabel)),
-            _detail('Severity', window._escapeHtml(vm.severityLabel))
+            _detail('Type', window.escapeHtml(vm.typeLabel)),
+            _detail('Year', window.escapeHtml(vm.yearLabel)),
+            _detail('Perpetrator', window.escapeHtml(vm.perpetratorName)),
+            _detail('Victim', window.escapeHtml(vm.victimName || 'None')),
+            _detail('Location', window.escapeHtml(vm.locationName || 'Unknown')),
+            _detail('Reason', window.escapeHtml(vm.reason || 'Unknown')),
+            _detail('Status', window.escapeHtml(vm.statusLabel)),
+            _detail('Severity', window.escapeHtml(vm.severityLabel))
         ];
 
         var content = '<div style="padding:4px 0;">' + _detailGrid(cells);
 
         if (vm.solved && vm.solution) {
-            content += _detail('Solution', window._escapeHtml(vm.solution));
+            content += _detail('Solution', window.escapeHtml(vm.solution));
         }
         if (vm.method) {
-            content += _detail('Method', window._escapeHtml(vm.method));
+            content += _detail('Method', window.escapeHtml(vm.method));
         }
         if (vm.civilViolation) {
             content += _detail(
                 'Civil Violation',
-                window._escapeHtml(vm.civilViolation.lawName || 'Law unspecified') +
+                window.escapeHtml(vm.civilViolation.lawName || 'Law unspecified') +
                 (vm.civilViolation.punishment
-                    ? ' — ' + window._escapeHtml(vm.civilViolation.punishment)
+                    ? ' — ' + window.escapeHtml(vm.civilViolation.punishment)
                     : '')
             );
         }
         if (vm.religiousViolation) {
             content += _detail(
                 'Religious Violation',
-                window._escapeHtml(vm.religiousViolation.lawName || 'Law unspecified') +
+                window.escapeHtml(vm.religiousViolation.lawName || 'Law unspecified') +
                 (vm.religiousViolation.punishment
-                    ? ' — ' + window._escapeHtml(vm.religiousViolation.punishment)
+                    ? ' — ' + window.escapeHtml(vm.religiousViolation.punishment)
                     : '')
             );
         }
         if (vm.notes) {
-            content += _detail('Notes', window._escapeHtml(vm.notes));
+            content += _detail('Notes', window.escapeHtml(vm.notes));
         }
 
         content += '</div>';
 
         return window.openModal({
-            title: 'Crime Details',
-            content: content,
+            titleHtml: 'Crime Details',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: ''
         });
@@ -705,28 +730,28 @@
     function openVendettaDetailsModal(vendettaId) {
         var vendetta = Queries.getVendetta(vendettaId);
         if (!vendetta) {
-            window._showToast('Vendetta not found', 'error');
+            window.showToast('Vendetta not found', 'error');
             return null;
         }
 
         var vm = VM.toVendettaDetailsViewModel(vendetta);
         if (!vm) {
-            window._showToast('Vendetta details unavailable', 'error');
+            window.showToast('Vendetta details unavailable', 'error');
             return null;
         }
 
         var cells = [
-            _detail('Household A', window._escapeHtml(vm.householdAName)),
-            _detail('Household B', window._escapeHtml(vm.householdBName)),
-            _detail('Started', window._escapeHtml(vm.startedYearLabel)),
-            _detail('Status', window._escapeHtml(vm.statusLabel)),
-            _detail('Body Count', window._escapeHtml(String(vm.deathCount)))
+            _detail('Household A', window.escapeHtml(vm.householdAName)),
+            _detail('Household B', window.escapeHtml(vm.householdBName)),
+            _detail('Started', window.escapeHtml(vm.startedYearLabel)),
+            _detail('Status', window.escapeHtml(vm.statusLabel)),
+            _detail('Body Count', window.escapeHtml(String(vm.deathCount)))
         ];
 
         var content = '<div style="padding:4px 0;">' + _detailGrid(cells);
 
         if (vm.cause) {
-            content += _detail('Cause', window._escapeHtml(vm.cause));
+            content += _detail('Cause', window.escapeHtml(vm.cause));
         }
 
         if (vm.deaths.length > 0) {
@@ -738,27 +763,27 @@
                 var d = vm.deaths[i];
                 content += '<div style="padding:4px 8px;background:var(--bg3);' +
                     'border-radius:4px;margin-bottom:4px;font-size:0.65rem;">' +
-                    window._escapeHtml(d.victimName) + ' killed by ' +
-                    window._escapeHtml(d.killerName) +
-                    ' (' + window._escapeHtml(d.yearLabel) + ')' +
-                    (d.reason ? ' — ' + window._escapeHtml(d.reason) : '') +
+                    window.escapeHtml(d.victimName) + ' killed by ' +
+                    window.escapeHtml(d.killerName) +
+                    ' (' + window.escapeHtml(d.yearLabel) + ')' +
+                    (d.reason ? ' — ' + window.escapeHtml(d.reason) : '') +
                     '</div>';
             }
             content += '</div>';
         }
 
         if (vm.isResolved && vm.resolution) {
-            content += _detail('Resolution', window._escapeHtml(vm.resolution));
+            content += _detail('Resolution', window.escapeHtml(vm.resolution));
         }
         if (vm.notes) {
-            content += _detail('Notes', window._escapeHtml(vm.notes));
+            content += _detail('Notes', window.escapeHtml(vm.notes));
         }
 
         content += '</div>';
 
         return window.openModal({
-            title: 'Vendetta Details',
-            content: content,
+            titleHtml: 'Vendetta Details',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: ''
         });
@@ -779,7 +804,7 @@
 
         var vm = VM.toCrimeStatsViewModel(stats, locationName);
         if (!vm) {
-            window._showToast('Crime statistics unavailable', 'error');
+            window.showToast('Crime statistics unavailable', 'error');
             return null;
         }
 
@@ -787,13 +812,13 @@
 
         if (vm.periodLabel) {
             content += '<div style="font-size:0.55rem;color:var(--dim);margin-bottom:8px;">' +
-                window._escapeHtml(vm.periodLabel) +
+                window.escapeHtml(vm.periodLabel) +
                 '</div>';
         }
 
         content += _detailGrid([
             _detail('Total Crimes', String(vm.totalCrimes)),
-            _detail('Solve Rate', window._escapeHtml(vm.solvedRateLabel)),
+            _detail('Solve Rate', window.escapeHtml(vm.solvedRateLabel)),
             _detail('Unsolved', String(vm.unsolvedCrimes)),
             _detail('Recent', String(vm.recentCrimes))
         ]);
@@ -807,7 +832,7 @@
                 var row = vm.typeDistributionRows[i];
                 content += '<div style="display:flex;justify-content:space-between;' +
                     'font-size:0.7rem;padding:2px 0;">' +
-                    '<span>' + window._escapeHtml(row.typeLabel) + '</span>' +
+                    '<span>' + window.escapeHtml(row.typeLabel) + '</span>' +
                     '<span>' + row.count + '</span>' +
                     '</div>';
             }
@@ -824,17 +849,17 @@
         }
 
         if (vm.avgSeverityLabel) {
-            content += _detail('Average Severity', window._escapeHtml(vm.avgSeverityLabel));
+            content += _detail('Average Severity', window.escapeHtml(vm.avgSeverityLabel));
         }
         if (vm.mostCommonCrimeLabel) {
-            content += _detail('Most Common Crime', window._escapeHtml(vm.mostCommonCrimeLabel));
+            content += _detail('Most Common Crime', window.escapeHtml(vm.mostCommonCrimeLabel));
         }
 
         content += '</div>';
 
         return window.openModal({
-            title: 'Crime Statistics — ' + window._escapeHtml(locationName || 'Global'),
-            content: content,
+            titleHtml: 'Crime Statistics — ' + window.escapeHtml(locationName || 'Global'),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: ''
         });
