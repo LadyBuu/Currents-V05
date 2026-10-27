@@ -12,11 +12,12 @@
  *         - the in-memory category map
  *         - derived indexes (byId, byName, byCategory)
  *         - subscription/notification
+ *         - ephemeral UI state (selection, search term) — facade surface
  *
  *     RoleState does NOT own:
  *         - persistence format (delegated to storage.js)
  *         - business rules (delegated to RoleCommands)
- *         - UI state (lives in the UI layer)
+ *         - panel rendering (lives in the UI layer)
  *
  * Persistence contract:
  *
@@ -55,6 +56,18 @@
  *     added in later versions of the schema. Normalisation runs once, at
  *     init() time, over the persisted array. Reads do not mutate roles.
  *
+ * NAMESPACE OWNERSHIP
+ * -------------------
+ *   This file is the SINGLE owner of window.RoleState. The historical
+ *   js/core/role-state.js UI shim has been deleted. The shim's surface
+ *   (selectedRoleId, roleSearchTerm, reset) is provided here as a
+ *   compatibility block backed by this module's own ephemeral UI state.
+ *
+ *   A collision guard at the top of this file throws if
+ *   window.RoleState was already defined by another module when this
+ *   file loads. That makes any future accidental duplication loud
+ *   instead of silent.
+ *
  * DEPENDENCIES:
  *   - role-constants.js (RoleConstants)
  *   - storage.js        (masterData, markDataDirty)
@@ -67,6 +80,24 @@
 
 (function () {
     'use strict';
+
+    // =========================================================================
+    // 0. COLLISION GUARD
+    // =========================================================================
+    //
+    // If another module has already claimed window.RoleState, refuse to
+    // load. Silent clobbering is how the role/rank/household namespace
+    // collisions happened. The core UI shim has been removed; there must
+    // be exactly one RoleState in the tree.
+
+    if (typeof window.RoleState !== 'undefined'
+        && window.RoleState.__owner !== 'roles/role-state.js') {
+        throw new Error(
+            'roles/role-state.js: window.RoleState is already defined by ' +
+            'another module. The historical core UI shim must be deleted, ' +
+            'not loaded alongside this file.'
+        );
+    }
 
     // =========================================================================
     // 1. HARD DEPENDENCY CHECK
@@ -93,6 +124,14 @@
     };
     var _subscribers = [];
     var _initialized = false;
+
+    // Ephemeral UI state — facade compatibility surface only.
+    // This is NOT canonical data. It does not go into masterData, does
+    // not survive reload, and is not persisted anywhere.
+    var _uiState = {
+        selectedRoleId: null,
+        roleSearchTerm: ''
+    };
 
     // =========================================================================
     // 3. DEPENDENCY WRAPPERS (storage + accessors)
@@ -548,10 +587,48 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 14. FACADE COMPATIBILITY SURFACE
+    // =========================================================================
+    //
+    // The historical js/core/role-state.js exposed selectedRoleId,
+    // roleSearchTerm, and reset as top-level properties/methods. That file
+    // has been deleted; the surface is provided here so core/state.js
+    // continues to work unchanged.
+    //
+    // These read/write _uiState (declared in section 2). They do NOT
+    // touch the role catalogue, do NOT call markDataDirty, and do NOT
+    // publish events on the state channel — the UI state is ephemeral and
+    // not part of the catalogue's persistence contract.
+
+    function _getSelectedRoleId() {
+        return _uiState.selectedRoleId;
+    }
+
+    function _setSelectedRoleId(value) {
+        _uiState.selectedRoleId = value;
+    }
+
+    function _getRoleSearchTerm() {
+        return _uiState.roleSearchTerm;
+    }
+
+    function _setRoleSearchTerm(value) {
+        _uiState.roleSearchTerm = value;
+    }
+
+    function reset() {
+        _uiState.selectedRoleId = null;
+        _uiState.roleSearchTerm = '';
+    }
+
+    // =========================================================================
+    // 15. EXPORTS
     // =========================================================================
 
     window.RoleState = {
+        // Namespace ownership marker — see collision guard at top.
+        __owner: 'roles/role-state.js',
+
         // Lifecycle
         init: init,
         isInitialised: function () { return _initialized; },
@@ -575,7 +652,14 @@
         // Category mutations (RoleCommands is the intended caller)
         addCategory: addCategory,
         updateCategory: updateCategory,
-        deleteCategory: deleteCategory
+        deleteCategory: deleteCategory,
+
+        // Facade compatibility surface (core/state.js reads these).
+        get selectedRoleId() { return _getSelectedRoleId(); },
+        set selectedRoleId(v) { _setSelectedRoleId(v); },
+        get roleSearchTerm() { return _getRoleSearchTerm(); },
+        set roleSearchTerm(v) { _setRoleSearchTerm(v); },
+        reset: reset
     };
 
     if (typeof module !== 'undefined' && module.exports) {
