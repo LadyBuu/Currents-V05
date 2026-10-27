@@ -1,5 +1,9 @@
 /**
- * romance-commands.js
+ * =============================================================================
+ * STILL WATERS - ROMANCE COMMANDS (romance-commands.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/romance-commands.js
  *
  * Mutation boundary for romantic relationships.
  *
@@ -15,8 +19,9 @@
  * Depends on:
  *   - RomanceRules for policy
  *   - RomanceQueries for existence and facts
- *   - CultureRules for cultural attribute gating (required when any
- *     cultural attribute is present in the request)
+ *   - CultureRules for cultural attribute gating (required at call
+ *     time only, via RomanceRules.validateAttributesForCulture — not
+ *     required at module load)
  *   - RelationshipCommands for the state write
  *   - Character accessors for ages, names, traits, rank
  *   - RankRules for rank policy reads (optional, falls back to direct
@@ -34,6 +39,8 @@
  * Load order: after relationship-commands.js, romance-rules.js,
  * romance-queries.js. RankRules is optional; if loaded before this
  * module, rank policy reads route through it.
+ *
+ * =============================================================================
  */
 
 (function() {
@@ -48,7 +55,10 @@
     var STATUS = window.RELATIONSHIP_STATUS;
 
     if (!RC || !RR || !RoQ || !A || !ATTR || !STATUS) {
-        throw new Error('romance-commands.js: relationship-commands.js, romance-rules.js, romance-queries.js must load first');
+        throw new Error(
+            'romance-commands.js: relationship-commands.js, ' +
+            'romance-rules.js, romance-queries.js must load first'
+        );
     }
 
     var CASUAL    = A.CASUAL_DATING;
@@ -102,14 +112,6 @@
         if (typeof window.logEvent === 'function') {
             window.logEvent(category, type, message, subjects);
         }
-    }
-
-    function _requireCultureRules() {
-        if (typeof window.CultureRules !== 'object' || window.CultureRules === null ||
-            typeof window.CultureRules.supportsRelationshipAttribute !== 'function') {
-            throw new Error('romance-commands.js: CultureRules.supportsRelationshipAttribute required');
-        }
-        return window.CultureRules;
     }
 
     // -------------------------------------------------------------------------
@@ -447,7 +449,8 @@
     //
     // Adding or removing an attribute on a committed relationship.
     // Structural validation via RomanceRules; cultural gating via
-    // CultureRules when the attribute is cultural.
+    // RomanceRules.validateAttributesForCulture when the attribute is
+    // cultural.
     // -------------------------------------------------------------------------
 
     function addCommittedAttribute(relationshipId, attribute, options) {
@@ -475,7 +478,9 @@
             return _fail('INVALID_ATTRIBUTE', check.reason);
         }
 
-        // Cultural gating if applicable.
+        // Cultural gating if applicable. RomanceRules.validateAttributesForCulture
+        // is the sole cultural-gating entry point; it consults CultureRules
+        // at call time and fails loudly if CultureRules is missing.
         if (window.RELATIONSHIP_TYPES.isCulturalAttribute(attribute)) {
             var charA = _getCharacter(rec.participantA);
             var charB = _getCharacter(rec.participantB);
@@ -617,7 +622,10 @@
     // BULK: END ALL ROMANTIC RELATIONSHIPS FOR A CHARACTER
     //
     // Used by life-death integration when the relationship command
-    // surface is being invoked from outside romance. One commit.
+    // surface is being invoked from outside romance. One commit per
+    // relationship ended (via RC.end / RC.setWidowed); the loop is not
+    // atomic across records. Documented in the same spirit as
+    // children-commands.js recordPregnancyAttempts.
     // -------------------------------------------------------------------------
 
     /**
@@ -688,5 +696,9 @@
 
         endAllRomanticForCharacter: endAllRomanticForCharacter
     };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.RomanceCommands;
+    }
 
 })();
