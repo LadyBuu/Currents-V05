@@ -60,6 +60,21 @@
  *   the entries are canonical trait ids. That is the factory's job at
  *   build time and the trait commands' job at write time.
  *
+ * CHILDREN COLLECTIONS:
+ *   ChildrenState owns three top-level collections that live in
+ *   masterData.data:
+ *
+ *     pregnancyRecords        array   (pregnancy / birth events)
+ *     surrogacyArrangements   array   (surrogacy arrangement records)
+ *     adoptionRecords         array   (adoption metadata records)
+ *
+ *   These are declared here (factory + normalization) so that every
+ *   fresh install and every old save gets the arrays up front. The
+ *   children domain was previously relying on ChildrenState's defensive
+ *   `Array.isArray` guard at load; that worked but left the schema
+ *   layer's shape declaration incomplete. This module now declares them
+ *   as part of the canonical current shape.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.DEFAULT_YEAR, MIN_YEAR, MAX_YEAR
  *
@@ -68,10 +83,20 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords to
+ *       createDefaultMasterDataOverride().data and to the arrayKeys list
+ *       in normalizeMasterData. These are the three top-level children
+ *       collections that ChildrenState owns. Previous revisions relied
+ *       on ChildrenState's defensive `Array.isArray` guards at load,
+ *       which worked but left the schema shape declaration incomplete.
+ *       No behavioural change for existing saves: the arrays were either
+ *       already present (written by ChildrenCommands._commit) or
+ *       undefined (handled by the defensive guard). Both cases now
+ *       normalize to [] through the standard path.
+ *   Previous revision:
  *     - _ensureArrayField(char, 'traits') added to normalizeMasterData.
  *       Old saves gain traits: [] on load. No migration version bump;
  *       the field is additive and defaults safely.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -238,7 +263,15 @@
                 currentYear: window.TIME_CONSTANTS.DEFAULT_YEAR,
                 educationalInstitutions: [],
                 educationalSubjects: {},
-                subjectProgress: {}
+                subjectProgress: {},
+
+                // Children domain collections. Owned by ChildrenState;
+                // declared here so every fresh install and every old
+                // save gets the arrays up front. See CHILDREN COLLECTIONS
+                // in the module header.
+                pregnancyRecords: [],
+                surrogacyArrangements: [],
+                adoptionRecords: []
             }
         };
     }
@@ -270,11 +303,19 @@
         var out = {};
 
         // --- Array fields ---
+        //
+        // parentChildEdges, pregnancyRecords, surrogacyArrangements, and
+        // adoptionRecords are children/family-owned top-level collections.
+        // They are declared here so that every loaded envelope carries
+        // them as arrays, matching createDefaultMasterDataOverride().
         var arrayKeys = [
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
             'governmentTypes', 'governments', 'households', 'residences',
             'disasters', 'eventLog', 'educationalInstitutions',
-            'parentChildEdges'
+            'parentChildEdges',
+            'pregnancyRecords',
+            'surrogacyArrangements',
+            'adoptionRecords'
         ];
         for (var i = 0; i < arrayKeys.length; i++) {
             var k = arrayKeys[i];
