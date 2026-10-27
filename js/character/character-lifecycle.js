@@ -20,6 +20,7 @@
  *       - relationship consequences via
  *         RelationshipIntegrations.handleCharacterDeath
  *       - rank consequences via RankIssues.handleCharacterDeath
+ *       - any registered death handler (see DEATH HANDLER HOOK)
  *   - Life stage classification
  *   - Age group classification
  *   - Elderly check
@@ -107,16 +108,38 @@
  *   called from both _die (simulation path) and killCharacter (command
  *   path). This ensures the two paths cannot drift.
  *
- *   LOAD ORDER NOTE:
- *     This module loads before relationship-integrations.js in the
- *     documented load order. The dispatch below is therefore a no-op
- *     for the relationship domain unless relationship-integrations.js
- *     registers a death handler via window.registerDeathHandler (added
- *     in a later phase). Until that hook exists, the direct dispatch
- *     stays here as the fallback for the modules that DO load before
- *     this file (family, rank). The two dispatch paths are additive,
- *     not redundant: the named dispatch handles the modules that load
- *     first, the hook handles the modules that load after.
+ * DEATH HANDLER HOOK (Phase 3.13):
+ *   The named dispatch above only reaches the domains that load
+ *   before this file. Under the documented load order, that means
+ *   FamilyCommands and RankIssues, but NOT RelationshipIntegrations
+ *   (which loads after character-lifecycle.js).
+ *
+ *   To close that gap, this module exposes registerDeathHandler(fn).
+ *   Any module that loads after character-lifecycle.js may register a
+ *   handler. Every successful death invokes every registered handler
+ *   exactly once, after the named dispatch and after the death has
+ *   been written.
+ *
+ *   RelationshipIntegrations registers itself at load time (see
+ *   relationship-integrations.js's REGISTRATION HOOKS section).
+ *
+ *   Handler contract:
+ *     fn(characterId, { deathYear }) -> any
+ *   The return value is ignored. Exceptions are caught and logged. A
+ *   throwing handler does not prevent subsequent handlers from
+ *   running, and does not propagate out of the death dispatch.
+ *
+ *   The handler registration is additive with the named dispatch: a
+ *   domain that registers via the hook AND is present in the named
+ *   dispatch (e.g. a hypothetical future state where the load order
+ *   changes) will be called twice. That is safe because the command
+ *   layer is idempotent per character id — end() refuses non-ongoing
+ *   records; remove() refuses missing ids.
+ *
+ *   Registration returns an unregister function. Callers who need to
+ *   tear down (test harnesses, hot reload) should call it. In a
+ *   normal browser session nothing calls unregister; the handler lives
+ *   for the lifetime of the page.
  *
  * AGE CLASSIFICATION:
  *   LIFE_STAGES comes from constants/age-constants.js. It maps stage
@@ -150,21 +173,27 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 1.6):
+ *   Current revision (Phase 3.13):
+ *     - Added registerDeathHandler(fn). A module that loads after this
+ *       file can register a death handler; every successful death
+ *       invokes every registered handler, after the named cross-domain
+ *       dispatch. This closes the load-order gap that made the
+ *       RelationshipIntegrations branch of _notifyCrossDomainDeath a
+ *       no-op under the documented load order.
+ *     - _dispatchDeathEffects now invokes registered handlers after
+ *       _notifyCrossDomainDeath. Handler exceptions are caught and
+ *       logged; they do not stop subsequent handlers or propagate.
+ *     - Header DEATH HANDLER HOOK section added.
+ *     - No other behavioural change.
+ *   Previous revision (Phase 1.6):
  *     - randomness.js (window.random) is now a HARD load-time
- *       dependency. The module throws at load if window.random is
- *       not a function.
+ *       dependency.
  *     - _getRandomFn's docstring updated to clarify that
- *       options.random is an override, not a substitute. The "no
- *       random source available" branch is now unreachable at
- *       runtime; kept as defense in depth.
+ *       options.random is an override, not a substitute.
  *     - Header DEPENDENCIES (REQUIRED) updated to list randomness.js.
- *     - Header RANDOMNESS section added.
  *     - Header LOAD ORDER NOTE added under CROSS-DOMAIN DEATH
  *       DISPATCH, documenting that the RelationshipIntegrations
- *       dispatch is a no-op until registerDeathHandler is added in
- *       Phase 3.
- *     - No other behavioural change.
+ *       dispatch is a no-op until registerDeathHandler is added.
  * =============================================================================
  */
 
@@ -217,6 +246,60 @@
         throw new Error(
             'character-lifecycle.js: CharacterCommands.markDeceased is required.'
         );
+    }
+
+    // =========================================================================
+    // 0b. DEATH HANDLER REGISTRY (Phase 3.13)
+    // =========================================================================
+    //
+    // See DEATH HANDLER HOOK in the module header. Handlers registered
+    // here run after the named cross-domain dispatch, on every
+    // successful death.
+
+    var _deathHandlers = [];
+
+    /**
+     * Registers a function to be called on every successful death.
+     *
+     * @param {Function} fn - called as fn(characterId, { deathYear })
+     * @returns {Function} unregister function
+     * @throws {Error} if fn is not a function
+     */
+    function registerDeathHandler(fn) {
+        if (typeof fn !== 'function') {
+            throw new Error(
+                'character-lifecycle.js: registerDeathHandler requires a function.'
+            );
+        }
+        _deathHandlers.push(fn);
+        return function unregister() {
+            var idx = _deathHandlers.indexOf(fn);
+            if (idx !== -1) _deathHandlers.splice(idx, 1);
+        };
+    }
+
+    /**
+     * Invokes every registered death handler with (characterId,
+     * { deathYear }). Handler exceptions are caught and logged. A
+     * throwing handler does not prevent subsequent handlers from
+     * running.
+     *
+     * @private
+     */
+    function _invokeDeathHandlers(characterId, year) {
+        if (_deathHandlers.length === 0) return;
+        var snapshot = _deathHandlers.slice();
+        for (var i = 0; i < snapshot.length; i++) {
+            try {
+                snapshot[i](characterId, { deathYear: year });
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'character-lifecycle.js: death handler threw:', e
+                    );
+                }
+            }
+        }
     }
 
     // =========================================================================
@@ -327,12 +410,12 @@
     // LOAD ORDER NOTE:
     //   This module loads before relationship-integrations.js in the
     //   documented load order, so the RelationshipIntegrations branch
-    //   below is a no-op today. It becomes reachable once
-    //   relationship-integrations.js registers a death handler (Phase
-    //   3.34). Until then, the branch stays as documentation of the
-    //   intended contract and as a defensive dispatch in case the load
+    //   below is a no-op on any page that follows the documented load
+    //   order. It remains as a defensive dispatch in case the load
     //   order is ever changed to put relationship-integrations.js
-    //   first.
+    //   first. The Phase 3.13 registerDeathHandler hook is the
+    //   load-order-independent path; relationship-integrations.js
+    //   registers itself there.
 
     function _notifyCrossDomainDeath(characterId, year) {
         if (!_hasId(characterId)) return;
@@ -364,7 +447,7 @@
         //
         // NOTE: this branch is a no-op under the documented load order
         // (relationship-integrations.js loads after character-lifecycle.js).
-        // See LOAD ORDER NOTE in the module header.
+        // See LOAD ORDER NOTE above and DEATH HANDLER HOOK in the header.
         if (window.RelationshipIntegrations
             && typeof window.RelationshipIntegrations.handleCharacterDeath === 'function') {
             try {
@@ -428,6 +511,12 @@
             [character]);
 
         _notifyCrossDomainDeath(character.id, year);
+
+        // Phase 3.13: invoke registered handlers. These reach the
+        // domains that load after this file (notably the relationship
+        // domain) via the registration hook. The named dispatch above
+        // reaches the domains that load before it.
+        _invokeDeathHandlers(character.id, year);
     }
 
     /**
@@ -818,7 +907,7 @@
      *   - passes the death year as referenceYear (so simulation-driven
      *     deaths from children-commands work correctly),
      *   - dispatches cross-domain consequences (family + relationship
-     *     + rank),
+     *     + rank + registered handlers),
      *   - logs the death event.
      */
     function killCharacter(characterId, deathData) {
@@ -1038,8 +1127,21 @@
         triggerAccidentalDeath: triggerAccidentalDeath,
 
         predictLifespan: predictLifespan,
-        getExpectedRemainingYears: getExpectedRemainingYears
+        getExpectedRemainingYears: getExpectedRemainingYears,
+
+        // Phase 3.13: register a death handler. Exposed on the
+        // CharacterLifecycle namespace AND on window (below) so a
+        // caller can reach it either way.
+        registerDeathHandler: registerDeathHandler
     };
+
+    // Phase 3.13: expose registerDeathHandler on window so that
+    // modules that load after this file (notably
+    // relationship-integrations.js) can register without assuming the
+    // CharacterLifecycle namespace is populated. Both paths are
+    // equivalent; the window global is the one the relationship
+    // integration's registration block checks for.
+    window.registerDeathHandler = registerDeathHandler;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.CharacterLifecycle;
