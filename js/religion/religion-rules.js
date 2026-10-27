@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION RULES (religion-rules.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-rules.js
+ * LOCATION: js/religion/religion-rules.js
  *
  * Domain rules for religion operations. Answers "is this allowed?" without
  * performing the operation.
