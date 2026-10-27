@@ -12,6 +12,7 @@
  *   - Reactive rebuild in response to canonical mutation events
  *   - Low-level mutation primitives (add, remove, update, batch)
  *   - Internal live-reference access for authorized mutation code
+ *   - Ephemeral UI state (facade compatibility surface only)
  *
  * OWNERSHIP:
  *   CharacterState owns the runtime representation of canonical character
@@ -110,6 +111,22 @@
  *   - gender is normalized to 'male' | 'female' | 'unknown'.
  *   - A field is indexed only if present and non-empty.
  *
+ * NAMESPACE OWNERSHIP
+ * -------------------
+ *   This file is the SINGLE owner of window.CharacterState. The historical
+ *   js/core/character-state.js UI shim was removed in a prior fix. The
+ *   shim's surface (selectedCharId, ageGroupCollapsedState, selectedChildId,
+ *   selectedGuardianId, selectedGuardianType, selectedPartnerId,
+ *   adoptRelationshipCache, adoptChildAgeGapCache, currentSelectedChildId,
+ *   setSelectedCharacter, hasSelectedCharacter, clearAdoptionCache, reset)
+ *   is provided here as a compatibility block backed by this module's own
+ *   ephemeral UI state.
+ *
+ *   A collision guard at the top of this file throws if
+ *   window.CharacterState was already defined by another module when this
+ *   file loads. That makes any future accidental duplication loud instead
+ *   of silent.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - storage.js:   masterData, markDataDirty
  *   - accessors.js: getCharacters (initial load only)
@@ -126,7 +143,25 @@
     'use strict';
 
     // =========================================================================
-    // 0. DEPENDENCY GUARDS
+    // 0. COLLISION GUARD
+    // =========================================================================
+    //
+    // If another module has already claimed window.CharacterState, refuse
+    // to load. Silent clobbering is how the other namespace collisions
+    // happened. The core UI shim was removed in a prior fix; there must be
+    // exactly one CharacterState in the tree.
+
+    if (typeof window.CharacterState !== 'undefined'
+        && window.CharacterState.__owner !== 'character/character-state.js') {
+        throw new Error(
+            'character/character-state.js: window.CharacterState is already ' +
+            'defined by another module. There must be exactly one ' +
+            'CharacterState in the tree.'
+        );
+    }
+
+    // =========================================================================
+    // 1. DEPENDENCY GUARDS
     // =========================================================================
 
     function _requireDependencies() {
@@ -148,7 +183,7 @@
     _requireDependencies();
 
     // =========================================================================
-    // 1. CHARACTER-OWNED FIELDS
+    // 2. CHARACTER-OWNED FIELDS
     // =========================================================================
     //
     // Fields the generic updateCharacter / updateCharacters path will accept.
@@ -224,7 +259,7 @@
     };
 
     // =========================================================================
-    // 2. INTERNAL STATE
+    // 3. INTERNAL STATE
     // =========================================================================
 
     var _characters = [];
@@ -249,8 +284,36 @@
     var _rebuilding = false;
     var _rebuildPending = false;
 
+    // Ephemeral UI state — facade compatibility surface only.
+    // This is NOT canonical data. It does not go into masterData, does
+    // not survive reload, and is not persisted anywhere.
+    //
+    // Fields:
+    //   selectedCharId           — currently open character in the panel
+    //   ageGroupCollapsedState   — { [groupKey]: boolean } collapse map
+    //   selectedChildId          — child selection in adoption/parentage UI
+    //   selectedGuardianId       — guardian selection in adoption/ward UI
+    //   selectedGuardianType     — 'legal' | 'guardianship' | 'foster' | null
+    //   selectedPartnerId        — partner selection in relationship UI
+    //   adoptRelationshipCache   — adoption relationship lookup cache
+    //   adoptChildAgeGapCache    — adoption age-gap lookup cache
+    //   currentSelectedChildId   — the "currently focused" child in the
+    //                              adoption form (may differ from
+    //                              selectedChildId during editing)
+    var _uiState = {
+        selectedCharId: null,
+        ageGroupCollapsedState: {},
+        selectedChildId: null,
+        selectedGuardianId: null,
+        selectedGuardianType: null,
+        selectedPartnerId: null,
+        adoptRelationshipCache: null,
+        adoptChildAgeGapCache: null,
+        currentSelectedChildId: null
+    };
+
     // =========================================================================
-    // 3. INTERNAL HELPERS
+    // 4. INTERNAL HELPERS
     // =========================================================================
 
     function _hasId(v) {
@@ -298,7 +361,7 @@
     }
 
     // =========================================================================
-    // 4. CACHE REBUILD
+    // 5. CACHE REBUILD
     // =========================================================================
 
     function _clearCaches() {
@@ -395,7 +458,7 @@
     }
 
     // =========================================================================
-    // 5. NOTIFICATIONS
+    // 6. NOTIFICATIONS
     // =========================================================================
 
     function _notifySubscribers(event) {
@@ -441,7 +504,7 @@
     }
 
     // =========================================================================
-    // 6. EVENT SUBSCRIPTIONS (STATE REFRESH)
+    // 7. EVENT SUBSCRIPTIONS (STATE REFRESH)
     // =========================================================================
 
     function _handleCharacterChanged(event) {
@@ -469,7 +532,7 @@
     window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
 
     // =========================================================================
-    // 7. SUBSCRIPTION MANAGEMENT
+    // 8. SUBSCRIPTION MANAGEMENT
     // =========================================================================
 
     function subscribe(callback) {
@@ -484,7 +547,7 @@
     }
 
     // =========================================================================
-    // 8. INTERNAL LIVE-REFERENCE ACCESS (AUTHORIZED MUTATION ONLY)
+    // 9. INTERNAL LIVE-REFERENCE ACCESS (AUTHORIZED MUTATION ONLY)
     // =========================================================================
 
     function _getLiveCharacterForMutation(id) {
@@ -493,7 +556,7 @@
     }
 
     // =========================================================================
-    // 9. PROJECTION HELPERS
+    // 10. PROJECTION HELPERS
     // =========================================================================
     //
     // A projection is a shallow, defensive copy of the character for external
@@ -649,7 +712,7 @@
     }
 
     // =========================================================================
-    // 10. PUBLIC API - COLLECTION READ
+    // 11. PUBLIC API - COLLECTION READ
     // =========================================================================
 
     function getAllCharacters() {
@@ -677,7 +740,7 @@
     }
 
     // =========================================================================
-    // 11. PUBLIC API - INDEX QUERIES (PROJECTIONS)
+    // 12. PUBLIC API - INDEX QUERIES (PROJECTIONS)
     // =========================================================================
 
     function getCharactersByCurrentLocation(locationId) {
@@ -791,7 +854,7 @@
     }
 
     // =========================================================================
-    // 12. WRITE PRIMITIVES - VALIDATION
+    // 13. WRITE PRIMITIVES - VALIDATION
     // =========================================================================
 
     function _isCharacterOwnedField(key) {
@@ -847,7 +910,7 @@
     }
 
     // =========================================================================
-    // 13. WRITE PRIMITIVES - CHARACTER-OWNED FIELD UPDATES
+    // 14. WRITE PRIMITIVES - CHARACTER-OWNED FIELD UPDATES
     // =========================================================================
 
     function updateCharacter(characterId, updates) {
@@ -959,7 +1022,7 @@
     }
 
     // =========================================================================
-    // 14. WRITE PRIMITIVES - COLLECTION MEMBERSHIP
+    // 15. WRITE PRIMITIVES - COLLECTION MEMBERSHIP
     // =========================================================================
 
     function addCharacter(character) {
@@ -1091,7 +1154,7 @@
     }
 
     // =========================================================================
-    // 15. MANUAL REFRESH
+    // 16. MANUAL REFRESH
     // =========================================================================
 
     function refresh() {
@@ -1105,16 +1168,117 @@
     }
 
     // =========================================================================
-    // 16. INITIAL REBUILD
+    // 17. FACADE COMPATIBILITY SURFACE
+    // =========================================================================
+    //
+    // The historical js/core/character-state.js UI shim was removed in a
+    // prior fix. Its surface is provided here so core/state.js continues to
+    // work unchanged.
+    //
+    // These read/write _uiState (declared in section 3). They do NOT touch
+    // the character catalogue, do NOT call markDataDirty, and do NOT
+    // publish events on the state channel — the UI state is ephemeral and
+    // not part of the character collection's persistence contract.
+
+    function _getSelectedCharId() {
+        return _uiState.selectedCharId;
+    }
+
+    function _setSelectedCharId(value) {
+        _uiState.selectedCharId = value;
+    }
+
+    function _getAgeGroupCollapsedState() {
+        return _uiState.ageGroupCollapsedState;
+    }
+
+    function _setAgeGroupCollapsedState(value) {
+        _uiState.ageGroupCollapsedState = value;
+    }
+
+    function _getSelectedChildId() {
+        return _uiState.selectedChildId;
+    }
+
+    function _setSelectedChildId(value) {
+        _uiState.selectedChildId = value;
+    }
+
+    function _getSelectedGuardianId() {
+        return _uiState.selectedGuardianId;
+    }
+
+    function _setSelectedGuardianId(value) {
+        _uiState.selectedGuardianId = value;
+    }
+
+    function _getSelectedGuardianType() {
+        return _uiState.selectedGuardianType;
+    }
+
+    function _setSelectedGuardianType(value) {
+        _uiState.selectedGuardianType = value;
+    }
+
+    function _getSelectedPartnerId() {
+        return _uiState.selectedPartnerId;
+    }
+
+    function _setSelectedPartnerId(value) {
+        _uiState.selectedPartnerId = value;
+    }
+
+    function _getAdoptRelationshipCache() {
+        return _uiState.adoptRelationshipCache;
+    }
+
+    function _getAdoptChildAgeGapCache() {
+        return _uiState.adoptChildAgeGapCache;
+    }
+
+    function _getCurrentSelectedChildId() {
+        return _uiState.currentSelectedChildId;
+    }
+
+    function setSelectedCharacter(id) {
+        _uiState.selectedCharId = id;
+    }
+
+    function hasSelectedCharacter() {
+        return _uiState.selectedCharId !== null;
+    }
+
+    function clearAdoptionCache() {
+        _uiState.adoptRelationshipCache = null;
+        _uiState.adoptChildAgeGapCache = null;
+    }
+
+    function reset() {
+        _uiState.selectedCharId = null;
+        _uiState.ageGroupCollapsedState = {};
+        _uiState.selectedChildId = null;
+        _uiState.selectedGuardianId = null;
+        _uiState.selectedGuardianType = null;
+        _uiState.selectedPartnerId = null;
+        _uiState.adoptRelationshipCache = null;
+        _uiState.adoptChildAgeGapCache = null;
+        _uiState.currentSelectedChildId = null;
+    }
+
+    // =========================================================================
+    // 18. INITIAL REBUILD
     // =========================================================================
 
     _rebuildCaches();
 
     // =========================================================================
-    // 17. EXPORTS
+    // 19. EXPORTS
     // =========================================================================
 
     window.CharacterState = {
+        // Namespace ownership marker — see collision guard at top.
+        __owner: 'character/character-state.js',
+
         subscribe: subscribe,
 
         getAllCharacters: getAllCharacters,
@@ -1148,7 +1312,29 @@
 
         _getLiveCharacterForMutation: _getLiveCharacterForMutation,
 
-        refresh: refresh
+        refresh: refresh,
+
+        // Facade compatibility surface (core/state.js reads these).
+        get selectedCharId() { return _getSelectedCharId(); },
+        set selectedCharId(v) { _setSelectedCharId(v); },
+        get ageGroupCollapsedState() { return _getAgeGroupCollapsedState(); },
+        set ageGroupCollapsedState(v) { _setAgeGroupCollapsedState(v); },
+        get selectedChildId() { return _getSelectedChildId(); },
+        set selectedChildId(v) { _setSelectedChildId(v); },
+        get selectedGuardianId() { return _getSelectedGuardianId(); },
+        set selectedGuardianId(v) { _setSelectedGuardianId(v); },
+        get selectedGuardianType() { return _getSelectedGuardianType(); },
+        set selectedGuardianType(v) { _setSelectedGuardianType(v); },
+        get selectedPartnerId() { return _getSelectedPartnerId(); },
+        set selectedPartnerId(v) { _setSelectedPartnerId(v); },
+        get adoptRelationshipCache() { return _getAdoptRelationshipCache(); },
+        get adoptChildAgeGapCache() { return _getAdoptChildAgeGapCache(); },
+        get currentSelectedChildId() { return _getCurrentSelectedChildId(); },
+
+        setSelectedCharacter: setSelectedCharacter,
+        hasSelectedCharacter: hasSelectedCharacter,
+        clearAdoptionCache: clearAdoptionCache,
+        reset: reset
     };
 
     if (typeof module !== 'undefined' && module.exports) {
