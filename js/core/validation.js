@@ -43,18 +43,29 @@
  *   integrity tooling is responsible for reporting any pre-migration
  *   data that still contains them.
  *
- *   Earlier revisions removed motherId and fatherId from
- *   ENTITY_SCHEMAS.character.optional and from the per-entity checks
- *   inside validateCharacter. This revision removes the last remaining
- *   reference — adoptedParents — from ENTITY_SCHEMAS.character.optional.
- *   The character schema now lists no parentage fields at all, which
- *   matches storage-schema.js's "removed fields" note.
+ *   validateEntitySchema() reports any character record that still
+ *   carries these fields as "Unknown field". That is the correct
+ *   outcome for imported data: pre-migration records must be migrated
+ *   to parentChildEdges before they can pass schema validation.
  *
- *   validateEntitySchema() therefore reports any character record that
- *   still carries adoptedParents as "Unknown field: adoptedParents".
- *   That is the correct outcome for imported data: pre-migration
- *   records must be migrated to parentChildEdges before they can pass
- *   schema validation.
+ * RANK LOCATION:
+ *   The rank record does NOT carry a location pointer. A rank applies to
+ *   a location TYPE, expressed via `locationTypeId`, not to a specific
+ *   location instance. Concrete holder assignment flows through
+ *   `parentRankId` / `sourceRankId` / `character.activeRankId`, not
+ *   through a location reference on the rank record.
+ *
+ *   The current rank shape (rank-constants.js::DEFAULT_RANK,
+ *   rank-rules.js::applyDefaults, rank-state.js::_normaliseRank) does
+ *   not declare `locationId`. storage-schema.js does not normalize it.
+ *   This module's ENTITY_SCHEMAS.rank does not list it.
+ *
+ *   Earlier revisions listed `'locationId'` in the rank optional field
+ *   list — a stale entry from an older rank shape, and the direct
+ *   mirror of the character `adoptedParents` cleanup. Removed.
+ *   validateEntitySchema() therefore reports any rank record that
+ *   still carries `locationId` as "Unknown field: locationId". That
+ *   is the correct outcome for imported pre-migration data.
  *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.MIN_YEAR, TIME_CONSTANTS.MAX_YEAR
@@ -66,23 +77,23 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 2.7):
+ *   Current revision (Phase 2.8):
+ *     - Removed 'locationId' from ENTITY_SCHEMAS.rank.optional. This was
+ *       the last remaining reference to a removed rank field. See RANK
+ *       LOCATION in the module header. The rank schema now lists only
+ *       the fields the current rank shape actually declares.
+ *     - Header RANK LOCATION section added.
+ *   Previous revision (Phase 2.7):
  *     - Removed 'adoptedParents' from ENTITY_SCHEMAS.character.optional.
  *       This was the last remaining reference to a removed parentage
  *       field. See PARENTAGE in the module header.
- *     - No other behavioural change.
  *   Previous revision (Phase 2.6):
  *     - Removed the dead motherId/fatherId checks from validateCharacter.
- *       The character record no longer carries these fields; parentage
- *       lives in FamilyState (parentChildEdges). The checks were reading
- *       fields that storage-schema.js explicitly says are ignored.
  *     - Removed the parent-existence block from validateCharacter's
- *       context.existingCharacterIds section (also dead for the same
- *       reason).
+ *       context.existingCharacterIds section.
  *     - Removed 'motherId' and 'fatherId' from
  *       ENTITY_SCHEMAS.character.optional.
- *     - The household string check is preserved (household is a live
- *       character field, not a parentage mirror).
+ *     - The household string check is preserved.
  * =============================================================================
  */
 
@@ -372,12 +383,10 @@ function validateCharacter(char, context) {
 
     // --- Household ---
     //
-    // Phase 2.6: the motherId/fatherId syntax checks that used to live
-    // here were removed. Those fields are not part of the character
-    // record any more; parentage lives in parentChildEdges. The
-    // household field remains character-owned (see
-    // _CHARACTER_OWNED_FIELDS in character-state.js), so it is still
-    // validated for string-ness.
+    // The motherId/fatherId syntax checks that used to live here were
+    // removed when parentage moved to parentChildEdges. Those fields are
+    // not part of the character record any more. The household field
+    // remains character-owned, so it is still validated for string-ness.
     if (char.household !== undefined && char.household !== null
         && typeof char.household !== 'string') {
         errors.push('Household must be a string');
@@ -400,9 +409,6 @@ function validateCharacter(char, context) {
         && context.existingCharacterIds.has(char.id)) {
         errors.push('Duplicate character ID: ' + char.id);
     }
-
-    // Phase 2.6: the mother/father existence block that used to live
-    // here was removed. See the module header's PARENTAGE section.
 
     return { isValid: errors.length === 0, errors: errors };
 }
@@ -1001,11 +1007,6 @@ function validateImportData(imported) {
 
     // --- Validate characters (references resolved against the import) ---
     if (Array.isArray(dataToValidate.characters)) {
-        // NOTE: existingCharacterIds here means "IDs available for reference
-        // resolution", NOT "IDs that already exist in canonical data". The
-        // entity validator uses this set for mother/father existence and,
-        // because we do NOT want to double-report duplicates, we do not
-        // supply it as the duplicate-detection set.
         var charContext = {
             existingCharacterIds: importCharacterIds
         };
@@ -1102,7 +1103,7 @@ var ENTITY_SCHEMAS = {
         required: ['id', 'name'],
         optional: [
             'priority', 'numbered', 'symbol', 'genderRestriction',
-            'locationTypeId', 'locationId', 'deprecateOnDeath', 'spouseInheritance'
+            'locationTypeId', 'deprecateOnDeath', 'spouseInheritance'
         ]
     },
     role: {
