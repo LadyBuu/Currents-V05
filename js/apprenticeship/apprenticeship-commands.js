@@ -28,6 +28,33 @@
  *     specialization membership   → RoleRules.validateSpecialization
  *     teaching policy             → ApprenticeshipRules
  *
+ * PERSISTENCE
+ *
+ *   Commands in this module do NOT call saveMasterData. They mutate
+ *   in-memory state (via CharacterCommands and ProfessionalCommands),
+ *   which in turn mark data dirty through RelationshipState and the
+ *   character mutation boundary. The caller is responsible for calling
+ *   ApprenticeshipCommands.persist() exactly once per batch, after
+ *   every command in the batch has succeeded.
+ *
+ *   Modal callers (modals-apprenticeship.js) call persist() once per
+ *   user action, at the end of the successful command chain. Batch
+ *   callers (advanceApprenticeshipSkills, the annual pipeline) call
+ *   persist() once at the end.
+ *
+ *   This matches the roles, rank, and character domains. The previous
+ *   version flushed on every command; that is a policy drift from the
+ *   rest of the codebase and has been corrected here.
+ *
+ * RANDOMNESS
+ *
+ *   Rolls go through window.Random.next (the canonical RNG stream
+ *   used by affair-commands.js, jealousy-commands.js, and
+ *   relationship-integrations.js). A legacy window.randomNext
+ *   fallback is honoured for older callers, matching
+ *   relationship-integrations.js. There is no Math.random() call and
+ *   no window.RNG reference (window.RNG does not exist in this tree).
+ *
  * METADATA SHAPE (owned by this module)
  *
  *   {
@@ -159,11 +186,15 @@
     }
 
     function _roll() {
-        if (typeof window.RNG !== 'undefined' && typeof window.RNG.next === 'function') {
-            return window.RNG.next();
+        if (window.Random && typeof window.Random.next === 'function') {
+            return window.Random.next();
+        }
+        if (typeof window.randomNext === 'function') {
+            return window.randomNext();
         }
         throw new Error(
-            'ApprenticeshipCommands: canonical RNG (window.RNG.next) not available'
+            'ApprenticeshipCommands: canonical RNG (window.Random.next or ' +
+            'window.randomNext) not available.'
         );
     }
 
@@ -179,20 +210,52 @@
     }
 
     function _commitAndNotify(payload) {
-        _saveMasterData();
+        // No saveMasterData() here. The mutation boundary that
+        // CharacterCommands and ProfessionalCommands already use
+        // (markDataDirty) is enough; the caller flushes via persist().
         _notify('apprenticeshipUpdated', payload);
         _notify('characterUpdated', payload);
     }
 
     // =========================================================================
-    // 4. RESULT HELPERS
+    // 4. PERSISTENCE
+    // =========================================================================
+
+    /**
+     * Forces a synchronous flush of masterData to storage.
+     *
+     * The caller is responsible for invoking persist() exactly once per
+     * batch, after every command in the batch has succeeded. This matches
+     * RoleCommands.persist().
+     *
+     * Returns { success: true } if the write succeeded, { success: false,
+     * reason } otherwise.
+     */
+    function persist() {
+        if (typeof window.saveMasterData !== 'function') {
+            return { success: false, reason: 'saveMasterData is not available.' };
+        }
+        try {
+            var ok = window.saveMasterData();
+            if (ok === true) return { success: true };
+            return { success: false, reason: 'saveMasterData returned false' };
+        } catch (e) {
+            return {
+                success: false,
+                reason: e && e.message ? e.message : 'saveMasterData threw'
+            };
+        }
+    }
+
+    // =========================================================================
+    // 5. RESULT HELPERS
     // =========================================================================
 
     function ok(data)           { return { success: true, data: data }; }
     function fail(code, reason) { return { success: false, code: code, reason: reason }; }
 
     // =========================================================================
-    // 5. SHARED HELPERS
+    // 6. SHARED HELPERS
     // =========================================================================
 
     function _getSkill(characterId, roleId) {
@@ -268,7 +331,7 @@
     }
 
     // =========================================================================
-    // 6. CREATE
+    // 7. CREATE
     // =========================================================================
 
     function createApprenticeship(args) {
@@ -369,7 +432,7 @@
     }
 
     // =========================================================================
-    // 7. UPDATE
+    // 8. UPDATE
     // =========================================================================
     //
     // Two write paths are used here:
@@ -472,7 +535,7 @@
     }
 
     // =========================================================================
-    // 8. PROGRESS
+    // 9. PROGRESS
     // =========================================================================
 
     function progressApprenticeship(masterId, apprenticeId, amount) {
@@ -532,7 +595,7 @@
     }
 
     // =========================================================================
-    // 9. TEACH
+    // 10. TEACH
     // =========================================================================
 
     function teachSkill(masterId, apprenticeId, methodId) {
@@ -617,7 +680,7 @@
     }
 
     // =========================================================================
-    // 10. TEACH SPECIALIZATION
+    // 11. TEACH SPECIALIZATION
     // =========================================================================
 
     function teachSpecialization(masterId, apprenticeId, specialization) {
@@ -664,7 +727,7 @@
     }
 
     // =========================================================================
-    // 11. COMPLETE
+    // 12. COMPLETE
     // =========================================================================
 
     function completeApprenticeship(masterId, apprenticeId, roleId) {
@@ -717,7 +780,7 @@
     }
 
     // =========================================================================
-    // 12. TERMINATE / CANCEL
+    // 13. TERMINATE / CANCEL
     // =========================================================================
 
     function terminateApprenticeship(masterId, apprenticeId, roleId, reason) {
@@ -781,7 +844,7 @@
     }
 
     // =========================================================================
-    // 13. BATCH CLEANUP
+    // 14. BATCH CLEANUP
     // =========================================================================
 
     function removeAllReferencesTo(characterId) {
@@ -815,7 +878,7 @@
     }
 
     // =========================================================================
-    // 14. ANNUAL ADVANCEMENT
+    // 15. ANNUAL ADVANCEMENT
     // =========================================================================
 
     function advanceApprenticeshipSkills(year) {
@@ -883,7 +946,7 @@
     }
 
     // =========================================================================
-    // 15. CROSS-DOMAIN LISTENER
+    // 16. CROSS-DOMAIN LISTENER
     // =========================================================================
 
     function _handleRoleDeleted(event) {
@@ -920,10 +983,12 @@
     }
 
     // =========================================================================
-    // 16. EXPORTS
+    // 17. EXPORTS
     // =========================================================================
 
     window.ApprenticeshipCommands = {
+        persist: persist,
+
         createApprenticeship: createApprenticeship,
         updateApprenticeship: updateApprenticeship,
         progressApprenticeship: progressApprenticeship,
