@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME COMMANDS (crime-commands.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/crime-commands.js
+ * LOCATION: js/crime/crime-commands.js
  *
  * PURPOSE:
  *   Orchestration layer for crime and vendetta workflows. Each command:
@@ -50,9 +50,13 @@
  *   - It does not use a module-wide recursion guard. Commands compose freely.
  *   - It does not unwrap results into bare objects. Everything structured.
  *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
+ *
  * DEPENDENCIES (required, verified at load):
  *   - CrimeConstants, CrimeState, CrimeLawIntegration
- *   - getCurrentYearSafe, generateId, killCharacter, logEvent
+ *   - getCurrentYear, generateId, killCharacter, logEvent
  *   - getCharacterById, getHouseholdById, getCurrentLocationId
  *   - getRelationshipsForCharacter, endRelationship
  *   - HouseholdCommands (applyPerpetratorCrime, applyVictimCrime,
@@ -80,8 +84,8 @@
     if (!State) throw new Error('crime-commands.js requires CrimeState');
     if (!Law)   throw new Error('crime-commands.js requires CrimeLawIntegration');
 
-    if (typeof window.getCurrentYearSafe !== 'function') {
-        throw new Error('crime-commands.js requires getCurrentYearSafe');
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error('crime-commands.js requires getCurrentYear');
     }
     if (typeof window.generateId !== 'function') {
         throw new Error('crime-commands.js requires generateId');
@@ -147,7 +151,15 @@
     // 1. HELPERS
     // =========================================================================
 
-    function _now() { return window.getCurrentYearSafe(); }
+    function _now() {
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'crime-commands.js requires time.js (getCurrentYear).'
+            );
+        }
+        return window.getCurrentYear();
+    }
+
     function _ok(data) { return { success: true, data: data }; }
     function _fail(reason, code) { return { success: false, reason: reason, code: code || null }; }
 
