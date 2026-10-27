@@ -28,7 +28,8 @@
  *       - apprenticeship lifecycle policy (see ApprenticeshipRules)
  *       - skill storage  (see CharacterCommands.getProfession — the
  *         character domain owns `character.professions`)
- *       - role catalogue (see RoleState.getRole)
+ *       - role catalogue (see accessors.js getRoleById — the character
+ *         subsystem's canonical role accessor)
  *
  * SKILL READS
  *
@@ -41,6 +42,15 @@
  *   reach into `character.professions` directly, and it does not
  *   depend on a `SkillQueries` module.
  *
+ * ROLE NAME RESOLUTION
+ *
+ *   Role names are resolved via `getRoleById(roleId)` from
+ *   accessors.js. That is the canonical ID-based lookup for the role
+ *   collection, matching the pattern used by world.js for places and
+ *   character-queries.js for characters. There is no separate
+ *   RoleState.getRole dependency; RoleState is a UI-state module and
+ *   does not expose a role catalogue.
+ *
  * RETURN CONTRACT
  *
  *   Singular lookup:  T | null
@@ -52,7 +62,8 @@
  *   - relationship-queries.js (RelationshipQueries)
  *   - professional-rules.js   (ProfessionalRules)
  *   - character-commands.js   (CharacterCommands)
- *   - role-state.js           (RoleState)
+ *   - accessors.js            (getRoleById — used for role name display,
+ *                              optional at call time)
  *
  * =============================================================================
  */
@@ -95,17 +106,10 @@
             '(CharacterCommands.getProfession) first.'
         );
     }
-    if (!window.RoleState || typeof window.RoleState.getRole !== 'function') {
-        throw new Error(
-            'professional-queries.js requires role-state.js ' +
-            '(RoleState.getRole) first.'
-        );
-    }
 
     var RQ = window.RelationshipQueries;
     var PR = window.ProfessionalRules;
     var CC = window.CharacterCommands;
-    var RS = window.RoleState;
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
@@ -132,9 +136,20 @@
             : 0;
     }
 
+    /**
+     * Resolves a role name via accessors.getRoleById. The dependency
+     * is optional at call time: if it is absent (accessors.js not
+     * loaded, or role collection unavailable), the role id is
+     * returned as-is. This keeps professional queries functional in
+     * contexts that do not have the role catalogue loaded, while
+     * preferring the canonical display name when it is available.
+     */
     function _roleName(roleId) {
         if (!roleId) return null;
-        var role = RS.getRole(roleId);
+        if (typeof window.getRoleById !== 'function') {
+            return roleId;
+        }
+        var role = window.getRoleById(roleId);
         if (role && typeof role.name === 'string' && role.name.length > 0) {
             return role.name;
         }
