@@ -72,12 +72,7 @@
  *       apprenticeshipDetails   -> ApprenticeshipCommands
  *       apprentices             -> ApprenticeshipCommands
  *       isDeleted, deletedAt    -> CharacterDeletionCommands
- *
- *   Projections include traits, professions, rankAssignments, education,
- *   educationHistory, and subjectProgress so cross-domain readers can
- *   access them without reaching into the live record. No index is
- *   maintained for any of these; the arrays/objects are small and no
- *   consumer requires an index.
+ *       moves                   -> location domain (via CharacterCommands)
  *
  * PROJECTION CONTRACT (IMPORTANT):
  *   Every public read returns a defensive projection — a fresh object
@@ -93,6 +88,7 @@
  *       `salaryHistory` arrays are cloned (safe to mutate).
  *     - `projection.rankAssignments[i]` is a fresh object whose `number`
  *       is a fresh object (safe to mutate).
+ *     - `projection.moves[i]` is a fresh object (safe to mutate).
  *
  *   If a caller needs the live reference (authorized mutation code only),
  *   it calls getLiveCharacterForMutation(id). The leading underscore was
@@ -131,34 +127,39 @@
  *   not storage.
  *
  * SUBSCRIPTION CONTRACT:
- *   Subscribers are notified exactly ONCE per write. The notification
+ *   Subscribers are notified exactly ONCE per write, and internal caches
+ *   are rebuilt exactly ONCE per write. The single notification/rebuild
  *   path is:
  *
- *     write primitive  →  _emitChange  →  dispatches 'characterChanged'
- *                                     →  _handleCharacterChanged (listener)
- *                                     →  _notifySubscribers
+ *     write primitive
+ *       → _emitChange
+ *         → markDataDirty()
+ *         → invalidateAccessorCaches()
+ *         → dispatch 'characterChanged'
+ *           → _handleCharacterChanged (the module's own listener)
+ *             → _rebuildCaches()
+ *             → _notifySubscribers()
  *
- *   _emitChange itself does NOT call _notifySubscribers directly. It
- *   rebuilds caches, invalidates the accessor cache, and dispatches the
- *   DOM event. The module's own 'characterChanged' listener then fires
- *   subscribers. This gives us exactly-once notification for local
- *   writes and exactly-once notification for external dispatches of the
- *   same event (nothing in this module dispatches it, but other modules
- *   might).
- *
- *   Earlier revisions called _notifySubscribers directly inside
- *   _emitChange AND relied on the 'characterChanged' listener to fire it
- *   again. Every write therefore double-notified every subscriber and
- *   rebuilt caches twice. That bug is fixed here.
+ *   _emitChange itself does NOT call _rebuildCaches or
+ *   _notifySubscribers. Those happen exclusively in the listener.
  *
  *   Cross-tab reload notification is a separate path:
  *
- *     storage.js  →  dispatches 'masterDataUpdated'
- *                 →  _handleMasterDataUpdated (listener)
- *                 →  _rebuildCaches + _invalidateAccessorCaches
- *                 →  _notifySubscribers
+ *     storage.js
+ *       → dispatch 'masterDataUpdated'
+ *         → _handleMasterDataUpdated
+ *           → _rebuildCaches()
+ *           → invalidateAccessorCaches()
+ *           → _notifySubscribers()
  *
  *   That path also fires exactly once per cross-tab reload.
+ *
+ *   Manual refresh() also fires once:
+ *
+ *     refresh()
+ *       → _rebuildCaches()
+ *       → invalidateAccessorCaches()
+ *       → _notifySubscribers()
  *
  * SEMANTIC RULES:
  *   - Missing data is not fabricated. Missing character -> null.
@@ -199,21 +200,27 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - _emitChange no longer calls _notifySubscribers directly. It
- *       rebuilds caches, invalidates the accessor cache, and dispatches
- *       'characterChanged'. The module's own 'characterChanged'
- *       listener (_handleCharacterChanged) fires subscribers.
- *
- *       Previous behaviour: _emitChange called _notifySubscribers
- *       directly AND dispatched 'characterChanged', which fired
- *       _handleCharacterChanged, which called _notifySubscribers
- *       again. Every write caused:
- *         - two cache rebuilds
- *         - two full notification cycles
- *         - potentially two side effects per subscriber
- *
- *       The single-notification-path contract is now documented in the
- *       SUBSCRIPTION CONTRACT section above.
+ *     - _project now includes `moves`, `householdHistory`, `religionHistory`,
+ *       `surnameHistory`, and `apprentices` in the returned shape. These are
+ *       character-owned or domain-owned fields the location, family, name,
+ *       and apprenticeship domains read from a projection. Before this
+ *       revision, the projection omitted them, which silently caused
+ *       location-commands.js::recordMove to overwrite the entire moves
+ *       array on every call (because it read `character.moves` from the
+ *       projection, saw `undefined`, and treated it as `[]`).
+ *     - New _cloneMoves, _cloneStringArray, and _cloneSurnameHistory helpers
+ *       added so the newly-projected fields are defensively cloned.
+ *     - No public signature change. Every field that was already present
+ *       remains present with the same shape.
+ *   Previous revision:
+ *     - _emitChange no longer calls _rebuildCaches() or
+ *       _notifySubscribers(). Both happen exclusively in
+ *       _handleCharacterChanged, the module's own 'characterChanged'
+ *       listener. See SUBSCRIPTION CONTRACT above.
+ *     - _emitChange now carries a defensive fallback: if dispatchEvent
+ *       throws (unreachable in a functioning browser), it calls
+ *       _handleCharacterChanged inline with a synthesized detail object
+ *       so internal state stays consistent.
  *   Previous revision (Phase 1.1):
  *     - Renamed _getLiveCharacterForMutation -> getLiveCharacterForMutation.
  *       The old name is preserved as a deprecated alias.
@@ -232,11 +239,6 @@
     // =========================================================================
     // 0. COLLISION GUARD
     // =========================================================================
-    //
-    // If another module has already claimed window.CharacterState, refuse
-    // to load. Silent clobbering is how the other namespace collisions
-    // happened. The core UI shim was removed in a prior fix; there must be
-    // exactly one CharacterState in the tree.
 
     if (typeof window.CharacterState !== 'undefined'
         && window.CharacterState.__owner !== 'character/character-state.js') {
@@ -272,16 +274,6 @@
     // =========================================================================
     // 2. CHARACTER-OWNED FIELDS
     // =========================================================================
-    //
-    // Fields the generic updateCharacter / updateCharacters path will accept.
-    // Anything not listed here (and not the id) is refused.
-    //
-    // Domain-owned embedded fields (traits, professions, rankAssignments,
-    // activeRankId, activeRankNumber, education, educationHistory,
-    // subjectProgress, isLiterate, relationships, friends,
-    // apprenticeshipDetails, apprentices, isDeleted, deletedAt) are
-    // deliberately absent. They are written via applyDomainFieldPatch by
-    // the owning domain's commands.
 
     var _CHARACTER_OWNED_FIELDS = {
         // Identity
@@ -330,14 +322,11 @@
         appearance: true,
 
         // Apprenticeship identity pointer (character-owned scalar)
-        // NOTE: apprenticeshipDetails and apprentices are domain-owned and
-        // are deliberately NOT listed here.
         isMaster: true,
         masterId: true,
         masterProfessionId: true,
 
         // Friendship details blob (character-owned legacy container)
-        // NOTE: friends is domain-owned and is deliberately NOT listed here.
         friendshipDetails: true,
 
         // Metadata
@@ -371,22 +360,6 @@
     var _rebuilding = false;
     var _rebuildPending = false;
 
-    // Ephemeral UI state — facade compatibility surface only.
-    // This is NOT canonical data. It does not go into masterData, does
-    // not survive reload, and is not persisted anywhere.
-    //
-    // Fields:
-    //   selectedCharId           — currently open character in the panel
-    //   ageGroupCollapsedState   — { [groupKey]: boolean } collapse map
-    //   selectedChildId          — child selection in adoption/parentage UI
-    //   selectedGuardianId       — guardian selection in adoption/ward UI
-    //   selectedGuardianType     — 'legal' | 'guardianship' | 'foster' | null
-    //   selectedPartnerId        — partner selection in relationship UI
-    //   adoptRelationshipCache   — adoption relationship lookup cache
-    //   adoptChildAgeGapCache    — adoption age-gap lookup cache
-    //   currentSelectedChildId   — the "currently focused" child in the
-    //                              adoption form (may differ from
-    //                              selectedChildId during editing)
     var _uiState = {
         selectedCharId: null,
         ageGroupCollapsedState: {},
@@ -524,7 +497,6 @@
                 }
             }
 
-            // Active rank index: only the currently active rank id.
             if (_hasId(c.activeRankId)) {
                 _pushToIndex(_cache.byRank, c.activeRankId, c);
             }
@@ -567,26 +539,11 @@
         }
     }
 
-    /**
-     * Single change path for every character-collection write.
-     *
-     * Responsibilities:
-     *   1. Schedule persistence (markDataDirty).
-     *   2. Rebuild derived indexes.
-     *   3. Invalidate the accessor cache (id -> record).
-     *   4. Dispatch 'characterChanged'.
-     *
-     * Subscriber notification happens via _handleCharacterChanged, which
-     * is the listener for 'characterChanged'. _emitChange deliberately
-     * does NOT call _notifySubscribers directly — that would double-fire
-     * every subscriber on every write (once here, once in the listener).
-     *
-     * See SUBSCRIPTION CONTRACT in the module header.
-     */
     function _emitChange(action, characterIds) {
         window.markDataDirty();
-        _rebuildCaches();
         _invalidateAccessorCaches();
+
+        var dispatched = false;
         try {
             window.dispatchEvent(new CustomEvent('characterChanged', {
                 detail: {
@@ -594,24 +551,26 @@
                     characterIds: characterIds || []
                 }
             }));
+            dispatched = true;
         } catch (e) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error('character-state.js: event dispatch failed:', e);
             }
+        }
+
+        if (!dispatched) {
+            _handleCharacterChanged({
+                detail: {
+                    action: action,
+                    characterIds: characterIds || []
+                }
+            });
         }
     }
 
     // =========================================================================
     // 7. EVENT SUBSCRIPTIONS (STATE REFRESH)
     // =========================================================================
-    //
-    // 'characterChanged' fires from _emitChange (local writes) and may
-    // also fire from external dispatchers. Either way, one dispatch
-    // causes one _notifySubscribers cycle.
-    //
-    // 'masterDataUpdated' fires from storage.js on cross-tab reload,
-    // import, and reset. One dispatch causes one rebuild + one
-    // _notifySubscribers cycle.
 
     function _handleCharacterChanged(event) {
         _rebuildCaches();
@@ -655,15 +614,6 @@
     // =========================================================================
     // 9. INTERNAL LIVE-REFERENCE ACCESS (AUTHORIZED MUTATION ONLY)
     // =========================================================================
-    //
-    // Returns the live canonical object. The caller MUST be authorized
-    // mutation code (character-commands, character-deletion-commands,
-    // character-lifecycle, children-commands, modals-character). Public
-    // readers use the projection functions above.
-    //
-    // The underscore prefix was removed in Phase 1.1. The old name
-    // _getLiveCharacterForMutation is preserved as a deprecated alias
-    // at the bottom of the module for one revision.
 
     function getLiveCharacterForMutation(id) {
         if (!_hasId(id)) return null;
@@ -673,17 +623,6 @@
     // =========================================================================
     // 10. PROJECTION HELPERS
     // =========================================================================
-    //
-    // A projection is a defensive copy of the character for external
-    // consumers. It includes the fields every reader is expected to see:
-    // identity, demographics, life/death, location, religion/culture,
-    // presentation, and the embedded domain containers that other domains
-    // need to read.
-    //
-    // The projections are deep-cloned for domain containers that callers
-    // may mutate (traits, professions, rankAssignments, education,
-    // educationHistory, subjectProgress). Mutating a projection cannot
-    // corrupt canonical state.
 
     function _cloneProfessions(professions) {
         if (!Array.isArray(professions)) return [];
@@ -755,22 +694,9 @@
 
     function _cloneTraits(traits) {
         if (!Array.isArray(traits)) return [];
-        // Traits are strings; a shallow slice is sufficient.
         return traits.slice();
     }
 
-    /**
-     * Deep-clones the education container.
-     *
-     * education is an object keyed by institutionId. Each value is a
-     * "record" whose fields are primitives. We clone both levels so a
-     * caller can mutate `projection.education[id].enrolledYear` without
-     * corrupting canonical state.
-     *
-     * Unknown keys that are plain objects are cloned field-by-field;
-     * unknown scalar values are copied as-is. This keeps the clone
-     * tolerant of forward-compatible fields added by future refactors.
-     */
     function _cloneEducation(education) {
         if (!_isPlainObject(education)) return {};
         var out = {};
@@ -779,10 +705,6 @@
             var key = keys[i];
             var entry = education[key];
             if (!_isPlainObject(entry)) {
-                // Preserve non-object entries so the projection accurately
-                // reflects what is stored. A caller inspecting this field
-                // can detect the corruption; the schema layer will
-                // normalise it on next load.
                 out[key] = entry;
                 continue;
             }
@@ -791,10 +713,6 @@
             for (var j = 0; j < entryKeys.length; j++) {
                 var ek = entryKeys[j];
                 var ev = entry[ek];
-                // The known education fields are all primitives, so a
-                // straight copy is a deep-enough clone. Arrays and plain
-                // objects (defensive) get the same treatment as nested
-                // scalars so a future-added array field is not shared.
                 if (Array.isArray(ev)) {
                     clonedEntry[ek] = ev.slice();
                 } else if (_isPlainObject(ev)) {
@@ -808,13 +726,6 @@
         return out;
     }
 
-    /**
-     * Deep-clones the subjectProgress container.
-     *
-     * subjectProgress is an object keyed by subject key. Each value is a
-     * "progress entry" whose fields are primitives. Same clone depth as
-     * _cloneEducation.
-     */
     function _cloneSubjectProgress(subjectProgress) {
         if (!_isPlainObject(subjectProgress)) return {};
         var out = {};
@@ -844,6 +755,104 @@
         return out;
     }
 
+    /**
+     * Clones a move record. Moves carry a small fixed set of fields:
+     * year, locationId, locationName, note, fromLocationId,
+     * fromLocationName, isBirthMove, timestamp. Every field is a primitive
+     * (or null), so a shallow copy at the record level is a deep-enough
+     * clone for every consumer.
+     *
+     * Called by _project for every character. Returned move records are
+     * safe for callers to mutate without affecting canonical state.
+     */
+    function _cloneMoves(moves) {
+        if (!Array.isArray(moves)) return [];
+        var out = [];
+        for (var i = 0; i < moves.length; i++) {
+            var m = moves[i];
+            if (!m || typeof m !== 'object') continue;
+            out.push({
+                year: _isMissing(m.year) ? null : m.year,
+                locationId: _isMissing(m.locationId) ? null : m.locationId,
+                locationName: _isMissing(m.locationName) ? null : m.locationName,
+                note: _isMissing(m.note) ? null : m.note,
+                fromLocationId: _isMissing(m.fromLocationId) ? null : m.fromLocationId,
+                fromLocationName: _isMissing(m.fromLocationName) ? null : m.fromLocationName,
+                isBirthMove: m.isBirthMove === true,
+                timestamp: _isMissing(m.timestamp) ? null : m.timestamp
+            });
+        }
+        return out;
+    }
+
+    /**
+     * Clones an array whose entries are all strings (or expected to be).
+     * Used for `apprentices` (ids). Filtering to strings keeps the
+     * projection honest about what a consumer can rely on.
+     */
+    function _cloneStringArray(arr) {
+        if (!Array.isArray(arr)) return [];
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+            if (typeof arr[i] === 'string') out.push(arr[i]);
+        }
+        return out;
+    }
+
+    /**
+     * Clones a surname-history object. Fields:
+     *   birthSurname   string
+     *   entries        array of entry records (each with primitives +
+     *                  small primitives-only nested objects)
+     *   lastUpdated    number | null
+     *
+     * Entries are cloned record-by-record; each entry's fields are
+     * primitives or null (except previousSurnameRules which may be a plain
+     * object — that is cloned one level deep, matching the treatment used
+     * for education entries).
+     */
+    function _cloneSurnameHistory(history) {
+        if (!_isPlainObject(history)) {
+            return {
+                birthSurname: '',
+                entries: [],
+                lastUpdated: null
+            };
+        }
+
+        var clonedEntries = [];
+        if (Array.isArray(history.entries)) {
+            for (var i = 0; i < history.entries.length; i++) {
+                var e = history.entries[i];
+                if (!_isPlainObject(e)) continue;
+                var clonedEntry = {};
+                var keys = Object.keys(e);
+                for (var j = 0; j < keys.length; j++) {
+                    var k = keys[j];
+                    var v = e[k];
+                    if (Array.isArray(v)) {
+                        clonedEntry[k] = v.slice();
+                    } else if (_isPlainObject(v)) {
+                        clonedEntry[k] = Object.assign({}, v);
+                    } else {
+                        clonedEntry[k] = v;
+                    }
+                }
+                clonedEntries.push(clonedEntry);
+            }
+        }
+
+        return {
+            birthSurname: typeof history.birthSurname === 'string'
+                ? history.birthSurname
+                : '',
+            entries: clonedEntries,
+            lastUpdated: _isMissing(history.lastUpdated)
+                ? null
+                : history.lastUpdated
+        };
+    }
+
     function _project(c) {
         if (!c || !_hasId(c.id)) return null;
         return {
@@ -871,24 +880,36 @@
             religionId: _isMissing(c.religionId) ? null : c.religionId,
             cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
 
-            // Embedded domain containers, defensively cloned.
             traits: _cloneTraits(c.traits),
             professions: _cloneProfessions(c.professions),
             rankAssignments: _cloneRankAssignments(c.rankAssignments),
 
-            // Active rank pointers. Derived by CharacterCommands; read here
-            // for the character summary and cross-domain readers.
+            // Move history. Every location-domain read of character.moves
+            // goes through this field. The projection must include it or
+            // recordMove silently overwrites prior moves with the new one.
+            moves: _cloneMoves(c.moves),
+
+            // Household and religion history. Character-owned; projected
+            // as fresh arrays so consumers can inspect without touching
+            // canonical state.
+            householdHistory: _cloneStringArray(c.householdHistory),
+            religionHistory: _cloneStringArray(c.religionHistory),
+
+            // Surname history. Cloned one level deep at the entry level so
+            // the name domain and modals-name can inspect entries without
+            // risking canonical mutation.
+            surnameHistory: _cloneSurnameHistory(c.surnameHistory),
+
+            // Apprentices (ids). Domain-owned but read by the
+            // apprenticeship domain via the projection. Cloned as strings.
+            apprentices: _cloneStringArray(c.apprentices),
+
             activeRankId: _isMissing(c.activeRankId) ? null : c.activeRankId,
             activeRankNumber: (typeof c.activeRankNumber === 'number'
                 && Number.isFinite(c.activeRankNumber))
                 ? c.activeRankNumber
                 : null,
 
-            // Education containers. Deep-cloned via _cloneEducation and
-            // _cloneSubjectProgress. Previous revisions used
-            // Object.assign({}, c.education) which shared nested objects
-            // and let callers mutate canonical state through the
-            // projection.
             education: _cloneEducation(c.education),
             educationHistory: Array.isArray(c.educationHistory)
                 ? c.educationHistory.slice()
@@ -1002,13 +1023,6 @@
         return bucket ? _projectArray(bucket) : [];
     }
 
-    /**
-     * Returns characters whose ACTIVE rank matches rankId.
-     *
-     * This index reflects activeRankId only. To find characters whose
-     * rankAssignments include a rank regardless of active state, use
-     * RankQueries.getCharactersWithRank, which scans the assignment array.
-     */
     function getCharactersByRank(rankId) {
         if (!_hasId(rankId)) return [];
         var bucket = _cache.byRank.get(rankId);
@@ -1375,83 +1389,31 @@
     // =========================================================================
     // 17. FACADE COMPATIBILITY SURFACE
     // =========================================================================
-    //
-    // The historical js/core/character-state.js UI shim was removed in a
-    // prior fix. Its surface is provided here so core/state.js continues to
-    // work unchanged.
-    //
-    // These read/write _uiState (declared in section 3). They do NOT touch
-    // the character catalogue, do NOT call markDataDirty, and do NOT
-    // publish events on the state channel — the UI state is ephemeral and
-    // not part of the character collection's persistence contract.
 
-    function _getSelectedCharId() {
-        return _uiState.selectedCharId;
-    }
+    function _getSelectedCharId() { return _uiState.selectedCharId; }
+    function _setSelectedCharId(value) { _uiState.selectedCharId = value; }
 
-    function _setSelectedCharId(value) {
-        _uiState.selectedCharId = value;
-    }
+    function _getAgeGroupCollapsedState() { return _uiState.ageGroupCollapsedState; }
+    function _setAgeGroupCollapsedState(value) { _uiState.ageGroupCollapsedState = value; }
 
-    function _getAgeGroupCollapsedState() {
-        return _uiState.ageGroupCollapsedState;
-    }
+    function _getSelectedChildId() { return _uiState.selectedChildId; }
+    function _setSelectedChildId(value) { _uiState.selectedChildId = value; }
 
-    function _setAgeGroupCollapsedState(value) {
-        _uiState.ageGroupCollapsedState = value;
-    }
+    function _getSelectedGuardianId() { return _uiState.selectedGuardianId; }
+    function _setSelectedGuardianId(value) { _uiState.selectedGuardianId = value; }
 
-    function _getSelectedChildId() {
-        return _uiState.selectedChildId;
-    }
+    function _getSelectedGuardianType() { return _uiState.selectedGuardianType; }
+    function _setSelectedGuardianType(value) { _uiState.selectedGuardianType = value; }
 
-    function _setSelectedChildId(value) {
-        _uiState.selectedChildId = value;
-    }
+    function _getSelectedPartnerId() { return _uiState.selectedPartnerId; }
+    function _setSelectedPartnerId(value) { _uiState.selectedPartnerId = value; }
 
-    function _getSelectedGuardianId() {
-        return _uiState.selectedGuardianId;
-    }
+    function _getAdoptRelationshipCache() { return _uiState.adoptRelationshipCache; }
+    function _getAdoptChildAgeGapCache() { return _uiState.adoptChildAgeGapCache; }
+    function _getCurrentSelectedChildId() { return _uiState.currentSelectedChildId; }
 
-    function _setSelectedGuardianId(value) {
-        _uiState.selectedGuardianId = value;
-    }
-
-    function _getSelectedGuardianType() {
-        return _uiState.selectedGuardianType;
-    }
-
-    function _setSelectedGuardianType(value) {
-        _uiState.selectedGuardianType = value;
-    }
-
-    function _getSelectedPartnerId() {
-        return _uiState.selectedPartnerId;
-    }
-
-    function _setSelectedPartnerId(value) {
-        _uiState.selectedPartnerId = value;
-    }
-
-    function _getAdoptRelationshipCache() {
-        return _uiState.adoptRelationshipCache;
-    }
-
-    function _getAdoptChildAgeGapCache() {
-        return _uiState.adoptChildAgeGapCache;
-    }
-
-    function _getCurrentSelectedChildId() {
-        return _uiState.currentSelectedChildId;
-    }
-
-    function setSelectedCharacter(id) {
-        _uiState.selectedCharId = id;
-    }
-
-    function hasSelectedCharacter() {
-        return _uiState.selectedCharId !== null;
-    }
+    function setSelectedCharacter(id) { _uiState.selectedCharId = id; }
+    function hasSelectedCharacter() { return _uiState.selectedCharId !== null; }
 
     function clearAdoptionCache() {
         _uiState.adoptRelationshipCache = null;
@@ -1481,7 +1443,6 @@
     // =========================================================================
 
     window.CharacterState = {
-        // Namespace ownership marker — see collision guard at top.
         __owner: 'character/character-state.js',
 
         subscribe: subscribe,
@@ -1515,14 +1476,10 @@
         removeCharacter: removeCharacter,
         removeCharacters: removeCharacters,
 
-        // Authorized mutation-code access to the live canonical object.
-        // The leading underscore was removed in Phase 1.1; the deprecated
-        // alias is installed below for one revision.
         getLiveCharacterForMutation: getLiveCharacterForMutation,
 
         refresh: refresh,
 
-        // Facade compatibility surface (core/state.js reads these).
         get selectedCharId() { return _getSelectedCharId(); },
         set selectedCharId(v) { _setSelectedCharId(v); },
         get ageGroupCollapsedState() { return _getAgeGroupCollapsedState(); },
@@ -1543,19 +1500,6 @@
         hasSelectedCharacter: hasSelectedCharacter,
         clearAdoptionCache: clearAdoptionCache,
         reset: reset,
-
-        // =====================================================================
-        // DEPRECATED ALIASES (Phase 1.1)
-        // =====================================================================
-        //
-        // _getLiveCharacterForMutation was the historical name. It was
-        // renamed to getLiveCharacterForMutation because the leading
-        // underscore implied the function was private when in fact every
-        // domain command calls it. The old name is kept as a deprecated
-        // alias for one revision.
-        //
-        // Remove this alias in the follow-up commit once every caller
-        // listed in the Phase 1.1 checklist has migrated.
 
         _getLiveCharacterForMutation: getLiveCharacterForMutation
     };
