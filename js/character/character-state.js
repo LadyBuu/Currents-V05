@@ -130,6 +130,36 @@
  *   not at persistence time, because the cache mirrors canonical memory,
  *   not storage.
  *
+ * SUBSCRIPTION CONTRACT:
+ *   Subscribers are notified exactly ONCE per write. The notification
+ *   path is:
+ *
+ *     write primitive  →  _emitChange  →  dispatches 'characterChanged'
+ *                                     →  _handleCharacterChanged (listener)
+ *                                     →  _notifySubscribers
+ *
+ *   _emitChange itself does NOT call _notifySubscribers directly. It
+ *   rebuilds caches, invalidates the accessor cache, and dispatches the
+ *   DOM event. The module's own 'characterChanged' listener then fires
+ *   subscribers. This gives us exactly-once notification for local
+ *   writes and exactly-once notification for external dispatches of the
+ *   same event (nothing in this module dispatches it, but other modules
+ *   might).
+ *
+ *   Earlier revisions called _notifySubscribers directly inside
+ *   _emitChange AND relied on the 'characterChanged' listener to fire it
+ *   again. Every write therefore double-notified every subscriber and
+ *   rebuilt caches twice. That bug is fixed here.
+ *
+ *   Cross-tab reload notification is a separate path:
+ *
+ *     storage.js  →  dispatches 'masterDataUpdated'
+ *                 →  _handleMasterDataUpdated (listener)
+ *                 →  _rebuildCaches + _invalidateAccessorCaches
+ *                 →  _notifySubscribers
+ *
+ *   That path also fires exactly once per cross-tab reload.
+ *
  * SEMANTIC RULES:
  *   - Missing data is not fabricated. Missing character -> null.
  *     Missing collection -> [].
@@ -168,7 +198,23 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 1.1):
+ *   Current revision:
+ *     - _emitChange no longer calls _notifySubscribers directly. It
+ *       rebuilds caches, invalidates the accessor cache, and dispatches
+ *       'characterChanged'. The module's own 'characterChanged'
+ *       listener (_handleCharacterChanged) fires subscribers.
+ *
+ *       Previous behaviour: _emitChange called _notifySubscribers
+ *       directly AND dispatched 'characterChanged', which fired
+ *       _handleCharacterChanged, which called _notifySubscribers
+ *       again. Every write caused:
+ *         - two cache rebuilds
+ *         - two full notification cycles
+ *         - potentially two side effects per subscriber
+ *
+ *       The single-notification-path contract is now documented in the
+ *       SUBSCRIPTION CONTRACT section above.
+ *   Previous revision (Phase 1.1):
  *     - Renamed _getLiveCharacterForMutation -> getLiveCharacterForMutation.
  *       The old name is preserved as a deprecated alias.
  *     - _project now deep-clones `education` and `subjectProgress` via
@@ -177,7 +223,6 @@
  *       CharacterCommands.getEducationRecord / getSubjectProgress return
  *       live canonical references despite their contract.
  *     - Header PROJECTION CONTRACT section added.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -522,15 +567,26 @@
         }
     }
 
+    /**
+     * Single change path for every character-collection write.
+     *
+     * Responsibilities:
+     *   1. Schedule persistence (markDataDirty).
+     *   2. Rebuild derived indexes.
+     *   3. Invalidate the accessor cache (id -> record).
+     *   4. Dispatch 'characterChanged'.
+     *
+     * Subscriber notification happens via _handleCharacterChanged, which
+     * is the listener for 'characterChanged'. _emitChange deliberately
+     * does NOT call _notifySubscribers directly — that would double-fire
+     * every subscriber on every write (once here, once in the listener).
+     *
+     * See SUBSCRIPTION CONTRACT in the module header.
+     */
     function _emitChange(action, characterIds) {
         window.markDataDirty();
         _rebuildCaches();
         _invalidateAccessorCaches();
-        _notifySubscribers({
-            type: 'charactersChanged',
-            action: action,
-            characterIds: characterIds || []
-        });
         try {
             window.dispatchEvent(new CustomEvent('characterChanged', {
                 detail: {
@@ -548,6 +604,14 @@
     // =========================================================================
     // 7. EVENT SUBSCRIPTIONS (STATE REFRESH)
     // =========================================================================
+    //
+    // 'characterChanged' fires from _emitChange (local writes) and may
+    // also fire from external dispatchers. Either way, one dispatch
+    // causes one _notifySubscribers cycle.
+    //
+    // 'masterDataUpdated' fires from storage.js on cross-tab reload,
+    // import, and reset. One dispatch causes one rebuild + one
+    // _notifySubscribers cycle.
 
     function _handleCharacterChanged(event) {
         _rebuildCaches();
