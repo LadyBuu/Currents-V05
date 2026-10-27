@@ -11,7 +11,6 @@
  *   - Validate death causes
  *   - Determine mortality eligibility from explicit facts
  *   - Determine age-at-death from explicit years
- *   - Validate cause-specific eligibility
  *   - Classify mortality circumstances
  *   - Provide a default death-cause catalogue
  *   - Provide a default age-banded mortality rate table
@@ -47,6 +46,18 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 2.3):
+ *     - Removed isCauseEligible. It had no callers in the codebase and
+ *       was structurally ambiguous with getEligibleCauses: the former
+ *       took (facts, policy) and returned { valid, errors }; the
+ *       latter takes (facts, catalogue) and returns the eligible
+ *       entries directly. The similar names implied the two were
+ *       interchangeable, but a caller that reached for the wrong one
+ *       got a completely different filter. Deletion removes the
+ *       ambiguity.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -305,67 +316,7 @@
     }
 
     // =========================================================================
-    // 10. CAUSE ELIGIBILITY
-    // =========================================================================
-
-    /**
-     * Evaluates whether a particular cause is eligible for a character,
-     * given explicit policy facts.
-     *
-     * If policy is undefined, the default policy derived from
-     * DEFAULT_DEATH_CAUSES is used. Callers may supply their own.
-     *
-     * facts:
-     *   { gender, age, isPregnant, isChildbirthRelated }
-     *
-     * policy:
-     *   {
-     *     requiresFemale,
-     *     minAge,
-     *     maxAge,
-     *     requiresPregnancy,
-     *     requiresChildbirth
-     *   }
-     */
-    function isCauseEligible(facts, policy) {
-        var errors = [];
-
-        if (!facts || typeof facts !== 'object') {
-            return { valid: false, errors: ['missing_facts'] };
-        }
-        if (policy === undefined || policy === null) {
-            policy = {};
-        }
-        if (typeof policy !== 'object') {
-            return { valid: false, errors: ['invalid_cause_policy'] };
-        }
-
-        if (policy.requiresFemale === true && facts.gender !== 'female') {
-            errors.push('requires_female');
-        }
-        if (typeof policy.minAge === 'number') {
-            if (typeof facts.age !== 'number' || facts.age < policy.minAge) {
-                errors.push('below_minimum_age');
-            }
-        }
-        if (typeof policy.maxAge === 'number') {
-            if (typeof facts.age !== 'number' || facts.age > policy.maxAge) {
-                errors.push('above_maximum_age');
-            }
-        }
-        if (policy.requiresPregnancy === true && facts.isPregnant !== true) {
-            errors.push('requires_pregnancy');
-        }
-        if (policy.requiresChildbirth === true
-            && facts.isChildbirthRelated !== true) {
-            errors.push('requires_childbirth');
-        }
-
-        return { valid: errors.length === 0, errors: errors };
-    }
-
-    // =========================================================================
-    // 11. MORTALITY ROLL
+    // 10. MORTALITY ROLL
     // =========================================================================
 
     function evaluateMortalityRoll(facts, roll) {
@@ -392,7 +343,7 @@
     }
 
     // =========================================================================
-    // 12. MORTALITY RATE LOOKUP
+    // 11. MORTALITY RATE LOOKUP
     // =========================================================================
 
     /**
@@ -423,7 +374,7 @@
     }
 
     // =========================================================================
-    // 13. CAUSE CATALOGUE
+    // 12. CAUSE CATALOGUE
     // =========================================================================
 
     function getDefaultCauseCatalogue() {
@@ -509,7 +460,7 @@
     }
 
     // =========================================================================
-    // 14. DEATH RECORD PROJECTION VALIDATION
+    // 13. DEATH RECORD PROJECTION VALIDATION
     // =========================================================================
 
     function validateDeathRecord(record) {
@@ -537,7 +488,7 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 14. EXPORTS
     // =========================================================================
 
     window.MortalityRules = {
@@ -554,8 +505,6 @@
         isValidDeathCause: isValidDeathCause,
         classifyDeathCause: classifyDeathCause,
         validateDeath: validateDeath,
-
-        isCauseEligible: isCauseEligible,
 
         evaluateMortalityRoll: evaluateMortalityRoll,
         getMortalityRate: getMortalityRate,
