@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION MODALS (modals-religion.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/modals-religion.js
+ * LOCATION: js/religion/modals-religion.js
  *
  * Modal UI for religion operations:
  *   - Create Religion
@@ -38,6 +38,31 @@
  * religion modal's onConfirm handlers do not return a boolean — they
  * control flow via the _handleCommandResult helper and the explicit close.
  *
+ * MODAL INFRASTRUCTURE (core/modals-core.js):
+ *
+ *   window.openModal(options) -> { element, close }
+ *     Accepted option keys:  titleHtml, contentHtml, confirmText,
+ *                            cancelText, onMount, onConfirm, size, ...
+ *     The core ignores `title` and `content`. Modals must use
+ *     `titleHtml` / `contentHtml` or the modal will render with the
+ *     default title ("Modal") and an empty body.
+ *     `onMount(root)` is called after DOM insertion with the modal
+ *     element. `onConfirm(root)` is called on confirm; return false to
+ *     keep the modal open.
+ *
+ *   window.closeTopModal()
+ *   window.showToast(message, type)   (from ui.js)
+ *   window.escapeHtml(str)            (from formatting.js)
+ *   window.getIcon(name)              (from icons.js)
+ *
+ *   The deprecated window._escapeHtml, window._showToast, and
+ *   window._getIcon aliases are NOT used in this file.
+ *
+ * TIME CONTRACT
+ * -------------
+ * Uses window.getCurrentYear from js/core/time.js. The deprecated
+ * "safe" alias is NOT used.
+ *
  * DEFERRALS
  * ---------
  * Two known deferrals, both documented in religion-doc.md:
@@ -46,8 +71,10 @@
  *     avoid a z-index/transition race. Documented as deferral.
  *
  * DEPENDENCIES:
- *   - modals-core.js: openModal, closeTopModal, _escapeHtml, _showToast,
- *                     _getIcon
+ *   - modals-core.js: openModal, closeTopModal
+ *   - ui.js: showToast
+ *   - formatting.js: escapeHtml
+ *   - icons.js: getIcon
  *   - modals-char-select.js: openCharacterSelector
  *   - religion-state.js: ReligionState
  *   - religion-commands.js: ReligionCommands (including persist)
@@ -57,7 +84,7 @@
  *   - locationDropdown.js: getFilteredLocationOptions
  *   - accessors.js: getCharacterById, getCharacters, getPlaceById, getPlaces,
  *                   getCharacterFullNameById, getPlaceName
- *   - time.js: getCurrentYearSafe
+ *   - time.js: getCurrentYear
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
@@ -66,7 +93,7 @@
  *   Phase 0: removed _openingModal re-entry guard, fixed year-zero bugs,
  *            removed emoji from delete modal.
  *   Phase 2: delegated vocabulary to ReligionFormat/ReligionConstants;
- *            removed ✦ prefill and fallback.
+ *            removed prefill and fallback.
  *   Phase 4 (deferred): inline styles, event handling, setTimeout
  *            navigation. Not addressed here.
  *   Phase 7 (current): converge to the reference pattern.
@@ -103,44 +130,29 @@
     }
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'modals-religion.js requires formatting.js (escapeHtml).'
+            );
         }
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        // Last-resort local implementation. Load-time verification below
-        // prevents this branch from firing in a well-ordered page.
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        return window.escapeHtml(str);
     }
 
     function _showToast(message, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(message, type);
-        } else {
-            window.showToast(message, type);
-        }
+        window.showToast(message, type);
     }
 
     function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (typeof window._getIcon === 'function') {
-            return window._getIcon(name);
-        }
-        return '';
+        return window.getIcon(name);
     }
 
     function _getCurrentYear() {
-        // Delegates to time.js. Load-time verification guarantees it exists.
-        return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'modals-religion.js requires time.js (getCurrentYear).'
+            );
+        }
+        return window.getCurrentYear();
     }
 
     /**
@@ -400,12 +412,12 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Create New Religion',
-            content: content,
+            titleHtml: 'Create New Religion',
+            contentHtml: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('religionName').value.trim();
+            onConfirm: function(root) {
+                var name = root.querySelector('#religionName').value.trim();
                 if (!name) {
                     _showToast('Religion name is required', 'error');
                     return;
@@ -413,18 +425,18 @@
 
                 var data = {
                     name: name,
-                    displayName: document.getElementById('religionDisplayName').value.trim() || name,
-                    description: document.getElementById('religionDescription').value.trim(),
-                    trait: document.getElementById('religionTrait').value,
+                    displayName: root.querySelector('#religionDisplayName').value.trim() || name,
+                    description: root.querySelector('#religionDescription').value.trim(),
+                    trait: root.querySelector('#religionTrait').value,
                     // Icon stored exactly as typed. Empty stays empty.
-                    icon: document.getElementById('religionIcon').value.trim(),
-                    isOrganized: document.getElementById('religionOrganized').checked,
-                    allowsConversion: document.getElementById('religionAllowsConversion').checked,
-                    proselytizes: document.getElementById('religionProselytizes').checked,
+                    icon: root.querySelector('#religionIcon').value.trim(),
+                    isOrganized: root.querySelector('#religionOrganized').checked,
+                    allowsConversion: root.querySelector('#religionAllowsConversion').checked,
+                    proselytizes: root.querySelector('#religionProselytizes').checked,
                     inheritanceRule: {
-                        type: document.getElementById('religionInheritance').value
+                        type: root.querySelector('#religionInheritance').value
                     },
-                    notes: document.getElementById('religionNotes').value.trim()
+                    notes: root.querySelector('#religionNotes').value.trim()
                 };
 
                 var result = window.ReligionCommands.createReligion(data);
@@ -538,12 +550,12 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Edit Religion: ' + religion.name,
-            content: content,
+            titleHtml: 'Edit Religion: ' + _escapeHtml(religion.name),
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('religionName').value.trim();
+            onConfirm: function(root) {
+                var name = root.querySelector('#religionName').value.trim();
                 if (!name) {
                     _showToast('Religion name is required', 'error');
                     return;
@@ -551,18 +563,18 @@
 
                 var updates = {
                     name: name,
-                    displayName: document.getElementById('religionDisplayName').value.trim() || name,
-                    description: document.getElementById('religionDescription').value.trim(),
-                    trait: document.getElementById('religionTrait').value,
+                    displayName: root.querySelector('#religionDisplayName').value.trim() || name,
+                    description: root.querySelector('#religionDescription').value.trim(),
+                    trait: root.querySelector('#religionTrait').value,
                     // Icon stored exactly as typed. Empty stays empty.
-                    icon: document.getElementById('religionIcon').value.trim(),
-                    isOrganized: document.getElementById('religionOrganized').checked,
-                    allowsConversion: document.getElementById('religionAllowsConversion').checked,
-                    proselytizes: document.getElementById('religionProselytizes').checked,
+                    icon: root.querySelector('#religionIcon').value.trim(),
+                    isOrganized: root.querySelector('#religionOrganized').checked,
+                    allowsConversion: root.querySelector('#religionAllowsConversion').checked,
+                    proselytizes: root.querySelector('#religionProselytizes').checked,
                     inheritanceRule: {
-                        type: document.getElementById('religionInheritance').value
+                        type: root.querySelector('#religionInheritance').value
                     },
-                    notes: document.getElementById('religionNotes').value.trim()
+                    notes: root.querySelector('#religionNotes').value.trim()
                 };
 
                 var result = window.ReligionCommands.updateReligion(religionId, updates);
@@ -611,11 +623,11 @@
         content += '</div>';
 
         var modal = _openModal({
-            title: 'Delete Religion',
-            content: content,
+            titleHtml: 'Delete Religion',
+            contentHtml: content,
             confirmText: followerCount > 0 ? 'Cannot Delete' : 'Delete',
             cancelText: 'Cancel',
-            onConfirm: function() {
+            onConfirm: function(root) {
                 if (followerCount > 0) {
                     _showToast('Cannot delete religion with followers. Deprecate it instead.', 'error');
                     return;
@@ -664,12 +676,12 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Deprecate Religion',
-            content: content,
+            titleHtml: 'Deprecate Religion',
+            contentHtml: content,
             confirmText: 'Deprecate',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var year = _resolveParsedYear(document.getElementById('deprecateYear').value);
+            onConfirm: function(root) {
+                var year = _resolveParsedYear(root.querySelector('#deprecateYear').value);
 
                 var result = window.ReligionCommands.deprecateReligion(religionId, year);
                 _handleCommandResult(
@@ -717,7 +729,7 @@
 
         var isDeprecated = religion.isDeprecated || false;
 
-        // Icon rendered only if non-empty. No '✦' fallback.
+        // Icon rendered only if non-empty. No fallback.
         var iconDisplay = religion.icon || '';
 
         var content =
@@ -798,14 +810,12 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Religion Details',
-            content: content,
+            titleHtml: 'Religion Details',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onOpen: function() {
-                var container = document.querySelector('.modal-body');
-
-                var editBtn = container.querySelector('.edit-religion-btn');
+            onMount: function(root) {
+                var editBtn = root.querySelector('.edit-religion-btn');
                 if (editBtn) {
                     editBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -816,7 +826,7 @@
                     });
                 }
 
-                var leaderBtn = container.querySelector('.set-leader-btn');
+                var leaderBtn = root.querySelector('.set-leader-btn');
                 if (leaderBtn) {
                     leaderBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -827,7 +837,7 @@
                     });
                 }
 
-                var godBtn = container.querySelector('.add-god-btn');
+                var godBtn = root.querySelector('.add-god-btn');
                 if (godBtn) {
                     godBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -838,7 +848,7 @@
                     });
                 }
 
-                var lawBtn = container.querySelector('.add-law-btn');
+                var lawBtn = root.querySelector('.add-law-btn');
                 if (lawBtn) {
                     lawBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -849,7 +859,7 @@
                     });
                 }
 
-                var placeBtn = container.querySelector('.create-place-btn');
+                var placeBtn = root.querySelector('.create-place-btn');
                 if (placeBtn) {
                     placeBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -860,7 +870,7 @@
                     });
                 }
 
-                var deprecateBtn = container.querySelector('.deprecate-religion-btn');
+                var deprecateBtn = root.querySelector('.deprecate-religion-btn');
                 if (deprecateBtn) {
                     deprecateBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -887,7 +897,7 @@
                     });
                 }
 
-                var deleteBtn = container.querySelector('.delete-religion-btn');
+                var deleteBtn = root.querySelector('.delete-religion-btn');
                 if (deleteBtn) {
                     deleteBtn.addEventListener('click', function() {
                         var id = this.dataset.religionId;
@@ -946,13 +956,13 @@
         var selectedCharacterId = null;
 
         var modal = _openModal({
-            title: 'Set Religious Leader: ' + religion.name,
-            content: content,
+            titleHtml: 'Set Religious Leader: ' + _escapeHtml(religion.name),
+            contentHtml: content,
             confirmText: 'Set Leader',
             cancelText: 'Cancel',
-            onOpen: function() {
-                var selectBtn = document.getElementById('selectLeaderBtn');
-                var display = document.getElementById('selectedLeaderDisplay');
+            onMount: function(root) {
+                var selectBtn = root.querySelector('#selectLeaderBtn');
+                var display = root.querySelector('#selectedLeaderDisplay');
 
                 if (selectBtn) {
                     selectBtn.addEventListener('click', function() {
@@ -971,15 +981,15 @@
                     });
                 }
             },
-            onConfirm: function() {
+            onConfirm: function(root) {
                 if (!selectedCharacterId) {
                     _showToast('Please select a character', 'error');
                     return;
                 }
 
-                var title = document.getElementById('leaderTitle').value.trim() || 'Religious Leader';
-                var startYear = _resolveParsedYear(document.getElementById('leaderStartYear').value);
-                var notes = document.getElementById('leaderNotes').value.trim();
+                var title = root.querySelector('#leaderTitle').value.trim() || 'Religious Leader';
+                var startYear = _resolveParsedYear(root.querySelector('#leaderStartYear').value);
+                var notes = root.querySelector('#leaderNotes').value.trim();
 
                 var result = window.ReligionCommands.setReligionLeader(
                     religionId,
@@ -1037,13 +1047,13 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'End Leader Term',
-            content: content,
+            titleHtml: 'End Leader Term',
+            contentHtml: content,
             confirmText: 'End Term',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var endYear = _resolveParsedYear(document.getElementById('endYear').value);
-                var reason = document.getElementById('endReason').value.trim() || 'Term ended';
+            onConfirm: function(root) {
+                var endYear = _resolveParsedYear(root.querySelector('#endYear').value);
+                var reason = root.querySelector('#endReason').value.trim() || 'Term ended';
 
                 var result = window.ReligionCommands.endReligionLeaderTerm(
                     religionId,
@@ -1147,12 +1157,12 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Add God to ' + religion.name,
-            content: content,
+            titleHtml: 'Add God to ' + _escapeHtml(religion.name),
+            contentHtml: content,
             confirmText: 'Add God',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('godName').value.trim();
+            onConfirm: function(root) {
+                var name = root.querySelector('#godName').value.trim();
                 if (!name) {
                     _showToast('God name is required', 'error');
                     return;
@@ -1160,14 +1170,14 @@
 
                 var data = {
                     name: name,
-                    displayName: document.getElementById('godDisplayName').value.trim() || name,
-                    description: document.getElementById('godDescription').value.trim(),
-                    domain: document.getElementById('godDomain').value,
+                    displayName: root.querySelector('#godDisplayName').value.trim() || name,
+                    description: root.querySelector('#godDescription').value.trim(),
+                    domain: root.querySelector('#godDomain').value,
                     // Symbol stored exactly as typed. Empty stays empty.
-                    symbol: document.getElementById('godSymbol').value.trim(),
-                    gender: document.getElementById('godGender').value,
-                    alignment: document.getElementById('godAlignment').value,
-                    parentGodId: document.getElementById('godParent').value.trim() || null
+                    symbol: root.querySelector('#godSymbol').value.trim(),
+                    gender: root.querySelector('#godGender').value,
+                    alignment: root.querySelector('#godAlignment').value,
+                    parentGodId: root.querySelector('#godParent').value.trim() || null
                 };
 
                 var result = window.ReligionCommands.addGod(religionId, data);
@@ -1338,12 +1348,12 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Add Law to ' + religion.name,
-            content: content,
+            titleHtml: 'Add Law to ' + _escapeHtml(religion.name),
+            contentHtml: content,
             confirmText: 'Add Law',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('lawName').value.trim();
+            onConfirm: function(root) {
+                var name = root.querySelector('#lawName').value.trim();
                 if (!name) {
                     _showToast('Law name is required', 'error');
                     return;
@@ -1351,15 +1361,15 @@
 
                 var data = {
                     name: name,
-                    type: document.getElementById('lawType').value,
-                    lawCategory: document.getElementById('lawCategory').value,
-                    domain: document.getElementById('lawDomain').value,
-                    description: document.getElementById('lawDescription').value.trim(),
-                    severity: document.getElementById('lawSeverity').value,
-                    crimeType: document.getElementById('lawCrimeType').value || null,
-                    isEnforced: document.getElementById('lawEnforced').checked,
-                    punishment: document.getElementById('lawPunishment').value.trim() || null,
-                    notes: document.getElementById('lawNotes').value.trim()
+                    type: root.querySelector('#lawType').value,
+                    lawCategory: root.querySelector('#lawCategory').value,
+                    domain: root.querySelector('#lawDomain').value,
+                    description: root.querySelector('#lawDescription').value.trim(),
+                    severity: root.querySelector('#lawSeverity').value,
+                    crimeType: root.querySelector('#lawCrimeType').value || null,
+                    isEnforced: root.querySelector('#lawEnforced').checked,
+                    punishment: root.querySelector('#lawPunishment').value.trim() || null,
+                    notes: root.querySelector('#lawNotes').value.trim()
                 };
 
                 // Phase 7: law mutations moved from ReligionLaws to ReligionCommands.
@@ -1455,24 +1465,24 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Create Place of Worship for ' + religion.name,
-            content: content,
+            titleHtml: 'Create Place of Worship for ' + _escapeHtml(religion.name),
+            contentHtml: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('placeName').value.trim();
+            onConfirm: function(root) {
+                var name = root.querySelector('#placeName').value.trim();
                 if (!name) {
                     _showToast('Place name is required', 'error');
                     return;
                 }
 
-                var locationId = document.getElementById('placeLocation').value;
+                var locationId = root.querySelector('#placeLocation').value;
                 if (!locationId) {
                     _showToast('Please select a location', 'error');
                     return;
                 }
 
-                var titheValue = parseFloat(document.getElementById('placeTithe').value);
+                var titheValue = parseFloat(root.querySelector('#placeTithe').value);
                 if (Number.isNaN(titheValue)) titheValue = 1;
 
                 var data = {
@@ -1480,11 +1490,11 @@
                     religionId: religionId,
                     locationId: locationId,
                     locationName: _getPlaceName(locationId),
-                    type: document.getElementById('placeType').value,
+                    type: root.querySelector('#placeType').value,
                     baseTithe: titheValue,
-                    foundedYear: _resolveParsedYear(document.getElementById('placeFoundedYear').value),
-                    producesIncome: document.getElementById('placeProducesIncome').checked,
-                    notes: document.getElementById('placeNotes').value.trim()
+                    foundedYear: _resolveParsedYear(root.querySelector('#placeFoundedYear').value),
+                    producesIncome: root.querySelector('#placeProducesIncome').checked,
+                    notes: root.querySelector('#placeNotes').value.trim()
                 };
 
                 var result = window.ReligionCommands.createPlaceOfWorship(data);
@@ -1575,20 +1585,20 @@
             '</div>';
 
         var modal = _openModal({
-            title: 'Assign Religion to Character',
-            content: content,
+            titleHtml: 'Assign Religion to Character',
+            contentHtml: content,
             confirmText: 'Assign',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var religionId = document.getElementById('assignReligion').value;
+            onConfirm: function(root) {
+                var religionId = root.querySelector('#assignReligion').value;
                 if (!religionId) {
                     _showToast('Please select a religion', 'error');
                     return;
                 }
 
-                var year = _resolveParsedYear(document.getElementById('assignYear').value);
-                var reason = document.getElementById('assignReason').value;
-                var notes = document.getElementById('assignNotes').value.trim();
+                var year = _resolveParsedYear(root.querySelector('#assignYear').value);
+                var reason = root.querySelector('#assignReason').value;
+                var notes = root.querySelector('#assignNotes').value.trim();
 
                 var opts = {
                     year: year,
@@ -1640,22 +1650,22 @@
                 'Check script tag order (modals-core.js must load first).'
             );
         }
-        var hasEscape =
-            (typeof window.escapeHtml === 'function') ||
-            (typeof window._escapeHtml === 'function');
-        if (!hasEscape) {
+        if (typeof window.escapeHtml !== 'function') {
             throw new Error(
-                'modals-religion.js loaded but no escapeHtml/_escapeHtml is available. ' +
+                'modals-religion.js loaded but window.escapeHtml is missing. ' +
                 'Check script tag order (formatting.js must load first).'
             );
         }
-        var hasToast =
-            (typeof window.showToast === 'function') ||
-            (typeof window._showToast === 'function');
-        if (!hasToast) {
+        if (typeof window.showToast !== 'function') {
             throw new Error(
-                'modals-religion.js loaded but no showToast/_showToast is available. ' +
-                'Check script tag order (modals-core.js must load first).'
+                'modals-religion.js loaded but window.showToast is missing. ' +
+                'Check script tag order (ui.js must load first).'
+            );
+        }
+        if (typeof window.getIcon !== 'function') {
+            throw new Error(
+                'modals-religion.js loaded but window.getIcon is missing. ' +
+                'Check script tag order (icons.js must load first).'
             );
         }
         if (typeof window.openCharacterSelector !== 'function') {
@@ -1712,9 +1722,9 @@
                 'Check script tag order (locationDropdown.js must load first).'
             );
         }
-        if (typeof window.getCurrentYearSafe !== 'function') {
+        if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
-                'modals-religion.js loaded but window.getCurrentYearSafe is missing. ' +
+                'modals-religion.js loaded but window.getCurrentYear is missing. ' +
                 'Check script tag order (time.js must load first).'
             );
         }
