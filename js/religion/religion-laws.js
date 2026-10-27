@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION LAWS (religion-laws.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-laws.js
+ * LOCATION: js/religion/religion-laws.js
  *
  * Law/taboo QUERIES for religions.
  *
