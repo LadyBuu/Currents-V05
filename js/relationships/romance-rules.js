@@ -31,6 +31,43 @@
  * Load order: after relationship-types.js, relationship-utils.js.
  * CultureRules must be available at call time, not load time; the
  * cultural validation function throws at call time if it is missing.
+ *
+ * MULTI-PARTNER POLICY (DECISION RECORD)
+ *
+ *   A character may have multiple spouses if and only if their ACTIVE
+ *   RANK declares `allowsMultipleSpouses: true`. That is the sole
+ *   source of truth.
+ *
+ *   This file's `canHaveMultiplePartners` reads three fact flags:
+ *
+ *     allowsMultipleByRank    rank-based permission. THE canonical flag.
+ *     anyPolyamorous          active committed relationship carries the
+ *                             polyamorous attribute. Legitimate policy —
+ *                             a polyamorous marriage is a positive
+ *                             choice, not a fallback.
+ *     allowsMultipleByTrait   DEPRECATED. Was the trait-based path for
+ *                             the `polygamous` character trait. That
+ *                             trait is no longer in the vocabulary;
+ *                             romance-commands._getExternalMultiPartnerFacts
+ *                             now supplies this flag as a hardcoded
+ *                             `false`. The condition below reads it so
+ *                             the interface stays stable for one
+ *                             revision. It contributes nothing at
+ *                             runtime. REMOVAL TARGET: this file is the
+ *                             last consumer in the chain, so the
+ *                             follow-up removes:
+ *
+ *                               - the `if (facts.allowsMultipleByTrait)`
+ *                                 line below
+ *                               - the `allowsMultipleByTrait: false`
+ *                                 initializer in romance-commands.js
+ *                               - the `allowsMultipleByTrait` field
+ *                                 from romance-queries.getMultiPartnerFacts
+ *                               - the deprecation entries in the headers
+ *                                 of all three files
+ *
+ *                             After those removals, `allowsMultipleByTrait`
+ *                             no longer exists anywhere in the codebase.
  */
 
 (function() {
@@ -371,20 +408,35 @@
     // -------------------------------------------------------------------------
     // MULTI-PARTNER POLICY
     //
+    // See MULTI-PARTNER POLICY in the module header for the decision
+    // record and the follow-up removal plan.
+    //
     // facts: {
     //   existingCommittedCount: number,
     //   anyPolyamorous: boolean,
     //   allowsMultipleByRank: boolean,
-    //   allowsMultipleByTrait: boolean
+    //   allowsMultipleByTrait: boolean     DEPRECATED, always false
     // }
     // -------------------------------------------------------------------------
 
     function canHaveMultiplePartners(facts) {
         if (!facts || typeof facts !== 'object') return false;
         if (!facts.existingCommittedCount || facts.existingCommittedCount === 0) return true;
+
+        // Rank permission is the canonical source of truth for
+        // multi-spouse policy.
         if (facts.allowsMultipleByRank) return true;
+
+        // DEPRECATED branch. `allowsMultipleByTrait` is always false in
+        // the current codebase (romance-commands supplies it as a
+        // hardcoded false). This line is retained for interface
+        // stability; see the header for the removal plan.
         if (facts.allowsMultipleByTrait) return true;
+
+        // Polyamorous committed relationships are a positive choice,
+        // not a fallback. Independent of rank policy.
         if (facts.anyPolyamorous) return true;
+
         return false;
     }
 
