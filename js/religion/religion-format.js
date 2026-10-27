@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION FORMAT (religion-format.js)
  * =============================================================================
  * 
- * LOCATION: js/core/religion/religion-format.js
+ * LOCATION: js/religion/religion-format.js
  * 
  * Canonical display-name lookups for religion vocabulary.
  * Pure functions. Enum in, string out.
