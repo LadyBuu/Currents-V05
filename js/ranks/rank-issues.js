@@ -20,7 +20,7 @@
  *   - toast or render
  *   - reach into character, family, or relationship state directly. All
  *     reads go through CharacterState projections, FamilyQueries, and
- *     RomanceQueries.
+ *     RomanceQueries (the latter two via RankQueries helpers).
  *
  * DISPATCH MODEL:
  *   The character subsystem dispatches directly. It does NOT route
@@ -64,6 +64,39 @@
  *   fixData        object | null
  *   fix            function | null  -> { success, reason? }
  *
+ * SHARED HELPERS:
+ *   This file delegates three scans to their canonical owners:
+ *
+ *     _getParentIds         -> RankQueries.getParentIds
+ *     _getChildIds          -> RankQueries.getChildIds
+ *     _resolveHolderGroupKey -> RankAssignment.getHolderGroupKey
+ *
+ *   The three scans were previously duplicated inline here. Each duplicate
+ *   was byte-for-byte identical (or a subset) of the canonical version.
+ *   Delegation eliminates the drift risk the doc (§18) called out:
+ *   "RankIssues._findFirstNumberingDiscrepancy duplicates the grouping
+ *   logic of RankAssignment.renumberRankHolders."
+ *
+ * SPOUSE INHERITANCE SCAN:
+ *   This file's _checkSpouseInheritance and RankAssignment's
+ *   checkAndFixSpouseInheritance scan the same condition. They return
+ *   different shapes (RankIssue with fix closure vs fix-data records).
+ *   They are NOT consolidated in this revision.
+ *
+ *   Rationale:
+ *     1. RankCommands.applySpouseInheritanceFixes accepts the fix-data
+ *        shape, not the RankIssue shape. Converting at the RankCommands
+ *        boundary would require RankCommands to depend on RankIssues.
+ *     2. RankIssue carries severity, fixLabel, and human-readable
+ *        messages that the fix-data shape does not.
+ *     3. The scan is cheap (O(population * partners)); duplication is
+ *        not a performance concern.
+ *     4. The two could diverge in the future if RankIssues adds severity
+ *        filtering or policy controls that RankCommands does not have.
+ *
+ *   See rank-assignment.js's RELATIONSHIP section for the same rationale
+ *   from the other side.
+ *
  * CONTRACT:
  *   - checkAll() never throws. It returns { success, issues, count,
  *     bySeverity }.
@@ -76,22 +109,45 @@
  *   - removeAllReferencesTo(id) removes references to a deleted character
  *     from other characters' rank assignments; does not persist.
  *
- * DEPENDENCIES (REQUIRED):
+ * DEPENDENCIES (REQUIRED, load-time):
  *   - rank-state.js         (RankState)
  *   - rank-rules.js         (RankRules)
- *   - rank-queries.js       (RankQueries)
+ *   - rank-queries.js       (RankQueries) — canonical getInheritanceSource,
+ *                            getParentIds, getChildIds, holder scans
  *   - rank-commands.js      (RankCommands)
- *   - rank-assignment.js    (RankAssignment) — for getNextRankNumber only
+ *   - rank-assignment.js    (RankAssignment) — for getNextRankNumber and
+ *                            getHolderGroupKey
  *   - character-state.js    (CharacterState)
  *   - character-commands.js (CharacterCommands)
  *   - time.js               (getCurrentYear, calculateAge)
  *
- * DEPENDENCIES (REQUIRED AT CALL TIME):
- *   - RomanceQueries.getActiveCommittedPartners
- *   - FamilyQueries.getParents / getChildIds
+ * DEPENDENCIES (REQUIRED AT CALL TIME, not load-time):
+ *   - RomanceQueries.getActiveCommittedPartners — for spouse inheritance
+ *     scanning
+ *   - FamilyQueries.getParents / getChildIds — accessed via RankQueries
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - Dispatch model clarified: direct calls, no listener registry.
+ *   Current revision (Phase 6):
+ *     - _getParentIds delegates to RankQueries.getParentIds. The inline
+ *       implementation (~50 lines) is deleted. The canonical version
+ *       handles the same three ref shapes plus deduplication and
+ *       graceful degradation.
+ *     - _getChildIds delegates to RankQueries.getChildIds. Same story
+ *       (~50 lines deleted).
+ *     - _resolveHolderGroupKey delegates to
+ *       RankAssignment.getHolderGroupKey. The two implementations were
+ *       byte-for-byte identical. The delegation eliminates the drift
+ *       risk the doc (§18) called out.
+ *     - _checkNumberingIssues message clarified: the fix re-numbers all
+ *       holders of the rank, not just the one named in the message.
+ *       Previously the message implied a single-holder problem.
+ *     - Header SHARED HELPERS and SPOUSE INHERITANCE SCAN sections added.
+ *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -135,6 +191,26 @@
     var CS = window.CharacterState;
     var CC = window.CharacterCommands;
 
+    // Soft check: the delegated helpers must exist. These are checked at
+    // call time inside the delegating functions, but they are load-time
+    // guarantees from Phase 3 / Phase 4. Verifying here surfaces a
+    // load-order bug early rather than deep inside a scan.
+    if (typeof RQ.getParentIds !== 'function') {
+        throw new Error(
+            'rank-issues.js: RankQueries.getParentIds is required.'
+        );
+    }
+    if (typeof RQ.getChildIds !== 'function') {
+        throw new Error(
+            'rank-issues.js: RankQueries.getChildIds is required.'
+        );
+    }
+    if (typeof RA.getHolderGroupKey !== 'function') {
+        throw new Error(
+            'rank-issues.js: RankAssignment.getHolderGroupKey is required.'
+        );
+    }
+
     // =========================================================================
     // 2. HELPERS
     // =========================================================================
@@ -173,103 +249,40 @@
         return window.RomanceQueries;
     }
 
-    function _readFamilyQueries() {
-        if (typeof window.FamilyQueries === 'undefined') return null;
-        return window.FamilyQueries;
-    }
+    // =========================================================================
+    // 2b. DELEGATED HELPERS
+    // =========================================================================
+    //
+    // These three helpers were duplicated inline here and in other files.
+    // Each now delegates to its canonical owner. See SHARED HELPERS in the
+    // header.
 
-    function _getCommittedPartners(characterId) {
-        var romance = _readRomanceQueries();
-        if (!romance) return [];
-        try {
-            var partners = romance.getActiveCommittedPartners(characterId);
-            if (!Array.isArray(partners)) return [];
-            var out = [];
-            for (var i = 0; i < partners.length; i++) {
-                if (partners[i] && _hasId(partners[i].partnerId)) {
-                    out.push(partners[i].partnerId);
-                }
-            }
-            return out;
-        } catch (e) {
-            return [];
-        }
-    }
-
+    /**
+     * Returns the parent character ids of a character. Delegates to
+     * RankQueries.getParentIds.
+     */
     function _getParentIds(characterId) {
-        var family = _readFamilyQueries();
-        if (!family || typeof family.getParents !== 'function') return [];
-        try {
-            var parents = family.getParents(characterId);
-            if (!parents) return [];
-            var ids = [];
-            if (Array.isArray(parents)) {
-                for (var i = 0; i < parents.length; i++) {
-                    var p = parents[i];
-                    if (!p) continue;
-                    if (typeof p === 'string') ids.push(p);
-                    else if (_hasId(p.id)) ids.push(p.id);
-                    else if (_hasId(p.parentId)) ids.push(p.parentId);
-                }
-            } else if (_isPlainObject(parents)) {
-                if (parents.father) {
-                    var f = parents.father;
-                    if (typeof f === 'string') ids.push(f);
-                    else if (_hasId(f.id)) ids.push(f.id);
-                    else if (_hasId(f.parentId)) ids.push(f.parentId);
-                }
-                if (parents.mother) {
-                    var m = parents.mother;
-                    if (typeof m === 'string') ids.push(m);
-                    else if (_hasId(m.id)) ids.push(m.id);
-                    else if (_hasId(m.parentId)) ids.push(m.parentId);
-                }
-            }
-            return ids;
-        } catch (e) {
-            return [];
-        }
+        return RQ.getParentIds(characterId);
     }
 
+    /**
+     * Returns the child character ids of a character. Delegates to
+     * RankQueries.getChildIds.
+     */
     function _getChildIds(characterId) {
-        var family = _readFamilyQueries();
-        if (!family) return [];
-        var out = [];
-        try {
-            if (typeof family.getChildIds === 'function') {
-                var ids = family.getChildIds(characterId);
-                if (Array.isArray(ids)) {
-                    for (var i = 0; i < ids.length; i++) {
-                        if (_hasId(ids[i])) out.push(ids[i]);
-                    }
-                }
-            } else if (typeof family.getChildren === 'function') {
-                var children = family.getChildren(characterId);
-                if (Array.isArray(children)) {
-                    for (var j = 0; j < children.length; j++) {
-                        var c = children[j];
-                        if (!c) continue;
-                        if (typeof c === 'string') out.push(c);
-                        else if (_hasId(c.id)) out.push(c.id);
-                        else if (_hasId(c.childId)) out.push(c.childId);
-                    }
-                }
-            }
-        } catch (e) {
-            return out;
-        }
-        return out;
+        return RQ.getChildIds(characterId);
     }
 
-    function _findAssignment(character, rankId, includeDeprecated) {
-        if (!character || !Array.isArray(character.rankAssignments)) return null;
-        for (var i = 0; i < character.rankAssignments.length; i++) {
-            var a = character.rankAssignments[i];
-            if (!a || a.rankId !== rankId) continue;
-            if (includeDeprecated === true) return a;
-            if (a.isDeprecated !== true) return a;
-        }
-        return null;
+    /**
+     * Determines the numbering group key for an existing holder. Delegates
+     * to RankAssignment.getHolderGroupKey.
+     *
+     * The single implementation is used by both the renumberer and the
+     * discrepancy detector so that "predict what renumber will produce"
+     * and "produce it" agree.
+     */
+    function _resolveHolderGroupKey(rank, character, assignment) {
+        return RA.getHolderGroupKey(rank, character, assignment);
     }
 
     // =========================================================================
@@ -341,6 +354,10 @@
     // =========================================================================
     // 5. SPOUSE INHERITANCE
     // =========================================================================
+    //
+    // This scan is deliberately NOT consolidated with
+    // RankAssignment.checkAndFixSpouseInheritance. See SPOUSE INHERITANCE
+    // SCAN in the header for the rationale.
 
     function _checkSpouseInheritance() {
         var romance = _readRomanceQueries();
@@ -457,12 +474,25 @@
         return null;
     }
 
+    function _findAssignment(character, rankId, includeDeprecated) {
+        if (!character || !Array.isArray(character.rankAssignments)) return null;
+        for (var i = 0; i < character.rankAssignments.length; i++) {
+            var a = character.rankAssignments[i];
+            if (!a || a.rankId !== rankId) continue;
+            if (includeDeprecated === true) return a;
+            if (a.isDeprecated !== true) return a;
+        }
+        return null;
+    }
+
     // =========================================================================
     // 6. CHILD INHERITANCE
     // =========================================================================
 
     function _checkChildInheritance() {
-        var family = _readFamilyQueries();
+        var family = typeof window.FamilyQueries !== 'undefined'
+            ? window.FamilyQueries
+            : null;
         if (!family) return [];
 
         var allCharacters = _readAllCharacters();
@@ -692,7 +722,8 @@
                     characterName + ' has number "' +
                     (discrepancy.currentDisplay || '(none)') +
                     '" for "' + rankName + '" but should be "' +
-                    discrepancy.expectedDisplay + '"',
+                    discrepancy.expectedDisplay + '". ' +
+                    'Re-numbering will fix all holders of this rank.',
                     rankId,
                     discrepancy.characterId,
                     fix,
@@ -800,18 +831,6 @@
         });
 
         return found;
-    }
-
-    function _resolveHolderGroupKey(rank, character, assignment) {
-        if (rank.numberingGroup === 'global') return 'global';
-
-        if (_hasId(assignment.inheritedFrom)) {
-            return assignment.inheritedFrom;
-        }
-
-        var sourceId = RQ.getInheritanceSource(character.id, rank.id);
-        if (_hasId(sourceId)) return sourceId;
-        return 'unknown';
     }
 
     // =========================================================================
