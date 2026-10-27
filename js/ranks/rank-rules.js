@@ -35,15 +35,78 @@
  *
  * DEPENDENCIES:
  *   - rank-constants.js (RANK_LEVELS, AVAILABLE_SYMBOLS, INHERITANCE_SOURCE,
- *                       NUMBERING_GROUP, DEFAULT_RANK)
+ *                       NUMBERING_GROUP, DEFAULT_RANK) — required for
+ *                       correct default values and symbol validation.
+ *                       Read at call time via window.*.
  *
- * All dependencies are read at call time via window.*. There is no cached
- * reference. This keeps the file trivially testable and avoids load-order
- * traps: as long as rank-constants.js is loaded before a caller invokes a
- * function here, the constants are visible.
+ *   - formatting.js::formatRomanNumeral — OPTIONAL. Used when
+ *     formatRomanFull is unavailable. Falls back to a local table.
+ *
+ *   - formatting.js::formatOrdinal — OPTIONAL. Used for the ordinal
+ *     fallback. Falls back to an inline implementation.
+ *
+ *   - names.js::formatRomanFull — OPTIONAL. Provides full-range Roman
+ *     numerals (1-3999). Falls back to formatRomanNumeral and then to
+ *     the local table.
+ *
+ *   All dependencies are read at call time via window.*. There is no
+ *   cached reference. This keeps the file trivially testable and avoids
+ *   load-order traps: as long as the optional dependencies are loaded
+ *   before a caller invokes a function here, they are visible. The
+ *   fallbacks make the module safe in bare test harnesses.
+ *
+ * COHERENCE POLICY (applyDefaults):
+ *   applyDefaults does NOT guess inheritanceSource from a set
+ *   sourceRankId. A record with sourceRankId but inheritanceSource
+ *   'none' is incoherent; applyDefaults leaves it incoherent and
+ *   validate() rejects it. The caller (RankCommands.createRank /
+ *   updateRank) is responsible for supplying both fields together, or
+ *   for supplying neither.
+ *
+ *   The one coercion applyDefaults DOES perform: if sourceRankId is
+ *   null but inheritanceSource is set to 'parent' or 'spouse', the
+ *   inheritance source is reset to 'none'. This is a safe correction
+ *   (the record cannot fulfill an inheritance source without a target)
+ *   and it prevents validate() from rejecting a record that was never
+ *   intended to inherit.
+ *
+ * ROMAN NUMERAL DELEGATION:
+ *   Three implementations exist in the tree:
+ *     - formatting.js::formatRomanNumeral (1-20, returns String for >20)
+ *     - names.js::formatRomanFull (1-3999, canonical)
+ *     - local fallback (1-39, returns String for >39)
+ *
+ *   _toRoman delegates to formatRomanFull first, then
+ *   formatRomanNumeral, then the local table. This gives full Roman
+ *   coverage without duplicating the 1-3999 table.
+ *
+ * ORDINAL DELEGATION:
+ *   _toOrdinal delegates to window.formatOrdinal (formatting.js) when
+ *   present, with an inline fallback. The 11th/12th/13th exception is
+ *   handled identically in both.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 1 of the rank module fix plan):
+ *     - _toRoman delegates to window.formatRomanFull (names.js) and
+ *       window.formatRomanNumeral (formatting.js), falling back to the
+ *       local table. Full range (1-3999) is now available when
+ *       names.js is loaded.
+ *     - _toOrdinal delegates to window.formatOrdinal (formatting.js),
+ *       falling back to the local implementation. The 11th/12th/13th
+ *       exception is unchanged.
+ *     - applyDefaults no longer infers 'parent' from a set sourceRankId.
+ *       validate() rejects the incoherent combination instead of
+ *       silently coercing it.
+ *     - validate() now checks: sourceRankId present but inheritanceSource
+ *       'none' (rejects), inheritanceSource present but sourceRankId
+ *       null (rejects). These were previously masked by applyDefaults'
+ *       silent inference.
+ *     - Header COHERENCE POLICY, ROMAN NUMERAL DELEGATION, and ORDINAL
+ *       DELEGATION sections added.
+ *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -128,9 +191,13 @@
      *
      * Idempotent: calling applyDefaults on the output of applyDefaults returns
      * an equivalent record. Safe to call from RankState._normaliseRank as a
-     * fallback shape source if you ever want to consolidate the two — today,
-     * RankState has its own normaliser to avoid a load-order dependency on
-     * this file, and both must stay in sync.
+     * shape source; that method now delegates to this function to eliminate
+     * the two-implementation drift.
+     *
+     * COHERENCE: see the header's COHERENCE POLICY section. This function
+     * does NOT guess inheritanceSource from a set sourceRankId. It resets
+     * inheritanceSource to 'none' when sourceRankId is null, which is a
+     * safe correction rather than a guess.
      *
      * @param {Object} raw
      * @returns {Object}
@@ -216,21 +283,24 @@
                 ? defaults.surnameSuffix
                 : '');
 
-        // Coherence: sourceRankId present implies inheritanceSource is not
-        // 'none'. If inheritanceSource is 'none' but sourceRankId is set,
-        // prefer the source and infer the source type. If both are absent,
-        // leave both neutral.
-        if (out.sourceRankId !== null && out.inheritanceSource === 'none') {
-            out.inheritanceSource = 'parent';
-        }
+        // Coherence: inheritanceSource requires a sourceRankId. If the
+        // caller supplied an inheritanceSource but no sourceRankId, reset
+        // the source to 'none' — a safe correction that lets the record
+        // proceed without an impossible inheritance claim.
         if (out.sourceRankId === null && out.inheritanceSource !== 'none') {
-            // Inheriting from a specific rank requires a source id. Reset.
             out.inheritanceSource = 'none';
         }
 
-        // Coherence: numbered is false implies numbering fields are inert.
-        // They are kept (they describe what the rank would use if enabled)
-        // but nothing downstream reads them when numbered is false.
+        // The reverse case (sourceRankId set, inheritanceSource 'none') is
+        // NOT corrected here. See COHERENCE POLICY in the header:
+        // applyDefaults does not guess 'parent'. validate() rejects the
+        // combination so the caller supplies both fields or neither.
+
+        // Coherence: numbered is false implies numberingGroup is inert.
+        // The value is still preserved (it describes what the rank WOULD
+        // use if numbered were enabled), but the group is normalised to
+        // 'global' so a stale 'spouse' or 'source' group does not linger
+        // on an unnumbered rank.
         if (out.numbered !== true) {
             out.numberingGroup = 'global';
         }
@@ -248,6 +318,14 @@
      *
      * Does NOT check cross-rank references (parentRankId, sourceRankId) —
      * that is a state question and belongs to RankState.validateIntegrity.
+     *
+     * Cross-field coherence checks are enforced here:
+     *   - sourceRankId present requires inheritanceSource !== 'none'
+     *   - inheritanceSource !== 'none' requires sourceRankId present
+     *   - numberedGroup 'source' requires inheritanceSource !== 'none'
+     *
+     * These cannot be silently "fixed" — a caller that produces an
+     * incoherent record needs to be told, not have their intent guessed.
      *
      * @param {Object} rank
      * @returns {{ valid: boolean, errors: string[] }}
@@ -285,7 +363,9 @@
             if (!_isValidNumberingGroup(rank.numberingGroup)) {
                 errors.push('numberingGroup must be global, parent, spouse, or source');
             }
-            // group === 'source' requires the rank to have a source.
+            // group === 'source' requires the rank to have an inheritance
+            // source configured. Grouping by source without a source is
+            // meaningless and would silently produce an empty bucket.
             if (rank.numberingGroup === 'source'
                 && rank.inheritanceSource === 'none') {
                 errors.push('numberingGroup "source" requires inheritanceSource ' +
@@ -331,6 +411,10 @@
      * Validates a proposed change to a rank. Returns which of the supplied
      * fields would be rejected, without applying them.
      *
+     * Merges the patch onto the current record and runs full validation.
+     * This catches coherence errors that a per-field check would miss
+     * (e.g. clearing sourceRankId without resetting inheritanceSource).
+     *
      * @param {Object} current  the current rank record (shape from RankState)
      * @param {Object} patch    the fields being changed
      * @returns {{ valid: boolean, errors: string[] }}
@@ -343,9 +427,6 @@
             return { valid: false, errors: ['patch must be a plain object'] };
         }
 
-        // Merge and validate. This catches coherence errors (e.g. removing a
-        // sourceRankId without resetting inheritanceSource) that a per-field
-        // check would miss.
         var candidate = {};
         for (var k in current) {
             if (Object.prototype.hasOwnProperty.call(current, k)) {
@@ -430,7 +511,7 @@
      *                              or CharacterQueries)
      * @param {Object} rank         rank record (from RankState or RankQueries)
      * @param {Object} [options]
-     * @param {string} [options.assignedYear]  the year the rank would be
+     * @param {number} [options.assignedYear]  the year the rank would be
      *                              assigned; used only for the deceased check
      * @param {boolean} [options.allowDeprecated]  default false
      * @returns {{ valid: boolean, reason?: string }}
@@ -482,9 +563,9 @@
             }
         }
 
-        // Numbered ranks with group 'source' require an inheritance source on
-        // the character. Callers that know the source can pre-check it; this
-        // is a soft guard that prevents obviously-broken assignments.
+        // Numbered ranks with group 'source' require an inheritance source
+        // to be configured on the rank. This is a rank-record check, not a
+        // character check — the rank record itself is incoherent otherwise.
         if (rank.numbered === true
             && rank.numberingGroup === 'source'
             && rank.inheritanceSource === 'none') {
@@ -605,7 +686,24 @@
         return _toOrdinal(n);
     }
 
+    /**
+     * Formats a number as an English ordinal.
+     *
+     * Delegates to window.formatOrdinal (formatting.js) when present.
+     * Falls back to an inline implementation with identical semantics.
+     *
+     * The 11th/12th/13th exception is handled correctly in both paths.
+     *
+     * @private
+     * @param {number} n
+     * @returns {string}
+     */
     function _toOrdinal(n) {
+        if (typeof window.formatOrdinal === 'function') {
+            var delegated = window.formatOrdinal(n);
+            return typeof delegated === 'string' ? delegated : '';
+        }
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return '';
         var mod100 = n % 100;
         if (mod100 >= 11 && mod100 <= 13) return n + 'th';
         var mod10 = n % 10;
@@ -615,10 +713,37 @@
         return n + 'th';
     }
 
+    /**
+     * Formats a number as a Roman numeral.
+     *
+     * Delegation chain:
+     *   1. window.formatRomanFull (names.js) — 1-3999, full subtractive
+     *   2. window.formatRomanNumeral (formatting.js) — 1-20, falls back to
+     *      arabic above 20
+     *   3. Local table — 1-39, falls back to arabic above 39
+     *
+     * The delegation gives full Roman coverage when names.js is loaded,
+     * without duplicating the 1-3999 table. The local fallback keeps the
+     * module safe in bare test harnesses that do not load names.js.
+     *
+     * @private
+     * @param {number} n
+     * @returns {string}
+     */
     function _toRoman(n) {
-        // Cover the range a rank holder could realistically reach. Falls back
-        // to arabic numerals above 39 (the catalogue never generates holders
-        // in the hundreds).
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < 1) return '';
+
+        if (typeof window.formatRomanFull === 'function') {
+            var delegated = window.formatRomanFull(n);
+            if (typeof delegated === 'string') return delegated;
+        }
+
+        if (typeof window.formatRomanNumeral === 'function') {
+            var viaFormatting = window.formatRomanNumeral(n);
+            if (typeof viaFormatting === 'string') return viaFormatting;
+        }
+
+        // Local fallback (1-39).
         if (n >= 40) return String(n);
         var table = [
             [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']
