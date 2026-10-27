@@ -6,8 +6,7 @@
  *
  * CORE SETTLEMENT MODALS.
  *
- * This file contains the core settlement UI modals that use the new
- * command and query architecture:
+ * This file contains the core settlement UI modals:
  *
  *   - openSettlementDetailsModal   : summary + entry points
  *   - openManageFeaturesModal      : add / remove / demolish features
@@ -20,7 +19,7 @@
  * It is a UI module. It:
  *   - reads through SettlementViewModels and query modules
  *   - calls commands for mutations
- *   - uses modals-core for the modal shell
+ *   - uses the core modal shell for presentation
  *   - does not create settlement records
  *   - does not mutate canonical settlement data directly
  *   - does not persist
@@ -32,19 +31,22 @@
  * Contract), §15 (ViewModel Contract), §16 (UI Contract), §29 (Command
  * Transaction Example), §32 (Completion Standard).
  *
- * Modal infrastructure expectation:
+ * Modal infrastructure:
  *
- *   This module assumes `window.openModal(options)` returns the created
- *   content container element, or null on failure. If the modal
- *   infrastructure returns null, the modal is not rendered and this
- *   module does not attempt to wire anything. If a future modals-core
- *   returns a different shape (e.g. an object with `.content`), the
- *   wiring in this module is the single place to adapt.
+ *   This module uses the CORE modals, not a ModalsCore namespace:
+ *     - window.openModal(options) -> { element, close }
+ *     - window.closeTopModal()
+ *     - window.showToast(message, type)
+ *     - window.confirmDialog(message, title, onConfirm)
  *
- *   When `openModal` does NOT return a container, callers should switch
- *   to event delegation on document.body. This file uses the returned
- *   container; it does not use global `document.querySelector` and it
- *   does not use setTimeout.
+ *   openModal is expected to return { element, close } per modals-core.js.
+ *   The content container is `result.element`. Event wiring is attached to
+ *   that container; it is not attached to document.body and no global
+ *   document selectors are used.
+ *
+ *   `titleHtml` and `contentHtml` are the accepted option keys on the core
+ *   openModal. It does NOT read `title` / `content`; those options are
+ *   silently ignored by the core and must not be used here.
  *
  * =============================================================================
  */
@@ -56,7 +58,6 @@
     // 1. DEPENDENCIES
     // =========================================================================
 
-    function _getModalsCore()       { return window.ModalsCore; }
     function _getViewModels()       { return window.SettlementViewModels; }
     function _getSettlementQueries(){ return window.SettlementQueries; }
     function _getPlaceQueries()     { return window.PlaceQueries; }
@@ -68,7 +69,6 @@
     function _getRoleQueries()      { return window.RoleQueries; }
     function _getEmploymentQueries(){ return window.SettlementEmploymentQueries; }
     function _getEconomyQueries()   { return window.SettlementEconomyQueries; }
-    function _getTabs()             { return window.SettlementTabs; }
 
     // =========================================================================
     // 2. HELPERS
@@ -98,26 +98,34 @@
         return _escapeHtml(value.toLocaleString());
     }
 
+    /**
+     * Opens a modal via the core modal shell.
+     *
+     * modals-core.js returns { element, close }. The element is the modal
+     * shell; the content container is the element itself for the purposes
+     * of event delegation (openModal attaches listeners to the modal
+     * element, and our wiring attaches to the same element).
+     *
+     * Returns the modal element, or null if openModal returned an
+     * unexpected shape.
+     */
     function _openModal(options) {
-        var result = _getModalsCore().openModal(options);
+        var result = window.openModal(options);
         if (!result) return null;
-        // Support both shapes: container element directly, or
-        // { content: container, ... }.
-        if (result.content && result.content.nodeType === 1) return result.content;
-        if (result.nodeType === 1) return result;
+        if (result.element && result.element.nodeType === 1) return result.element;
         return null;
     }
 
     function _closeTopModal() {
-        _getModalsCore().closeTopModal();
+        window.closeTopModal();
     }
 
     function _toast(message, type) {
-        _getModalsCore().showToast(message, type);
+        window.showToast(message, type);
     }
 
     function _confirm(message, title, onConfirm) {
-        _getModalsCore().confirmDialog(message, title, onConfirm);
+        window.confirmDialog(message, title, onConfirm);
     }
 
     // =========================================================================
@@ -182,8 +190,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Settlement Details: ' + _escapeHtml(name),
-            content: content,
+            titleHtml: 'Settlement Details: ' + _escapeHtml(name),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
@@ -284,8 +292,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Manage Features: ' + _escapeHtml(summary.name || ''),
-            content: content,
+            titleHtml: 'Manage Features: ' + _escapeHtml(summary.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
@@ -438,9 +446,9 @@
 
         var canUpgrade = view.upgradeEligible === true && view.nextRank;
 
-        var container = _openModal({
-            title: 'Upgrade Settlement',
-            content: content,
+        _openModal({
+            titleHtml: 'Upgrade Settlement',
+            contentHtml: content,
             confirmText: canUpgrade ? 'Upgrade' : 'Close',
             cancelText: canUpgrade ? 'Cancel' : '',
             size: 'medium',
@@ -462,8 +470,6 @@
                 return true;
             }
         });
-
-        if (!container) return;
     }
 
     function _describeUpgradeReason(reason) {
@@ -525,8 +531,8 @@
         content += '</div>';
 
         var container = _openModal({
-            title: 'Specialization: ' + _escapeHtml(summary.name || ''),
-            content: content,
+            titleHtml: 'Specialization: ' + _escapeHtml(summary.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'medium',
@@ -605,8 +611,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'State Enterprises: ' + _escapeHtml(summary.name || ''),
-            content: content,
+            titleHtml: 'State Enterprises: ' + _escapeHtml(summary.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'medium',
@@ -639,8 +645,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Employment: ' + _escapeHtml(view.name || ''),
-            content: content,
+            titleHtml: 'Employment: ' + _escapeHtml(view.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'medium',
@@ -693,8 +699,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Budget: ' + _escapeHtml(view.name || ''),
-            content: content,
+            titleHtml: 'Budget: ' + _escapeHtml(view.name || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
