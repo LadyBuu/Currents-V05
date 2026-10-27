@@ -24,9 +24,7 @@
  *
  *   `CharacterCommands.getProfession(characterId, roleId)` is the
  *   canonical reader. This module reaches it through
- *   `ProfessionalQueries.getApprenticeshipBetween` and through
- *   `CharacterCommands.getProfession` directly for the standalone
- *   `getSkillLevel` accessor. It never reaches into
+ *   `CharacterCommands.getProfession` directly. It never reaches into
  *   `character.professions` and it never reads a cached
  *   `metadata.skillLevel`.
  *
@@ -43,16 +41,27 @@
  *   which returns the single result and fails loudly if the pair has
  *   more than one.
  *
- * DEPENDENCIES (required, checked lazily on first use):
- *   - getCharacterById          (accessors)
- *   - getCurrentYearSafe        (time)
+ * EDGE SOURCE
+ *
+ *   All edge reads route through RelationshipQueries. This module does
+ *   NOT go through ProfessionalQueries for apprenticeship edge reads:
+ *   ProfessionalQueries is a generic professional-edge projection layer
+ *   and returns its own shape, while this module needs the raw
+ *   RelationshipState records so that projectApprenticeship can
+ *   assemble the domain-specific view. The raw records come from
+ *   RelationshipQueries, which is the canonical edge reader.
+ *
+ * DEPENDENCIES (required, checked at load):
+ *   - RelationshipQueries       (edge reads)
  *   - CharacterCommands         (getProfession)
  *   - RoleState                 (getRole)
- *   - ProfessionalQueries       (apprenticeship edge reads)
- *   - RELATIONSHIP_ARCHETYPES   (relationship-types)
- *   - RELATIONSHIP_STATUS       (relationship-types)
  *   - ApprenticeshipRules       (getStageForSkill)
- *   - SettlementQueries         (findPotentialMasters only)
+ *   - accessors                 (getCharacterById)
+ *   - time                      (getCurrentYearSafe)
+ *   - relationship-types        (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
+ *
+ * DEPENDENCIES (required for findPotentialMasters only):
+ *   - SettlementQueries         (getSettlementMastersByRole)
  *
  * =============================================================================
  */
@@ -76,10 +85,10 @@
             '(RELATIONSHIP_STATUS) first.'
         );
     }
-    if (!window.ProfessionalQueries) {
+    if (!window.RelationshipQueries) {
         throw new Error(
-            'apprenticeship-queries.js requires professional-queries.js ' +
-            '(ProfessionalQueries) first.'
+            'apprenticeship-queries.js requires relationship-queries.js ' +
+            '(RelationshipQueries) first.'
         );
     }
     if (!window.CharacterCommands ||
@@ -117,7 +126,7 @@
 
     var A = window.RELATIONSHIP_ARCHETYPES;
     var STATUS = window.RELATIONSHIP_STATUS;
-    var PQ = window.ProfessionalQueries;
+    var RQ = window.RelationshipQueries;
     var CC = window.CharacterCommands;
     var RS = window.RoleState;
 
@@ -173,24 +182,22 @@
     // 4. RELATIONSHIP LOOKUP
     // =========================================================================
     //
-    // All edge reads route through ProfessionalQueries. That module owns
-    // the archetype filter and returns either projections or raw records,
-    // depending on the accessor.
+    // All edge reads route through RelationshipQueries. That module owns
+    // the archetype filter and returns raw records (RelationshipState
+    // projections), which projectApprenticeship consumes.
 
     /**
      * Raw relationship records between (master, apprentice) with type
      * apprenticeship. Includes ended records.
      *
-     * @returns {Array<Object>}  Raw records from RelationshipState.
+     * @returns {Array<Object>}  Raw records from RelationshipQueries.
      */
     function getApprenticeshipRelationships(masterId, apprenticeId) {
         if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') {
             return [];
         }
         if (masterId === apprenticeId) return [];
-        return window.RelationshipQueries.getBetweenOfType(
-            masterId, apprenticeId, APPRENTICESHIP
-        );
+        return RQ.getBetweenOfType(masterId, apprenticeId, APPRENTICESHIP);
     }
 
     /**
@@ -280,7 +287,7 @@
 
     function getApprenticeshipById(id) {
         if (typeof id !== 'string' || id.length === 0) return null;
-        var rel = window.RelationshipQueries.getById(id);
+        var rel = RQ.getById(id);
         if (!rel) return null;
         return rel.type === APPRENTICESHIP ? rel : null;
     }
@@ -373,14 +380,16 @@
     // =========================================================================
 
     function getApprentices(masterId, activeOnly) {
-        var records = window.RelationshipQueries.getForCharacter(
-            masterId, { type: APPRENTICESHIP }
+        var records = RQ.getForCharacter(
+            masterId,
+            activeOnly
+                ? { type: APPRENTICESHIP, activeOnly: true }
+                : { type: APPRENTICESHIP }
         );
         var results = [];
         for (var i = 0; i < records.length; i++) {
             var rel = records[i];
             if (rel.participantA !== masterId) continue;
-            if (activeOnly && rel.status !== STATUS.ONGOING) continue;
             results.push(projectApprenticeship(rel));
         }
         return results;
@@ -391,14 +400,16 @@
      * character may have multiple masters for different roles.
      */
     function getMasters(characterId, activeOnly) {
-        var records = window.RelationshipQueries.getForCharacter(
-            characterId, { type: APPRENTICESHIP }
+        var records = RQ.getForCharacter(
+            characterId,
+            activeOnly
+                ? { type: APPRENTICESHIP, activeOnly: true }
+                : { type: APPRENTICESHIP }
         );
         var results = [];
         for (var i = 0; i < records.length; i++) {
             var rel = records[i];
             if (rel.participantB !== characterId) continue;
-            if (activeOnly && rel.status !== STATUS.ONGOING) continue;
             results.push(projectApprenticeship(rel));
         }
         return results;
@@ -440,7 +451,7 @@
     // =========================================================================
 
     function getAllApprenticeships(filter) {
-        var records = window.RelationshipQueries.getByType(APPRENTICESHIP);
+        var records = RQ.getByType(APPRENTICESHIP);
         var results = [];
         for (var i = 0; i < records.length; i++) {
             var rel = records[i];
@@ -467,7 +478,7 @@
     }
 
     function getApprenticeshipsByRole(roleId) {
-        var records = window.RelationshipQueries.getByType(APPRENTICESHIP);
+        var records = RQ.getByType(APPRENTICESHIP);
         var results = [];
         for (var i = 0; i < records.length; i++) {
             var rel = records[i];
@@ -482,9 +493,22 @@
     // 8. TEACHABILITY / DISCOVERY
     // =========================================================================
 
+    /**
+     * Returns the master's professions whose skill reaches the teaching
+     * threshold, as { id, name, skillLevel } projections.
+     *
+     * Reads through CharacterCommands.getProfessions, which is the
+     * canonical profession reader. Does NOT reach into
+     * character.professions directly — some character projections strip
+     * that field, and relying on it would silently return [] for those
+     * callers.
+     *
+     * @param {string} masterId
+     * @returns {Array<{ id: string, name: string, skillLevel: number }>}
+     */
     function getTeachableSkills(masterId) {
-        var master = _getCharacterById(masterId);
-        if (!master || !Array.isArray(master.professions)) return [];
+        var professions = CC.getProfessions(masterId);
+        if (!Array.isArray(professions) || professions.length === 0) return [];
 
         var minSkill = window.TEACHING_CONSTANTS
             ? window.TEACHING_CONSTANTS.MIN_MASTER_SKILL
@@ -497,8 +521,8 @@
         }
 
         var results = [];
-        for (var i = 0; i < master.professions.length; i++) {
-            var prof = master.professions[i];
+        for (var i = 0; i < professions.length; i++) {
+            var prof = professions[i];
             var skill = typeof prof.skillLevel === 'number' ? prof.skillLevel : 0;
             if (skill < minSkill) continue;
             results.push({
