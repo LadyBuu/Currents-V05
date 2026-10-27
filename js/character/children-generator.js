@@ -47,19 +47,41 @@
  *   established by children-commands.js and character-creation-commands.js
  *   at record time, not by this module.
  *
+ * FERTILITY POLICY OWNERSHIP:
+ *   ChildrenRules is the canonical owner of fertility windows and
+ *   stillbirth chance. This module reads them from
+ *   window.ChildrenRules.FERTILITY_CONSTANTS and
+ *   window.ChildrenRules.getStillbirthChance. It does NOT maintain its
+ *   own fallback constants. A missing ChildrenRules module is a
+ *   load-order bug, not a runtime condition; it throws at load time.
+ *
  * DEPENDENCIES (REQUIRED):
- *   - randomness.js: pickRandom, random, randomBoolean, randomInt
- *   - time.js:       getCurrentYear, isValidYear
- *   - accessors.js:  getCharacterById (for age and birth-year lookups)
- *   - character-commands.js:  getProfessions (not used here, only for
- *                             parity with other generators; can be
- *                             removed if unnecessary)
+ *   - randomness.js:     pickRandom, random, randomBoolean, randomInt
+ *   - time.js:           getCurrentYear, isValidYear
+ *   - accessors.js:      getCharacterById (for age and birth-year lookups)
+ *   - children-rules.js: ChildrenRules (FERTILITY_CONSTANTS,
+ *                        getStillbirthChance)
  *
  * DEPENDENCIES (OPTIONAL):
- *   - children-rules.js: ChildrenRules (for fertility window constants)
+ *   None. All policy comes from ChildrenRules (required).
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 2.2):
+ *     - children-rules.js is now a HARD load-time dependency.
+ *       Loading children-generator.js without it throws.
+ *     - _getFertileWindow reads ChildrenRules.FERTILITY_CONSTANTS
+ *       unconditionally. The previous fallback to
+ *       DEFAULT_FERTILE_WINDOW was removed.
+ *     - _getStillbirthChance reads ChildrenRules.getStillbirthChance
+ *       unconditionally. The previous fallback to
+ *       DEFAULT_STILLBIRTH_CHANCE was removed.
+ *     - Header DEPENDENCIES updated: children-rules.js moved from
+ *       OPTIONAL to REQUIRED. The "FERTILITY POLICY OWNERSHIP" section
+ *       added to explain why.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -92,20 +114,32 @@
         );
     }
 
+    if (!window.ChildrenRules) {
+        throw new Error(
+            'children-generator.js: children-rules.js must load first ' +
+            '(ChildrenRules missing).'
+        );
+    }
+    if (typeof window.ChildrenRules.getStillbirthChance !== 'function') {
+        throw new Error(
+            'children-generator.js: ChildrenRules.getStillbirthChance is required.'
+        );
+    }
+    if (!window.ChildrenRules.FERTILITY_CONSTANTS
+        || typeof window.ChildrenRules.FERTILITY_CONSTANTS !== 'object') {
+        throw new Error(
+            'children-generator.js: ChildrenRules.FERTILITY_CONSTANTS is required.'
+        );
+    }
+
     // =========================================================================
     // 1. CONSTANTS
     // =========================================================================
 
-    // Default fertile window when ChildrenRules is not loaded.
-    // These constants exist so the generator can run without the rules
-    // module. The rules module is the canonical source when present.
-    var DEFAULT_FERTILE_WINDOW = {
-        MIN_AGE: 14,
-        MAX_AGE: 47
-    };
-
-    var DEFAULT_STILLBIRTH_CHANCE = 0.03;
-
+    // Birth spacing defaults. These are range bounds for the generator's
+    // own spacing policy, not fertility policy — the fertility window
+    // itself comes from ChildrenRules. Kept as a local constant because
+    // no other module shares them.
     var MIN_BIRTH_SPACING = 1;
     var MAX_BIRTH_SPACING = 3;
 
@@ -143,32 +177,40 @@
         return result;
     }
 
+    /**
+     * Reads the canonical fertile window from ChildrenRules.
+     *
+     * This function does NOT have a fallback. ChildrenRules is a
+     * required load-time dependency (see section 0). If it were absent,
+     * the module would have thrown at load.
+     */
     function _getFertileWindow() {
-        if (typeof window.ChildrenRules !== 'undefined'
-            && window.ChildrenRules.FERTILITY_CONSTANTS) {
-            var c = window.ChildrenRules.FERTILITY_CONSTANTS;
-            return {
-                MIN_AGE: typeof c.MIN_FERTILE_AGE === 'number'
-                    ? c.MIN_FERTILE_AGE
-                    : DEFAULT_FERTILE_WINDOW.MIN_AGE,
-                MAX_AGE: typeof c.MAX_FERTILE_AGE === 'number'
-                    ? c.MAX_FERTILE_AGE
-                    : DEFAULT_FERTILE_WINDOW.MAX_AGE
-            };
-        }
+        var c = window.ChildrenRules.FERTILITY_CONSTANTS;
         return {
-            MIN_AGE: DEFAULT_FERTILE_WINDOW.MIN_AGE,
-            MAX_AGE: DEFAULT_FERTILE_WINDOW.MAX_AGE
+            MIN_AGE: typeof c.MIN_FERTILE_AGE === 'number'
+                ? c.MIN_FERTILE_AGE
+                : 14,
+            MAX_AGE: typeof c.MAX_FERTILE_AGE === 'number'
+                ? c.MAX_FERTILE_AGE
+                : 47
         };
     }
 
+    /**
+     * Reads the canonical stillbirth chance from ChildrenRules.
+     *
+     * This function does NOT have a fallback. ChildrenRules is a
+     * required load-time dependency.
+     *
+     * The generator passes no age context here; the caller can override
+     * the chance via options.stillbirthChance. This is the baseline
+     * chance used when no override is supplied.
+     */
     function _getStillbirthChance() {
-        if (typeof window.ChildrenRules !== 'undefined'
-            && typeof window.ChildrenRules.getStillbirthChance === 'function') {
-            // No age context here; the caller can override the chance.
-            return DEFAULT_STILLBIRTH_CHANCE;
-        }
-        return DEFAULT_STILLBIRTH_CHANCE;
+        var chance = window.ChildrenRules.getStillbirthChance();
+        return (typeof chance === 'number' && Number.isFinite(chance))
+            ? chance
+            : 0;
     }
 
     function _resolveYear(value) {
