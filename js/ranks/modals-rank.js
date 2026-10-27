@@ -26,10 +26,33 @@
  *   - read character.relationships, character.professions, or any other
  *     embedded domain container directly — those come off the projection
  *
+ * MODAL INPUT READS:
+ *   Every modal reads its inputs via modal.element.querySelector('#id'),
+ *   NOT document.getElementById('#id'). The modal-scoped read is required
+ *   because:
+ *
+ *     1. Multiple rank modals can be open simultaneously (the modal stack
+ *        allows it). Two open create-rank modals would otherwise both
+ *        read the first modal's inputs via getElementById.
+ *
+ *     2. A completely unrelated modal could define an element with an id
+ *        collision (unlikely but possible). Scoped reads are immune.
+ *
+ *     3. The modal element is the correct scope for the input values;
+ *        document is the entire page.
+ *
+ *   The helpers _readValue, _readChecked, _readNumber all take a root
+ *   element (the modal) as their first argument. Every call site passes
+ *   modal.element.
+ *
  * DEPENDENCIES (REQUIRED, must load first):
  *   - modals-core.js        (openModal, closeTopModal)
  *   - icons.js              (Icons)
- *   - rank-constants.js     (RANK_LEVELS, AVAILABLE_SYMBOLS)
+ *   - formatting.js         (escapeHtml)
+ *   - ui.js                 (showToast)
+ *   - rank-constants.js     (RANK_LEVELS, AVAILABLE_SYMBOLS, DEFAULT_RANK,
+ *                            NUMBERING_TYPE, NUMBERING_GROUP,
+ *                            INHERITANCE_SOURCE)
  *   - rank-rules.js         (RankRules)
  *   - rank-state.js         (RankState)
  *   - rank-queries.js       (RankQueries)
@@ -38,14 +61,76 @@
  *   - time.js               (getCurrentYear, calculateAge)
  *
  * DEPENDENCIES (OPTIONAL, used only if present):
- *   - getCharacterById — falls back to CharacterState.getCharacter
- *   - _showToast / showToast — toast helper, at window scope
+ *   - _showToast — deprecated alias; ui.js still exports it, but
+ *                  showToast is the primary name. _toast prefers
+ *                  _showToast (for backward compatibility) but falls
+ *                  back to showToast. ui.js is required, so at least
+ *                  one must be present.
+ *
+ * INLINE STYLES (KNOWN DEFERRAL):
+ *   This file uses inline style attributes for layout. The general
+ *   policy across the tree is classes-only; the exceptions here are a
+ *   known deferral documented in the rank-doc's Known Deferrals section.
+ *
+ *   The correctness fixes in this revision (modal input scoping,
+ *   options shadowing, escapeHtml requirement, DEFAULT_SYMBOL,
+ *   RANK_LEVELS requirement, enum reference in dropdown builders) are
+ *   independent of the inline-style extraction. Extracting ~200 lines
+ *   of layout to a new rank-modals.css is a follow-up PR that touches
+ *   only this file and the new CSS file.
  *
  * ICON POLICY: No emojis. Icons come from icons.js via Icons.NAME. No
  * inline Unicode glyphs in buttons, badges, or select options. Level
  * glyphs are not shown in the priority dropdown; the level name alone is
  * the option label.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - _escapeHtml given a three-tier fallback. Now hard-requires
+ *       formatting.js (see current revision).
+ *   Current revision (Phase 8):
+ *     - #22 (correctness): openAssignRankModal::onConfirm no longer
+ *       shadows the outer `options` parameter with a local `var options`.
+ *       The inner variable is renamed to `assignOptions`. The caller's
+ *       onComplete callback now fires. (Pre-fix: the callback was never
+ *       invoked because `options.onComplete` was undefined on the inner
+ *       object.)
+ *     - #2, #21 (correctness): _readValue, _readChecked, _readNumber now
+ *       take a root element as their first argument and use
+ *       root.querySelector. Every call site passes modal.element. The
+ *       document.getElementById pattern is removed. This eliminates the
+ *       multi-modal contamination bug where two open modals would both
+ *       read the first modal's inputs.
+ *     - _escapeHtml deleted. formatting.js is now a REQUIRED load-time
+ *       dependency. _esc delegates to window.escapeHtml directly.
+ *     - ui.js promoted to REQUIRED. showToast is used unconditionally.
+ *       _toast prefers _showToast (deprecated alias) for backward
+ *       compatibility with any environment that has ui.js loaded but
+ *       reverted to the old alias, then falls back to showToast. If both
+ *       are absent, throw — silent no-op was a UX hole.
+ *     - DEFAULT_SYMBOL derived from window.DEFAULT_RANK.symbol at load.
+ *       All hardcoded '⟡' literals replaced with DEFAULT_SYMBOL.
+ *     - _buildPriorityOptions no longer falls back to [1, 2, 3, 4, 5]
+ *       when RANK_LEVELS is empty. RANK_LEVELS is required, and its
+ *       priority keys are used directly. A bare test harness that lacks
+ *       RANK_LEVELS fails at load, matching rank-queries.js.
+ *     - _buildNumberingTypeOptions, _buildNumberingGroupOptions, and
+ *       _buildInheritanceSourceOptions read their string values from
+ *       window.NUMBERING_TYPE, window.NUMBERING_GROUP, and
+ *       window.INHERITANCE_SOURCE respectively. Pre-fix they hardcoded
+ *       'reign' / 'ordinal' / 'roman' etc. as literals.
+ *     - _buildGenderOptions keeps its literals ('either' / 'male' /
+ *       'female') with a comment pointing to
+ *       RankRules._isValidGenderRestriction as the source of truth.
+ *       Gender restriction is a small, stable enum; the constants module
+ *       does not export it, and adding a new export for three values is
+ *       not worth the churn.
+ *     - Inline style attributes retained. See INLINE STYLES section
+ *       above for the deferral.
+ *     - Header updated: MODAL INPUT READS section, INLINE STYLES
+ *       deferral, DEPENDENCIES list with all REQUIRED modules.
+ *     - No public signature change.
  * =============================================================================
  */
 
@@ -57,15 +142,23 @@
     // =========================================================================
 
     var REQUIRED = [
-        ['openModal',        'modals-core.js'],
-        ['closeTopModal',    'modals-core.js'],
-        ['Icons',            'icons.js'],
-        ['RankState',        'rank-state.js'],
-        ['RankRules',        'rank-rules.js'],
-        ['RankQueries',      'rank-queries.js'],
-        ['RankCommands',     'rank-commands.js'],
-        ['CharacterState',   'character-state.js'],
-        ['getCurrentYear',   'time.js']
+        ['openModal',       'modals-core.js'],
+        ['closeTopModal',   'modals-core.js'],
+        ['Icons',           'icons.js'],
+        ['escapeHtml',      'formatting.js'],
+        ['showToast',       'ui.js'],
+        ['RankState',       'rank-state.js'],
+        ['RankRules',       'rank-rules.js'],
+        ['RankQueries',     'rank-queries.js'],
+        ['RankCommands',    'rank-commands.js'],
+        ['CharacterState',  'character-state.js'],
+        ['getCurrentYear',  'time.js'],
+        ['RANK_LEVELS',     'rank-constants.js'],
+        ['AVAILABLE_SYMBOLS', 'rank-constants.js'],
+        ['DEFAULT_RANK',    'rank-constants.js'],
+        ['NUMBERING_TYPE',  'rank-constants.js'],
+        ['NUMBERING_GROUP', 'rank-constants.js'],
+        ['INHERITANCE_SOURCE', 'rank-constants.js']
     ];
     for (var _i = 0; _i < REQUIRED.length; _i++) {
         if (typeof window[REQUIRED[_i][0]] === 'undefined') {
@@ -94,24 +187,8 @@
         return v === undefined || v === null;
     }
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
     function _esc(v) {
-        return _escapeHtml(_isMissing(v) ? '' : String(v));
+        return window.escapeHtml(_isMissing(v) ? '' : String(v));
     }
 
     function _icon(name) {
@@ -125,12 +202,26 @@
         return '<span class="icon-inline">' + _icon(name) + '</span>';
     }
 
+    /**
+     * Shows a toast. Prefers _showToast (deprecated alias) for backward
+     * compatibility, falls back to showToast (primary export). Both come
+     * from ui.js, which is a REQUIRED dependency. If neither exists, this
+     * throws — a silent no-op would leave the user with no feedback on a
+     * command failure, which is a UX hole, not a graceful degradation.
+     */
     function _toast(message, type) {
         if (typeof window._showToast === 'function') {
             window._showToast(message, type || 'info');
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(message, type || 'info');
+            return;
         }
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, type || 'info');
+            return;
+        }
+        throw new Error(
+            'modals-rank.js: _toast called without a toast helper. ' +
+            'ui.js must be loaded before modals-rank.js. Message: ' + message
+        );
     }
 
     function _displayName(character) {
@@ -155,15 +246,53 @@
     }
 
     // =========================================================================
+    // 2b. MODAL-SCOPED INPUT READERS
+    // =========================================================================
+    //
+    // Every reader takes the modal element (or any root element) as its
+    // first argument and uses querySelector. This is required for
+    // correctness when two modals are open simultaneously.
+    //
+    // Pre-fix versions used document.getElementById, which read from the
+    // whole page. Two open create-rank modals would both find the first
+    // modal's input by id, and the second modal's confirm would read the
+    // first modal's values.
+
+    function _readValue(root, id) {
+        if (!root) return '';
+        var el = root.querySelector('#' + id);
+        return el ? el.value : '';
+    }
+
+    function _readChecked(root, id) {
+        if (!root) return false;
+        var el = root.querySelector('#' + id);
+        return el ? el.checked === true : false;
+    }
+
+    function _readNumber(root, id, fallback) {
+        var raw = _readValue(root, id);
+        if (raw === '') return fallback;
+        var n = Number(raw);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    // =========================================================================
     // 3. SHARED OPTION BUILDERS
     // =========================================================================
 
-    var SYMBOL_FALLBACK = ['⟡'];
+    /**
+     * Default symbol derived from rank-constants.js. Using DEFAULT_RANK.symbol
+     * instead of a hardcoded '⟡' keeps the fallback in one place: if the
+     * default ever changes, every dropdown, every saved rank, and every
+     * render site picks up the new value.
+     */
+    var DEFAULT_SYMBOL = (window.DEFAULT_RANK && window.DEFAULT_RANK.symbol) || '⟡';
 
     function _getSymbols() {
         var s = window.AVAILABLE_SYMBOLS;
         if (Array.isArray(s) && s.length > 0) return s;
-        return SYMBOL_FALLBACK;
+        return [DEFAULT_SYMBOL];
     }
 
     function _buildSymbolOptions(selected) {
@@ -181,19 +310,20 @@
     /**
      * Builds the priority select options.
      *
+     * Reads priority keys directly from window.RANK_LEVELS. No fallback
+     * list: RANK_LEVELS is required at load, and rank-queries.js also
+     * requires it. A bare test harness that lacks RANK_LEVELS fails at
+     * load, matching rank-queries.js's behavior.
+     *
      * The option label is the level name alone. No glyph is rendered in
-     * the dropdown; the previous inline Unicode level indicator was removed
-     * when RANK_LEVELS[*].icon was stripped. If a glyph is ever wanted here,
-     * the correct source is RankQueries.getRankLevelIcon(p), which returns
-     * SVG markup — unsuitable for <option> content in some browsers. The
-     * level name alone is the deliberate choice.
+     * the dropdown; the previous inline Unicode level indicator was
+     * removed when RANK_LEVELS[*].icon was stripped.
      */
     function _buildPriorityOptions(selected) {
-        var levels = window.RANK_LEVELS || {};
+        var levels = window.RANK_LEVELS;
         var keys = Object.keys(levels).map(function (k) { return parseInt(k, 10); })
             .filter(function (n) { return Number.isFinite(n); })
             .sort(function (a, b) { return a - b; });
-        if (keys.length === 0) keys = [1, 2, 3, 4, 5];
         var html = '';
         for (var i = 0; i < keys.length; i++) {
             var p = keys[i];
@@ -206,6 +336,16 @@
         return html;
     }
 
+    /**
+     * Gender restriction options.
+     *
+     * The literals ('either' / 'male' / 'female') match
+     * RankRules._isValidGenderRestriction. Gender restriction is a small,
+     * stable enum that rank-constants.js does not export. Adding a new
+     * export for three values is not worth the churn. If the enum ever
+     * grows, both this list and RankRules._isValidGenderRestriction must
+     * be updated together.
+     */
     function _buildGenderOptions(selected) {
         var opts = [
             { id: 'either', label: 'Either' },
@@ -221,48 +361,61 @@
         return html;
     }
 
+    /**
+     * Numbering type options. Values come from window.NUMBERING_TYPE
+     * (rank-constants.js), not hardcoded literals. If a new numbering type
+     * is added to the constants module, this dropdown picks it up only
+     * after the labels below are updated — which is the correct behavior:
+     * the constant establishes the value; the modal establishes the label.
+     */
     function _buildNumberingTypeOptions(selected) {
+        var types = window.NUMBERING_TYPE
+            || { REIGN: 'reign', ORDINAL: 'ordinal', ROMAN: 'roman' };
         var opts = [
-            { id: 'reign', label: 'Reign (I, II, III...)' },
-            { id: 'ordinal', label: 'Ordinal (1st, 2nd, 3rd...)' },
-            { id: 'roman', label: 'Roman (I, II, III...)' }
+            { id: types.REIGN,   label: 'Reign (I, II, III...)' },
+            { id: types.ORDINAL, label: 'Ordinal (1st, 2nd, 3rd...)' },
+            { id: types.ROMAN,   label: 'Roman (I, II, III...)' }
         ];
         var html = '';
         for (var i = 0; i < opts.length; i++) {
             var sel = opts[i].id === selected ? ' selected' : '';
-            html += '<option value="' + opts[i].id + '"' + sel + '>' +
-                opts[i].label + '</option>';
+            html += '<option value="' + _esc(opts[i].id) + '"' + sel + '>' +
+                _esc(opts[i].label) + '</option>';
         }
         return html;
     }
 
     function _buildNumberingGroupOptions(selected) {
+        var groups = window.NUMBERING_GROUP
+            || { GLOBAL: 'global', PARENT: 'parent', SPOUSE: 'spouse', SOURCE: 'source' };
         var opts = [
-            { id: 'global', label: 'Global (all holders share one sequence)' },
-            { id: 'parent', label: 'By parent' },
-            { id: 'spouse', label: 'By spouse' },
-            { id: 'source', label: 'By inheritance source' }
+            { id: groups.GLOBAL, label: 'Global (all holders share one sequence)' },
+            { id: groups.PARENT, label: 'By parent' },
+            { id: groups.SPOUSE, label: 'By spouse' },
+            { id: groups.SOURCE, label: 'By inheritance source' }
         ];
         var html = '';
         for (var i = 0; i < opts.length; i++) {
             var sel = opts[i].id === selected ? ' selected' : '';
-            html += '<option value="' + opts[i].id + '"' + sel + '>' +
-                opts[i].label + '</option>';
+            html += '<option value="' + _esc(opts[i].id) + '"' + sel + '>' +
+                _esc(opts[i].label) + '</option>';
         }
         return html;
     }
 
     function _buildInheritanceSourceOptions(selected) {
+        var sources = window.INHERITANCE_SOURCE
+            || { NONE: 'none', PARENT: 'parent', SPOUSE: 'spouse' };
         var opts = [
-            { id: 'none',   label: 'None' },
-            { id: 'parent', label: 'Parent' },
-            { id: 'spouse', label: 'Spouse' }
+            { id: sources.NONE,   label: 'None' },
+            { id: sources.PARENT, label: 'Parent' },
+            { id: sources.SPOUSE, label: 'Spouse' }
         ];
         var html = '';
         for (var i = 0; i < opts.length; i++) {
             var sel = opts[i].id === selected ? ' selected' : '';
-            html += '<option value="' + opts[i].id + '"' + sel + '>' +
-                opts[i].label + '</option>';
+            html += '<option value="' + _esc(opts[i].id) + '"' + sel + '>' +
+                _esc(opts[i].label) + '</option>';
         }
         return html;
     }
@@ -288,27 +441,10 @@
             if (excludeIds[r.id]) continue;
             var sel = r.id === selectedId ? ' selected' : '';
             html += '<option value="' + _esc(r.id) + '"' + sel + '>' +
-                _esc((r.symbol || '⟡') + ' ' + (r.name || '')) +
+                _esc((r.symbol || DEFAULT_SYMBOL) + ' ' + (r.name || '')) +
                 '</option>';
         }
         return html;
-    }
-
-    function _readValue(id) {
-        var el = document.getElementById(id);
-        return el ? el.value : '';
-    }
-
-    function _readChecked(id) {
-        var el = document.getElementById(id);
-        return el ? el.checked === true : false;
-    }
-
-    function _readNumber(id, fallback) {
-        var raw = _readValue(id);
-        if (raw === '') return fallback;
-        var n = Number(raw);
-        return Number.isFinite(n) ? n : fallback;
     }
 
     // =========================================================================
@@ -335,7 +471,7 @@
                 '<div>' +
                     '<label class="form-label">Symbol</label>' +
                     '<select id="rankSymbol" class="form-input" style="width:100%;">' +
-                        _buildSymbolOptions('⟡') +
+                        _buildSymbolOptions(DEFAULT_SYMBOL) +
                     '</select>' +
                 '</div>' +
             '</div>' +
@@ -452,24 +588,26 @@
             confirmText: 'Create',
             cancelText: 'Cancel',
             onOpen: function (modal) {
-                var numbered = modal.querySelector('#rankNumbered');
-                var numberingFields = modal.querySelector('#rankNumberingFields');
+                var root = modal.element;
+
+                var numbered = root.querySelector('#rankNumbered');
+                var numberingFields = root.querySelector('#rankNumberingFields');
                 if (numbered && numberingFields) {
                     numbered.addEventListener('change', function () {
                         numberingFields.style.display = this.checked ? 'block' : 'none';
                     });
                 }
 
-                var surname = modal.querySelector('#rankCustomSurname');
-                var surnameFields = modal.querySelector('#rankSurnameFields');
+                var surname = root.querySelector('#rankCustomSurname');
+                var surnameFields = root.querySelector('#rankSurnameFields');
                 if (surname && surnameFields) {
                     surname.addEventListener('change', function () {
                         surnameFields.style.display = this.checked ? 'block' : 'none';
                     });
                 }
 
-                var inher = modal.querySelector('#rankInheritanceSource');
-                var sourceRankField = modal.querySelector('#rankSourceRankField');
+                var inher = root.querySelector('#rankInheritanceSource');
+                var sourceRankField = root.querySelector('#rankSourceRankField');
                 if (inher && sourceRankField) {
                     inher.addEventListener('change', function () {
                         sourceRankField.style.display =
@@ -477,52 +615,57 @@
                     });
                 }
 
-                var nameInput = modal.querySelector('#rankName');
+                var nameInput = root.querySelector('#rankName');
                 if (nameInput) {
                     nameInput.focus();
                     nameInput.select();
                 }
             },
             onConfirm: function (modal) {
-                var numbered = _readChecked('rankNumbered');
-                var inheritanceSource = _readValue('rankInheritanceSource') || 'none';
+                // Scoped reads: modal.element is the ONLY valid root.
+                // document.getElementById would find another open modal's
+                // input by collision.
+                var root = modal.element;
+
+                var numbered = _readChecked(root, 'rankNumbered');
+                var inheritanceSource = _readValue(root, 'rankInheritanceSource') || 'none';
                 var sourceRankId = inheritanceSource === 'none'
                     ? null
-                    : (_readValue('rankSourceRankId') || null);
-                var customSurname = _readChecked('rankCustomSurname');
+                    : (_readValue(root, 'rankSourceRankId') || null);
+                var customSurname = _readChecked(root, 'rankCustomSurname');
 
                 var rankData = {
-                    name: _readValue('rankName'),
-                    priority: _readNumber('rankPriority', 4),
-                    symbol: _readValue('rankSymbol') || '⟡',
-                    genderRestriction: _readValue('rankGender') || 'either',
-                    parentRankId: _readValue('rankParent') || null,
+                    name: _readValue(root, 'rankName'),
+                    priority: _readNumber(root, 'rankPriority', 4),
+                    symbol: _readValue(root, 'rankSymbol') || DEFAULT_SYMBOL,
+                    genderRestriction: _readValue(root, 'rankGender') || 'either',
+                    parentRankId: _readValue(root, 'rankParent') || null,
                     numbered: numbered,
                     numberingType: numbered
-                        ? (_readValue('rankNumberingType') || 'reign')
+                        ? (_readValue(root, 'rankNumberingType') || 'reign')
                         : 'reign',
                     numberingGroup: numbered
-                        ? (_readValue('rankNumberingGroup') || 'global')
+                        ? (_readValue(root, 'rankNumberingGroup') || 'global')
                         : 'global',
                     numberingPrefix: numbered
-                        ? _readValue('rankNumberingPrefix')
+                        ? _readValue(root, 'rankNumberingPrefix')
                         : '',
                     numberingSuffix: numbered
-                        ? _readValue('rankNumberingSuffix')
+                        ? _readValue(root, 'rankNumberingSuffix')
                         : '',
-                    deprecateOnDeath: _readChecked('rankDeprecateOnDeath'),
-                    allowsMultipleSpouses: _readChecked('rankAllowsMultipleSpouses'),
+                    deprecateOnDeath: _readChecked(root, 'rankDeprecateOnDeath'),
+                    allowsMultipleSpouses: _readChecked(root, 'rankAllowsMultipleSpouses'),
                     inheritanceSource: inheritanceSource,
                     sourceRankId: sourceRankId,
                     customSurnameRule: customSurname,
                     surnameConnector: customSurname
-                        ? _readValue('rankSurnameConnector')
+                        ? _readValue(root, 'rankSurnameConnector')
                         : 'of',
                     surnamePrefix: customSurname
-                        ? _readValue('rankSurnamePrefix')
+                        ? _readValue(root, 'rankSurnamePrefix')
                         : '',
                     surnameSuffix: customSurname
-                        ? _readValue('rankSurnameSuffix')
+                        ? _readValue(root, 'rankSurnameSuffix')
                         : ''
                 };
 
@@ -729,24 +872,26 @@
             confirmText: 'Save',
             cancelText: 'Cancel',
             onOpen: function (modal) {
-                var numbered = modal.querySelector('#rankEditNumbered');
-                var numberingFields = modal.querySelector('#rankEditNumberingFields');
+                var root = modal.element;
+
+                var numbered = root.querySelector('#rankEditNumbered');
+                var numberingFields = root.querySelector('#rankEditNumberingFields');
                 if (numbered && numberingFields) {
                     numbered.addEventListener('change', function () {
                         numberingFields.style.display = this.checked ? 'block' : 'none';
                     });
                 }
 
-                var surname = modal.querySelector('#rankEditCustomSurname');
-                var surnameFields = modal.querySelector('#rankEditSurnameFields');
+                var surname = root.querySelector('#rankEditCustomSurname');
+                var surnameFields = root.querySelector('#rankEditSurnameFields');
                 if (surname && surnameFields) {
                     surname.addEventListener('change', function () {
                         surnameFields.style.display = this.checked ? 'block' : 'none';
                     });
                 }
 
-                var inher = modal.querySelector('#rankEditInheritanceSource');
-                var sourceRankField = modal.querySelector('#rankEditSourceRankField');
+                var inher = root.querySelector('#rankEditInheritanceSource');
+                var sourceRankField = root.querySelector('#rankEditSourceRankField');
                 if (inher && sourceRankField) {
                     inher.addEventListener('change', function () {
                         sourceRankField.style.display =
@@ -755,45 +900,47 @@
                 }
             },
             onConfirm: function (modal) {
-                var numbered = _readChecked('rankEditNumbered');
-                var inheritanceSource = _readValue('rankEditInheritanceSource') || 'none';
+                var root = modal.element;
+
+                var numbered = _readChecked(root, 'rankEditNumbered');
+                var inheritanceSource = _readValue(root, 'rankEditInheritanceSource') || 'none';
                 var sourceRankId = inheritanceSource === 'none'
                     ? null
-                    : (_readValue('rankEditSourceRankId') || null);
-                var customSurname = _readChecked('rankEditCustomSurname');
+                    : (_readValue(root, 'rankEditSourceRankId') || null);
+                var customSurname = _readChecked(root, 'rankEditCustomSurname');
 
                 var updates = {
-                    name: _readValue('rankEditName'),
-                    priority: _readNumber('rankEditPriority', rank.priority),
-                    symbol: _readValue('rankEditSymbol') || '⟡',
-                    genderRestriction: _readValue('rankEditGender') || 'either',
-                    parentRankId: _readValue('rankEditParent') || null,
+                    name: _readValue(root, 'rankEditName'),
+                    priority: _readNumber(root, 'rankEditPriority', rank.priority),
+                    symbol: _readValue(root, 'rankEditSymbol') || DEFAULT_SYMBOL,
+                    genderRestriction: _readValue(root, 'rankEditGender') || 'either',
+                    parentRankId: _readValue(root, 'rankEditParent') || null,
                     numbered: numbered,
                     numberingType: numbered
-                        ? (_readValue('rankEditNumberingType') || 'reign')
+                        ? (_readValue(root, 'rankEditNumberingType') || 'reign')
                         : 'reign',
                     numberingGroup: numbered
-                        ? (_readValue('rankEditNumberingGroup') || 'global')
+                        ? (_readValue(root, 'rankEditNumberingGroup') || 'global')
                         : 'global',
                     numberingPrefix: numbered
-                        ? _readValue('rankEditNumberingPrefix')
+                        ? _readValue(root, 'rankEditNumberingPrefix')
                         : '',
                     numberingSuffix: numbered
-                        ? _readValue('rankEditNumberingSuffix')
+                        ? _readValue(root, 'rankEditNumberingSuffix')
                         : '',
-                    deprecateOnDeath: _readChecked('rankEditDeprecateOnDeath'),
-                    allowsMultipleSpouses: _readChecked('rankEditAllowsMultipleSpouses'),
+                    deprecateOnDeath: _readChecked(root, 'rankEditDeprecateOnDeath'),
+                    allowsMultipleSpouses: _readChecked(root, 'rankEditAllowsMultipleSpouses'),
                     inheritanceSource: inheritanceSource,
                     sourceRankId: sourceRankId,
                     customSurnameRule: customSurname,
                     surnameConnector: customSurname
-                        ? _readValue('rankEditSurnameConnector')
+                        ? _readValue(root, 'rankEditSurnameConnector')
                         : 'of',
                     surnamePrefix: customSurname
-                        ? _readValue('rankEditSurnamePrefix')
+                        ? _readValue(root, 'rankEditSurnamePrefix')
                         : '',
                     surnameSuffix: customSurname
-                        ? _readValue('rankEditSurnameSuffix')
+                        ? _readValue(root, 'rankEditSurnameSuffix')
                         : ''
                 };
 
@@ -830,6 +977,16 @@
     //   'bulk'    — many characters are selected via checkboxes
     //
     // Default mode is 'single'.
+    //
+    // #22 FIX: the onConfirm handler previously declared a local
+    // `var options` that shadowed the outer options parameter. The line
+    // `if (typeof options.onComplete === 'function')` then checked the
+    // INNER object, which had no onComplete property. The caller's
+    // onComplete callback never fired.
+    //
+    // The fix renames the inner variable to `assignOptions`. The outer
+    // `options` parameter is now correctly referenced throughout
+    // onConfirm, including the onComplete invocation.
 
     function openAssignRankModal(options) {
         options = options || {};
@@ -917,8 +1074,19 @@
             return selectedCharacterIds.indexOf(id) !== -1;
         }
 
+        // Modal-scoped state: modalRoot is captured once in onOpen and
+        // passed to the render helpers. This preserves the multi-modal
+        // isolation: two open assign-rank modals would otherwise both
+        // query document.getElementById('#assignRankList') and get the
+        // first modal's list.
+        var modalRootRef = null;
+
+        function _q(id) {
+            return modalRootRef ? modalRootRef.querySelector('#' + id) : null;
+        }
+
         function updateCounter() {
-            var el = document.getElementById('assignRankSelectedCount');
+            var el = _q('assignRankSelectedCount');
             if (el) el.textContent = String(selectedCharacterIds.length);
         }
 
@@ -949,7 +1117,7 @@
         }
 
         function renderList() {
-            var container = document.getElementById('assignRankList');
+            var container = _q('assignRankList');
             if (!container) return;
             var chars = eligibleCharacters();
             if (chars.length === 0) {
@@ -1063,8 +1231,10 @@
             confirmText: mode === 'bulk' ? 'Assign to Selected' : 'Assign',
             cancelText: 'Cancel',
             onOpen: function (modal) {
+                modalRootRef = modal.element;
+
                 function refreshInfo() {
-                    var info = modal.querySelector('#assignRankInfo');
+                    var info = _q('assignRankInfo');
                     var rank = currentRank();
                     if (!info || !rank) return;
                     var parts = [];
@@ -1081,7 +1251,7 @@
                     info.innerHTML = parts.join(' · ');
                 }
 
-                var rankSelect = modal.querySelector('#assignRankSelect');
+                var rankSelect = _q('assignRankSelect');
                 if (rankSelect) {
                     rankSelect.addEventListener('change', function () {
                         selectedRankId = this.value;
@@ -1090,7 +1260,7 @@
                     });
                 }
 
-                var searchInput = modal.querySelector('#assignRankSearch');
+                var searchInput = _q('assignRankSearch');
                 if (searchInput) {
                     searchInput.addEventListener('input', function () {
                         filters.search = this.value;
@@ -1098,7 +1268,7 @@
                     });
                 }
 
-                var genderSelect = modal.querySelector('#assignRankGender');
+                var genderSelect = _q('assignRankGender');
                 if (genderSelect) {
                     genderSelect.addEventListener('change', function () {
                         filters.gender = this.value;
@@ -1107,7 +1277,7 @@
                 }
 
                 if (mode === 'bulk') {
-                    var selectAll = modal.querySelector('#assignRankSelectAll');
+                    var selectAll = _q('assignRankSelectAll');
                     if (selectAll) {
                         selectAll.addEventListener('click', function () {
                             var chars = eligibleCharacters();
@@ -1118,7 +1288,7 @@
                             renderList();
                         });
                     }
-                    var selectNone = modal.querySelector('#assignRankSelectNone');
+                    var selectNone = _q('assignRankSelectNone');
                     if (selectNone) {
                         selectNone.addEventListener('click', function () {
                             selectedCharacterIds = [];
@@ -1131,6 +1301,9 @@
                 renderList();
             },
             onConfirm: function (modal) {
+                // Scoped reads. modal.element is the ONLY valid root.
+                var root = modal.element;
+
                 if (!_hasId(selectedRankId)) {
                     _toast('Please select a rank.', 'error');
                     return false;
@@ -1140,24 +1313,29 @@
                     return false;
                 }
 
-                var notes = _readValue('assignRankNotes');
-                var assignedYear = _readNumber('assignRankYear', _currentYear());
+                var notes = _readValue(root, 'assignRankNotes');
+                var assignedYear = _readNumber(root, 'assignRankYear', _currentYear());
 
-                var options = {
+                // #22 FIX: renamed from `options` to `assignOptions`.
+                // The old name shadowed the function parameter, causing
+                // `options.onComplete` below to check the inner object
+                // (which had no onComplete property). The caller's
+                // onComplete callback never fired.
+                var assignOptions = {
                     notes: notes,
                     assignedYear: assignedYear
                 };
 
                 var result;
                 if (mode === 'bulk') {
-                    result = RC.bulkAssignRank(selectedCharacterIds, selectedRankId, options);
+                    result = RC.bulkAssignRank(selectedCharacterIds, selectedRankId, assignOptions);
                     if (!result.success) {
                         _toast(result.reason || 'Bulk assign failed.', 'error');
                         return false;
                     }
                 } else {
                     result = RC.assignRankToCharacter(
-                        selectedCharacterIds[0], selectedRankId, options
+                        selectedCharacterIds[0], selectedRankId, assignOptions
                     );
                     if (!result.success) {
                         _toast(result.reason || 'Assign failed.', 'error');
@@ -1187,6 +1365,9 @@
                     }
                 }
 
+                // #22 FIX: outer `options` correctly referenced here.
+                // Pre-fix, this line checked the inner `assignOptions`
+                // object, which had no onComplete property.
                 if (typeof options.onComplete === 'function') {
                     options.onComplete(result);
                 }
@@ -1247,7 +1428,7 @@
             '<div style="display:grid;grid-template-columns:auto 1fr;gap:12px;' +
             'align-items:center;margin-bottom:14px;">' +
                 '<div style="font-size:2rem;line-height:1;">' +
-                    _esc(rank.symbol || '⟡') +
+                    _esc(rank.symbol || DEFAULT_SYMBOL) +
                 '</div>' +
                 '<div>' +
                     '<div style="font-size:1rem;font-weight:600;">' +
