@@ -12,6 +12,7 @@
  *   - Cross-tab coordination
  *   - Load/save/reload/reset orchestration
  *   - Import (with validation before install)
+ *   - Debounced save scheduling via markDataDirty
  *
  * OUT OF SCOPE:
  *   - Schema shape and default data → storage-schema.js
@@ -23,14 +24,40 @@
  *   - Cross-tab conflict prevention beyond "do not discard dirty state"
  *
  * SEMANTIC RULES:
- *   - saveMasterData() returns true only if localStorage.setItem succeeded.
- *     There is no debounced variant of this function; the debounced path is
- *     scheduleSave(), which does not claim persistence.
- *   - load: no entry → defaults; valid entry → load; corrupt entry → signal
- *     failure without replacing window.masterData.
+ *   - markDataDirty() marks the data dirty AND schedules a debounced
+ *     save. This is the single persistence trigger for every domain
+ *     that writes to masterData.data. Domains do not need to call
+ *     scheduleSave() themselves; they call markDataDirty() and the
+ *     debounce fires automatically.
+ *
+ *   - saveMasterData() is the canonical synchronous persistence
+ *     operation. It returns true only if the write actually succeeded.
+ *     It clears any pending debounced save (the write just happened).
+ *
+ *   - scheduleSave() is exposed for callers that want to schedule a
+ *     save without marking dirty (rare; the debounce is normally
+ *     driven by markDataDirty). It does not claim the save succeeded.
+ *
+ *   - flushPendingSave() flushes any pending debounced save
+ *     synchronously and reports whether the resulting state is
+ *     persisted. It returns true if no pending save existed AND the
+ *     current state is clean, or if a pending save was flushed
+ *     successfully. It returns false if the flush failed OR unsaved
+ *     changes remain.
+ *
+ *   - getLastSaveError() returns the Error from the most recent failed
+ *     save, or null if the last save succeeded (or no save has been
+ *     attempted). Callers that want to report a save failure reason
+ *     read this after saveMasterData() returns false.
+ *
+ *   - load: no entry → defaults; valid entry → load; corrupt entry →
+ *     signal failure without replacing window.masterData.
+ *
  *   - import: does not report success if validation or save failed.
+ *
  *   - reset: does not delete the storage key before attempting to save
  *     defaults. A failed save leaves the previously persisted value intact.
+ *
  *   - cross-tab: does not silently overwrite unsaved local changes, but
  *     also does not prevent a later overwrite. See CROSS-TAB CONFLICT.
  *
@@ -41,6 +68,24 @@
  *   auto-reload, but when tab A later saves, it will overwrite tab B's
  *   changes. Preventing that requires a revision/compare-before-write
  *   strategy, which is out of scope for this module.
+ *
+ * PERSISTENCE TRIGGER (IMPORTANT):
+ *   Every domain that mutates canonical data calls window.markDataDirty().
+ *   That call now schedules a debounced save. The result:
+ *
+ *     - CharacterState._emitChange  → markDataDirty → scheduled save
+ *     - FamilyCommands._commit      → markDataDirty → scheduled save
+ *     - ChildrenCommands._commit    → markDataDirty → scheduled save
+ *     - RelationshipState._markDirty → markDataDirty → scheduled save
+ *     - RoleState._syncToMasterData → markDataDirty → scheduled save
+ *
+ *   The role domain additionally calls RoleCommands.persist(), which
+ *   invokes saveMasterData() synchronously after user actions (modal
+ *   confirms). That is an immediate-flush override, not a replacement
+ *   for the debounce.
+ *
+ *   Callers who need synchronous durability should call saveMasterData()
+ *   directly (or flushPendingSave() to flush a pending debounced save).
  *
  * SCHEMA OWNERSHIP:
  *   storage.js owns BYTES. It does not own schema meaning.
@@ -128,9 +173,12 @@
     var _forceReloading = false;
 
     // Tracks whether the current in-memory data has unsaved changes.
-    // Set true by mutation boundaries via markDataDirty(); cleared after a
-    // successful save.
+    // Set true by markDataDirty(); cleared after a successful save.
     var _isDirty = false;
+
+    // The Error from the most recent failed save, or null.
+    // Read via getLastSaveError() after saveMasterData() returns false.
+    var _lastSaveError = null;
 
     // Cross-tab coordination
     var _storageListenerAdded = false;
@@ -209,6 +257,7 @@
             if (stored === null) {
                 window.masterData = createDefaultMasterData();
                 _isDirty = false;
+                _lastSaveError = null;
                 return { ok: true, source: 'defaults' };
             }
 
@@ -265,6 +314,7 @@
 
             window.masterData = envelope;
             _isDirty = false;
+            _lastSaveError = null;
             return { ok: true, source: 'storage' };
         } catch (e) {
             console.error('storage.js: load failed:', e);
@@ -281,9 +331,12 @@
     /**
      * Performs the synchronous write to localStorage.
      *
-     * Called by saveMasterData() and by the flush path. Sets savedAt
+     * Called by saveMasterData() and by the debounce flush. Sets savedAt
      * metadata; does NOT modify schemaVersion (that is schema layer's
      * concern).
+     *
+     * Records the failure reason in _lastSaveError so callers can read it
+     * via getLastSaveError() after saveMasterData() returns false.
      *
      * @private
      * @returns {{ ok: boolean, error?: Error }}
@@ -310,9 +363,10 @@
      * Saves masterData to localStorage immediately.
      *
      * Returns true ONLY if the write to localStorage actually succeeded.
-     * This is the canonical persistence operation. There is no debounced
-     * variant of this function; if you want to defer, use scheduleSave()
-     * and call flushPendingSave() when you need a truthful answer.
+     * This is the canonical persistence operation. If a debounced save
+     * was pending, it is cancelled (the write just happened synchronously).
+     *
+     * On failure, getLastSaveError() returns the underlying Error.
      *
      * @returns {boolean}
      */
@@ -333,15 +387,23 @@
 
         if (result.ok) {
             _isDirty = false;
+            _lastSaveError = null;
             return true;
         }
-        console.error('storage.js: save failed:', result.error);
+        _lastSaveError = result.error || new Error('unknown save failure');
+        console.error('storage.js: save failed:', _lastSaveError);
         return false;
     }
 
     /**
      * Schedules a debounced save. Does NOT claim the save succeeded.
-     * The eventual result is observable via hasUnsavedChanges().
+     * The eventual result is observable via hasUnsavedChanges() and
+     * getLastSaveError().
+     *
+     * Callers normally do not need to call this directly — markDataDirty()
+     * calls it. It is exposed for callers that need to defer a save
+     * without marking dirty (rare; usually for re-scheduling after a
+     * cross-tab merge).
      */
     function scheduleSave() {
         if (_saveTimeout !== null) clearTimeout(_saveTimeout);
@@ -353,8 +415,16 @@
 
     /**
      * Flushes any pending debounced save synchronously and reports whether
-     * it succeeded. If no save was pending, returns the current dirty
-     * state (true = persisted, false = unsaved changes remain).
+     * the state is now persisted.
+     *
+     * Returns true if:
+     *   - a pending save was flushed successfully, OR
+     *   - no pending save existed AND the state is clean.
+     *
+     * Returns false if:
+     *   - a pending save existed and its flush failed, OR
+     *   - no pending save existed AND unsaved changes remain (dirty but
+     *     not scheduled — should not happen, but guarded).
      *
      * @returns {boolean}
      */
@@ -366,11 +436,20 @@
     }
 
     /**
-     * Marks the current in-memory data as having unsaved changes.
-     * Called by mutation boundaries before scheduling a save.
+     * Marks the current in-memory data as having unsaved changes AND
+     * schedules a debounced save. This is the single persistence trigger
+     * for every domain that mutates masterData.data.
+     *
+     * The debounce is intentional: rapid mutations (e.g. a bulk character
+     * update that touches 100 records) do not trigger 100 localStorage
+     * writes. The 100ms debounce coalesces them into a single write.
+     *
+     * Callers that need immediate durability call saveMasterData()
+     * directly (or flushPendingSave()).
      */
     function markDataDirty() {
         _isDirty = true;
+        scheduleSave();
     }
 
     /**
@@ -379,6 +458,18 @@
      */
     function hasUnsavedChanges() {
         return _isDirty === true;
+    }
+
+    /**
+     * Returns the Error from the most recent failed save, or null.
+     * Use this after saveMasterData() returns false to surface the
+     * actual failure reason (e.g. quota exceeded, JSON serialization
+     * failure, localStorage disabled).
+     *
+     * @returns {Error|null}
+     */
+    function getLastSaveError() {
+        return _lastSaveError;
     }
 
     // =========================================================================
@@ -551,7 +642,10 @@
             return {
                 ok: false,
                 error: 'save-failed',
-                message: 'Imported data could not be saved to storage'
+                message: 'Imported data could not be saved to storage: ' +
+                    (_lastSaveError && _lastSaveError.message
+                        ? _lastSaveError.message
+                        : 'unknown')
             };
         }
 
@@ -587,7 +681,12 @@
             if (!saved) {
                 window.masterData = prior;
                 _isDirty = false;
-                return { ok: false, error: 'save-failed' };
+                return {
+                    ok: false,
+                    error: _lastSaveError && _lastSaveError.message
+                        ? _lastSaveError.message
+                        : 'save-failed'
+                };
             }
             return { ok: true };
         } catch (e) {
@@ -669,8 +768,9 @@
     window.flushPendingSave = flushPendingSave;
 
     // Dirty state
-    window.markDataDirty = markDataDirty;
+    window.markDataDirty = markDataDirty;     // marks dirty + schedules
     window.hasUnsavedChanges = hasUnsavedChanges;
+    window.getLastSaveError = getLastSaveError;
 
     // Import / reset
     window.importData = importData;
