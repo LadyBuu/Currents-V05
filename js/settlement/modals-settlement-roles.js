@@ -15,7 +15,7 @@
  * It is a UI module. It:
  *   - reads through query modules and ViewModels
  *   - does not call commands (these modals are read-only)
- *   - uses modals-core for the modal shell
+ *   - uses the core modal shell for presentation
  *   - does not read canonical settlement state directly
  *   - does not create settlement records
  *   - does not mutate canonical settlement data
@@ -27,11 +27,18 @@
  * Contract reference: Settlement Architecture Contracts §15 (ViewModel
  * Contract), §16 (UI Contract), §32 (Completion Standard).
  *
- * Modal infrastructure expectation:
+ * Modal infrastructure:
  *
- *   `window.ModalsCore.openModal(options)` returns the created content
- *   container element, or null on failure. Event wiring is scoped to
- *   that container. No global document selectors. No setTimeout.
+ *   This module uses the CORE modals, not a ModalsCore namespace:
+ *     - window.openModal(options) -> { element, close }
+ *     - window.showToast(message, type)
+ *
+ *   `titleHtml` and `contentHtml` are the accepted option keys.
+ *   `title` and `content` are silently ignored by the core.
+ *
+ *   The content container for any future event delegation is
+ *   `result.element`. These modals are read-only, so no event wiring is
+ *   currently attached.
  *
  * Data sources:
  *
@@ -57,10 +64,8 @@
     // 1. DEPENDENCIES
     // =========================================================================
 
-    function _getModalsCore()          { return window.ModalsCore; }
     function _getSettlementQueries()   { return window.SettlementQueries; }
     function _getPlaceQueries()        { return window.PlaceQueries; }
-    function _getViewModels()          { return window.SettlementViewModels; }
     function _getEducationQueries()    { return window.SettlementEducationQueries; }
     function _getRoleQueries()         { return window.RoleQueries; }
 
@@ -92,16 +97,19 @@
         return _escapeHtml(value.toLocaleString());
     }
 
+    /**
+     * Opens a modal via the core modal shell. Returns the modal element,
+     * or null if openModal returned an unexpected shape.
+     */
     function _openModal(options) {
-        var result = _getModalsCore().openModal(options);
+        var result = window.openModal(options);
         if (!result) return null;
-        if (result.content && result.content.nodeType === 1) return result.content;
-        if (result.nodeType === 1) return result;
+        if (result.element && result.element.nodeType === 1) return result.element;
         return null;
     }
 
     function _toast(message, type) {
-        _getModalsCore().showToast(message, type);
+        window.showToast(message, type);
     }
 
     // =========================================================================
@@ -183,8 +191,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Roles: ' + _escapeHtml(_placeName(locationId) || ''),
-            content: content,
+            titleHtml: 'Roles: ' + _escapeHtml(_placeName(locationId) || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
@@ -271,8 +279,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Apprenticeships: ' + _escapeHtml(_placeName(locationId) || ''),
-            content: content,
+            titleHtml: 'Apprenticeships: ' + _escapeHtml(_placeName(locationId) || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
@@ -395,8 +403,8 @@
         content += '</div>';
 
         _openModal({
-            title: 'Education: ' + _escapeHtml(_placeName(locationId) || ''),
-            content: content,
+            titleHtml: 'Education: ' + _escapeHtml(_placeName(locationId) || ''),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             size: 'large',
