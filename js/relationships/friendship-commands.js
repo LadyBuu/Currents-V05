@@ -1,5 +1,9 @@
 /**
- * friendship-commands.js
+ * =============================================================================
+ * STILL WATERS - FRIENDSHIP COMMANDS (friendship-commands.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/friendship-commands.js
  *
  * Mutation boundary for friendship relationships.
  *
@@ -8,13 +12,39 @@
  *   - changing strength (increase / decrease)
  *   - recording friendship events (append + apply impact)
  *   - ending friendships
- *   - one commit per logical operation
+ *
+ * COMMIT SEMANTICS
+ *
+ *   createFriendship                 one commit (single RC.create)
+ *   createMutualFriendships          one commit (single RC.createBatch)
+ *   increaseFriendshipStrength       one commit (single RC.update) when
+ *                                    the change does not end the
+ *                                    friendship; two commits when it does
+ *                                    (metadata + end)
+ *   decreaseFriendshipStrength       same as increase
+ *   recordFriendshipEvent            one commit (single RC.update) when
+ *                                    the event does not end the
+ *                                    friendship; two commits when it does
+ *   removeFriendship                 one commit (single RC.end)
+ *
+ *   The two-commit paths exist because the "ends the friendship" case
+ *   requires two distinct state transitions: a metadata write
+ *   (strength = STRENGTH_MIN) and a status transition (ongoing →
+ *   ended). RelationshipCommands does not expose a combined
+ *   update-and-end primitive, and adding one would expand the mutation
+ *   surface for a rare case (strength reaching exactly zero). Both
+ *   writes target the same record; a crash between them leaves the
+ *   friendship at strength 0 but still ongoing, which is recoverable by
+ *   calling end() again.
  *
  * Depends on:
  *   - FriendshipRules for policy
  *   - FriendshipQueries for existence checks
- *   - RelationshipCommands for the actual state write
+ *   - RelationshipCommands for the actual state write(s),
+ *     including RelationshipCommands.createBatch for atomic
+ *     multi-record insertion
  *   - CharacterQueries / getCharacterById for name resolution on log
+ *   - ids.js (generateId) for record ids when batching
  *
  * Does NOT own:
  *   - direct state access (goes through RelationshipCommands)
@@ -26,6 +56,8 @@
  *
  * Load order: after relationship-commands.js, friendship-rules.js,
  * friendship-queries.js.
+ *
+ * =============================================================================
  */
 
 (function() {
@@ -39,14 +71,25 @@
     var STATUS = window.RELATIONSHIP_STATUS;
 
     if (!RC || !FR || !FQ || !A || !STATUS) {
-        throw new Error('friendship-commands.js: relationship-commands.js, friendship-rules.js, friendship-queries.js must load first');
+        throw new Error(
+            'friendship-commands.js: relationship-commands.js, ' +
+            'friendship-rules.js, friendship-queries.js must load first'
+        );
+    }
+
+    if (typeof RC.createBatch !== 'function') {
+        throw new Error(
+            'friendship-commands.js: RelationshipCommands.createBatch ' +
+            'is required (relationship-commands.js must expose the ' +
+            'batch create primitive).'
+        );
     }
 
     var FRIENDSHIP = A.FRIENDSHIP;
 
-    // -------------------------------------------------------------------------
-    // DEPENDENCY WRAPPERS (fail loud, no fallbacks)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 1. DEPENDENCY WRAPPERS (fail loud, no fallbacks)
+    // =========================================================================
 
     function _getCharacter(id) {
         if (typeof window.getCharacterById !== 'function') {
@@ -77,9 +120,16 @@
         }
     }
 
-    // -------------------------------------------------------------------------
-    // RESULT HELPERS
-    // -------------------------------------------------------------------------
+    function _generateId() {
+        if (typeof window.generateId !== 'function') {
+            throw new Error('friendship-commands.js: generateId required');
+        }
+        return window.generateId('rel');
+    }
+
+    // =========================================================================
+    // 2. RESULT HELPERS
+    // =========================================================================
 
     function _fail(code, message) {
         return { success: false, code: code, message: message };
@@ -89,16 +139,20 @@
         return Object.assign({ success: true }, data || {});
     }
 
-    // -------------------------------------------------------------------------
-    // INTERNAL: CREATE WITHOUT COMMIT
+    // =========================================================================
+    // 3. INTERNAL: PREPARE ONE FRIENDSHIP RECORD
     //
-    // Used by createFriendship and createMutualFriendships. Does not
-    // call markDataDirty or logEvent; the public callers do.
+    // Validates a pair and, if valid, returns the fully-formed record
+    // (with id and timestamps) that would be passed to
+    // RelationshipCommands.create or .createBatch. Does NOT commit.
     //
-    // Returns { success, relationship?, created, reason? }.
-    // -------------------------------------------------------------------------
+    // Returns one of:
+    //   { kind: 'ok',      record: {...} }
+    //   { kind: 'skipped', reason: 'already_friends' }
+    //   { kind: 'failed',  code, message }
+    // =========================================================================
 
-    function _createFriendshipInternal(idA, idB, options) {
+    function _prepareFriendshipRecord(idA, idB, options) {
         var validation = FR.canCreate({
             participantA: idA,
             participantB: idB,
@@ -106,17 +160,16 @@
             startYear: options.startYear
         });
         if (!validation.valid) {
-            return _fail('VALIDATION_FAILED', validation.errors.join('; '));
+            return {
+                kind: 'failed',
+                code: 'VALIDATION_FAILED',
+                message: validation.errors.join('; ')
+            };
         }
 
-        // Already friends (active)? Return the existing record; idempotent.
         var existing = FQ.getActiveFriendshipBetween(idA, idB);
         if (existing) {
-            return _ok({
-                relationship: existing,
-                created: false,
-                reason: 'already_friends'
-            });
+            return { kind: 'skipped', reason: 'already_friends' };
         }
 
         var startYear = options.startYear !== undefined
@@ -129,27 +182,30 @@
             notes: options.notes
         });
 
-        var result = RC.create({
-            participantA: idA,
-            participantB: idB,
-            type: FRIENDSHIP,
-            status: STATUS.ONGOING,
-            startYear: startYear,
-            attributes: [],
-            metadata: metadata
-        });
-
-        if (!result.success) return result;
-
-        return _ok({
-            relationship: FQ.getActiveFriendshipBetween(idA, idB),
-            created: true
-        });
+        var now = Date.now();
+        return {
+            kind: 'ok',
+            record: {
+                id: _generateId(),
+                type: FRIENDSHIP,
+                status: STATUS.ONGOING,
+                participantA: idA,
+                participantB: idB,
+                startYear: startYear,
+                endYear: null,
+                attributes: [],
+                metadata: metadata,
+                createdAt: now,
+                updatedAt: now
+            }
+        };
     }
 
-    // -------------------------------------------------------------------------
-    // CREATE FRIENDSHIP
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 4. CREATE FRIENDSHIP (single)
+    //
+    // One commit (via RC.create).
+    // =========================================================================
 
     /**
      * options: { startYear?, strength?, notes? }
@@ -167,31 +223,54 @@
             return _fail('MISSING_CHARACTER', 'character not found');
         }
 
-        var result = _createFriendshipInternal(idA, idB, options);
-        if (!result.success) return result;
-
-        if (result.created) {
-            _logEvent('friendship', 'Friendship Formed',
-                _getCharacterName(idA) + ' and ' + _getCharacterName(idB) +
-                ' became friends',
-                [_getCharacter(idA), _getCharacter(idB)]);
+        var prepared = _prepareFriendshipRecord(idA, idB, options);
+        if (prepared.kind === 'failed') {
+            return _fail(prepared.code, prepared.message);
+        }
+        if (prepared.kind === 'skipped') {
+            var existing = FQ.getActiveFriendshipBetween(idA, idB);
+            return _ok({
+                relationship: existing,
+                created: false,
+                reason: prepared.reason
+            });
         }
 
-        return result;
+        var createResult = RC.create(prepared.record);
+        if (!createResult.success) return createResult;
+
+        _logEvent('friendship', 'Friendship Formed',
+            _getCharacterName(idA) + ' and ' + _getCharacterName(idB) +
+            ' became friends',
+            [_getCharacter(idA), _getCharacter(idB)]);
+
+        return _ok({
+            relationship: FQ.getActiveFriendshipBetween(idA, idB),
+            created: true
+        });
     }
 
-    // -------------------------------------------------------------------------
-    // CREATE MUTUAL FRIENDSHIPS
+    // =========================================================================
+    // 5. CREATE MUTUAL FRIENDSHIPS (batch)
     //
     // Creates a friendship between every unordered pair in characterIds.
     // Skips existing pairs. Validates all ids before writing.
-    // One logical operation; underlying RC.create commits per record
-    // through the state batch mechanism.
-    // -------------------------------------------------------------------------
+    //
+    // COMMIT SEMANTICS: this is one commit. All new friendship records
+    // are prepared first, then a single RC.createBatch commits them all
+    // in one State batch (one markDataDirty, one notification).
+    //
+    // If any pair fails preparation (invalid pair, missing character,
+    // bad options), NO records are inserted. Skipped pairs (already
+    // friends) do not block the operation; they are reported separately.
+    //
+    // If State-level validation rejects the batch (structurally invalid
+    // record, duplicate id), NO records are inserted — the batch is
+    // all-or-nothing.
+    //
+    // options: { startYear?, strength?, notes? }
+    // =========================================================================
 
-    /**
-     * options: { startYear?, strength?, notes? }
-     */
     function createMutualFriendships(characterIds, options) {
         options = options || {};
 
@@ -208,34 +287,90 @@
             }
         }
 
-        var created = [];
+        // Phase 1: prepare every record. No commits yet.
+        var preparedRecords = [];
+        var preparedPairs = [];
         var skipped = [];
         var failed = [];
 
         for (var i = 0; i < characterIds.length; i++) {
             for (var j = i + 1; j < characterIds.length; j++) {
-                var r = _createFriendshipInternal(characterIds[i], characterIds[j], options);
-                if (!r.success) {
+                var prep = _prepareFriendshipRecord(
+                    characterIds[i],
+                    characterIds[j],
+                    options
+                );
+
+                if (prep.kind === 'failed') {
                     failed.push({
                         a: characterIds[i],
                         b: characterIds[j],
-                        code: r.code,
-                        message: r.message
+                        code: prep.code,
+                        message: prep.message
                     });
-                } else if (r.created) {
-                    created.push({
-                        relationshipId: r.relationship.relationshipId,
-                        a: characterIds[i],
-                        b: characterIds[j]
-                    });
-                } else {
+                    continue;
+                }
+                if (prep.kind === 'skipped') {
                     skipped.push({
                         a: characterIds[i],
                         b: characterIds[j],
-                        reason: r.reason || 'already_friends'
+                        reason: prep.reason
                     });
+                    continue;
                 }
+
+                preparedRecords.push(prep.record);
+                preparedPairs.push({ a: characterIds[i], b: characterIds[j] });
             }
+        }
+
+        // If any pair failed preparation, refuse the whole operation.
+        // Nothing has been committed yet.
+        if (failed.length > 0) {
+            return _ok({
+                created: [],
+                skipped: skipped,
+                failed: failed,
+                createdCount: 0,
+                skippedCount: skipped.length,
+                failedCount: failed.length,
+                committed: false
+            });
+        }
+
+        // Nothing to create — all pairs were already friends (or the
+        // input was a single character, which the guard above rejects).
+        if (preparedRecords.length === 0) {
+            return _ok({
+                created: [],
+                skipped: skipped,
+                failed: [],
+                createdCount: 0,
+                skippedCount: skipped.length,
+                failedCount: 0,
+                committed: true
+            });
+        }
+
+        // Phase 2: batch commit. All-or-nothing at the State level.
+        var batchResult = RC.createBatch(preparedRecords);
+        if (!batchResult.success) {
+            return _fail(
+                batchResult.code || 'BATCH_REJECTED',
+                batchResult.message || 'batch insert rejected by state'
+            );
+        }
+
+        // Reshape: report created pairs alongside their relationship ids.
+        // The inserted ids come back in the same order as preparedRecords,
+        // which is the same order as preparedPairs.
+        var created = [];
+        for (var k = 0; k < preparedPairs.length; k++) {
+            created.push({
+                relationshipId: batchResult.inserted[k],
+                a: preparedPairs[k].a,
+                b: preparedPairs[k].b
+            });
         }
 
         if (created.length > 0) {
@@ -247,19 +382,23 @@
         return _ok({
             created: created,
             skipped: skipped,
-            failed: failed,
+            failed: [],
             createdCount: created.length,
             skippedCount: skipped.length,
-            failedCount: failed.length
+            failedCount: 0,
+            committed: true
         });
     }
 
-    // -------------------------------------------------------------------------
-    // STRENGTH CHANGE
+    // =========================================================================
+    // 6. STRENGTH CHANGE
     //
     // Internal helper. Applies a signed delta. If the new strength reaches
     // the end threshold, ends the friendship with reason 'drifted_apart'.
-    // -------------------------------------------------------------------------
+    //
+    // See COMMIT SEMANTICS in the module header for the two-commit
+    // rationale when the strength change ends the friendship.
+    // =========================================================================
 
     function _changeStrength(idA, idB, delta) {
         var rel = FQ.getActiveFriendshipBetween(idA, idB);
@@ -284,8 +423,7 @@
         });
 
         if (applied.ended) {
-            // Record final strength, then end. Two state updates in one
-            // logical operation; the second is the terminal one.
+            // Two commits for this path. See module header.
             RC.update(rel.relationshipId, {
                 metadata: { strength: FR.STRENGTH_MIN }
             });
@@ -337,14 +475,17 @@
         return _changeStrength(idA, idB, delta);
     }
 
-    // -------------------------------------------------------------------------
-    // RECORD EVENT
+    // =========================================================================
+    // 7. RECORD EVENT
     //
     // Appends the event to the friendship's bounded event array and
     // applies its impact to strength, in one metadata update. If the
     // resulting strength reaches the end threshold, ends the friendship
     // in the same operation.
-    // -------------------------------------------------------------------------
+    //
+    // See COMMIT SEMANTICS in the module header for the two-commit
+    // rationale when the event ends the friendship.
+    // =========================================================================
 
     /**
      * event: { type, year?, impact?, description? }
@@ -379,7 +520,9 @@
             type: event.type,
             year: year,
             impact: impact,
-            description: typeof event.description === 'string' ? event.description : null
+            description: typeof event.description === 'string'
+                ? event.description
+                : null
         });
         currentEvents = FR.boundEventHistory(currentEvents);
 
@@ -393,6 +536,7 @@
         });
 
         if (applied.ended) {
+            // Two commits for this path. See module header.
             RC.update(rel.relationshipId, {
                 metadata: {
                     events: currentEvents,
@@ -432,13 +576,15 @@
         });
     }
 
-    // -------------------------------------------------------------------------
-    // REMOVE FRIENDSHIP
+    // =========================================================================
+    // 8. REMOVE FRIENDSHIP
     //
     // Ends the active friendship. Uses the standard end path with the
     // caller's endYear and reason. Once ended, the record is historical;
     // a new friendship is a new record.
-    // -------------------------------------------------------------------------
+    //
+    // One commit.
+    // =========================================================================
 
     /**
      * options: { endYear?, reason? }
@@ -483,9 +629,9 @@
         });
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 9. EXPORTS
+    // =========================================================================
 
     window.FriendshipCommands = {
         createFriendship: createFriendship,
@@ -495,5 +641,9 @@
         recordFriendshipEvent: recordFriendshipEvent,
         removeFriendship: removeFriendship
     };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.FriendshipCommands;
+    }
 
 })();
