@@ -40,8 +40,28 @@
  * byPair is a Map<pairKey, Set<relationshipId>>. A pair may have any
  * number of historical records.
  *
- * Load order: after relationship-types.js and relationship-utils.js,
+ * LOAD ORDER: after relationship-types.js and relationship-utils.js,
  * before relationship-queries.js and relationship-commands.js.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 3.3):
+ *     - _notify now isolates subscriber exceptions: one throwing
+ *       subscriber no longer stops the rest, and no exception escapes
+ *       into the command that triggered the write. Matches the
+ *       pattern used by character-state.js, children-state.js, and
+ *       family-state.js. The previous behavior was inconsistent with
+ *       the rest of the codebase; a single broken subscriber could
+ *       break every relationship mutation.
+ *     - _reloadFromMasterData now wraps replaceAll in a try/catch.
+ *       replaceAll throws on structurally invalid records; before
+ *       this change a single corrupt persisted record crashed the
+ *       masterDataUpdated listener, breaking the page. Now the
+ *       failure is logged, the previous in-memory state is
+ *       preserved, and the next save overwrites the corrupt storage
+ *       with the in-memory state.
+ *     - No other behavioural change.
+ * =============================================================================
  */
 
 (function() {
@@ -134,10 +154,27 @@
         };
     }
 
+    /**
+     * Notifies every subscriber of a batch action.
+     *
+     * Each subscriber is called in a try/catch. A throwing subscriber
+     * does not prevent subsequent subscribers from running, and does
+     * not escape into the command that triggered the write. This
+     * matches the pattern used by character-state.js,
+     * children-state.js, and family-state.js.
+     *
+     * @private
+     */
     function _notify(action, ids) {
         var event = { action: action, relationshipIds: ids.slice() };
         for (var i = 0; i < _subscribers.length; i++) {
-            _subscribers[i](event);
+            try {
+                _subscribers[i](event);
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('relationship-state.js: subscriber threw:', e);
+                }
+            }
         }
     }
 
@@ -399,6 +436,18 @@
     // RELOAD
     // -------------------------------------------------------------------------
 
+    /**
+     * Re-reads relationships from masterData.data.relationships.
+     *
+     * replaceAll throws on structurally invalid records. Before this
+     * change, that throw propagated out of the masterDataUpdated
+     * listener, breaking the page on a single corrupt persisted
+     * record. Now the failure is caught, logged, and the previous
+     * in-memory state is preserved. A subsequent save overwrites the
+     * corrupt storage with the in-memory state.
+     *
+     * @private
+     */
     function _reloadFromMasterData() {
         if (!window.masterData ||
             !window.masterData.data ||
@@ -406,7 +455,19 @@
             clear();
             return;
         }
-        replaceAll(window.masterData.data.relationships);
+        try {
+            replaceAll(window.masterData.data.relationships);
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'relationship-state.js: reload failed; preserving ' +
+                    'previous in-memory state. Corrupt record(s) in ' +
+                    'masterData.data.relationships.', e
+                );
+            }
+            // Leave the previous state intact. A subsequent save will
+            // overwrite the corrupt storage with the in-memory state.
+        }
     }
 
     function _ensureInitializedFromMasterData() {
