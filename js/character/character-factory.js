@@ -59,6 +59,7 @@
  *   pointer that is owned by a domain is constructed in its neutral empty
  *   state here because the persistence schema requires it:
  *
+ *       traits                            -> character-commands.js
  *       professions                       -> character-commands.js
  *       rankAssignments                   -> ranks domain
  *       activeRankId, activeRankNumber    -> ranks domain
@@ -75,6 +76,31 @@
  *   masterId, masterProfessionId) from the caller because those describe
  *   the character's current identity. It does not accept domain records.
  *
+ * TRAITS:
+ *   `traits` is a character-owned array of canonical trait ids. It is
+ *   writable after creation only through CharacterCommands (addTrait /
+ *   removeTrait / replaceTraits), not through the generic
+ *   updateCharacter path (traits is a domain-owned field).
+ *
+ *   The factory accepts an optional `traits` array at build time so
+ *   that:
+ *     - create-character-modal and character-generator can set initial
+ *       traits without a separate write
+ *     - imports and clones carry their traits through
+ *
+ *   Validation semantics:
+ *     - missing/null           → []
+ *     - non-array              → rejected
+ *     - non-string entry       → rejected
+ *     - unknown trait id       → rejected WHEN CHARACTER_TRAIT_VALUES is
+ *                                loaded; skipped (structural check only)
+ *                                when it is not, so the factory remains
+ *                                usable in a bare test harness that
+ *                                didn't load the vocabulary. Production
+ *                                load order always has the vocabulary
+ *                                before the factory.
+ *     - duplicates             → rejected
+ *
  * PRE-BUILT VALIDATION (validateBuiltCharacter):
  *   createCharacterFromData inserts a caller-built record directly,
  *   bypassing buildCharacter. That is a legitimate escape hatch for
@@ -86,7 +112,7 @@
  *     - plain object
  *     - non-empty string id
  *     - non-empty string name
- *     - the five domain-owned embedded arrays are actually arrays
+ *     - the six domain-owned embedded arrays are actually arrays
  *     - createdAt and updatedAt are finite numbers
  *
  *   It does NOT validate:
@@ -94,6 +120,9 @@
  *     - year bounds
  *     - cross-field consistency (isDeceased vs deathYear)
  *     - the shape of individual entries inside the embedded arrays
+ *     - individual trait ids (that is the factory's job at build time;
+ *       pre-built records are trusted to have been built correctly, and
+ *       are re-validated for shape, not content)
  *
  *   Those are the responsibility of the caller. The point of the
  *   validator is to catch the shape errors that would silently break
@@ -104,10 +133,25 @@
  *   - ids.js:   generateId
  *
  * DEPENDENCIES (OPTIONAL):
- *   - time.js:  isValidYear - used if present to validate year fields.
+ *   - time.js:                isValidYear - used if present to validate
+ *                             year fields.
+ *   - constants/character-traits.js:
+ *                             CHARACTER_TRAIT_VALUES - used if present to
+ *                             validate individual trait ids. Absent in
+ *                             bare test harnesses; present in production.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added `traits` as a character-owned array field:
+ *         - FIELD_VALIDATORS entry validates shape and (when the
+ *           vocabulary is loaded) trait ids.
+ *         - _applyDefaults emits `traits: []` when not supplied.
+ *         - validateBuiltCharacter now requires `traits` to be an
+ *           array, matching the other domain-owned containers.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -208,6 +252,56 @@
             return { ok: false, reason: name + ' must be a valid world year' };
         }
         return { ok: true, value: value };
+    }
+
+    /**
+     * Validates the `traits` field.
+     *
+     * Structural checks (array, string entries, no duplicates) are
+     * always enforced. Trait-id checks are enforced only when the
+     * vocabulary is loaded, so the factory remains usable in a bare
+     * test harness. Production load order guarantees the vocabulary
+     * loads before this file, so in practice unknown ids are always
+     * rejected.
+     */
+    function _validateTraits(value) {
+        if (_isMissing(value)) return { ok: true, value: null };
+        if (!Array.isArray(value)) {
+            return { ok: false, reason: 'traits must be an array when provided' };
+        }
+
+        var vocabularyAvailable = Array.isArray(window.CHARACTER_TRAIT_VALUES);
+        var seen = {};
+        var cleaned = [];
+
+        for (var i = 0; i < value.length; i++) {
+            var entry = value[i];
+            if (typeof entry !== 'string' || entry.length === 0) {
+                return {
+                    ok: false,
+                    reason: 'traits[' + i + '] must be a non-empty string'
+                };
+            }
+            if (seen[entry] === true) {
+                return {
+                    ok: false,
+                    reason: 'traits[' + i + '] is a duplicate: ' + entry
+                };
+            }
+            seen[entry] = true;
+
+            if (vocabularyAvailable
+                && window.CHARACTER_TRAIT_VALUES.indexOf(entry) === -1) {
+                return {
+                    ok: false,
+                    reason: 'traits[' + i + '] is not a known trait: ' + entry
+                };
+            }
+
+            cleaned.push(entry);
+        }
+
+        return { ok: true, value: cleaned };
     }
 
     // =========================================================================
@@ -395,6 +489,7 @@
             }
             return { ok: true, value: v };
         },
+        'traits': function (v) { return _validateTraits(v); },
         'birthYear': function (v) { return _validateOptionalYear(v, 'birthYear'); },
         'isLegitimate': function (v) { return _validateOptionalBoolean(v, 'isLegitimate'); },
 
@@ -471,6 +566,7 @@
             // Demographics
             gender: _isMissing(validated.gender) ? 'unknown' : validated.gender,
             attraction: _isMissing(validated.attraction) ? 'both' : validated.attraction,
+            traits: Array.isArray(validated.traits) ? validated.traits.slice() : [],
             birthYear: birthYear,
             isLegitimate: _isMissing(validated.isLegitimate) ? true : validated.isLegitimate,
 
@@ -643,6 +739,7 @@
         // missing or the wrong type, the projection will silently
         // produce {} or undefined for those fields downstream.
         var requiredArrays = [
+            'traits',
             'professions',
             'rankAssignments',
             'relationships',
