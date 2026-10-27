@@ -43,6 +43,19 @@
  *   integrity tooling is responsible for reporting any pre-migration
  *   data that still contains them.
  *
+ *   Earlier revisions removed motherId and fatherId from
+ *   ENTITY_SCHEMAS.character.optional and from the per-entity checks
+ *   inside validateCharacter. This revision removes the last remaining
+ *   reference — adoptedParents — from ENTITY_SCHEMAS.character.optional.
+ *   The character schema now lists no parentage fields at all, which
+ *   matches storage-schema.js's "removed fields" note.
+ *
+ *   validateEntitySchema() therefore reports any character record that
+ *   still carries adoptedParents as "Unknown field: adoptedParents".
+ *   That is the correct outcome for imported data: pre-migration
+ *   records must be migrated to parentChildEdges before they can pass
+ *   schema validation.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.MIN_YEAR, TIME_CONSTANTS.MAX_YEAR
  *
@@ -53,7 +66,12 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 2.6):
+ *   Current revision (Phase 2.7):
+ *     - Removed 'adoptedParents' from ENTITY_SCHEMAS.character.optional.
+ *       This was the last remaining reference to a removed parentage
+ *       field. See PARENTAGE in the module header.
+ *     - No other behavioural change.
+ *   Previous revision (Phase 2.6):
  *     - Removed the dead motherId/fatherId checks from validateCharacter.
  *       The character record no longer carries these fields; parentage
  *       lives in FamilyState (parentChildEdges). The checks were reading
@@ -65,7 +83,6 @@
  *       ENTITY_SCHEMAS.character.optional.
  *     - The household string check is preserved (household is a live
  *       character field, not a parentage mirror).
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -1069,7 +1086,7 @@ var ENTITY_SCHEMAS = {
         optional: [
             'surname', 'gender', 'attraction', 'birthYear', 'isDeceased', 'deathYear',
             'deathCause', 'birthplaceId', 'household', 'notes',
-            'adoptedParents', 'rankAssignments', 'relationships', 'friends', 'moves',
+            'rankAssignments', 'relationships', 'friends', 'moves',
             'professions', 'apprentices', 'isMaster', 'masterId', 'masterProfessionId',
             'apprenticeshipDetails', 'friendshipDetails', 'appearance', 'epithet'
         ]
