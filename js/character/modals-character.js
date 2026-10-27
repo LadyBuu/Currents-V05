@@ -77,6 +77,23 @@
  *   The chosen order (validate-all-then-mutate, cheap-writes-first)
  *   keeps every mutation site's failure story simple.
  *
+ * PARENT EDGE START YEAR:
+ *   When the edit modal sets a new parent edge, the edge's startYear
+ *   is the character's ORIGINAL birth year (the value before the
+ *   modal opened), not the birth year the user may have just typed
+ *   into the form. Rationale: the parent edge records when the
+ *   parent-child relationship began, which is when the child was
+ *   born. Correcting a typo in the birth year (1250 → 1251) does not
+ *   change when the relationship began, and mixing "some edges at
+ *   1250, some at 1251" in the same edit is worse than either
+ *   semantic chosen consistently. Existing edges always keep their
+ *   original startYear; new edges added in the same edit match the
+ *   pre-edit anchor.
+ *
+ *   A caller who wants a different semantic (e.g. "the parent edge
+ *   always starts when the user says the child was born") should open
+ *   a separate flow rather than overloading this one.
+ *
  * FAMILY INTEGRATION:
  *   Parent selection and display use FamilyQueries and FamilyCommands.
  *   FamilyAccessors is not used.
@@ -92,8 +109,9 @@
  *   - CharacterCreationCommands: createCharacter
  *   - CharacterDeletionCommands: deleteCharacter
  *   - FamilyQueries:       getParentsByRole, getChildIds, getSiblings,
- *                          getGrandchildIds
+ *                          getGrandchildIds, getAncestorProvider
  *   - FamilyCommands:      setParent, removeBiologicalParentAtRole
+ *   - FamilyRules:         wouldCreateBiologicalCycle
  *
  * DEPENDENCIES (OPTIONAL, required only for specific routes):
  *   - selectors/modals-char-selector.js (openCharacterSelector) — parent pickers
@@ -107,11 +125,24 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - Trait checkboxes added to create/edit modals; trait chips added
- *       to the details modal.
- *     - Edit modal writes trait deltas via CharacterCommands.addTrait
- *       and removeTrait before field and parent changes.
+ *   Current revision (Phase 1.8):
+ *     - _applyParentChange's startYear now uses the character's ORIGINAL
+ *       birth year (captured before the modal opened), not the edited
+ *       value. Previously, editing the birth year and adding a parent
+ *       in the same save recorded the new parent edge with the new
+ *       birth year, while existing edges kept the old birth year, so
+ *       the edit produced an inconsistent set of startYears.
+ *     - _validateParentChange now runs the biological cycle check via
+ *       FamilyRules.wouldCreateBiologicalCycle. Previously, a
+ *       cycle-creating parent edit passed Step 2 (cheap validation)
+ *       and failed at Step 5 (FamilyCommands.setParent), leaving
+ *       trait and field updates already applied with no rollback.
+ *     - Header PARENT EDGE START YEAR section added.
+ *     - Header EDIT-MODAL TRANSACTION CONTRACT's Step 2 description
+ *       now matches the code (it always claimed the cycle check was
+ *       part of Step 2; the code only ran it at Step 5).
+ *     - DEPENDENCIES updated: FamilyRules.wouldCreateBiologicalCycle
+ *       and FamilyQueries.getAncestorProvider are required.
  *     - No other behavioural change.
  * =============================================================================
  */
@@ -168,6 +199,15 @@
         }
         if (typeof window.FamilyCommands === 'undefined') {
             throw new Error('modals-character.js: family-commands.js must load first.');
+        }
+        if (typeof window.FamilyRules === 'undefined') {
+            throw new Error('modals-character.js: family-rules.js must load first.');
+        }
+        if (typeof window.FamilyQueries.getAncestorProvider !== 'function') {
+            throw new Error('modals-character.js: FamilyQueries.getAncestorProvider is required.');
+        }
+        if (typeof window.FamilyRules.wouldCreateBiologicalCycle !== 'function') {
+            throw new Error('modals-character.js: FamilyRules.wouldCreateBiologicalCycle is required.');
         }
     }
 
@@ -343,10 +383,13 @@
     //
     // A parent change is { action: 'set'|'remove'|'none', id: string|null }.
     // This section validates a proposed change against the current edge
-    // state WITHOUT mutating anything. The validation is intentionally
-    // shallow — it only catches conditions that FamilyCommands.setParent
-    // would reject anyway, plus the trivial no-op case. The full
-    // FamilyRules checks (cycle, minimum age) remain inside setParent.
+    // state WITHOUT mutating anything.
+    //
+    // Validation runs the same biological cycle check that
+    // FamilyCommands.setParent runs at apply time. Doing it here
+    // (Step 2 of the edit-modal transaction) means a cycle-creating
+    // parent edit is refused BEFORE any field or trait mutation has been
+    // applied. See EDIT-MODAL TRANSACTION CONTRACT in the header.
 
     function _validateParentChange(childId, role, previousId, change) {
         if (!change || change.action === 'none') {
@@ -369,6 +412,19 @@
                 // produced this, so return ok; the apply step will skip).
                 return { ok: true, noop: true };
             }
+
+            // Biological cycle check. This is the same check
+            // FamilyCommands.setParent runs at apply time; running it
+            // here ensures the edit is refused before any mutation.
+            var provider = window.FamilyQueries.getAncestorProvider();
+            if (window.FamilyRules.wouldCreateBiologicalCycle(childId, change.id, provider)) {
+                return {
+                    ok: false,
+                    reason: 'Setting this ' + role +
+                            ' would create a genealogy cycle.'
+                };
+            }
+
             return { ok: true };
         }
 
@@ -382,8 +438,12 @@
     // Applies a single validated parent change. Returns a structured
     // { ok, reason } instead of throwing. Failures are reported back to
     // the caller; the caller decides whether to surface them.
+    //
+    // startYear is the child's ORIGINAL birth year (the value before the
+    // modal opened), not the edited value. See PARENT EDGE START YEAR in
+    // the module header.
 
-    function _applyParentChange(childId, role, previousId, change, year) {
+    function _applyParentChange(childId, role, previousId, change, originalBirthYear) {
         if (!change || change.action === 'none') {
             return { ok: true };
         }
@@ -394,7 +454,7 @@
                     childId,
                     role,
                     {
-                        endYear: year,
+                        endYear: originalBirthYear,
                         reason: 'parent cleared by user'
                     }
                 );
@@ -418,7 +478,7 @@
             var setResult = window.FamilyCommands.setParent(childId, change.id, {
                 parentType: 'biological',
                 parentRole: role,
-                startYear: year,
+                startYear: originalBirthYear,
                 allowReplace: true
             });
             if (!setResult || setResult.success !== true) {
@@ -474,7 +534,11 @@
         if (deathYear !== null) {
             birthDeathHtml += ' &middot; Died: ' + _esc(deathYear);
             if (!_isMissing(summary.deathCause) && summary.deathCause) {
-                birthDeathHtml += ' (' + _esc(summary.deathCause) + ')';
+                birthDeathHtml += ' (' + _esc(summary.deathCause);
+                if (!_isMissing(summary.deathCauseDetail) && summary.deathCauseDetail) {
+                    birthDeathHtml += ': ' + _esc(summary.deathCauseDetail);
+                }
+                birthDeathHtml += ')';
             }
         }
         content += '<div class="character-modal__section">' + birthDeathHtml + '</div>';
@@ -813,6 +877,9 @@
     // second, and treat parent changes as the riskier operation whose
     // failure is surfaced without leaving field updates in an unclear
     // state.
+    //
+    // Parent edge startYear uses the ORIGINAL birth year, not the edited
+    // value. See PARENT EDGE START YEAR in the header.
 
     function openEditCharacterModal(characterId, onSuccess) {
         if (!_hasId(characterId)) {
@@ -826,6 +893,13 @@
         if (summary.isDeleted === true) {
             return { success: false, reason: 'Character is soft-deleted' };
         }
+
+        // Capture the birth year BEFORE building the form. Parent edges
+        // added during this edit will use this value as their startYear,
+        // not whatever the user types into the birth-year field.
+        var originalBirthYear = _isMissing(summary.birthYear)
+            ? null
+            : summary.birthYear;
 
         var currentYear = window.getCurrentYear();
         var minYear = window.TIME_CONSTANTS ? window.TIME_CONSTANTS.MIN_YEAR : -10000;
@@ -1093,6 +1167,10 @@
                 // -----------------------------------------------------------------
                 // STEP 5: apply parent changes. Failures here are surfaced
                 // individually; earlier steps are NOT rolled back.
+                //
+                // startYear is the ORIGINAL birth year (captured before
+                // the modal opened), not the edited value. See PARENT
+                // EDGE START YEAR in the module header.
                 // -----------------------------------------------------------------
                 var parentErrors = [];
 
@@ -1101,7 +1179,7 @@
                     'father',
                     originalBio.father,
                     parentChanges.father,
-                    birthYear
+                    originalBirthYear
                 );
                 if (!fatherApply.ok) {
                     parentErrors.push(fatherApply.reason);
@@ -1112,7 +1190,7 @@
                     'mother',
                     originalBio.mother,
                     parentChanges.mother,
-                    birthYear
+                    originalBirthYear
                 );
                 if (!motherApply.ok) {
                     parentErrors.push(motherApply.reason);
