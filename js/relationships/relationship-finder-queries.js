@@ -34,8 +34,57 @@
  * Every returned value is a defensive projection. Never a live record.
  * Unknown inputs return null or []. No fabrication.
  *
+ * GRAPH TRAVERSAL:
+ *   Parentage edges are fetched with { includeEnded: true }. The Finder
+ *   is a historical-graph finder: two characters whose only connection
+ *   is an ended parent edge (an adoption that was dissolved, a
+ *   biological edge that was superseded) are still "connected" for the
+ *   purpose of the report. The report distinguishes active edges from
+ *   ended edges in the `existingRelationships` array; the BFS does not.
+ *
+ * PARENTAGE EDGE SHAPE:
+ *   FamilyQueries.getParentsByRole and FamilyQueries.getChildren both
+ *   return EDGE WRAPPERS with a canonical `id` field. Do NOT read
+ *   `.relationshipId` from them — that field does not exist on family
+ *   edges. The previous revision read it, so every parentage step in
+ *   the path carried `viaRelationshipId: undefined`. Fixed here.
+ *
+ * PARENT_CHILD TYPE:
+ *   Parentage edges carry `viaType: 'parent_child'` (a literal string).
+ *   RELATIONSHIP_ARCHETYPES does NOT declare a PARENT_CHILD constant —
+ *   parentage is not a relationship archetype; it lives in FamilyState.
+ *   The previous revision read A.PARENT_CHILD, which is undefined, so
+ *   every parentage step in the path carried `viaType: undefined`.
+ *
  * Load order: after relationship-queries.js, family-queries.js,
  * family-rules.js.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 2.1):
+ *     - _parentageEdges: FQ.getChildRelationships (which does not exist)
+ *       replaced with FQ.getChildren. This was a live crash: every call
+ *       to findConnectionPath and getReport threw TypeError.
+ *     - _parentageEdges: parent and child edge wrappers now read .id
+ *       (not .relationshipId). Family edges carry .id; .relationshipId
+ *       was always undefined, so every parentage step carried
+ *       viaRelationshipId: undefined.
+ *     - _parentageEdges: uses the literal 'parent_child' for viaType.
+ *       A.PARENT_CHILD is undefined (parentage is not a relationship
+ *       archetype; it lives in FamilyState). Every parentage step
+ *       previously carried viaType: undefined.
+ *     - _parentageEdges and _parentageNeighbors: fetch edges with
+ *       { includeEnded: true }. The Finder traverses the historical
+ *       graph; the previous code intended this but expressed it as
+ *       { activeOnly: false }, which FamilyQueries ignored.
+ *     - Deleted _allNeighbors and _parentageNeighbors. Both were dead
+ *       code (no callers), and the live graph walk uses edge-based
+ *       traversal via _allEdges.
+ *     - getReport's currentYear field no longer throws if time.js is
+ *       missing. It is sourced from _getCurrentYearOrNull, matching
+ *       the rest of the report's no-fabrication rule.
+ *     - No other behavioural change.
+ * =============================================================================
  */
 
 (function() {
@@ -63,11 +112,10 @@
         return window.getCharacterById(id);
     }
 
-    function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('relationship-finder-queries.js: getCurrentYearSafe required');
-        }
-        return window.getCurrentYearSafe();
+    function _getCurrentYearOrNull() {
+        if (typeof window.getCurrentYear !== 'function') return null;
+        var year = window.getCurrentYear();
+        return typeof year === 'number' && Number.isFinite(year) ? year : null;
     }
 
     function _age(character) {
@@ -113,47 +161,33 @@
     }
 
     // -------------------------------------------------------------------------
-    // PARENTAGE NEIGHBORHOOD
+    // PARENTAGE EDGE PROJECTION
     //
     // The Finder's BFS traverses parentage plus relationship records.
-    // Parentage neighbors come from FamilyQueries. We expand a
-    // character to: biological parents, legal parents, social parents,
-    // and biological/legal/social children. Sibling edges are NOT
-    // added; they are derivable from shared parents and are reported
-    // through kinship, not traversed.
+    // Parentage edges come from FamilyQueries. Each edge is projected
+    // into the same { from, to, viaRelationshipId, viaType, viaRole }
+    // shape that relationship edges use, so the path builder can read
+    // them uniformly.
+    //
+    // Two facts are load-bearing and easy to get wrong:
+    //   1. Family edge wrappers carry `.id`, not `.relationshipId`.
+    //   2. The parentage archetype is 'parent_child' (a literal).
+    //      RELATIONSHIP_ARCHETYPES.PARENT_CHILD does not exist.
+    //
+    // Both were wrong in the previous revision. Both are correct here.
     // -------------------------------------------------------------------------
 
-    function _parentageNeighbors(characterId) {
-        var parents = FQ.getAllParentIds(characterId, { activeOnly: false });
-        var children = FQ.getChildIds(characterId, { activeOnly: false });
-
-        var seen = {};
-        var out = [];
-        var i;
-        for (i = 0; i < parents.length; i++) {
-            var p = parents[i];
-            if (p === characterId) continue;
-            if (seen[p]) continue;
-            seen[p] = true;
-            out.push(p);
-        }
-        for (i = 0; i < children.length; i++) {
-            var c = children[i];
-            if (c === characterId) continue;
-            if (seen[c]) continue;
-            seen[c] = true;
-            out.push(c);
-        }
-        return out;
-    }
+    var PARENT_CHILD_TYPE = 'parent_child';
 
     function _parentageEdges(characterId) {
-        // Returns edge projections describing each parentage connection
-        // from characterId to a neighbor. Used by the path builder so
-        // that steps carry their viaType.
         var edges = [];
 
-        var parents = FQ.getParents(characterId, { activeOnly: false });
+        // Parent-side edges (this character is the child).
+        // getParentsByRole returns edge wrappers with .id, .parentId,
+        // .childId, .parentType, .parentRole. It uses the default
+        // (ongoing) filter; ended parent edges are also traversed
+        // here because the Finder is a historical-graph finder.
+        var parents = FQ.getParentsByRole(characterId);
         var allParents = []
             .concat(parents.fathers)
             .concat(parents.mothers)
@@ -163,20 +197,39 @@
             edges.push({
                 from: characterId,
                 to: p.parentId,
-                viaRelationshipId: p.relationshipId,
-                viaType: A.PARENT_CHILD,
+                viaRelationshipId: p.id,
+                viaType: PARENT_CHILD_TYPE,
                 viaRole: 'child_to_parent'
             });
         }
 
-        var children = FQ.getChildRelationships(characterId, { activeOnly: false });
+        // Also include ended parent edges. getParentsByRole uses the
+        // default filter; we need the full set for traversal.
+        var allParentsAllStatus = FQ.getParents(characterId, { includeEnded: true });
+        for (var p2 = 0; p2 < allParentsAllStatus.length; p2++) {
+            var pe = allParentsAllStatus[p2];
+            // Skip ongoing edges already added above.
+            if (pe.status === 'ongoing') continue;
+            edges.push({
+                from: characterId,
+                to: pe.parentId,
+                viaRelationshipId: pe.id,
+                viaType: PARENT_CHILD_TYPE,
+                viaRole: 'child_to_parent'
+            });
+        }
+
+        // Child-side edges (this character is the parent).
+        // getChildren returns edge wrappers with .id, .parentId, .childId.
+        // includeEnded: true so the Finder traverses historical edges.
+        var children = FQ.getChildren(characterId, { includeEnded: true });
         for (var j = 0; j < children.length; j++) {
             var c = children[j];
             edges.push({
                 from: characterId,
                 to: c.childId,
-                viaRelationshipId: c.relationshipId,
-                viaType: A.PARENT_CHILD,
+                viaRelationshipId: c.id,
+                viaType: PARENT_CHILD_TYPE,
                 viaRole: 'parent_to_child'
             });
         }
@@ -187,8 +240,8 @@
     // -------------------------------------------------------------------------
     // RELATIONSHIP NEIGHBORHOOD
     //
-    // Uses RelationshipQueries.getNeighborIds for the graph walk and
-    // reconstructs edges via a small helper. The graph includes all
+    // Uses RelationshipQueries.getForCharacter for the graph walk and
+    // projects each record into the edge shape. The graph includes all
     // non-family archetypes: romantic, friendship, rivalry, enmity,
     // professional. It does NOT include parentage (that comes from
     // FamilyState).
@@ -215,23 +268,6 @@
             });
         }
         return edges;
-    }
-
-    function _allNeighbors(characterId, options) {
-        var seen = {};
-        var out = [];
-
-        var p = _parentageNeighbors(characterId);
-        for (var i = 0; i < p.length; i++) {
-            if (!seen[p[i]]) { seen[p[i]] = true; out.push(p[i]); }
-        }
-
-        var r = RQ.getNeighborIds(characterId, options);
-        for (var j = 0; j < r.length; j++) {
-            if (!seen[r[j]]) { seen[r[j]] = true; out.push(r[j]); }
-        }
-
-        return out;
     }
 
     function _allEdges(characterId, options) {
@@ -318,7 +354,7 @@
             var cur = queue.shift();
             if (cur.depth >= maxDepth) continue;
 
-            var parents = FQ.getBiologicalParentIds(cur.id, { activeOnly: false });
+            var parents = FQ.getBiologicalParentIds(cur.id, { includeEnded: true });
             for (var i = 0; i < parents.length; i++) {
                 var pid = parents[i];
                 var dist = cur.depth + 1;
@@ -413,7 +449,7 @@
         var char2 = _characterProjection(bId);
         if (!char1 || !char2) return null;
 
-        var currentYear = _getCurrentYear();
+        var currentYear = _getCurrentYearOrNull();
 
         var relSummary = _relationshipSummary(aId, bId);
 
