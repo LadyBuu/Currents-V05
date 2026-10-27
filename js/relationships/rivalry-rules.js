@@ -1,5 +1,9 @@
 /**
- * rivalry-rules.js
+ * =============================================================================
+ * STILL WATERS - RIVALRY RULES (rivalry-rules.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/rivalry-rules.js
  *
  * Pure policy for rivalry and enmity relationships.
  *
@@ -28,25 +32,33 @@
  * validator returns { valid, errors } or { valid, reason }.
  *
  * Load order: after relationship-types.js and relationship-utils.js.
+ *
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
-    var TYPES = window.RELATIONSHIP_TYPES;
+    // =========================================================================
+    // 1. HARD DEPENDENCY CHECK
+    // =========================================================================
+
     var STATUS = window.RELATIONSHIP_STATUS;
     var Utils = window.RelationshipUtils;
 
-    if (!TYPES || !STATUS || !Utils) {
-        throw new Error('rivalry-rules.js: relationship-types.js and relationship-utils.js must load first');
+    if (!STATUS || !Utils) {
+        throw new Error(
+            'rivalry-rules.js: relationship-types.js and ' +
+            'relationship-utils.js must load first'
+        );
     }
 
-    // -------------------------------------------------------------------------
-    // TRANSITION TABLES
+    // =========================================================================
+    // 2. TRANSITION TABLES
     //
     // Both rivalry and enmity are ongoing / ended. Once ended, no
     // transitions. A new rivalry or enmity is a new record.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     var RIVALRY_TRANSITIONS = Utils.freezeTable({
         'ongoing': { 'ended': true },
@@ -58,29 +70,29 @@
         'ended':   {}
     });
 
-    // -------------------------------------------------------------------------
-    // ATTRIBUTE SETS
+    // =========================================================================
+    // 3. ATTRIBUTE SETS
     //
     // Neither rivalry nor enmity has attributes. Empty tables so that
     // generic validation callers behave correctly.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     var RIVALRY_ALLOWED_ATTRIBUTES = Object.freeze({});
     var ENMITY_ALLOWED_ATTRIBUTES  = Object.freeze({});
 
-    // -------------------------------------------------------------------------
-    // MINIMUM AGES
+    // =========================================================================
+    // 4. MINIMUM AGES
     //
     // Rivalry and enmity are social relationships. The floor is the age
     // at which a character is treated as a social actor.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     var MIN_AGE_RIVALRY = 10;
     var MIN_AGE_ENMITY  = 10;
 
-    // -------------------------------------------------------------------------
-    // VALIDATORS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 5. VALIDATORS
+    // =========================================================================
 
     /**
      * facts: {
@@ -151,16 +163,15 @@
         }
 
         var table = null;
-        if (facts.archetype === TYPES.getAllArchetypes ? false : false) {
-            // Unreachable; placeholder removed. Kept structure explicit below.
-        }
-
         if (facts.archetype === 'rivalry') {
             table = RIVALRY_TRANSITIONS;
         } else if (facts.archetype === 'enmity') {
             table = ENMITY_TRANSITIONS;
         } else {
-            return { valid: false, errors: ['unknown_archetype:' + facts.archetype] };
+            return {
+                valid: false,
+                errors: ['unknown_archetype:' + facts.archetype]
+            };
         }
 
         return Utils.validateStatusTransition(facts.from, facts.to, table);
@@ -195,9 +206,9 @@
         };
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 6. EXPORTS
+    // =========================================================================
 
     window.RivalryRules = {
         // Transition tables (read-only)
@@ -219,5 +230,9 @@
         validateRivalryAttributes: validateRivalryAttributes,
         validateEnmityAttributes: validateEnmityAttributes
     };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.RivalryRules;
+    }
 
 })();
