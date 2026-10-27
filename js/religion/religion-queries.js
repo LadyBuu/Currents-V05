@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION QUERIES (religion-queries.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-queries.js
+ * LOCATION: js/religion/religion-queries.js
  *
  * All read-only queries for religion data.
  *
@@ -16,12 +16,16 @@
  * Missing canonical data throws at call time (except for the legitimate
  * empty-array case where masterData.data.religions is absent).
  *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
+ *
  * DEPENDENCIES:
  *   - religion-state.js:   ReligionState (indexes, clones)
  *   - religion-format.js:  ReligionFormat (display labels)
  *   - accessors.js:        getCharacterById, getCharacters,
  *                          getCurrentLocationId, getCharactersByLocation
- *   - time.js:             getCurrentYearSafe
+ *   - time.js:             getCurrentYear
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
@@ -90,10 +94,12 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('ReligionQueries requires time.getCurrentYearSafe.');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'religion-queries.js requires time.js (getCurrentYear).'
+            );
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     // =========================================================================
@@ -782,9 +788,9 @@
                 'Check script tag order (accessors.js must load first).'
             );
         }
-        if (typeof window.getCurrentYearSafe !== 'function') {
+        if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
-                'religion-queries.js loaded but window.getCurrentYearSafe is missing. ' +
+                'religion-queries.js loaded but window.getCurrentYear is missing. ' +
                 'Check script tag order (time.js must load first).'
             );
         }
