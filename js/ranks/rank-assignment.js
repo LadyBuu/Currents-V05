@@ -17,6 +17,8 @@
  *   - scans the population for characters who should hold a rank by virtue
  *     of spouse inheritance but do not
  *   - generates a surname from a rank's surname rule
+ *   - exposes getHolderGroupKey, the single implementation of the numbering
+ *     group classification rule (shared with rank-issues.js)
  *
  * This file does NOT:
  *   - write to the character record (CharacterCommands owns that)
@@ -24,6 +26,8 @@
  *   - persist or flush storage
  *   - read character.relationships directly (RomanceQueries is the sole
  *     owner of committed-partner facts)
+ *   - read character.motherId / character.fatherId (FamilyQueries is the
+ *     sole owner of parent facts)
  *   - format numbers (RankRules.formatNumber owns that)
  *   - decide whether an assignment is valid (RankRules.canAssignRank)
  *   - update a rank's surname rule (RankCommands.updateRankSurnameRule)
@@ -32,7 +36,9 @@
  *   Rank assignment writes        -> RankCommands
  *   Character-record writes       -> CharacterCommands
  *   Numbering arithmetic          -> this file
+ *   Numbering group classification -> this file (getHolderGroupKey)
  *   Number formatting             -> RankRules
+ *   Parent/child id normalisation -> RankQueries.getParentIds / getChildIds
  *   Inheritance-source resolution -> RankQueries.getInheritanceSource
  *   Rank policy                   -> RankRules
  *   Rank state                    -> RankState (via RankCommands)
@@ -47,25 +53,97 @@
  *
  * LOAD ORDER:
  *   This file loads after rank-state.js, rank-rules.js, rank-queries.js,
- *   character-commands.js, and romance-queries.js. Rank-commands.js loads
- *   after this file.
+ *   character-commands.js, and character-state.js. Rank-commands.js loads
+ *   after this file. RomanceQueries and FamilyQueries are read at call
+ *   time (see DEPENDENCIES below).
  *
- * DEPENDENCIES (REQUIRED):
- *   - rank-state.js        (RankState)
- *   - rank-rules.js        (RankRules)
- *   - rank-queries.js      (RankQueries) — canonical getInheritanceSource
+ * DEPENDENCIES (REQUIRED, load-time):
+ *   - rank-state.js         (RankState)
+ *   - rank-rules.js         (RankRules)
+ *   - rank-queries.js       (RankQueries) — canonical getInheritanceSource,
+ *                            getParentIds, getChildIds
  *   - character-commands.js (CharacterCommands) — for updateRankAssignment
- *   - character-state.js   (CharacterState) — for projection reads
- *   - time.js              (getCurrentYear)
+ *   - character-state.js    (CharacterState) — for projection reads
+ *   - time.js               (getCurrentYear)
  *
- * DEPENDENCIES (REQUIRED AT CALL TIME for spouse inheritance checks):
- *   - RomanceQueries.getActiveCommittedPartners
+ * DEPENDENCIES (REQUIRED AT CALL TIME):
+ *   - RomanceQueries.getActiveCommittedPartners — for spouse inheritance
+ *     scanning in checkAndFixSpouseInheritance
+ *   - FamilyQueries.getParents — accessed via RankQueries.getParentIds;
+ *     a missing FamilyQueries means getParentIds returns [] and the
+ *     parent numbering group has no members (documented in
+ *     rank-queries.js)
  *
- * DEPENDENCIES (REQUIRED AT CALL TIME for numbering group filtering):
- *   - FamilyQueries.getParents
+ * SHARED HELPERS (exported to rank-issues.js):
+ *   - getHolderGroupKey(rank, character, assignment) -> string
+ *     The single implementation of the numbering group classification
+ *     rule. rank-issues.js's numbering discrepancy detection delegates
+ *     here so that "predict what renumber will produce" and "produce it"
+ *     use the same rule.
+ *
+ *   - checkAndFixSpouseInheritance() -> { success, fixes, count }
+ *     Returns fix data records shaped for
+ *     RankCommands.applySpouseInheritanceFixes. See note below on the
+ *     relationship to RankIssues.checkSpouseInheritance.
+ *
+ * RELATIONSHIP TO RankIssues.checkSpouseInheritance:
+ *   Both functions scan the population for the same condition (a character
+ *   is married to a rank holder whose rank grants spouse inheritance but
+ *   does not hold the inherited rank). They return different shapes:
+ *
+ *     - RankAssignment.checkAndFixSpouseInheritance returns fix data
+ *       records: { characterId, rankId, spouseId, spouseName, ... }.
+ *       Consumed by RankCommands.applySpouseInheritanceFixes.
+ *
+ *     - RankIssues.checkSpouseInheritance returns RankIssue records
+ *       carrying fix closures. Consumed by RankIssues.applyFixes.
+ *
+ *   The two scans are NOT consolidated in this revision. They are kept
+ *   separate because:
+ *
+ *     1. RankCommands.applySpouseInheritanceFixes accepts the fix-data
+ *        shape, not the RankIssue shape. Converting between them at the
+ *        RankCommands boundary would require RankCommands to depend on
+ *        RankIssues or on a shared shape module.
+ *
+ *     2. RankIssues' fix closure encapsulates additional per-issue
+ *        context (severity, human-readable message, fixLabel) that the
+ *        fix-data shape does not carry.
+ *
+ *   Future consolidation (making RankIssues consume
+ *   RankAssignment.checkAndFixSpouseInheritance's output and wrap each
+ *   record as a RankIssue) is a valid refactor but is out of scope for
+ *   this phase. The plan's Phase 6 delegates other duplicated scans
+ *   (_resolveHolderGroupKey, _getParentIds, _getChildIds) without touching
+ *   this one, because this one has a semantic difference in return shape
+ *   that the others do not.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - _getChildIds and updateRankSurnameRule removed (dead code / wrong
+ *       owner).
+ *     - RankAssignment._resolveHolderGroupKey and rank-issues.js's copy
+ *       both exist; the plan flagged the duplication.
+ *   Current revision (Phase 4):
+ *     - getNextRankNumber signature reduced from 5 parameters to 3.
+ *       characterName and gender were accepted but never read. Callers
+ *       (rank-commands.js::assignRankToCharacter) updated to the new
+ *       signature.
+ *     - _getParentIds delegates to RankQueries.getParentIds. Inline
+ *       normalisation (three shapes, two levels) deleted. Shared with
+ *       rank-issues.js via the same export.
+ *     - _resolveHolderGroupKey exported as RankAssignment.getHolderGroupKey.
+ *       Single source for the numbering group classification rule.
+ *     - checkAndFixSpouseInheritance docstring expanded to document its
+ *       relationship with RankIssues.checkSpouseInheritance (kept separate,
+ *       see RELATIONSHIP section).
+ *     - Header DEPENDENCIES updated: rank-queries.js added to
+ *       REQUIRED load-time dependencies (was runtime-only).
+ *     - No public signature change for other functions, no public
+ *       return-shape change.
  * =============================================================================
  */
 
@@ -112,6 +190,11 @@
             'rank-assignment.js: RankQueries.getInheritanceSource is required.'
         );
     }
+    if (typeof RQ.getParentIds !== 'function') {
+        throw new Error(
+            'rank-assignment.js: RankQueries.getParentIds is required.'
+        );
+    }
 
     // =========================================================================
     // 2. HELPERS
@@ -142,11 +225,6 @@
             return null;
         }
         return window.RomanceQueries;
-    }
-
-    function _readFamilyQueries() {
-        if (typeof window.FamilyQueries === 'undefined') return null;
-        return window.FamilyQueries;
     }
 
     function _fail(reason) {
@@ -192,9 +270,16 @@
     //   - 'source'   : holders inheriting from the same source character
     //
     // The classification is delegated to RankRules.classifyNumberingGroup.
-    // Formatting is delegated to RankRules.formatNumber.
+    // The filter itself is _filterHoldersByGroup. Formatting is delegated
+    // to RankRules.formatNumber.
 
-    function getNextRankNumber(rankId, characterId, characterName, gender, sourceCharacterId) {
+    /**
+     * @param {string} rankId
+     * @param {string} characterId
+     * @param {string|null} sourceCharacterId  inheritance source, or null
+     * @returns {Object|null} NumberInfo or null
+     */
+    function getNextRankNumber(rankId, characterId, sourceCharacterId) {
         if (!_hasId(rankId)) return null;
         if (!_hasId(characterId)) return null;
 
@@ -313,42 +398,18 @@
         return holders.slice();
     }
 
+    /**
+     * Returns the parent character ids of a character. Delegates to
+     * RankQueries.getParentIds, the canonical normaliser for
+     * FamilyQueries' multiple parent shapes.
+     *
+     * The inline normalisation that used to live here has been removed.
+     * rank-queries.js owns the single implementation; rank-assignment.js
+     * and rank-issues.js both consume it.
+     */
     function _getParentIds(characterId) {
-        var family = _readFamilyQueries();
-        if (!family || typeof family.getParents !== 'function') return [];
-
-        var parents;
-        try {
-            parents = family.getParents(characterId);
-        } catch (e) {
-            return [];
-        }
-        if (!parents) return [];
-
-        var ids = [];
-        if (Array.isArray(parents)) {
-            for (var i = 0; i < parents.length; i++) {
-                var ref = parents[i];
-                if (!ref) continue;
-                if (typeof ref === 'string') ids.push(ref);
-                else if (_hasId(ref.id)) ids.push(ref.id);
-                else if (_hasId(ref.parentId)) ids.push(ref.parentId);
-            }
-        } else if (_isPlainObject(parents)) {
-            if (parents.father) {
-                var f = parents.father;
-                if (typeof f === 'string') ids.push(f);
-                else if (_hasId(f.id)) ids.push(f.id);
-                else if (_hasId(f.parentId)) ids.push(f.parentId);
-            }
-            if (parents.mother) {
-                var m = parents.mother;
-                if (typeof m === 'string') ids.push(m);
-                else if (_hasId(m.id)) ids.push(m.id);
-                else if (_hasId(m.parentId)) ids.push(m.parentId);
-            }
-        }
-        return ids;
+        if (typeof RQ.getParentIds !== 'function') return [];
+        return RQ.getParentIds(characterId);
     }
 
     function _getCommittedPartnerIds(characterId) {
@@ -378,7 +439,7 @@
     //
     // Recomputes the number for every non-deprecated holder of a numbered
     // rank, updating the character record via CharacterCommands only where
-    // the number changed. Returns { success, fixedCount }.
+    // the number changed. Returns { success, fixedCount, errors }.
     //
     // Groups holders exactly as getNextRankNumber does, then walks each
     // group in order and assigns 1..N.
@@ -501,10 +562,29 @@
     /**
      * Determines the numbering group key for an existing holder.
      *
-     * For 'global' or unnumbered ranks, this returns 'global'.
-     * For grouped ranks, it returns the source character id (or 'unknown' if
-     * the source cannot be resolved — that bucket is still numbered, just
+     * For 'global' or unnumbered ranks, returns 'global'.
+     * For grouped ranks, returns the source character id (or 'unknown' if
+     * the source cannot be resolved — that bucket is still numbered,
      * separately from the resolved ones).
+     *
+     * EXPORTED as RankAssignment.getHolderGroupKey. Shared with
+     * rank-issues.js's numbering discrepancy detection: both must use the
+     * same grouping rule, or the fixer produces a different grouping than
+     * the detector reports.
+     *
+     * Group key precedence:
+     *   1. assignment.inheritedFrom — what the assignment was created with.
+     *      This may differ from what getInheritanceSource would resolve
+     *      today (e.g. widow/widower cases), and the historical grouping
+     *      is what we want for stability.
+     *   2. RQ.getInheritanceSource(character.id, rank.id) — resolves from
+     *      current state.
+     *   3. 'unknown' — a stable bucket for unresolvable sources.
+     *
+     * @param {Object} rank
+     * @param {Object} character
+     * @param {Object} assignment
+     * @returns {string}
      */
     function _resolveHolderGroupKey(rank, character, assignment) {
         if (rank.numberingGroup === 'global') return 'global';
@@ -643,6 +723,12 @@
     //
     // Reads committed partners via RomanceQueries. Never reads
     // character.relationships.
+    //
+    // RELATIONSHIP TO RankIssues.checkSpouseInheritance:
+    //   Both scan for the same condition. They return different shapes
+    //   (fix data vs RankIssue with fix closure). The two are NOT
+    //   consolidated in this revision. See the header's RELATIONSHIP
+    //   section for the rationale.
 
     function checkAndFixSpouseInheritance() {
         var romance = _readRomanceQueries();
@@ -760,6 +846,9 @@
         getNextRankNumber: getNextRankNumber,
         renumberRankHolders: renumberRankHolders,
         fixAllNumberingForCharacter: fixAllNumberingForCharacter,
+
+        // Numbering group classification (shared with rank-issues.js)
+        getHolderGroupKey: _resolveHolderGroupKey,
 
         // Surname rule
         generateSurnameFromRankRule: generateSurnameFromRankRule,
