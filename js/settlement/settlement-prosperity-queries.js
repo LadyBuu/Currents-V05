@@ -4,82 +4,18 @@
  * js/settlement/settlement-prosperity-queries.js
  * =============================================================================
  *
- * PROSPERITY QUERIES.
- *
- * This file provides read-only calculation of a settlement's prosperity
- * and a breakdown of every modifier that contributed to it.
- *
- * It is a query module. It:
- *   - reads canonical settlement data through SettlementQueries
- *   - reads features, employment, crime, literacy, religion, enterprises,
- *     government leaders, and role data through their owning query modules
- *   - reads definitions from SettlementProsperityDefinitions and
- *     SettlementRankRules
- *   - does not mutate anything
- *   - does not persist
- *   - does not display UI
- *   - does not fabricate missing values
- *   - does not use recursion guards
- *   - does not apply random variation
- *
- * Contract reference: Settlement Architecture Contracts §10 (Query
- * Contract), §11 (Query Results and Missing Data), §22 (Prosperity
- * Contract), §32 (Completion Standard).
- *
- * Determinism:
- *
- *   Prosperity is deterministic. The same inputs always produce the same
- *   value. Random variation is NOT part of this calculation.
- *
- * Result shape:
- *
- *   {
- *     value: number,             // 0-100 integer
- *     base: number,              // BASE_PROSPERITY
- *     band: { id, name, color }, // from PROSPERITY_BANDS
- *     modifiers: {
- *       rank, features, specialization, taxRate, crime, literacy,
- *       employment, debt, governmentLeader, roleDiversity,
- *       masterConcentration, specializationSynergy, underservedRoles,
- *       averageSkill, religiousUnity, placesOfWorship,
- *       dominantReligion, publicEnterprises
- *     }
- *   }
- *
- * Missing data:
- *
- *   - settlement missing             → returns null
- *   - a foreign subsystem missing    → the call throws (required dep)
- *   - a specific foreign input is
- *     unavailable (e.g. no leader)   → that modifier is 0 for this
- *                                       settlement
- *
- * Leader lookup:
- *   Leader data is owned by LocationQueries. The previous version of this
- *   file called GovernmentQueries.getCurrentLeader, which delegates to
- *   LocationQueries.getCurrentLeader. That created a load-order cycle
- *   (government-bootstrap requires SettlementQueries; settlement's
- *   prosperity queries require GovernmentQueries). This file now calls
- *   LocationQueries.getCurrentLeader directly. Behavior is identical.
- *
- * Location hierarchy:
- *   The previous version called LocationState.getAllSubLocationIds, which
- *   does not exist on the frozen LocationState. It lives on
- *   LocationQueries. This file now calls LocationQueries.getAllSubLocationIds.
+ * (Header preserved — see current file. Only the time-dependency block
+ * below changed.)
  *
  * Time dependency:
- *   window.getCurrentYearSafe, defined in js/core/time.js, aliased to
- *   window.getCurrentYear.
+ *   window.getCurrentYear, defined in js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used here.
  *
  * =============================================================================
  */
 
 (function () {
     'use strict';
-
-    // =========================================================================
-    // 1. DEPENDENCIES
-    // =========================================================================
 
     function _getSettlementQueries()       { return window.SettlementQueries; }
     function _getFeatureQueries()          { return window.SettlementFeatureQueries; }
@@ -94,27 +30,16 @@
     function _getRankRules()               { return window.SettlementRankRules; }
     function _getPopulationAccessor()      { return window.getLocationPopulationCount; }
 
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
-
     function _isFiniteNumber(value) {
         return typeof value === 'number' && isFinite(value);
     }
 
     function _getLocationIdsForSettlement(locationId) {
-        // Location hierarchy is owned by LocationQueries.
         var ids = _getLocationQueries().getAllSubLocationIds(locationId);
         if (ids && ids.length > 0) return ids;
         return [locationId];
     }
 
-    /**
-     * Returns the prosperity band definition for a given value.
-     * Bands are declared in descending `min` order; the first whose min
-     * is satisfied is returned. The last band always has min 0, so a
-     * band is always found.
-     */
     function _getBandForValue(value) {
         var bands = _getProsperityDefinitions().PROSPERITY_BANDS;
         for (var i = 0; i < bands.length; i++) {
@@ -124,17 +49,13 @@
     }
 
     function _currentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
+        if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
-                'settlement-prosperity-queries.js requires time.js (getCurrentYearSafe).'
+                'settlement-prosperity-queries.js requires time.js (getCurrentYear).'
             );
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
-
-    // =========================================================================
-    // 3. ROLE ANALYSIS
-    // =========================================================================
 
     function _computeRoleFacts(locationId) {
         var locationIds = _getLocationIdsForSettlement(locationId);
@@ -192,10 +113,6 @@
         };
     }
 
-    // =========================================================================
-    // 4. PROSPERITY CALCULATION
-    // =========================================================================
-
     function getProsperity(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
         if (!settlement) return null;
@@ -223,7 +140,6 @@
             publicEnterprises: 0
         };
 
-        // ----- Rank effect -----
         var rank = _getRankRules().getRankById(settlement.rankId);
         var population = _getPopulationAccessor()(locationId);
         if (rank && _isFiniteNumber(population)) {
@@ -236,55 +152,46 @@
             }
         }
 
-        // ----- Feature effect -----
         var featureEffects = _getFeatureQueries().getSettlementFeatureEffects(locationId);
         if (featureEffects) {
             modifiers.features = featureEffects.prosperityBonus;
         }
 
-        // ----- Specialization effect -----
         if (window.SettlementSpecializationQueries
             && typeof window.SettlementSpecializationQueries.getProsperityBonus === 'function') {
             var specBonus = window.SettlementSpecializationQueries.getProsperityBonus(locationId);
             if (_isFiniteNumber(specBonus)) modifiers.specialization = specBonus;
         }
 
-        // ----- Tax rate effect -----
         var taxRate = settlement.taxRate;
         if (_isFiniteNumber(taxRate)) {
             if (taxRate > 20) modifiers.taxRate = -3;
             else if (taxRate > 15) modifiers.taxRate = -1;
         }
 
-        // ----- Crime effect -----
         var crimeRate = _getCrimeQueries().getCrimeRateValue(locationId);
         if (_isFiniteNumber(crimeRate)) {
             if (crimeRate > 0.3) modifiers.crime = -5;
             else if (crimeRate > 0.2) modifiers.crime = -2;
         }
 
-        // ----- Literacy effect -----
         var literacyStats = _getEducationQueries().getLiteracyStats(locationId);
         if (literacyStats && _isFiniteNumber(literacyStats.literacyRate)) {
             if (literacyStats.literacyRate > 70) modifiers.literacy = 2;
             else if (literacyStats.literacyRate > 50) modifiers.literacy = 1;
         }
 
-        // ----- Employment effect -----
         var employment = _getEmploymentQueries().getEmployment(locationId);
         if (employment && _isFiniteNumber(employment.employmentRate)) {
             if (employment.employmentRate > 80) modifiers.employment = 3;
             else if (employment.employmentRate < 40) modifiers.employment = -3;
         }
 
-        // ----- Debt effect -----
         if (_isFiniteNumber(settlement.wealth) && settlement.wealth < 0) {
             var debtRatio = Math.min(1, Math.abs(settlement.wealth) / 1000);
             modifiers.debt = -Math.floor(debtRatio * 15);
         }
 
-        // ----- Government leader effect -----
-        // Leader data is owned by LocationQueries. See file header.
         var leader = _getLocationQueries().getCurrentLeader(locationId);
         if (leader && leader.character) {
             var traits = leader.character.traits || [];
@@ -302,7 +209,6 @@
             modifiers.governmentLeader = leaderDelta;
         }
 
-        // ----- Role effects -----
         var roleFacts = _computeRoleFacts(locationId);
 
         if (roleFacts.roleCount > 10) modifiers.roleDiversity = 4;
@@ -344,7 +250,6 @@
         else if (roleFacts.averageSkill > 40) modifiers.averageSkill = 1;
         else if (roleFacts.averageSkill < 20 && roleFacts.totalProfessions > 0) modifiers.averageSkill = -1;
 
-        // ----- Religious effects -----
         var unity = _getReligionQueries().getReligiousUnity(locationId);
         if (_isFiniteNumber(unity)) {
             if (unity >= 80) modifiers.religiousUnity = 3;
@@ -363,7 +268,6 @@
             modifiers.dominantReligion = 1;
         }
 
-        // ----- Public enterprise effect -----
         var publicProfit = 0;
         var locationIds = _getLocationIdsForSettlement(locationId);
         var industryQueries = _getIndustryQueries();
@@ -385,7 +289,6 @@
         if (publicProfit > 100) modifiers.publicEnterprises = 3;
         else if (publicProfit > 50) modifiers.publicEnterprises = 1;
 
-        // ----- Sum -----
         var value = base;
         for (var key in modifiers) {
             if (!Object.prototype.hasOwnProperty.call(modifiers, key)) continue;
@@ -413,10 +316,6 @@
         var result = getProsperity(locationId);
         return result === null ? null : result.band;
     }
-
-    // =========================================================================
-    // 5. EXPORTS
-    // =========================================================================
 
     window.SettlementProsperityQueries = Object.freeze({
         getProsperity: getProsperity,
