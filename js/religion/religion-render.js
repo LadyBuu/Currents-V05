@@ -3,7 +3,7 @@
  * STILL WATERS - RELIGION RENDER (religion-render.js)
  * =============================================================================
  *
- * LOCATION: js/core/religion/religion-render.js
+ * LOCATION: js/religion/religion-render.js
  *
  * Pure renderer for religion lists, cards, and tables.
  *
@@ -28,7 +28,7 @@
  * -----------
  * Religion-record icons (row.icon) are data and are rendered verbatim.
  * Chrome icons (chevrons, markers, close buttons) must route through
- * window._getIcon(name). This file currently renders no chrome icons.
+ * window.getIcon(name). This file currently renders no chrome icons.
  *
  * EVENT BINDING
  * -------------
@@ -39,7 +39,7 @@
  * once, even across re-renders.
  *
  * DEPENDENCIES:
- *   - formatting.js: escapeHtml (or _escapeHtml — both accepted)
+ *   - formatting.js: escapeHtml
  *
  * =============================================================================
  * REFACTOR HISTORY:
@@ -63,23 +63,12 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
+        if (typeof window.escapeHtml !== 'function') {
+            throw new Error(
+                'religion-render.js requires formatting.js (escapeHtml).'
+            );
         }
-        if (typeof window._escapeHtml === 'function') {
-            return window._escapeHtml(str);
-        }
-        // This branch should never be reached; load-time verification below
-        // catches the missing dependency at page load. Kept as a last-resort
-        // local implementation so a broken load order produces escaped output
-        // rather than a crash.
-        if (!str) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        return window.escapeHtml(str);
     }
 
     // =========================================================================
@@ -154,7 +143,7 @@
 
         if (row.icon) {
             // Religion-record icon. Rendered verbatim. Do not route through
-            // _getIcon — that is for chrome.
+            // getIcon — that is for chrome.
             html += '<span class="religion-item__icon">' + _escapeHtml(row.icon) + '</span>';
         }
 
@@ -516,12 +505,9 @@
     // =========================================================================
 
     (function _verifyLoadTimeDependencies() {
-        var hasEscape =
-            (typeof window.escapeHtml === 'function') ||
-            (typeof window._escapeHtml === 'function');
-        if (!hasEscape) {
+        if (typeof window.escapeHtml !== 'function') {
             throw new Error(
-                'religion-render.js loaded but no escapeHtml/_escapeHtml is available. ' +
+                'religion-render.js loaded but window.escapeHtml is missing. ' +
                 'Check script tag order (formatting.js must load first).'
             );
         }
