@@ -77,9 +77,17 @@
  *   explicit named arguments, not update objects. There is no field
  *   allowlist because there is no field to reject.
  *
+ * NAMESPACE NOTE:
+ *   NameState is exported as window.NamesState (plural) by
+ *   name-state.js. window.NameState (singular) exists only as a
+ *   backward-compat alias and may be absent in a future version. This
+ *   module references the plural form exclusively so that dropping the
+ *   alias does not silently break the dependency guard or the cache
+ *   invalidation calls below.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:    getCharacterById
- *   - name-state.js:   NameState
+ *   - name-state.js:   NamesState
  *   - name-rules.js:   NameRules
  *   - storage.js:      saveMasterData (via persist only)
  *   - time.js:         getCurrentYearSafe
@@ -99,7 +107,9 @@
  *       publish in-process → dispatch cross-domain.
  *     - applyMarriageSurnames rollback documented as unreachable and
  *       refactored to use _undoSurnameChange.
- *     - Load-time dependency verification unchanged.
+ *     - NameState references migrated to NamesState (plural). The
+ *       singular alias is not relied upon; the dependency guard would
+ *       otherwise silently pass or fail depending on load order.
  *     - No other behavioural change.
  * =============================================================================
  */
@@ -123,8 +133,8 @@
                 missing.push(required[i]);
             }
         }
-        if (typeof window.NameState === 'undefined') {
-            missing.push('NameState');
+        if (typeof window.NamesState === 'undefined') {
+            missing.push('NamesState');
         }
         if (typeof window.NameRules === 'undefined') {
             missing.push('NameRules');
@@ -177,7 +187,7 @@
     // =========================================================================
     //
     // Called after every successful command. Marks data dirty, publishes
-    // in-process (so NameState and other subscribers react), and
+    // in-process (so NamesState and other subscribers react), and
     // dispatches the cross-domain CustomEvent.
     //
     // Does NOT save. Save is persist().
@@ -188,9 +198,9 @@
             try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
         }
 
-        if (typeof window.NameState !== 'undefined'
-            && typeof window.NameState.publish === 'function') {
-            window.NameState.publish(eventName, payload);
+        if (typeof window.NamesState !== 'undefined'
+            && typeof window.NamesState.publish === 'function') {
+            window.NamesState.publish(eventName, payload);
         }
 
         _dispatch(eventName, payload);
@@ -424,7 +434,7 @@
         var result = _appendSurnameChange(character, newSurname, year, reason, options);
         if (!result.success) return result;
 
-        window.NameState.invalidateSurnameHistory(characterId);
+        window.NamesState.invalidateSurnameHistory(characterId);
         _commit('characterChanged', {
             action: 'surnameChange',
             characterIds: [characterId]
@@ -458,7 +468,7 @@
         var history = _ensureSurnameHistory(character);
         history.birthSurname = birthSurname;
 
-        window.NameState.invalidateSurnameHistory(characterId);
+        window.NamesState.invalidateSurnameHistory(characterId);
         _commit('characterChanged', {
             action: 'birthSurname',
             characterIds: [characterId]
@@ -573,8 +583,8 @@
             }
         }
 
-        window.NameState.invalidateSurnameHistory(personId);
-        window.NameState.invalidateSurnameHistory(spouseId);
+        window.NamesState.invalidateSurnameHistory(personId);
+        window.NamesState.invalidateSurnameHistory(spouseId);
 
         var ids = [];
         if (personNeedsChange) ids.push(personId);
@@ -637,7 +647,7 @@
             return { success: false, reason: e.message || 'Revert failed' };
         }
 
-        window.NameState.invalidateSurnameHistory(characterId);
+        window.NamesState.invalidateSurnameHistory(characterId);
         _commit('characterChanged', {
             action: 'surnameRevert',
             characterIds: [characterId]
@@ -672,7 +682,7 @@
         history.entries = [];
         history.lastUpdated = character.birthYear || _getCurrentYear();
 
-        window.NameState.invalidateSurnameHistory(characterId);
+        window.NamesState.invalidateSurnameHistory(characterId);
         _commit('characterChanged', {
             action: 'surnameHistoryCleared',
             characterIds: [characterId]
@@ -703,7 +713,7 @@
             return { success: false, reason: "Category must be 'given' or 'surname'" };
         }
 
-        var nameList = window.NameState.getMutableNameList(countryId);
+        var nameList = window.NamesState.getMutableNameList(countryId);
         if (!nameList) {
             return { success: false, reason: 'Name list not found for country' };
         }
@@ -747,7 +757,7 @@
             return { success: false, reason: 'Name already exists in this list' };
         }
 
-        window.NameState.invalidateNameList(countryId);
+        window.NamesState.invalidateNameList(countryId);
         _commit('nameListChanged', {
             countryId: countryId,
             name: trimmed
@@ -774,7 +784,7 @@
             return { success: false, reason: "Category must be 'given' or 'surname'" };
         }
 
-        var nameList = window.NameState.getMutableNameList(countryId);
+        var nameList = window.NamesState.getMutableNameList(countryId);
         if (!nameList) {
             return { success: false, reason: 'Name list not found for country' };
         }
@@ -805,7 +815,7 @@
             return { success: false, reason: 'Name not found in this list' };
         }
 
-        window.NameState.invalidateNameList(countryId);
+        window.NamesState.invalidateNameList(countryId);
         _commit('nameListChanged', {
             countryId: countryId,
             name: trimmed
