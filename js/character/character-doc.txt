@@ -1,17 +1,21 @@
 # Still Waters — Character Subsystem Documentation
 
-Version: 3.0
+Version: 3.1
+Last regenerated from: the code in `js/character/` and `js/core/` after the
+Phase 0–1.9 refactor passes.
 
 Covers: character, family, children, education, mortality, lifecycle,
-parentage edge model, and integration with household/residence.
+parentage edge model, persistence, cross-domain dispatch, and
+compatibility shim.
 
-Status: character subsystem complete through the household-batch
-reconciliation. Relationship and apprenticeship domains have partial
-rebuilds (see §9). Succession and inheritance are not implemented.
+Status: character subsystem complete through Phase 1.9. Every module's
+header matches its behaviour. Persistence is scheduled by
+markDataDirty. The relationship and role domains have their own docs;
+this file does not duplicate them.
 
 ---
 
-## 1. System Overview
+## 1. Overview
 
 The character subsystem manages:
 
@@ -27,7 +31,7 @@ The character subsystem manages:
   adoption, and education
 - Multi-year simulation clock coordination
 
-Seven architectural rules govern the whole system:
+Seven architectural rules govern the whole subsystem:
 
 1. **One owner per concept.**
    Character record                → `CharacterState`.
@@ -70,4 +74,133 @@ Seven architectural rules govern the whole system:
 
 ---
 
-## 2. File Structure
+## 2. File Manifest
+
+### Character core
+
+| File | Role |
+|---|---|
+| `character-state.js` | Canonical character collection and derived indexes. Owns all mutation primitives. Owns ephemeral UI state (facade compatibility). Projections deep-clone every embedded container. |
+| `character-queries.js` | Semantic character-level reads (search, summary, facts, age-range, family delegates, profession delegates). Read side of `CharacterState`. |
+| `character-commands.js` | Mutation boundary for character-owned fields. Traits, professions, rank assignments, education containers, literacy, surname history, religion orchestration, death transition. |
+| `character-factory.js` | Canonical `buildCharacter` constructor. Validates, defaults, and assembles every character record. Also provides `validateBuiltCharacter` for the pre-built insertion path. |
+| `character-generator.js` | Random character data generation. Produces the plain data object fed to `buildCharacter`. Does not construct entities. |
+| `character-creation-commands.js` | Creation boundary. Routes every creation path through `buildCharacter` + `CharacterState.addCharacter`. Establishes family edges and religion after insertion. |
+| `character-deletion-commands.js` | Deletion boundary. Soft delete, hard delete, purge, bulk. Dispatches cross-domain cleanup on hard delete. |
+| `character-lifecycle.js` | Time progression and mortality orchestration. `advanceMortality`, `killCharacter`, `triggerNaturalDeath`, `triggerAccidentalDeath`. Age/life-stage classification. Cross-domain death dispatch. |
+
+### Family
+
+| File | Role |
+|---|---|
+| `family-rules.js` | Pure parentage and kinship policy. Validators. |
+| `family-state.js` | Canonical `parentChildEdges` collection. Indexes by parent, child, and pair. |
+| `family-queries.js` | Traversal and projection of parent-child edges. Kinship wrappers (`classifyKinship`, `getKinshipCloseness`). Ancestor provider for `FamilyRules` cycle detection. |
+| `family-commands.js` | Mutation boundary for parent edges. `setParent`, `removeParent`, `createAdoption`, `removeAdoption`, `changeParentType`, `handleCharacterDeath`, `removeAllReferencesTo`. |
+| `family-statistics.js` | Aggregate family counts for a character. Composition of `FamilyQueries` + `CharacterQueries`. |
+
+### Children
+
+| File | Role |
+|---|---|
+| `children-rules.js` | Pure pregnancy, surrogacy, and adoption policy. Fertility, conception, complication, reconciliation heuristics. |
+| `children-state.js` | Canonical store for pregnancy records, surrogacy arrangements, adoption metadata. |
+| `children-queries.js` | Read projections for pregnancies, surrogacy arrangements, adoptions. Composes `FamilyQueries` for parent resolution. |
+| `children-commands.js` | Mutation boundary. `recordBirth`, `recordPregnancyAttempt`, `recordSurrogacyArrangement`, `recordAdoptionMetadata`, etc. Coordinates `CharacterCreationCommands` and `FamilyCommands`. |
+| `children-generator.js` | Birth proposal generation. Does not construct children. |
+| `children-statistics.js` | Aggregate pregnancy, surrogacy, adoption, and per-parent family statistics. |
+
+### Mortality
+
+| File | Role |
+|---|---|
+| `mortality-rules.js` | Pure death validation, cause catalogue, mortality-rate bands, deterministic cause picker. |
+| `mortality-queries.js` | Read projections for death records, murders, executions. |
+| `mortality-statistics.js` | Aggregate mortality analytics. |
+
+### UI
+
+| File | Role |
+|---|---|
+| `character-ui-list.js` | Renders character lists and cards. Delegated click handling. |
+| `modals-character.js` | Character CRUD, details, family view. Edit-modal transaction contract (see §6). |
+| `modals-children-adoption.js` | Adoption metadata modals. |
+| `modals-children-birth.js` | Birth, pregnancy, batch birth modals. |
+| `modals-children-surrogacy.js` | Surrogacy arrangement modals. |
+| `modals-death.js` | Death, murder, execution modals. Childbed-fever routing. |
+
+### Compatibility
+
+| File | Role |
+|---|---|
+| `character-system.js` | One-way legacy aliases onto the canonical modules. Loads last. Throws if any canonical module is missing. |
+
+---
+
+## 3. Load Order
+
+The load order below is canonical. Every page that uses the character
+subsystem must follow it. Deviating from it causes one of the
+module-level throw guards to fire.
+
+```html
+<!-- Core (external to the character subsystem) -->
+<script src="js/core/constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/storage.js"></script>
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/accessors.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/ui.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/validation.js"></script>
+
+<!-- Character subsystem (order matters) -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/character-generator.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+
+<!-- Family -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+<script src="js/character/family-statistics.js"></script>
+
+<!-- Mortality -->
+<script src="js/character/mortality-rules.js"></script>
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+
+<!-- Children -->
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/children-state.js"></script>
+<script src="js/character/children-queries.js"></script>
+<script src="js/character/children-generator.js"></script>
+<script src="js/character/children-commands.js"></script>
+<script src="js/character/children-statistics.js"></script>
+
+<!-- Lifecycle (after its dependencies) -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- UI -->
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+<script src="js/character/modals-children-adoption.js"></script>
+<script src="js/character/modals-children-birth.js"></script>
+<script src="js/character/modals-children-surrogacy.js"></script>
+<script src="js/character/modals-death.js"></script>
+
+<!-- Compatibility shim (last) -->
+<script src="js/character/character-system.js"></script>
