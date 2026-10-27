@@ -10,7 +10,7 @@
  *
  * This file is loaded LAST in the rank module chain. It must run after
  * every other rank module, after character-state / character-commands,
- * after RomanceQueries, and after FamilyQueries are available.
+ * after FamilyQueries are available, and after rank-constants.js.
  *
  * RESPONSIBILITIES:
  *   1. Verify every required module is loaded and exposes its namespace.
@@ -26,19 +26,60 @@
  *   call them. There is no listener registry and no lifecycle hook
  *   registration.
  *
+ * REQUIRED vs OPTIONAL:
+ *   REQUIRED modules and globals are ones whose absence means the rank
+ *   domain cannot function at all: no catalogue, no assignment, no
+ *   persistence. Bootstrap throws. The application does not start with a
+ *   broken rank domain.
+ *
+ *   OPTIONAL modules and globals are ones whose absence degrades a
+ *   specific feature but leaves the catalogue and assignment functional.
+ *   Bootstrap warns. The application starts. Examples:
+ *
+ *     - RomanceQueries (optional): spouse inheritance
+ *       (inheritanceSource === 'spouse') cannot resolve its source.
+ *       All other rank features work. The rank catalogue can be
+ *       created, edited, deleted, and assigned; only the spouse-
+ *       inheritance scan and source resolution degrade.
+ *
+ *     - FamilyQueries (REQUIRED): parent inheritance
+ *       (inheritanceSource === 'parent') is a fundamental rank feature.
+ *       Without it, the child-inheritance scan cannot run. The
+ *       REQUIRED classification reflects that parent inheritance is
+ *       listed in RankRules as a first-class inheritance source, not
+ *       an optional extension.
+ *
+ *     - CharacterLifecycle (optional): death cascade dispatch. The
+ *       character subsystem calls RankIssues.handleCharacterDeath
+ *       directly (see DISPATCH MODEL above). If CharacterLifecycle is
+ *       loaded, its own _notifyCrossDomainDeath calls the same hook.
+ *       Rank does not require CharacterLifecycle to exist; it just
+ *       provides the hook.
+ *
+ *     - SkillUtils, EducationCommands, EducationQueries (optional):
+ *       no rank feature currently depends on these. Kept in the
+ *       optional list so a warning fires if a future rank feature is
+ *       added that uses them without updating bootstrap.
+ *
+ *     - Icons, openModal, closeTopModal, _showToast, showToast
+ *       (optional at bootstrap level): UI-only. If absent, RankModals
+ *       and RankUI fail at their own load, not at bootstrap. Bootstrap
+ *       does not fail the rank domain because presentation is missing.
+ *
  * CONTRACT:
  *   - init() throws on hard failures. Never leaves the domain in a
  *     half-initialised state.
- *   - verify() never throws. Returns { ok, status }.
+ *   - verify() never throws. Returns { ok, status } where status
+ *     carries per-category arrays. ok reflects hard failures only.
  *   - init() is idempotent.
  *   - reinit() re-hydrates from masterData. Safe to call from tests or a
  *     manual reload path.
  *   - Optional modules are warned about, not failed on.
  *
  * FAILURE SEMANTICS:
- *   A missing module or a missing required method is a load-order bug.
- *   Bootstrap throws. The application does not start with a broken rank
- *   domain.
+ *   A missing required module or a missing required method is a load-
+ *   order bug. Bootstrap throws. The application does not start with a
+ *   broken rank domain.
  *
  *   A corrupted rank catalogue is a data bug. validateIntegrity() reports
  *   it to the console. Bootstrap does not throw. The application starts so
@@ -60,19 +101,52 @@
  *     - getCurrentYear, calculateAge
  *     - generateId
  *     - CharacterState, CharacterCommands
- *     - RomanceQueries.getActiveCommittedPartners
  *     - FamilyQueries.getParents
+ *     - RANK_LEVELS (rank-constants.js)
+ *     - getRankLevelIcon (icons.js)
  *
  * DEPENDENCIES (OPTIONAL, warn only):
- *     - CharacterLifecycle.killCharacter
- *     - SkillUtils
- *     - EducationCommands / EducationQueries
- *     - Icons, openModal, closeTopModal
- *     - _showToast / showToast
- *     - FamilyQueries
+ *     - RomanceQueries.getActiveCommittedPartners — spouse inheritance
+ *       is unavailable without it; all other rank features work.
+ *     - CharacterLifecycle.killCharacter — provides the death cascade
+ *       path; RankIssues.handleCharacterDeath is called directly by
+ *       CharacterLifecycle if loaded, and by any caller otherwise.
+ *     - SkillUtils, EducationCommands, EducationQueries — no current
+ *       rank feature depends on these; listed as optional to detect a
+ *       future dependency that lacks a bootstrap update.
+ *     - Icons, openModal, closeTopModal, _showToast, showToast — UI-
+ *       only; their absence fails RankUI / RankModals at their own
+ *       load, not at bootstrap.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - Basic verification + hydration + window.Rank export.
+ *   Current revision (Phase 9):
+ *     - RANK_LEVELS added to REQUIRED_GLOBALS. rank-queries.js requires
+ *       it (Phase 3) and modals-rank.js requires it (Phase 8). Bootstrap
+ *       surfaces the load-order bug earlier with a clear message.
+ *     - getRankLevelIcon added to REQUIRED_GLOBALS. RankUI._levelIcon and
+ *       modals-rank.js's level rendering both route through it. A missing
+ *       icon helper leaves every rank level without its SVG.
+ *     - RomanceQueries moved from REQUIRED_ROMANCE_QUERIES to the
+ *       OPTIONAL_GLOBALS list. Rationale: spouse inheritance is a
+ *       specific rank configuration (inheritanceSource === 'spouse').
+ *       A world with no romance domain can still have a fully
+ *       functional rank catalogue. RankQueries.getInheritanceSource
+ *       gracefully returns null for spouse-inheritance resolution when
+ *       RomanceQueries is absent, and the spouse-inheritance scan in
+ *       RankIssues._checkSpouseInheritance returns [].
+ *     - _verifyRomanceQueries removed. RomanceQueries is now checked
+ *       in _verifyOptional.
+ *     - _reportWarnings gained a feature-specific message for missing
+ *       RomanceQueries: 'Ranks with inheritanceSource "spouse" will
+ *       not resolve their source.'
+ *     - Header REQUIRED vs OPTIONAL section added.
+ *     - No change to init(), reinit(), _hydrateState(), _checkIntegrity(),
+ *       or the window.Rank export shape.
  * =============================================================================
  */
 
@@ -108,7 +182,11 @@
         'calculateAge',
         'generateId',
         'CharacterState',
-        'CharacterCommands'
+        'CharacterCommands',
+        'RANK_LEVELS',          // rank-constants.js — required by
+                                // rank-queries.js and modals-rank.js
+        'getRankLevelIcon'      // icons.js — required for level icon
+                                // rendering in RankUI and modals-rank
     ];
 
     var REQUIRED_CHARACTER_COMMANDS = [
@@ -124,10 +202,6 @@
         'initializeRankContainers'
     ];
 
-    var REQUIRED_ROMANCE_QUERIES = [
-        'getActiveCommittedPartners'
-    ];
-
     var REQUIRED_FAMILY_QUERIES = [
         'getParents'
     ];
@@ -135,18 +209,30 @@
     // =========================================================================
     // 3. OPTIONAL GLOBALS
     // =========================================================================
+    //
+    // Absence produces a warning, not a hard failure. Each optional entry
+    // is a feature that degrades gracefully when its dependency is
+    // missing. See REQUIRED vs OPTIONAL in the header for the per-entry
+    // rationale.
 
     var OPTIONAL_GLOBALS = [
-        'CharacterLifecycle',
-        'SkillUtils',
-        'EducationCommands',
-        'EducationQueries',
-        'Icons',
-        'openModal',
-        'closeTopModal',
-        '_showToast',
-        'showToast',
-        'FamilyQueries'
+        'RomanceQueries',       // spouse inheritance unavailable without
+                                // it; all other rank features work
+        'CharacterLifecycle',   // the death hook; RankIssues is called
+                                // directly by CharacterLifecycle if
+                                // loaded, and by callers otherwise
+        'SkillUtils',           // no current rank feature depends on it
+        'EducationCommands',    // no current rank feature depends on it
+        'EducationQueries',     // no current rank feature depends on it
+        'Icons',                // UI-only; RankUI / RankModals fail at
+                                // their own load if Icons is missing
+        'openModal',            // UI-only
+        'closeTopModal',        // UI-only
+        '_showToast',           // UI-only (deprecated alias)
+        'showToast',            // UI-only (primary export)
+        'FamilyQueries'         // listed here for message purposes only;
+                                // also validated as required via
+                                // REQUIRED_FAMILY_QUERIES.getParents
     ];
 
     // =========================================================================
@@ -191,21 +277,6 @@
             var m = REQUIRED_CHARACTER_COMMANDS[i];
             if (typeof window.CharacterCommands[m] !== 'function') {
                 missing.push('CharacterCommands.' + m);
-            }
-        }
-        return missing;
-    }
-
-    function _verifyRomanceQueries() {
-        if (typeof window.RomanceQueries === 'undefined'
-            || window.RomanceQueries === null) {
-            return ['RomanceQueries'];
-        }
-        var missing = [];
-        for (var i = 0; i < REQUIRED_ROMANCE_QUERIES.length; i++) {
-            var m = REQUIRED_ROMANCE_QUERIES[i];
-            if (typeof window.RomanceQueries[m] !== 'function') {
-                missing.push('RomanceQueries.' + m);
             }
         }
         return missing;
@@ -261,7 +332,6 @@
             missingModules: _verifyModules(),
             missingGlobals: _verifyGlobals(),
             missingCharacterCommands: _verifyCharacterCommands(),
-            missingRomanceQueries: _verifyRomanceQueries(),
             missingFamilyQueries: _verifyFamilyQueries(),
             missingOptional: _verifyOptional(),
             masterDataShapeErrors: _verifyMasterDataShape(),
@@ -271,7 +341,6 @@
         var ok = status.missingModules.length === 0
             && status.missingGlobals.length === 0
             && status.missingCharacterCommands.length === 0
-            && status.missingRomanceQueries.length === 0
             && status.missingFamilyQueries.length === 0
             && status.masterDataShapeErrors.length === 0;
 
@@ -304,10 +373,6 @@
             parts.push('Missing CharacterCommands methods:\n' +
                 _formatList(status.missingCharacterCommands));
         }
-        if (status.missingRomanceQueries.length > 0) {
-            parts.push('Missing RomanceQueries methods:\n' +
-                _formatList(status.missingRomanceQueries));
-        }
         if (status.missingFamilyQueries.length > 0) {
             parts.push('Missing FamilyQueries methods:\n' +
                 _formatList(status.missingFamilyQueries));
@@ -325,11 +390,52 @@
         if (typeof console === 'undefined') return;
 
         if (status.missingOptional.length > 0 && console.warn) {
+            var featureMessages = [];
+            for (var i = 0; i < status.missingOptional.length; i++) {
+                var name = status.missingOptional[i];
+                switch (name) {
+                    case 'RomanceQueries':
+                        featureMessages.push(
+                            'RomanceQueries not loaded: ranks with ' +
+                            'inheritanceSource "spouse" will not resolve ' +
+                            'their source. All other rank features are ' +
+                            'available.'
+                        );
+                        break;
+                    case 'CharacterLifecycle':
+                        featureMessages.push(
+                            'CharacterLifecycle not loaded: the death ' +
+                            'cascade will not call RankIssues.handleCharacterDeath ' +
+                            'automatically. Callers must invoke it directly ' +
+                            'after a character dies.'
+                        );
+                        break;
+                    case 'FamilyQueries':
+                        // Only reaches this branch if FamilyQueries is
+                        // absent from the OPTIONAL list — it is also
+                        // required via REQUIRED_FAMILY_QUERIES, so this
+                        // branch fires only when getParents is missing
+                        // but FamilyQueries exists.
+                        featureMessages.push(
+                            'FamilyQueries present but missing getParents: ' +
+                            'parent inheritance cannot resolve.'
+                        );
+                        break;
+                    default:
+                        // Other optional absences have no user-facing
+                        // feature message. Include the name in the list.
+                        featureMessages.push(
+                            name + ' not loaded (no rank feature currently ' +
+                            'depends on it; verify load order if you ' +
+                            'expect it to be present).'
+                        );
+                }
+            }
             console.warn(
                 'rank-bootstrap.js: optional dependencies missing\n' +
                 _formatList(status.missingOptional) +
-                '\nThe rank domain will load, but features that depend on ' +
-                'these modules are unavailable.'
+                '\n\nFeature impact:\n  ' +
+                featureMessages.join('\n  ')
             );
         }
 
