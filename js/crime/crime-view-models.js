@@ -3,7 +3,7 @@
  * STILL WATERS - CRIME VIEW MODELS (crime-view-models.js)
  * =============================================================================
  *
- * LOCATION: js/core/crime/crime-view-models.js
+ * LOCATION: js/crime/crime-view-models.js
  *
  * PURPOSE:
  *   Presentation-shaping for Crime UI. Pure transforms from already-fetched
@@ -31,6 +31,10 @@
  *   - It does not carry its own copy of crime type vocabulary. Labels that
  *     are missing from the label map fall through to a snake_case-to-Title
  *     transformation of the identifier, which the renderer displays.
+ *
+ * TIME CONTRACT:
+ *   Uses window.getCurrentYear from js/core/time.js. The deprecated
+ *   window.getCurrentYearSafe alias is NOT used.
  *
  * DEPENDENCIES (required, verified at load):
  *   - CrimeConstants
@@ -692,10 +696,12 @@
     // =========================================================================
 
     function _currentYear() {
-        if (typeof window.getCurrentYearSafe === 'function') {
-            return window.getCurrentYearSafe();
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'crime-view-models.js requires time.js (getCurrentYear).'
+            );
         }
-        return null;
+        return window.getCurrentYear();
     }
 
     // =========================================================================
