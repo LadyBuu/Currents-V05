@@ -31,6 +31,26 @@
  *   - Scheduling → maintenance.js
  *   - UI feedback → caller
  *
+ * PARENTAGE:
+ *   Parentage lives in FamilyState (parentChildEdges). The character
+ *   record does NOT carry motherId, fatherId, children, adoptedParents,
+ *   or adoptedChildren — those are removed fields. See the REMOVED
+ *   FIELDS note in storage-schema.js and the PARENTAGE note in
+ *   validation.js.
+ *
+ *   This module therefore does NOT audit parent references on the
+ *   character record. Family edge integrity (dangling parent ids,
+ *   genealogy cycles) is owned by family-state.js + family-commands.js
+ *   and audited by their own finders (or by future work in this module
+ *   if family integrity is folded in — see FUTURE WORK below).
+ *
+ *   Earlier revisions of findBrokenParentReferences read char.motherId,
+ *   char.fatherId, and char.adoptedParents. All three fields are removed
+ *   from the canonical schema. Reading them returned undefined for every
+ *   character, so the finder produced no findings. The dead code has been
+ *   removed. findGenealogyCycles has also been removed (it walked the
+ *   same removed fields via _parentEdges).
+ *
  * RELATIONSHIP SCHEMA:
  *   This module audits the CANONICAL relationship shape only. Legacy
  *   representations must be migrated before integrity runs. Do not add
@@ -49,12 +69,42 @@
  *   contradictory, because reconciling one side of the graph requires
  *   updating the other side to match.
  *
+ * FUTURE WORK (family integrity):
+ *   Family edge integrity (dangling parentId, genealogy cycles across
+ *   parentChildEdges) is NOT audited by this module. It belongs to the
+ *   family domain. When it is added, the finders should be named
+ *   findBrokenFamilyEdges / findFamilyGenealogyCycles and should live in
+ *   family-queries.js or a new family-integrity.js — NOT be resurrected
+ *   here against the character record.
+ *
  * DEPENDENCIES (all REQUIRED):
  *   - accessors.js: getCharacters, getPlaces, getRanks, getRoles,
  *                   getHouseholds, getCharacterById, getPlaceById
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed findBrokenParentReferences, repairBrokenParentReferences,
+ *       findGenealogyCycles, repairGenealogyCycles, and the private
+ *       _parentEdges helper. All five read removed character-record
+ *       fields (motherId, fatherId, adoptedParents). They produced no
+ *       findings on any current save because the fields are gone.
+ *     - Removed the corresponding entries from auditDataIntegrity's
+ *       counts and totalIssues.
+ *     - Removed the corresponding entries from repairAllData's repairs
+ *       map.
+ *     - Removed the deprecated aliases findOrphanedCharacters /
+ *       repairOrphanedCharacters, which pointed at the removed
+ *       findBrokenParentReferences / repairBrokenParentReferences.
+ *     - Removed the deprecated aliases findOrphanedPlaces /
+ *       repairOrphanedPlaces, which were aliases for the still-live
+ *       findBrokenPlaceHierarchy / repairBrokenPlaceHierarchy but had
+ *       no callers in the tree. If a caller reappears, re-add them
+ *       with a migration note.
+ *     - Header PARENTAGE and FUTURE WORK sections added.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -102,224 +152,7 @@
     }
 
     // =========================================================================
-    // 1. PARENT REFERENCES
-    // =========================================================================
-
-    /**
-     * Finds characters with broken parent references.
-     * PURE. Returns live canonical references; treat as read-only.
-     *
-     * Only well-formed references (non-empty string IDs) are audited. A
-     * reference whose value is neither missing nor a well-formed ID is a
-     * shape problem for validation.js, not a dangling reference here.
-     *
-     * @returns {Array<{ character, issue, relation, refId }>}
-     */
-    function findBrokenParentReferences() {
-        _requireDependencies();
-        var characters = window.getCharacters();
-        var broken = [];
-
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-
-            if (_hasId(char.motherId) && !window.getCharacterById(char.motherId)) {
-                broken.push({
-                    character: char,
-                    issue: 'Missing mother',
-                    relation: 'mother',
-                    refId: char.motherId
-                });
-            }
-            if (_hasId(char.fatherId) && !window.getCharacterById(char.fatherId)) {
-                broken.push({
-                    character: char,
-                    issue: 'Missing father',
-                    relation: 'father',
-                    refId: char.fatherId
-                });
-            }
-            if (Array.isArray(char.adoptedParents)) {
-                for (var j = 0; j < char.adoptedParents.length; j++) {
-                    var ap = char.adoptedParents[j];
-                    if (!ap || !_hasId(ap.parentId)) continue;
-                    if (!window.getCharacterById(ap.parentId)) {
-                        broken.push({
-                            character: char,
-                            issue: 'Missing adoptive parent',
-                            relation: 'adoptiveParent',
-                            refId: ap.parentId
-                        });
-                    }
-                }
-            }
-        }
-        return broken;
-    }
-
-    /**
-     * Detects genealogy cycles in the two-edge parent graph.
-     *
-     * Both motherId and fatherId are traversed. A cycle is reported
-     * against the specific edge that closes it, so the repairer knows
-     * exactly which reference to null out.
-     *
-     * PURE.
-     *
-     * @returns {Array<{
-     *   character: Object,
-     *   issue: 'Genealogy cycle detected',
-     *   relation: 'mother'|'father',
-     *   refId: string
-     * }>}
-     */
-    function findGenealogyCycles() {
-        _requireDependencies();
-        var characters = window.getCharacters();
-        var charById = new Map();
-        for (var i = 0; i < characters.length; i++) {
-            if (characters[i] && _hasId(characters[i].id)) {
-                charById.set(characters[i].id, characters[i]);
-            }
-        }
-
-        var broken = [];
-        // Global set of "nodes whose entire subtree has been fully explored
-        // without finding a cycle", so we don't rewalk shared subtrees.
-        var fullyExplored = new Set();
-        // Deduplicate cycle reports keyed by "offenderId:relation:refId".
-        var reportedEdges = new Set();
-
-        for (var s = 0; s < characters.length; s++) {
-            var start = characters[s];
-            if (!start || !_hasId(start.id)) continue;
-            if (fullyExplored.has(start.id)) continue;
-
-            // Path-local visited set, keyed by character ID.
-            var pathStack = [start];
-            var onPath = new Set([start.id]);
-
-            var stack = [{ char: start, edges: _parentEdges(start) }];
-
-            while (stack.length > 0) {
-                var frame = stack[stack.length - 1];
-
-                if (frame.edges.length === 0) {
-                    // All edges explored; pop and mark subtree as clean.
-                    stack.pop();
-                    pathStack.pop();
-                    onPath.delete(frame.char.id);
-                    fullyExplored.add(frame.char.id);
-                    continue;
-                }
-
-                var edge = frame.edges.shift();
-                var nextId = edge.refId;
-
-                if (!_hasId(nextId)) continue;
-                var next = charById.get(nextId);
-
-                if (!next) {
-                    // Dangling reference — handled by findBrokenParentReferences.
-                    continue;
-                }
-
-                if (onPath.has(nextId)) {
-                    // Cycle: the edge from frame.char through `relation`
-                    // closes a path back to nextId. Report the edge.
-                    var key = frame.char.id + ':' + edge.relation + ':' + nextId;
-                    if (!reportedEdges.has(key)) {
-                        reportedEdges.add(key);
-                        broken.push({
-                            character: frame.char,
-                            issue: 'Genealogy cycle detected',
-                            relation: edge.relation,
-                            refId: nextId
-                        });
-                    }
-                    continue;
-                }
-
-                pathStack.push(next);
-                onPath.add(nextId);
-                stack.push({ char: next, edges: _parentEdges(next) });
-            }
-        }
-        return broken;
-    }
-
-    /**
-     * Returns the outgoing parent edges of a character.
-     * @private
-     */
-    function _parentEdges(char) {
-        var edges = [];
-        if (_hasId(char.fatherId)) edges.push({ relation: 'father', refId: char.fatherId });
-        if (_hasId(char.motherId)) edges.push({ relation: 'mother', refId: char.motherId });
-        return edges;
-    }
-
-    /**
-     * Repairs broken parent references by nulling them out.
-     * Does NOT persist.
-     *
-     * @returns {number} number of individual reference mutations
-     */
-    function repairBrokenParentReferences() {
-        _requireDependencies();
-        var broken = findBrokenParentReferences();
-        var repairs = 0;
-
-        for (var i = 0; i < broken.length; i++) {
-            var item = broken[i];
-            var char = item.character;
-
-            if (item.relation === 'mother' && char.motherId === item.refId) {
-                char.motherId = null;
-                repairs++;
-            } else if (item.relation === 'father' && char.fatherId === item.refId) {
-                char.fatherId = null;
-                repairs++;
-            } else if (item.relation === 'adoptiveParent' && Array.isArray(char.adoptedParents)) {
-                var before = char.adoptedParents.length;
-                char.adoptedParents = char.adoptedParents.filter(function(ap) {
-                    return !ap || ap.parentId !== item.refId;
-                });
-                repairs += before - char.adoptedParents.length;
-            }
-        }
-        return repairs;
-    }
-
-    /**
-     * Repairs genealogy cycles by nulling the specific edge that closes
-     * each detected cycle.
-     * Does NOT persist.
-     *
-     * @returns {number} number of individual reference mutations
-     */
-    function repairGenealogyCycles() {
-        _requireDependencies();
-        var broken = findGenealogyCycles();
-        var repairs = 0;
-
-        for (var i = 0; i < broken.length; i++) {
-            var item = broken[i];
-            var char = item.character;
-
-            if (item.relation === 'mother' && char.motherId === item.refId) {
-                char.motherId = null;
-                repairs++;
-            } else if (item.relation === 'father' && char.fatherId === item.refId) {
-                char.fatherId = null;
-                repairs++;
-            }
-        }
-        return repairs;
-    }
-
-    // =========================================================================
-    // 2. PLACE HIERARCHY
+    // 1. PLACE HIERARCHY
     // =========================================================================
 
     /**
@@ -434,7 +267,7 @@
     }
 
     // =========================================================================
-    // 3. RELATIONSHIPS
+    // 2. RELATIONSHIPS
     // =========================================================================
     //
     // The canonical relationship shape is audited directly. If the data
@@ -566,7 +399,7 @@
     }
 
     // =========================================================================
-    // 4. HOUSEHOLD MEMBERS
+    // 3. HOUSEHOLD MEMBERS
     // =========================================================================
 
     /**
@@ -660,7 +493,7 @@
     }
 
     // =========================================================================
-    // 5. RANK & ROLE ASSIGNMENTS
+    // 4. RANK & ROLE ASSIGNMENTS
     // =========================================================================
 
     /**
@@ -806,7 +639,7 @@
     }
 
     // =========================================================================
-    // 6. APPRENTICESHIPS
+    // 5. APPRENTICESHIPS
     // =========================================================================
 
     /**
@@ -1031,12 +864,15 @@
     }
 
     // =========================================================================
-    // 7. COMPREHENSIVE AUDIT — PURE
+    // 6. COMPREHENSIVE AUDIT — PURE
     // =========================================================================
 
     /**
      * Runs all finders and returns a full report.
      * PURE. Does not mutate canonical data.
+     *
+     * Note: parentage on the character record is no longer audited here.
+     * See PARENTAGE and FUTURE WORK in the module header.
      *
      * @returns {{
      *   ok: boolean,
@@ -1059,8 +895,6 @@
             };
         }
 
-        var brokenParents = findBrokenParentReferences();
-        var cycles = findGenealogyCycles();
         var brokenPlaces = findBrokenPlaceHierarchy();
         var brokenRelationships = findBrokenRelationships();
         var brokenFriendships = findBrokenFriendships();
@@ -1069,9 +903,7 @@
         var brokenRoleAssignments = findBrokenRoleAssignments();
         var brokenApprenticeships = findBrokenApprenticeships();
 
-        var total = brokenParents.length
-            + cycles.length
-            + brokenPlaces.length
+        var total = brokenPlaces.length
             + brokenRelationships.length
             + brokenFriendships.length
             + brokenHouseholdMembers.length
@@ -1082,8 +914,6 @@
         return {
             ok: true,
             counts: {
-                brokenParentReferences: brokenParents.length,
-                genealogyCycles: cycles.length,
                 brokenPlaceHierarchy: brokenPlaces.length,
                 brokenRelationships: brokenRelationships.length,
                 brokenFriendships: brokenFriendships.length,
@@ -1102,7 +932,7 @@
     }
 
     // =========================================================================
-    // 8. COMPREHENSIVE REPAIR
+    // 7. COMPREHENSIVE REPAIR
     // =========================================================================
 
     /**
@@ -1141,8 +971,6 @@
         });
 
         var repairs = {
-            brokenParentReferences: repairBrokenParentReferences(),
-            genealogyCycles: repairGenealogyCycles(),
             brokenPlaceHierarchy: repairBrokenPlaceHierarchy(),
             brokenRelationships: repairBrokenRelationships(),
             brokenFriendships: repairBrokenFriendships(),
@@ -1172,12 +1000,10 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 8. EXPORTS
     // =========================================================================
 
     // Finders (pure)
-    window.findBrokenParentReferences = findBrokenParentReferences;
-    window.findGenealogyCycles = findGenealogyCycles;
     window.findBrokenPlaceHierarchy = findBrokenPlaceHierarchy;
     window.findBrokenRelationships = findBrokenRelationships;
     window.findBrokenFriendships = findBrokenFriendships;
@@ -1187,8 +1013,6 @@
     window.findBrokenApprenticeships = findBrokenApprenticeships;
 
     // Repairers (mutate memory; caller persists)
-    window.repairBrokenParentReferences = repairBrokenParentReferences;
-    window.repairGenealogyCycles = repairGenealogyCycles;
     window.repairBrokenPlaceHierarchy = repairBrokenPlaceHierarchy;
     window.repairBrokenRelationships = repairBrokenRelationships;
     window.repairBrokenFriendships = repairBrokenFriendships;
@@ -1202,33 +1026,30 @@
     window.repairAllData = repairAllData;
 
     // =========================================================================
-    // 10. DEPRECATED ALIASES
+    // 9. DEPRECATED ALIASES
     // =========================================================================
-
-    /**
-     * @deprecated Alias for findBrokenParentReferences.
-     */
-    window.findOrphanedCharacters = findBrokenParentReferences;
-
-    /**
-     * @deprecated Alias for repairBrokenParentReferences.
-     */
-    window.repairOrphanedCharacters = repairBrokenParentReferences;
-
-    /**
-     * @deprecated Alias for findBrokenPlaceHierarchy.
-     */
-    window.findOrphanedPlaces = findBrokenPlaceHierarchy;
-
-    /**
-     * @deprecated Alias for repairBrokenPlaceHierarchy.
-     */
-    window.repairOrphanedPlaces = repairBrokenPlaceHierarchy;
+    //
+    // The family parentage aliases (findOrphanedCharacters,
+    // repairOrphanedCharacters) were removed together with the underlying
+    // findBrokenParentReferences / repairBrokenParentReferences. See
+    // PARENTAGE and FUTURE WORK in the module header.
+    //
+    // The place aliases (findOrphanedPlaces, repairOrphanedPlaces) were
+    // also removed: no caller in the tree referenced them, and keeping
+    // unused aliases invites accidental reintroduction of the deprecation.
+    // If a caller reappears, re-add them with a migration note that names
+    // the specific caller being unblocked.
 
     // =========================================================================
-    // 11. REMOVED (moved elsewhere)
+    // 10. REMOVED (moved elsewhere)
     // =========================================================================
 
+    // - findBrokenParentReferences / repairBrokenParentReferences →
+    //   removed. Parentage lives in parentChildEdges; the character-record
+    //   fields they audited (motherId, fatherId, adoptedParents) were
+    //   deleted from the schema. See PARENTAGE in the module header.
+    // - findGenealogyCycles / repairGenealogyCycles → removed. Same reason:
+    //   they walked removed character-record fields.
     // - requireIntegrityDependencies → private. Callers can preflight with
     //   auditDataIntegrity() which returns { ok: false, error } for the
     //   same condition.
