@@ -84,6 +84,22 @@
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (Phase 1.9):
+ *     - Added trait API aliases: getCharacterTraits, hasCharacterTrait,
+ *       replaceCharacterTraits, addCharacterTrait, removeCharacterTrait.
+ *       These mirror the shim's existing profession aliases and close
+ *       the gap created by Phase 1.2's trait API in
+ *       CharacterCommands. Previously, callers reaching for
+ *       window.getCharacterTraits (or similar) got undefined.
+ *     - Added characterExists alias (CharacterState.hasCharacter had
+ *       no shim alias).
+ *     - CommonJS export block extended with the new aliases.
+ *     - No other behavioural change.
+ *   Previous revisions:
+ *     - Body of aliases audited. Removed aliases that leaked live
+ *       references; the shim now only aliases projections.
+ * =============================================================================
  */
 
 (function () {
@@ -175,6 +191,12 @@
     };
 
     window.hasCharacter = function (id) {
+        return CS.hasCharacter(id);
+    };
+
+    // Backward-compatible alias for callers that used the older name.
+    // CharacterState.hasCharacter is the canonical predicate.
+    window.characterExists = function (id) {
         return CS.hasCharacter(id);
     };
 
@@ -326,6 +348,31 @@
     // Third argument is optional { referenceYear }.
     window.markCharacterDeceased = function (characterId, deathData, options) {
         return CC.markDeceased(characterId, deathData, options);
+    };
+
+    // Traits
+    //
+    // These mirror the profession aliases below. They are one-way; new
+    // code should call CharacterCommands.getTraits / hasTrait / addTrait /
+    // removeTrait / replaceTraits directly.
+    window.getCharacterTraits = function (characterId) {
+        return CC.getTraits(characterId);
+    };
+
+    window.hasCharacterTrait = function (characterId, traitId) {
+        return CC.hasTrait(characterId, traitId);
+    };
+
+    window.replaceCharacterTraits = function (characterId, traits) {
+        return CC.replaceTraits(characterId, traits);
+    };
+
+    window.addCharacterTrait = function (characterId, traitId) {
+        return CC.addTrait(characterId, traitId);
+    };
+
+    window.removeCharacterTrait = function (characterId, traitId) {
+        return CC.removeTrait(characterId, traitId);
     };
 
     // Professions
@@ -677,6 +724,7 @@
             getCharacterById: window.getCharacterById,
             getTotalCharacterCount: window.getTotalCharacterCount,
             hasCharacter: window.hasCharacter,
+            characterExists: window.characterExists,
             getLivingCharacters: window.getLivingCharacters,
             getDeceasedCharacters: window.getDeceasedCharacters,
             subscribeCharacters: window.subscribeCharacters,
@@ -693,6 +741,13 @@
             createCharacter: window.createCharacter,
             createRandomCharacter: window.createRandomCharacter,
             deleteCharacter: window.deleteCharacter,
+
+            // Traits
+            getCharacterTraits: window.getCharacterTraits,
+            hasCharacterTrait: window.hasCharacterTrait,
+            replaceCharacterTraits: window.replaceCharacterTraits,
+            addCharacterTrait: window.addCharacterTrait,
+            removeCharacterTrait: window.removeCharacterTrait,
 
             // Lifecycle
             advanceMortality: window.advanceMortality,
