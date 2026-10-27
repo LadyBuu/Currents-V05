@@ -11,6 +11,7 @@
  *
  * SCOPE:
  *   - Random gender, age, name, surname selection
+ *   - Random trait selection
  *   - Random birthplace selection
  *   - Country resolution for cultural context
  *   - Religion selection weighted by location follower count (if available)
@@ -26,6 +27,7 @@
  *   - Culture/appearance internals → culture-generation.js
  *   - Religion internals → religion-queries.js
  *   - Family / relationship / apprenticeship establishment → their commands
+ *   - Trait vocabulary / acquisition policy → constants/character-traits.js
  *   - Persistence → storage.js
  *
  * SEMANTIC RULES:
@@ -46,14 +48,36 @@
  *   - A character without any resolvable given name fails generation
  *     with a structured reason. It does not fabricate one.
  *
+ * TRAITS:
+ *   The generator picks 1–3 unique traits from the canonical vocabulary
+ *   (constants/character-traits.js). The count is fixed at generation
+ *   time; there is no per-call override. Player-created characters
+ *   (create-character modal) can supply any count via the factory's
+ *   `traits` field; only random generation uses this policy.
+ *
+ *   Determinism: trait selection routes through randomness.js via
+ *   pickRandomMultiple (or shuffleArray when pickRandomMultiple is not
+ *   present). Same seed → same traits. No Math.random.
+ *
+ *   Vocabulary absence: if CHARACTER_TRAIT_VALUES is not loaded, the
+ *   generator emits `traits: []`. This is a soft-fail because the trait
+ *   feature is optional to generation; a character without traits is
+ *   still a complete character. It is NOT an error — production load
+ *   order always has the vocabulary present.
+ *
  * DOMAIN-OWNED FIELDS:
  *   The generator produces ONLY character-owned input fields. Domain-owned
- *   embedded fields (professions, relationships, family, apprenticeship)
- *   are NOT generated here. Profession generation is an exception because
- *   it is character-owned input at creation time (the character IS a
- *   blacksmith at year N); it is written as `professions: [...]` and the
- *   factory copies it verbatim. Once RoleCommands takes over, all
- *   subsequent profession changes go through CharacterCommands.
+ *   embedded fields (professions, relationships, family, apprenticeship,
+ *   traits-after-creation) are NOT generated here. Two exceptions exist
+ *   because they are character-owned input at creation time:
+ *
+ *     professions — the character IS a blacksmith at year N; the factory
+ *                   copies it verbatim.
+ *     traits      — the character HAS these personality traits; the
+ *                   factory validates and copies verbatim.
+ *
+ *   Once the character exists, all subsequent changes to either go
+ *   through CharacterCommands (addProfession / addTrait / etc.).
  *
  * DEPENDENCIES (REQUIRED):
  *   - randomness.js: pickRandom, random, randomBoolean, randomInt,
@@ -67,9 +91,18 @@
  *   - religion-queries.js  (ReligionQueries)   — for religion selection
  *   - culture-queries.js   (CultureQueries)    — for culture resolution
  *   - culture-generation.js (CultureGeneration) — for appearance generation
+ *   - constants/character-traits.js (CHARACTER_TRAIT_VALUES) — for trait
+ *     selection. Absence yields traits: [] rather than a throw.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Random trait selection added: 1–3 unique traits picked from
+ *       CHARACTER_TRAIT_VALUES via the shared RNG stream.
+ *     - traits added to the assembled data object.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -130,6 +163,12 @@
 
     var VALID_GENDERS = ['male', 'female'];
 
+    // Trait generation policy. The generator picks between MIN and MAX
+    // distinct traits from the canonical vocabulary. Fixed at generation
+    // time; there is no per-call override.
+    var MIN_TRAITS = 1;
+    var MAX_TRAITS = 3;
+
     // =========================================================================
     // 2. INTERNAL HELPERS
     // =========================================================================
@@ -175,7 +214,58 @@
     }
 
     // =========================================================================
-    // 3. LOCATION RESOLUTION
+    // 3. TRAIT SELECTION
+    // =========================================================================
+    //
+    // Picks MIN_TRAITS..MAX_TRAITS distinct traits from the canonical
+    // vocabulary. All randomness flows through randomness.js. Returns []
+    // when the vocabulary is not loaded, or when there are fewer traits
+    // available than the minimum requested.
+
+    function _selectTraits() {
+        if (!Array.isArray(window.CHARACTER_TRAIT_VALUES)) return [];
+        var pool = window.CHARACTER_TRAIT_VALUES;
+        if (pool.length === 0) return [];
+
+        // If the vocabulary is smaller than the minimum, return all of it.
+        if (pool.length <= MIN_TRAITS) {
+            return pool.slice();
+        }
+
+        var count = _randomInt(MIN_TRAITS, Math.min(MAX_TRAITS, pool.length));
+
+        // Prefer pickRandomMultiple (canonical primitive, seeded).
+        if (typeof window.pickRandomMultiple === 'function') {
+            var picked = window.pickRandomMultiple(pool, count);
+            if (Array.isArray(picked)) return picked.slice();
+        }
+
+        // Fallback: seeded Fisher-Yates via shuffleArray when available,
+        // then slice. Neither path touches Math.random directly.
+        if (typeof window.shuffleArray === 'function') {
+            var shuffled = window.shuffleArray(pool.slice());
+            return shuffled.slice(0, count);
+        }
+
+        // Last resort: pick individually with pickRandom, deduplicating.
+        // This is still seeded, because pickRandom routes through
+        // randomness.js. It can produce fewer than `count` results if
+        // the pool is nearly exhausted, which is fine for a generated
+        // character — the trait list just comes out shorter.
+        var chosen = [];
+        var attempts = 0;
+        while (chosen.length < count && attempts < count * 4) {
+            attempts++;
+            var t = window.pickRandom(pool);
+            if (typeof t === 'string' && chosen.indexOf(t) === -1) {
+                chosen.push(t);
+            }
+        }
+        return chosen;
+    }
+
+    // =========================================================================
+    // 4. LOCATION RESOLUTION
     // =========================================================================
 
     /**
@@ -283,7 +373,7 @@
     }
 
     // =========================================================================
-    // 4. AGE
+    // 5. AGE
     // =========================================================================
 
     function _generateAge() {
@@ -306,7 +396,7 @@
     }
 
     // =========================================================================
-    // 5. NAME AND SURNAME
+    // 6. NAME AND SURNAME
     // =========================================================================
 
     function _generateGivenName(countryId, gender) {
@@ -360,7 +450,7 @@
     }
 
     // =========================================================================
-    // 6. RELIGION
+    // 7. RELIGION
     // =========================================================================
 
     /**
@@ -401,7 +491,7 @@
     }
 
     // =========================================================================
-    // 7. CULTURE AND APPEARANCE
+    // 8. CULTURE AND APPEARANCE
     // =========================================================================
 
     function _resolveCultureForLocation(locationId) {
@@ -426,7 +516,7 @@
     }
 
     // =========================================================================
-    // 8. PROFESSION
+    // 9. PROFESSION
     // =========================================================================
 
     /**
@@ -482,7 +572,7 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC ENTRY POINT
+    // 10. PUBLIC ENTRY POINT
     // =========================================================================
 
     /**
@@ -527,7 +617,11 @@
         if (age === null) age = _generateAge();
         var birthYear = currentYear - age;
 
-        // 3. Birthplace
+        // 3. Traits — 1..3 distinct from the canonical vocabulary.
+        //    Absence of the vocabulary yields []. Not an error.
+        var traits = _selectTraits();
+
+        // 4. Birthplace
         var birthplaceId = null;
         if (_hasId(countryIdResult.value)) {
             var specified = window.getPlaceById(countryIdResult.value);
@@ -542,7 +636,7 @@
             if (birthplace) birthplaceId = birthplace.id;
         }
 
-        // 4. Country resolution for cultural context
+        // 5. Country resolution for cultural context
         var countryId = null;
         if (_hasId(birthplaceId)) {
             var country = _getCountryFromLocation(birthplaceId);
@@ -553,7 +647,7 @@
             if (randomCountry) countryId = randomCountry.id;
         }
 
-        // 5. Given name
+        // 6. Given name
         var name = _generateGivenName(countryId, gender);
         if (!name) {
             return {
@@ -562,11 +656,11 @@
             };
         }
 
-        // 6. Surname
+        // 7. Surname
         var surname = _generateSurname(countryId, gender);
         var surnameSource = _surnameSourceFor(surname, countryId);
 
-        // 7. Religion
+        // 8. Religion
         var religionId = null;
         if (_hasId(religionIdResult.value)) {
             religionId = religionIdResult.value;
@@ -574,24 +668,25 @@
             religionId = _selectReligion(birthplaceId);
         }
 
-        // 8. Culture and appearance
+        // 9. Culture and appearance
         var cultureId = _resolveCultureForLocation(birthplaceId);
         var appearance = _generateAppearance(cultureId, gender);
 
-        // 9. Profession
+        // 10. Profession
         var professions = [];
         if (options.assignProfession !== false) {
             var profession = _selectProfession(age, birthYear, currentYear, gender);
             if (profession) professions.push(profession);
         }
 
-        // 10. Assemble
+        // 11. Assemble
         var data = {
             name: name,
             surname: surname,
             surnameSource: surnameSource,
             gender: gender,
             attraction: DEFAULT_ATTRACTION,
+            traits: traits,
             birthYear: birthYear,
             isDeceased: false,
             isLegitimate: true,
@@ -612,7 +707,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.generateRandomCharacterData = generateRandomCharacterData;
