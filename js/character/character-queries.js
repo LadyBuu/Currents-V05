@@ -14,6 +14,8 @@
  *   - Location-scoped character lookups
  *   - Whole-collection defensive projection
  *   - Age-range filter
+ *   - Move history projection (canonical read for the location domain)
+ *   - getCharacterById alias (matches the accessor and shim names)
  *
  * OUT OF SCOPE:
  *   - Family graph semantics         -> family-queries.js
@@ -27,6 +29,18 @@
  *   - Presentation                   -> character-ui-list.js, modals
  *   - Mutation                       -> character-commands.js
  *   - Persistence                    -> storage.js
+ *
+ * NAME ALIASES:
+ *   getCharacter(id) and getCharacterById(id) are the same function.
+ *   getCharacter matches CharacterState's canonical read API.
+ *   getCharacterById matches accessors.js and the character-system.js
+ *   shim. Both names are exported here so callers that reach for either
+ *   convention do not have to know which one is "canonical". They are
+ *   not different operations.
+ *
+ *   Similarly, window.getCharacterById (from accessors.js / shim) reads
+ *   the same underlying projection through CharacterState. The three
+ *   names all resolve to the same read.
  *
  * FAMILY DELEGATION:
  *   Family queries delegate to FamilyQueries when it is loaded. The
@@ -70,40 +84,36 @@
  *   will. Resolution belongs to world.js, which owns the canonical
  *   place-lookup, hierarchy walk, and current-location resolution
  *   (including the character.currentLocationId override and the
- *   moves-based fallback). Baking a resolved display string into the
- *   summary would force one policy choice (e.g. "the place's own name"
- *   vs "the country ancestor" vs "the full breadcrumb") on every
- *   consumer, and would couple this read layer to the location domain —
- *   both of which are out of scope per the module header.
+ *   moves-based fallback). Consumers that need to display a character's
+ *   location MUST use locationId and resolve through world.js. See the
+ *   full resolution pattern in the character-ui-list.js LOCATION
+ *   RESOLUTION section.
  *
- *   Consumers that need to display a character's location MUST use
- *   locationId (below) and resolve through world.js:
+ * MOVE HISTORY:
+ *   CharacterState._project now exposes `moves` as a defensive clone of
+ *   the character's move array. getMoveHistory(characterId) returns that
+ *   same array. This is the canonical read for the location domain.
  *
- *       var summary = CharacterQueries.getCharacterSummary(id);
- *       if (!summary) return;
+ *   CharacterQueries does NOT own move records — those are character-
+ *   owned and written only by CharacterCommands.updateCharacterFields
+ *   (via LocationCommands.recordMove). It reads them from the projection
+ *   and returns them. Mutating the returned array does NOT affect
+ *   canonical data.
  *
- *       var place = world.getCurrentPlace(
- *           CharacterState.getCharacter(summary.id)
- *       );
- *       var display = place
- *           ? place.displayName
- *           : (summary.locationId ? 'Unknown location' : 'No location');
+ *   Location domain contract: getMoveHistory is required at load time
+ *   by location-queries.js, location-movement.js, and location-view-
+ *   models.js. It returns an array of move records (see character-
+ *   state.js's _cloneMoves for the exact shape: year, locationId,
+ *   locationName, note, fromLocationId, fromLocationName, isBirthMove,
+ *   timestamp). An empty array means "no moves recorded," never
+ *   "character not found" — a missing character returns null.
  *
- *   `summary.locationId` is the raw currentLocationId, exactly as stored
- *   on the character record. It may be a dangling reference (a place
- *   that once existed and has since been deleted). Consumers who need
- *   to distinguish "no location recorded" from "recorded location
- *   missing" check locationId against the resolved place: if locationId
- *   is non-null but the resolved place is null, the reference is
- *   dangling. This matches world.js's DANGING LOCATION REFERENCES
- *   contract.
- *
- *   A future presentation-layer module (e.g. character-presentation.js)
- *   may add a `getCharacterLocationDisplay(characterId)` helper that
- *   centralizes the resolution. Until that module exists, every consumer
- *   resolves through world.js directly. Do NOT re-introduce a fabricated
- *   `location` string in the summary — that was the exact bug this
- *   header section exists to prevent.
+ * getCharactersAtLocation:
+ *   Convenience wrapper over getCharactersInLocations([locationId])
+ *   with optional filtering. Required at load time by
+ *   location-view-models.js (used in buildBulkMoveModel). Exposed here
+ *   rather than as a world.js query because it operates purely on
+ *   character projections.
  *
  * TRAITS:
  *   getCharacterSummary.traits and getCharacterFacts.traits are fresh
@@ -116,10 +126,6 @@
  *     facts   — for cross-domain rules and calculations
  *               (jealousy-queries, affair-queries, settlement)
  *
- *   No accessor is added here for individual traits (e.g. hasTrait) —
- *   the field is exposed as an array and callers use indexOf. That
- *   matches how professions and rankAssignments are exposed.
- *
  * DEATH CAUSE:
  *   Both projections expose the death information as two fields:
  *
@@ -129,15 +135,7 @@
  *     deathCauseDetail  free-text detail ('Consumption', 'Treason',
  *                       'Old age'), or null
  *
- *   Both fields are null for living characters. Callers that need only
- *   the category can ignore the detail; callers that need the specific
- *   cause ('Consumption') read the detail.
- *
- *   The character record carries both fields (CharacterState._project
- *   also exposes them). getCharacterSummary omitted deathCauseDetail
- *   in an earlier revision, which meant any UI showing a deceased
- *   character could not distinguish the category from the detail.
- *   That gap was closed in Phase 1.3.
+ *   Both fields are null for living characters.
  *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
@@ -174,21 +172,33 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Header LOCATION DISPLAY section added. The section explicitly
- *       documents that getCharacterSummary.location is a stable shape
- *       placeholder that is always null, that this module does not
- *       resolve location display strings, and that consumers must
- *       resolve via world.js using locationId. The section exists to
- *       prevent a future contributor from "fixing" the always-null
- *       field by fabricating a display string inside this module.
- *     - Inline comment on the `location` field expanded to match the
- *       header.
- *     - Added explicit out-of-scope entry: "Location semantics and
- *       resolution -> world.js".
- *     - DEPENDENCIES section clarified: world.js is NOT a dependency
- *       of this module.
- *     - No behavioural change. Every function's signature, return
- *       shape, and runtime behaviour are unchanged.
+ *     - Added getMoveHistory(characterId). Canonical read for the
+ *       location domain. Reads character.moves off the projection
+ *       (populated by CharacterState._project since the character-state
+ *       fix that added moves to the projection). Returns a defensive
+ *       clone. Required at load time by location-queries.js,
+ *       location-movement.js, and location-view-models.js.
+ *     - Added getCharactersAtLocation(locationId, options). Convenience
+ *       wrapper over getCharactersInLocations with an aliveOnly filter.
+ *       Required at load time by location-view-models.js.
+ *     - Added getCharacterById(id) as an alias of getCharacter(id).
+ *       The accessor layer and character-system.js shim both use the
+ *       "ById" form; consumers reaching for either convention now work.
+ *       Required at load time by location-queries.js,
+ *       location-movement.js, location-view-models.js, and
+ *       location-commands.js.
+ *     - LOCATION DISPLAY section updated to reference the correct
+ *       resolution pattern now that character-ui-list.js resolves
+ *       through world.getCurrentPlace().
+ *     - Header MOVE HISTORY and getCharactersAtLocation sections added.
+ *     - DEPENDENCIES unchanged. No new external dependency added —
+ *       every new function reads only from the existing projection and
+ *       from the existing time.js helpers.
+ *     - No behavioural change to any existing function.
+ *   Previous revision:
+ *     - LOCATION DISPLAY section added. Documented that
+ *       getCharacterSummary.location is a stable shape placeholder that
+ *       is always null.
  *   Previous revision (Phase 1.3):
  *     - getCharacterSummary now exposes deathCauseDetail.
  *     - getCharacterFacts now exposes deathCause and deathCauseDetail.
@@ -265,6 +275,35 @@
         return projection.traits.slice();
     }
 
+    /**
+     * Returns a defensive copy of the moves array from a character
+     * projection. The projection's moves are already cloned by
+     * CharacterState._project, so this is a second-level clone — cheap
+     * and ensures callers cannot mutate even the projection's copy.
+     *
+     * Records are cloned field-by-field using the canonical move shape
+     * (see character-state.js::_cloneMoves).
+     */
+    function _copyMoves(projection) {
+        if (!projection || !Array.isArray(projection.moves)) return [];
+        var out = [];
+        for (var i = 0; i < projection.moves.length; i++) {
+            var m = projection.moves[i];
+            if (!m || typeof m !== 'object') continue;
+            out.push({
+                year: _isMissing(m.year) ? null : m.year,
+                locationId: _isMissing(m.locationId) ? null : m.locationId,
+                locationName: _isMissing(m.locationName) ? null : m.locationName,
+                note: _isMissing(m.note) ? null : m.note,
+                fromLocationId: _isMissing(m.fromLocationId) ? null : m.fromLocationId,
+                fromLocationName: _isMissing(m.fromLocationName) ? null : m.fromLocationName,
+                isBirthMove: m.isBirthMove === true,
+                timestamp: _isMissing(m.timestamp) ? null : m.timestamp
+            });
+        }
+        return out;
+    }
+
     function _validateStringArgument(value, name, allowMissing) {
         if (_isMissing(value)) {
             if (allowMissing) return { ok: true, value: null };
@@ -326,6 +365,17 @@
         return _readCharacter(id);
     }
 
+    /**
+     * Alias of getCharacter(id).
+     *
+     * The accessor layer (accessors.js) and the character-system.js shim
+     * both expose "getCharacterById". Consumers reaching for either
+     * convention use this name. Same operation, same return shape.
+     */
+    function getCharacterById(id) {
+        return getCharacter(id);
+    }
+
     function getCharacterDisplayName(id) {
         var projection = _readCharacter(id);
         if (!projection) return null;
@@ -355,6 +405,37 @@
             }
         }
         return out;
+    }
+
+    /**
+     * Returns all characters whose currentLocationId matches `locationId`,
+     * optionally filtered to living characters.
+     *
+     * @param {string} locationId
+     * @param {Object} [options]
+     * @param {boolean} [options.aliveOnly] - default false
+     * @returns {Array}
+     *
+     * Convenience wrapper over getCharactersInLocations. The location
+     * domain (location-view-models.js::buildBulkMoveModel) is the
+     * primary consumer. Reads only from the projection; no external
+     * dependency added.
+     */
+    function getCharactersAtLocation(locationId, options) {
+        if (!_hasId(locationId)) return [];
+        options = options || {};
+
+        var chars = getCharactersInLocations([locationId]);
+
+        if (options.aliveOnly === true) {
+            var filtered = [];
+            for (var i = 0; i < chars.length; i++) {
+                if (chars[i].isDeceased !== true) filtered.push(chars[i]);
+            }
+            return filtered;
+        }
+
+        return chars;
     }
 
     // =========================================================================
@@ -405,22 +486,10 @@
     // =========================================================================
     // 5. RANK DISPLAY RESOLUTION
     // =========================================================================
-    //
-    // getCharacterSummary.rank must be a human-readable string. The
-    // canonical source is:
-    //   1. CharacterCommands.getRankAssignment(characterId, activeRankId)
-    //      → yields the assignment record (customTitle, number.display)
-    //   2. accessors.getRankById(activeRankId) → yields the rank record
-    //      (name, symbol) for the fallback display string.
-    //
-    // If neither layer is available, rank is null. This is deliberate:
-    // the summary must never fabricate a rank.
 
     function _resolveRankDisplay(characterId, activeRankId) {
         if (!_hasId(characterId) || !_hasId(activeRankId)) return null;
 
-        // Prefer the assignment's custom title / display number, because
-        // that is what the character has actually been recorded as.
         if (typeof window.CharacterCommands !== 'undefined'
             && typeof window.CharacterCommands.getRankAssignment === 'function') {
             var assignment = window.CharacterCommands.getRankAssignment(
@@ -439,7 +508,6 @@
             }
         }
 
-        // Fallback: read the rank record itself.
         if (typeof window.getRankById === 'function') {
             var rank = window.getRankById(activeRankId);
             if (rank && typeof rank.name === 'string' && rank.name.length > 0) {
@@ -532,19 +600,10 @@
             isDeceased: projection.isDeceased === true,
             traits: _copyTraits(projection),
 
-            // STABLE SHAPE PLACEHOLDER. Always null. This module does not
-            // resolve location display strings. Consumers use locationId
-            // and resolve through world.js. See LOCATION DISPLAY in the
-            // module header for the resolution pattern. Do NOT populate
-            // this field with a fabricated string here — that couples
-            // this read layer to the location domain and forces a
-            // display-policy choice on every consumer.
+            // STABLE SHAPE PLACEHOLDER. Always null. Consumers use
+            // locationId and resolve through world.js. See
+            // LOCATION DISPLAY in the module header.
             location: null,
-
-            // Raw currentLocationId from the character record. May be a
-            // dangling reference (a place that once existed and has since
-            // been deleted); check against world.getCurrentPlace() to
-            // distinguish "no location" from "recorded location missing".
             locationId: projection.currentLocationId || null,
 
             rank: rankDisplay,
@@ -612,11 +671,40 @@
     }
 
     // =========================================================================
-    // 8. FAMILY COMPATIBILITY DELEGATES
+    // 8. MOVE HISTORY
     // =========================================================================
     //
-    // These return SIMPLIFIED shapes (ids or role-resolved ids), not
-    // FamilyQueries' edge wrappers. See the SHAPE NOTE in the header.
+    // Canonical read for the location domain. Reads character.moves from
+    // the projection (populated by CharacterState._project since the fix
+    // that added moves to the projection).
+    //
+    // Returns:
+    //   Array    move records, one per recorded move (chronological order
+    //            as written by CharacterCommands.updateCharacterFields —
+    //            LocationCommands.recordMove appends, so the array is
+    //            ordered oldest-first)
+    //   null     character not found
+    //   []       character exists, no moves recorded
+    //
+    // Every record has the canonical shape described in the header's
+    // MOVE HISTORY section. Mutating the returned array does not affect
+    // canonical data.
+    //
+    // Required at load time by:
+    //   - location-queries.js
+    //   - location-movement.js
+    //   - location-view-models.js
+
+    function getMoveHistory(characterId) {
+        if (!_hasId(characterId)) return null;
+        var projection = _readCharacter(characterId);
+        if (!projection) return null;
+        return _copyMoves(projection);
+    }
+
+    // =========================================================================
+    // 9. FAMILY COMPATIBILITY DELEGATES
+    // =========================================================================
 
     function _familyAvailable() {
         return typeof window.FamilyQueries !== 'undefined';
@@ -696,24 +784,6 @@
         return window.FamilyQueries.classifyKinship(charId1, charId2);
     }
 
-    /**
-     * Numeric kinship closeness between two characters.
-     *
-     * Returns:
-     *   0   self
-     *   1   parent / child
-     *   2   sibling / grandparent / grandchild
-     *   3   aunt/uncle / niece/nephew
-     *   4   first cousin
-     *   5+  more distant cousins
-     *   99  unrelated
-     *   null for missing ids or when FamilyQueries is unavailable
-     *
-     * NOTE: do NOT delegate to FamilyQueries.isBloodRelated — that
-     * returns a boolean. This function returns a number, and the two
-     * names are deliberately different because the return types are
-     * different.
-     */
     function getCharacterKinshipCloseness(charId1, charId2) {
         if (!_hasId(charId1) || !_hasId(charId2)) return null;
         if (!_familyAvailable()) return null;
@@ -722,7 +792,7 @@
     }
 
     // =========================================================================
-    // 9. PROFESSION COMPATIBILITY DELEGATES
+    // 10. PROFESSION COMPATIBILITY DELEGATES
     // =========================================================================
 
     function getCharacterProfessions(id) {
@@ -743,7 +813,7 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 11. EXPORTS
     // =========================================================================
 
     window.CharacterQueries = {
@@ -752,9 +822,11 @@
 
         getAllCharacters: getAllCharacters,
         getCharacter: getCharacter,
+        getCharacterById: getCharacterById,
         getCharacterDisplayName: getCharacterDisplayName,
         getCurrentLocationId: getCurrentLocationId,
         getCharactersInLocations: getCharactersInLocations,
+        getCharactersAtLocation: getCharactersAtLocation,
 
         getCharactersByAgeRange: getCharactersByAgeRange,
 
@@ -762,6 +834,8 @@
         getCharacterFacts: getCharacterFacts,
         getAllCharacterFacts: getAllCharacterFacts,
         getCharacterIdentityFacts: getCharacterIdentityFacts,
+
+        getMoveHistory: getMoveHistory,
 
         getCharacterChildren: getCharacterChildren,
         getCharacterParents: getCharacterParents,
