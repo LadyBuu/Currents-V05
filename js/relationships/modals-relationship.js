@@ -1,5 +1,9 @@
 /**
- * modals-relationship.js
+ * =============================================================================
+ * STILL WATERS - UNIFIED RELATIONSHIP MODAL (modals-relationship.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/modals-relationship.js
  *
  * Unified relationship creation modal.
  *
@@ -19,25 +23,99 @@
  *     back to the caller's onSuccess)
  *   - family edges (that is modals-family territory)
  *
- * Load order: after relationship-types.js, relationship-ui-metadata.js,
- * romance-commands.js, friendship-commands.js, rivalry-commands.js,
- * professional-commands.js.
+ * DISPATCH TABLE
+ *
+ *   Every archetype maps to exactly one command. The table below is
+ *   authoritative; if an archetype is added to RELATIONSHIP_ARCHETYPES
+ *   without a case here, the modal returns UNSUPPORTED_TYPE and the
+ *   caller sees a toast.
+ *
+ *     casual_dating      → RomanceCommands.startCasualDating
+ *     one_night_stand    → RomanceCommands.startOneNightStand
+ *     committed          → RomanceCommands.startCommittedRelationship
+ *     friendship         → FriendshipCommands.createFriendship
+ *     rivalry            → RivalryCommands.createRivalry
+ *     enmity             → RivalryCommands.createEnmity
+ *     apprenticeship     → ApprenticeshipCommands.createApprenticeship
+ *                          (NOT ProfessionalCommands — that module owns
+ *                          the professional EDGE primitive, not the
+ *                          apprenticeship LIFECYCLE)
+ *     mastership         → ProfessionalCommands.createMastership
+ *     employment         → ProfessionalCommands.createEmployment
+ *     guild_membership   → ProfessionalCommands.createGuildMembership
+ *
+ *   Ownership boundary: ProfessionalCommands owns the professional
+ *   edge primitive and the mastership/employment/guild commands. The
+ *   apprenticeship lifecycle — creation, progression, completion,
+ *   termination — lives in ApprenticeshipCommands. This modal must not
+ *   bypass that boundary.
+ *
+ * DEPENDENCIES (must be loaded first):
+ *   - relationship-types.js           (RELATIONSHIP_ARCHETYPES,
+ *                                      RELATIONSHIP_ATTRIBUTES)
+ *   - relationship-ui-metadata.js     (RelationshipUI)
+ *   - modals-core.js                  (openModal, closeTopModal)
+ *   - formatting.js                   (_escapeHtml)
+ *   - ui.js                           (_showToast)
+ *   - icons.js                        (Icons via _getIcon)
+ *   - accessors.js                    (getCharacterById,
+ *                                      getCurrentLocation)
+ *   - time.js                         (getCurrentYearSafe,
+ *                                      calculateAge)
+ *   - romance-commands.js             (RomanceCommands)
+ *   - friendship-commands.js          (FriendshipCommands)
+ *   - rivalry-commands.js             (RivalryCommands)
+ *   - professional-commands.js        (ProfessionalCommands)
+ *   - apprenticeship-commands.js      (ApprenticeshipCommands) —
+ *                                      required because the
+ *                                      apprenticeship dispatch calls it
+ *
+ * =============================================================================
  */
 
 (function() {
     'use strict';
 
+    // =========================================================================
+    // 1. HARD DEPENDENCY CHECK
+    // =========================================================================
+
+    var REQUIRED = [
+        ['RELATIONSHIP_ARCHETYPES',  'relationship-types.js'],
+        ['RELATIONSHIP_ATTRIBUTES',  'relationship-types.js'],
+        ['RelationshipUI',           'relationship-ui-metadata.js'],
+        ['openModal',                'modals-core.js'],
+        ['closeTopModal',            'modals-core.js'],
+        ['_escapeHtml',              'formatting.js'],
+        ['_showToast',               'ui.js'],
+        ['Icons',                    'icons.js'],
+        ['getCharacterById',         'accessors.js'],
+        ['getCurrentLocation',       'accessors.js'],
+        ['getCurrentYearSafe',       'time.js'],
+        ['calculateAge',             'time.js'],
+        ['RomanceCommands',          'romance-commands.js'],
+        ['FriendshipCommands',       'friendship-commands.js'],
+        ['RivalryCommands',          'rivalry-commands.js'],
+        ['ProfessionalCommands',     'professional-commands.js'],
+        ['ApprenticeshipCommands',   'apprenticeship-commands.js']
+    ];
+
+    for (var _i = 0; _i < REQUIRED.length; _i++) {
+        if (typeof window[REQUIRED[_i][0]] === 'undefined') {
+            throw new Error(
+                'modals-relationship.js requires ' + REQUIRED[_i][1] +
+                ' (' + REQUIRED[_i][0] + ').'
+            );
+        }
+    }
+
     var A = window.RELATIONSHIP_ARCHETYPES;
     var ATTR = window.RELATIONSHIP_ATTRIBUTES;
     var UI = window.RelationshipUI;
 
-    if (!A || !ATTR || !UI) {
-        throw new Error('modals-relationship.js: relationship-types.js and relationship-ui-metadata.js must load first');
-    }
-
-    // -------------------------------------------------------------------------
-    // UI HELPERS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 2. UI HELPERS
+    // =========================================================================
 
     function _icon(name) {
         if (window.Icons && window.Icons[name]) return window.Icons[name];
@@ -45,71 +123,48 @@
         return '';
     }
 
-    function _escape(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+    function _esc(str) {
+        return window._escapeHtml(str == null ? '' : String(str));
     }
 
     function _toast(msg, type) {
-        if (typeof window.showToast === 'function') window.showToast(msg, type);
-        else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
+        window._showToast(msg, type);
     }
 
     function _openModal(opts) {
-        if (typeof window.openModal !== 'function') {
-            throw new Error('modals-relationship.js: openModal required');
-        }
         return window.openModal(opts);
     }
 
     function _closeModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
+        window.closeTopModal();
     }
 
     function _getCharacter(id) {
-        if (typeof window.getCharacterById !== 'function') {
-            throw new Error('modals-relationship.js: getCharacterById required');
-        }
         return window.getCharacterById(id);
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('modals-relationship.js: getCurrentYearSafe required');
-        }
         return window.getCurrentYearSafe();
     }
 
     function _age(character) {
         if (!character) return null;
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(
-                character.birthYear,
-                character.isDeceased,
-                character.deathYear
-            );
-        }
-        return null;
+        return window.calculateAge(
+            character.birthYear,
+            character.isDeceased === true,
+            character.deathYear
+        );
     }
 
     function _location(character) {
         if (!character) return null;
-        if (typeof window.getCurrentLocation === 'function') {
-            var loc = window.getCurrentLocation(character);
-            return (loc === undefined) ? null : loc;
-        }
-        return null;
+        var loc = window.getCurrentLocation(character);
+        return (loc === undefined) ? null : loc;
     }
 
-    // -------------------------------------------------------------------------
-    // CATEGORIES
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 3. CATEGORIES FOR THE TYPE PICKER
+    // =========================================================================
 
     var CATEGORIES = [
         {
@@ -135,17 +190,17 @@
             var catName = UI.categoryName(cat.key);
             if (catName === null) continue;
 
-            html += '<optgroup label="' + _escape(catName) + '">';
+            html += '<optgroup label="' + _esc(catName) + '">';
             for (var i = 0; i < cat.types.length; i++) {
                 var t = cat.types[i];
                 var name = UI.archetypeName(t);
                 if (name === null) continue;
                 var iconName = UI.archetypeIcon(t);
                 var iconSvg = iconName ? _icon(iconName) : '';
-                html += '<option value="' + _escape(t) + '"' +
+                html += '<option value="' + _esc(t) + '"' +
                         (first ? ' selected' : '') + '>' +
                         (iconSvg ? iconSvg + ' ' : '') +
-                        _escape(name) +
+                        _esc(name) +
                         '</option>';
                 first = false;
             }
@@ -182,109 +237,109 @@
             var iconName = UI.attributeIcon(a);
             var iconSvg = iconName ? _icon(iconName) : '';
             html += '<label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:0.65rem;cursor:pointer;">' +
-                '<input type="checkbox" class="attr-checkbox" value="' + _escape(a) + '">' +
+                '<input type="checkbox" class="attr-checkbox" value="' + _esc(a) + '">' +
                 (iconSvg ? iconSvg + ' ' : '') +
-                _escape(name) +
+                _esc(name) +
             '</label>';
         }
         return html;
     }
 
-    // -------------------------------------------------------------------------
-    // DISPATCH
-    // -------------------------------------------------------------------------
-
-    function _requireCommand(name, label) {
-        if (typeof window[name] !== 'object' || window[name] === null) {
-            throw new Error('modals-relationship.js: ' + label + ' required');
-        }
-        return window[name];
-    }
+    // =========================================================================
+    // 4. DISPATCH
+    // =========================================================================
+    //
+    // Every archetype maps to exactly one command. The dispatch is
+    // where the ownership boundary is enforced:
+    //
+    //   - ProfessionalCommands owns the professional EDGE primitive and
+    //     the mastership / employment / guild commands.
+    //
+    //   - ApprenticeshipCommands owns the apprenticeship LIFECYCLE.
+    //     ProfessionalCommands.createEdge is the primitive that
+    //     ApprenticeshipCommands uses internally, but the modal must
+    //     NOT call ProfessionalCommands.createEdge for apprenticeship
+    //     creation — that would bypass the apprenticeship lifecycle
+    //     (profession record, teaching history, etc.).
 
     function _dispatchCreate(type, aId, bId, form) {
         switch (type) {
             case A.CASUAL_DATING:
-                return _requireCommand('RomanceCommands', 'RomanceCommands')
-                    .startCasualDating(aId, bId, {
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.RomanceCommands.startCasualDating(aId, bId, {
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             case A.ONE_NIGHT_STAND:
-                return _requireCommand('RomanceCommands', 'RomanceCommands')
-                    .startOneNightStand(aId, bId, {
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.RomanceCommands.startOneNightStand(aId, bId, {
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             case A.COMMITTED:
-                return _requireCommand('RomanceCommands', 'RomanceCommands')
-                    .startCommittedRelationship(aId, bId, {
-                        startYear: form.startYear,
-                        attributes: form.attributes || [],
-                        isScandalous: (form.attributes || []).indexOf(ATTR.SCANDALOUS) !== -1,
-                        isSecret: (form.attributes || []).indexOf(ATTR.SECRET) !== -1,
-                        notes: form.notes
-                    });
+                return window.RomanceCommands.startCommittedRelationship(aId, bId, {
+                    startYear: form.startYear,
+                    attributes: form.attributes || [],
+                    isScandalous: (form.attributes || []).indexOf(ATTR.SCANDALOUS) !== -1,
+                    isSecret: (form.attributes || []).indexOf(ATTR.SECRET) !== -1,
+                    notes: form.notes
+                });
 
             case A.FRIENDSHIP:
-                return _requireCommand('FriendshipCommands', 'FriendshipCommands')
-                    .createFriendship(aId, bId, {
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.FriendshipCommands.createFriendship(aId, bId, {
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             case A.RIVALRY:
-                return _requireCommand('RivalryCommands', 'RivalryCommands')
-                    .createRivalry(aId, bId, {
-                        startYear: form.startYear
-                    });
+                return window.RivalryCommands.createRivalry(aId, bId, {
+                    startYear: form.startYear
+                });
 
             case A.ENMITY:
-                return _requireCommand('RivalryCommands', 'RivalryCommands')
-                    .createEnmity(aId, bId, {
-                        startYear: form.startYear
-                    });
+                return window.RivalryCommands.createEnmity(aId, bId, {
+                    startYear: form.startYear
+                });
 
             case A.APPRENTICESHIP:
+                // Apprenticeship lifecycle lives on ApprenticeshipCommands,
+                // not ProfessionalCommands. The command requires roleId.
                 if (!form.roleId) {
                     return {
                         success: false,
                         code: 'MISSING_ROLE',
-                        message: 'roleId required for apprenticeship'
+                        message: 'roleId is required to create an apprenticeship'
                     };
                 }
-                return _requireCommand('ProfessionalCommands', 'ProfessionalCommands')
-                    .createApprenticeship(aId, bId, {
-                        roleId: form.roleId,
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.ApprenticeshipCommands.createApprenticeship({
+                    masterId: aId,
+                    apprenticeId: bId,
+                    roleId: form.roleId,
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             case A.MASTERSHIP:
-                return _requireCommand('ProfessionalCommands', 'ProfessionalCommands')
-                    .createMastership(aId, bId, {
-                        roleId: form.roleId,
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.ProfessionalCommands.createMastership(aId, bId, {
+                    roleId: form.roleId,
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             case A.EMPLOYMENT:
-                return _requireCommand('ProfessionalCommands', 'ProfessionalCommands')
-                    .createEmployment(aId, bId, {
-                        role: form.role,
-                        wages: form.wages,
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.ProfessionalCommands.createEmployment(aId, bId, {
+                    role: form.role,
+                    wages: form.wages,
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             case A.GUILD_MEMBERSHIP:
-                return _requireCommand('ProfessionalCommands', 'ProfessionalCommands')
-                    .createGuildMembership(aId, bId, {
-                        rank: form.rank,
-                        startYear: form.startYear,
-                        notes: form.notes
-                    });
+                return window.ProfessionalCommands.createGuildMembership(aId, bId, {
+                    rank: form.rank,
+                    startYear: form.startYear,
+                    notes: form.notes
+                });
 
             default:
                 return {
@@ -307,9 +362,9 @@
         return type === A.GUILD_MEMBERSHIP;
     }
 
-    // -------------------------------------------------------------------------
-    // PUBLIC ENTRY POINT
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 5. PUBLIC ENTRY POINT
+    // =========================================================================
 
     /**
      * openRelationshipModal(char1, char2, onSuccess, context)
@@ -318,6 +373,9 @@
      * least { id, name, surname, birthYear, isDeceased, deathYear }.
      * The modal never holds a live reference; it reads by id when it
      * needs fresh data.
+     *
+     * context (optional):
+     *   { defaultType: <archetype id> }
      */
     function openRelationshipModal(char1, char2, onSuccess, context) {
         context = context || {};
@@ -347,15 +405,15 @@
             '<div style="background:var(--bg3);padding:12px;border-radius:8px;margin-bottom:16px;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">' +
                     '<div>' +
-                        '<strong>' + _escape(char1.name) + ' ' + _escape(char1.surname || '') + '</strong>' +
+                        '<strong>' + _esc(char1.name) + ' ' + _esc(char1.surname || '') + '</strong>' +
                         (age1 !== null ? ' <span style="color:var(--dim);font-size:0.65rem;">' + age1 + 'y' +
-                            (loc1 ? ' · ' + _escape(String(loc1)) : '') + '</span>' : '') +
+                            (loc1 ? ' · ' + _esc(String(loc1)) : '') + '</span>' : '') +
                     '</div>' +
                     '<div style="color:var(--accent);">' + heartIcon + '</div>' +
                     '<div style="text-align:right;">' +
-                        '<strong>' + _escape(char2.name) + ' ' + _escape(char2.surname || '') + '</strong>' +
+                        '<strong>' + _esc(char2.name) + ' ' + _esc(char2.surname || '') + '</strong>' +
                         (age2 !== null ? ' <span style="color:var(--dim);font-size:0.65rem;">' + age2 + 'y' +
-                            (loc2 ? ' · ' + _escape(String(loc2)) : '') + '</span>' : '') +
+                            (loc2 ? ' · ' + _esc(String(loc2)) : '') + '</span>' : '') +
                     '</div>' +
                 '</div>' +
             '</div>' +
@@ -428,7 +486,7 @@
 
                 if (!typeEl || !yearEl) {
                     _toast('Form missing', 'error');
-                    return;
+                    return false;
                 }
 
                 var type = typeEl.value;
@@ -437,7 +495,7 @@
 
                 if (isNaN(startYear)) {
                     _toast('Invalid start year', 'error');
-                    return;
+                    return false;
                 }
 
                 var form = {
@@ -459,7 +517,12 @@
 
                 if (_typeNeedsRoleField(type)) {
                     var roleEl = document.getElementById('relRoleId');
-                    form.roleId = roleEl ? (roleEl.value || '').trim() : '';
+                    var raw = roleEl ? (roleEl.value || '').trim() : '';
+                    if (!raw) {
+                        _toast('Role ID is required for this relationship type', 'error');
+                        return false;
+                    }
+                    form.roleId = raw;
                 }
 
                 if (_typeNeedsEmploymentFields(type)) {
@@ -480,14 +543,16 @@
                 var result = _dispatchCreate(type, char1.id, char2.id, form);
 
                 if (!result || !result.success) {
-                    var msg = (result && result.message) || 'Failed to create relationship';
+                    var msg = (result && (result.message || result.reason)) ||
+                              'Failed to create relationship';
                     _toast(msg, 'error');
-                    return;
+                    return false;
                 }
 
                 _toast('Relationship created', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result);
                 _closeModal();
+                return true;
             }
         });
 
@@ -523,11 +588,17 @@
         }, 50);
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 6. EXPORTS
+    // =========================================================================
 
     window.openRelationshipModal = openRelationshipModal;
     window.openMatchModal = openRelationshipModal;
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = {
+            openRelationshipModal: openRelationshipModal,
+            openMatchModal: openRelationshipModal
+        };
+    }
 })();
