@@ -73,10 +73,31 @@
  *       apprentices             -> ApprenticeshipCommands
  *       isDeleted, deletedAt    -> CharacterDeletionCommands
  *
- *   Projections include traits so cross-domain readers can access them
- *   without reaching into the live record. No index is maintained for
- *   traits; there is currently no consumer that requires one, and the
- *   trait array is small (single-digit entries per character).
+ *   Projections include traits, professions, rankAssignments, education,
+ *   educationHistory, and subjectProgress so cross-domain readers can
+ *   access them without reaching into the live record. No index is
+ *   maintained for any of these; the arrays/objects are small and no
+ *   consumer requires an index.
+ *
+ * PROJECTION CONTRACT (IMPORTANT):
+ *   Every public read returns a defensive projection — a fresh object
+ *   whose nested arrays and objects are cloned. Mutating a projection
+ *   does NOT affect canonical data.
+ *
+ *   The projections are "deep enough" that:
+ *     - `projection.education[institutionId]` is a fresh object whose
+ *       fields are primitives (safe to mutate).
+ *     - `projection.subjectProgress[key]` is a fresh object whose fields
+ *       are primitives (safe to mutate).
+ *     - `projection.professions[i]` is a fresh object whose `specs` and
+ *       `salaryHistory` arrays are cloned (safe to mutate).
+ *     - `projection.rankAssignments[i]` is a fresh object whose `number`
+ *       is a fresh object (safe to mutate).
+ *
+ *   If a caller needs the live reference (authorized mutation code only),
+ *   it calls getLiveCharacterForMutation(id). The leading underscore was
+ *   removed in the Phase 1.1 refactor; the old name is preserved as a
+ *   deprecated alias for one revision.
  *
  * REMOVED FIELDS:
  *   The parent-child compatibility mirrors (motherId, fatherId, children,
@@ -95,7 +116,7 @@
  * READ CONTRACT:
  *   Public reads return defensive projections or IDs. No public read
  *   returns a live canonical character object. Authorized mutation code
- *   calls _getLiveCharacterForMutation(id).
+ *   calls getLiveCharacterForMutation(id).
  *
  * ACCESSOR CACHE CONTRACT:
  *   accessors.js maintains an id -> record cache used by getCharacterById.
@@ -147,10 +168,15 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - traits added to the DOMAIN-OWNED EMBEDDED FIELDS block.
- *     - _project() now includes traits as a defensive copy.
- *     - No index added for traits; no consumer requires one.
+ *   Current revision (Phase 1.1):
+ *     - Renamed _getLiveCharacterForMutation -> getLiveCharacterForMutation.
+ *       The old name is preserved as a deprecated alias.
+ *     - _project now deep-clones `education` and `subjectProgress` via
+ *       _cloneEducation / _cloneSubjectProgress. The previous shallow
+ *       Object.assign leaked nested objects to callers, which made
+ *       CharacterCommands.getEducationRecord / getSubjectProgress return
+ *       live canonical references despite their contract.
+ *     - Header PROJECTION CONTRACT section added.
  *     - No other behavioural change.
  * =============================================================================
  */
@@ -565,8 +591,17 @@
     // =========================================================================
     // 9. INTERNAL LIVE-REFERENCE ACCESS (AUTHORIZED MUTATION ONLY)
     // =========================================================================
+    //
+    // Returns the live canonical object. The caller MUST be authorized
+    // mutation code (character-commands, character-deletion-commands,
+    // character-lifecycle, children-commands, modals-character). Public
+    // readers use the projection functions above.
+    //
+    // The underscore prefix was removed in Phase 1.1. The old name
+    // _getLiveCharacterForMutation is preserved as a deprecated alias
+    // at the bottom of the module for one revision.
 
-    function _getLiveCharacterForMutation(id) {
+    function getLiveCharacterForMutation(id) {
         if (!_hasId(id)) return null;
         return _byId.get(id) || null;
     }
@@ -575,16 +610,16 @@
     // 10. PROJECTION HELPERS
     // =========================================================================
     //
-    // A projection is a shallow, defensive copy of the character for external
+    // A projection is a defensive copy of the character for external
     // consumers. It includes the fields every reader is expected to see:
     // identity, demographics, life/death, location, religion/culture,
     // presentation, and the embedded domain containers that other domains
     // need to read.
     //
-    // The projections are "deep enough": container arrays and objects owned
-    // by the character are copied so a caller cannot mutate canonical state
-    // through a projection. Nested objects inside container elements are
-    // shared by reference — mutating them is a caller bug.
+    // The projections are deep-cloned for domain containers that callers
+    // may mutate (traits, professions, rankAssignments, education,
+    // educationHistory, subjectProgress). Mutating a projection cannot
+    // corrupt canonical state.
 
     function _cloneProfessions(professions) {
         if (!Array.isArray(professions)) return [];
@@ -660,6 +695,91 @@
         return traits.slice();
     }
 
+    /**
+     * Deep-clones the education container.
+     *
+     * education is an object keyed by institutionId. Each value is a
+     * "record" whose fields are primitives. We clone both levels so a
+     * caller can mutate `projection.education[id].enrolledYear` without
+     * corrupting canonical state.
+     *
+     * Unknown keys that are plain objects are cloned field-by-field;
+     * unknown scalar values are copied as-is. This keeps the clone
+     * tolerant of forward-compatible fields added by future refactors.
+     */
+    function _cloneEducation(education) {
+        if (!_isPlainObject(education)) return {};
+        var out = {};
+        var keys = Object.keys(education);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var entry = education[key];
+            if (!_isPlainObject(entry)) {
+                // Preserve non-object entries so the projection accurately
+                // reflects what is stored. A caller inspecting this field
+                // can detect the corruption; the schema layer will
+                // normalise it on next load.
+                out[key] = entry;
+                continue;
+            }
+            var clonedEntry = {};
+            var entryKeys = Object.keys(entry);
+            for (var j = 0; j < entryKeys.length; j++) {
+                var ek = entryKeys[j];
+                var ev = entry[ek];
+                // The known education fields are all primitives, so a
+                // straight copy is a deep-enough clone. Arrays and plain
+                // objects (defensive) get the same treatment as nested
+                // scalars so a future-added array field is not shared.
+                if (Array.isArray(ev)) {
+                    clonedEntry[ek] = ev.slice();
+                } else if (_isPlainObject(ev)) {
+                    clonedEntry[ek] = Object.assign({}, ev);
+                } else {
+                    clonedEntry[ek] = ev;
+                }
+            }
+            out[key] = clonedEntry;
+        }
+        return out;
+    }
+
+    /**
+     * Deep-clones the subjectProgress container.
+     *
+     * subjectProgress is an object keyed by subject key. Each value is a
+     * "progress entry" whose fields are primitives. Same clone depth as
+     * _cloneEducation.
+     */
+    function _cloneSubjectProgress(subjectProgress) {
+        if (!_isPlainObject(subjectProgress)) return {};
+        var out = {};
+        var keys = Object.keys(subjectProgress);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var entry = subjectProgress[key];
+            if (!_isPlainObject(entry)) {
+                out[key] = entry;
+                continue;
+            }
+            var clonedEntry = {};
+            var entryKeys = Object.keys(entry);
+            for (var j = 0; j < entryKeys.length; j++) {
+                var ek = entryKeys[j];
+                var ev = entry[ek];
+                if (Array.isArray(ev)) {
+                    clonedEntry[ek] = ev.slice();
+                } else if (_isPlainObject(ev)) {
+                    clonedEntry[ek] = Object.assign({}, ev);
+                } else {
+                    clonedEntry[ek] = ev;
+                }
+            }
+            out[key] = clonedEntry;
+        }
+        return out;
+    }
+
     function _project(c) {
         if (!c || !_hasId(c.id)) return null;
         return {
@@ -700,18 +820,16 @@
                 ? c.activeRankNumber
                 : null,
 
-            // Education containers. Cloned shallowly: the container itself
-            // is copied, but nested per-institution and per-subject objects
-            // remain shared by reference. Reads are safe; mutation is a bug.
-            education: _isPlainObject(c.education)
-                ? Object.assign({}, c.education)
-                : {},
+            // Education containers. Deep-cloned via _cloneEducation and
+            // _cloneSubjectProgress. Previous revisions used
+            // Object.assign({}, c.education) which shared nested objects
+            // and let callers mutate canonical state through the
+            // projection.
+            education: _cloneEducation(c.education),
             educationHistory: Array.isArray(c.educationHistory)
                 ? c.educationHistory.slice()
                 : [],
-            subjectProgress: _isPlainObject(c.subjectProgress)
-                ? Object.assign({}, c.subjectProgress)
-                : {},
+            subjectProgress: _cloneSubjectProgress(c.subjectProgress),
             isLiterate: c.isLiterate === true,
 
             epithet: _isMissing(c.epithet) ? '' : c.epithet,
@@ -1333,7 +1451,10 @@
         removeCharacter: removeCharacter,
         removeCharacters: removeCharacters,
 
-        _getLiveCharacterForMutation: _getLiveCharacterForMutation,
+        // Authorized mutation-code access to the live canonical object.
+        // The leading underscore was removed in Phase 1.1; the deprecated
+        // alias is installed below for one revision.
+        getLiveCharacterForMutation: getLiveCharacterForMutation,
 
         refresh: refresh,
 
@@ -1357,7 +1478,22 @@
         setSelectedCharacter: setSelectedCharacter,
         hasSelectedCharacter: hasSelectedCharacter,
         clearAdoptionCache: clearAdoptionCache,
-        reset: reset
+        reset: reset,
+
+        // =====================================================================
+        // DEPRECATED ALIASES (Phase 1.1)
+        // =====================================================================
+        //
+        // _getLiveCharacterForMutation was the historical name. It was
+        // renamed to getLiveCharacterForMutation because the leading
+        // underscore implied the function was private when in fact every
+        // domain command calls it. The old name is kept as a deprecated
+        // alias for one revision.
+        //
+        // Remove this alias in the follow-up commit once every caller
+        // listed in the Phase 1.1 checklist has migrated.
+
+        _getLiveCharacterForMutation: getLiveCharacterForMutation
     };
 
     if (typeof module !== 'undefined' && module.exports) {
