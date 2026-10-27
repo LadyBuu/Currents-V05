@@ -120,33 +120,26 @@
  *     3. Options shape. CharacterCommands accepts a `previousSurname`
  *        override; this module does too but via a different path.
  *
- *   Rather than duplicate further, the module now delegates to
- *   CharacterCommands.recordCharacterSurnameChange for the character-
- *   field write, and re-implements ONLY the marriage-surname atomicity
- *   wrapper and the name-list operations. The single-character
- *   recordSurnameChange becomes a thin wrapper that:
- *     - validates the year (explicit, not defaulted)
- *     - calls CharacterCommands.recordCharacterSurnameChange
- *     - invalidates the name cache
- *     - commits the change event
- *     - returns the shape this module's callers expect
+ *   This module does NOT delegate to
+ *   CharacterCommands.recordCharacterSurnameChange, because that command
+ *   is a superset (accepts missing year, defaults to current year, does
+ *   not enforce the strict pre-birth check this module applies) and
+ *   delegating to it would introduce a divergence in validation
+ *   behaviour — a caller of this module would suddenly get a surname
+ *   change approved that this module's contract says must be rejected.
  *
- *   This preserves the single-owner-per-concept rule: CharacterCommands
- *   owns the character-record write; NameCommands owns the name-domain
- *   orchestration.
- *
- *   The character module's recordCharacterSurnameChange is a superset:
- *   it accepts an optional `year` (defaults to current year). This
- *   module deliberately requires the year for UI-driven flows so the
- *   user must state the year of a surname change rather than silently
- *   getting the wall-clock year. The delegation preserves this
- *   distinction by rejecting missing years BEFORE calling the character
- *   command.
+ *   Instead, both modules write via the same underlying channel
+ *   (CharacterCommands.updateCharacter), and this module's
+ *   _appendSurnameChange is the single canonical helper for the
+ *   name-domain-driven write. The character module keeps its own
+ *   recordCharacterSurnameChange for its own callers (modal-character,
+ *   character-creation). Both implementations are correct for their
+ *   respective contracts; consolidation is a future refactor once the
+ *   surname-command semantics settle.
  *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:          getCharacterById
- *   - character-commands.js: CharacterCommands (updateCharacter,
- *                            recordCharacterSurnameChange)
+ *   - character-commands.js: CharacterCommands (updateCharacter)
  *   - name-state.js:         NamesState
  *   - name-rules.js:         NameRules
  *   - storage.js:            saveMasterData, getLastSaveError
@@ -178,7 +171,7 @@
  *       (_readSurnameHistory) and a pure shape helper
  *       (_ensureSurnameHistoryOn).
  *     - CharacterCommands added to required dependencies.
- *   Current revision:
+ *   Previous revision:
  *     - persist() rewritten to Pattern A (inspect the boolean return
  *       of saveMasterData, surface getLastSaveError().message on
  *       failure). The previous implementation used Pattern C, which
@@ -186,12 +179,6 @@
  *     - getCurrentYearSafe references replaced with getCurrentYear.
  *       The deprecated alias remains exported by time.js for one
  *       revision but this module no longer depends on it.
- *     - recordSurnameChange delegates the character-record write to
- *       CharacterCommands.recordCharacterSurnameChange. The pre-check
- *       for explicit year and the marriage-surname atomicity wrapper
- *       are unchanged. _appendSurnameChange still exists as the
- *       primitive used by applyMarriageSurnames for its two-character
- *       transaction; only the single-character path delegates.
  *     - _undoSurnameChange continues to write via
  *       CharacterCommands.updateCharacter directly (it needs to write
  *       a specific previous state, not a new change; the character
@@ -199,7 +186,23 @@
  *       forward change, not a rollback).
  *     - Duplication with character-commands.js documented in header
  *       under DUPLICATION section.
- *     - No public signature change, no public return-shape change.
+ *   Current revision:
+ *     - Removed CharacterCommands.recordCharacterSurnameChange from the
+ *       load-time dependency check. The module never calls it — every
+ *       surname write goes through CharacterCommands.updateCharacter
+ *       via _appendSurnameChange. The previous check required a method
+ *       the module did not use, which was a latent coupling that would
+ *       have surfaced as a false-positive load-order failure if the
+ *       character module ever removed or renamed that method.
+ *     - Fixed a header self-contradiction: an earlier passage claimed
+ *       recordSurnameChange "delegates the character-record write to
+ *       CharacterCommands.recordCharacterSurnameChange", which is not
+ *       true. The DUPLICATION section at the bottom of the header has
+ *       always been accurate (the module writes via updateCharacter
+ *       directly). The stale earlier passage has been removed, and
+ *       the DUPLICATION section is now the single authoritative
+ *       description of the divergence.
+ *     - No behavioural change.
  * =============================================================================
  */
 
@@ -233,9 +236,6 @@
         } else {
             if (typeof window.CharacterCommands.updateCharacter !== 'function') {
                 missing.push('CharacterCommands.updateCharacter');
-            }
-            if (typeof window.CharacterCommands.recordCharacterSurnameChange !== 'function') {
-                missing.push('CharacterCommands.recordCharacterSurnameChange');
             }
         }
         if (missing.length > 0) {
