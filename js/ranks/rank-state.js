@@ -3,7 +3,7 @@
  * STILL WATERS - RANK STATE (rank-state.js)
  * =============================================================================
  *
- * LOCATION: js/ranks/rank-state.js
+ * LOCATION: js/core/rank/rank-state.js
  *
  * The authoritative in-memory store for rank records and inheritance rules.
  *
@@ -77,12 +77,42 @@
  *   modals-character.js, any cross-domain read that resolves a rank via
  *   accessors) read the pre-mutation shape.
  *
- *   The invalidation happens at the memory-write boundary
- *   (_syncToMasterData), not at persistence time, because the cache mirrors
- *   canonical memory, not storage.
+ *   The invalidation happens at THREE boundaries:
+ *
+ *     1. Mutation boundary (_syncToMasterData). Every write (_addRank,
+ *        _updateRank, _removeRank, inheritance rule writes) calls
+ *        _syncToMasterData, which invalidates. This is the primary path.
+ *
+ *     2. Hydration boundary (hydrateFromMasterData). The in-memory
+ *        catalogue is replaced wholesale. The accessor cache is stale.
+ *        Invalidated here so bootstrap and reload paths see fresh data.
+ *
+ *     3. Cross-tab reload (storage.js). Storage.js invalidates BEFORE
+ *        dispatching masterDataUpdated, so every domain that hydrates
+ *        from the event sees a fresh cache. RankState's own
+ *        masterDataUpdated handler also calls hydrateFromMasterData,
+ *        which invalidates again. Redundant but harmless.
  *
  *   This mirrors the pattern established by character-state.js and
  *   role-state.js.
+ *
+ * NORMALISATION CONTRACT:
+ *   _normaliseRank delegates to RankRules.applyDefaults when available.
+ *   This eliminates the two-implementation drift the doc (§18) has long
+ *   acknowledged: _normaliseRank and applyDefaults used to diverge on the
+ *   coherence rule (applyDefaults silently inferred 'parent' from a set
+ *   sourceRankId; _normaliseRank did not). Both now produce the same
+ *   shape for the same input.
+ *
+ *   The local fallback (used when rank-rules.js is not loaded, e.g. in a
+ *   bare test harness) mirrors applyDefaults field-for-field and
+ *   coherence-rule-for-coherence-rule. Any change to applyDefaults must
+ *   be mirrored in the fallback; the delegation path is the production
+ *   path, so drift in the fallback only affects tests.
+ *
+ *   Post-processing that applyDefaults does NOT do (and _normaliseRank
+ *   still does): id handling, self-reference guards, createdAt/updatedAt
+ *   preservation. Those are state-layer concerns, not shape concerns.
  *
  * INITIALISATION CONTRACT:
  *   Hydration is explicit. Bootstrap calls:
@@ -114,6 +144,8 @@
  *   - Duplicate rank ids fail hydration loudly.
  *   - Structural shape errors in persisted records are repaired at the
  *     boundary (normaliseRank). Unknown fields are preserved on the record.
+ *   - Semantic incoherence (sourceRankId without inheritanceSource) is
+ *     preserved, not silently corrected. validateIntegrity() reports it.
  *   - No recursion guards. Mutations are synchronous and side-effect
  *     explicit; a caller may chain state calls freely.
  *
@@ -135,11 +167,13 @@
  *                   any mutation runs)
  *
  * DEPENDENCIES (OPTIONAL, called defensively):
- *   - accessors.js: invalidateAccessorCaches. If absent, the call is a
- *                   no-op. Every mutation still works; the accessor cache
- *                   will only go stale in environments without
- *                   accessors.js, which do not have getRankById consumers
- *                   anyway.
+ *   - rank-rules.js: RankRules.applyDefaults. Used by _normaliseRank when
+ *                    present. Fallback is a local implementation.
+ *   - accessors.js:  invalidateAccessorCaches. If absent, the call is a
+ *                    no-op. Every mutation still works; the accessor cache
+ *                    will only go stale in environments without
+ *                    accessors.js, which do not have getRankById consumers
+ *                    anyway.
  *
  * DEPENDENCIES (NONE AT LOAD):
  *   This module has no load-time dependencies beyond window. It validates
@@ -150,16 +184,31 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - _syncToMasterData now calls _invalidateAccessorCaches before
+ *   Previous revision:
+ *     - _syncToMasterData calls _invalidateAccessorCaches before
  *       _markDataDirty. Without this, getRankById returned stale records
  *       after any rank mutation, and downstream consumers
  *       (character-queries.js, role-queries.js, modals-character.js) read
- *       the pre-mutation shape. Matches the pattern in
- *       character-state.js and role-state.js.
- *     - _invalidateAccessorCaches helper added (defensive typeof check).
- *     - ACCESSOR CACHE CONTRACT added to header.
- *     - No other behavioural change.
+ *       the pre-mutation shape.
+ *   Current revision:
+ *     - _normaliseRank delegates to RankRules.applyDefaults when available.
+ *       Eliminates the drift between the two implementations: previously,
+ *       applyDefaults silently inferred 'parent' from a set sourceRankId
+ *       while _normaliseRank did not, so the two produced different shapes
+ *       for the same input. applyDefaults no longer infers (see
+ *       rank-rules.js Phase 1.3), so both now agree.
+ *     - _normaliseRank fallback updated to mirror the current
+ *       applyDefaults field set and coherence rules.
+ *     - hydrateFromMasterData calls _invalidateAccessorCaches at the end.
+ *       Defense in depth: storage.js already invalidates before dispatching
+ *       masterDataUpdated, but hydrateFromMasterData is also called by
+ *       rank-bootstrap.js and by tests, where the event path is not
+ *       involved.
+ *     - __owner corrected from 'ranks/rank-state.js' to
+ *       'core/rank/rank-state.js' (matching the actual file location).
+ *     - Header NORMALISATION CONTRACT section added.
+ *     - Header ACCESSOR CACHE CONTRACT expanded with the three boundaries.
+ *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -176,9 +225,9 @@
     // be exactly one RankState in the tree.
 
     if (typeof window.RankState !== 'undefined'
-        && window.RankState.__owner !== 'ranks/rank-state.js') {
+        && window.RankState.__owner !== 'core/rank/rank-state.js') {
         throw new Error(
-            'ranks/rank-state.js: window.RankState is already defined by ' +
+            'core/rank/rank-state.js: window.RankState is already defined by ' +
             'another module. The historical core UI shim must be deleted, ' +
             'not loaded alongside this file.'
         );
@@ -284,81 +333,41 @@
     // the current field set. Unknown extra fields on an incoming record are
     // preserved (forward compatibility); known fields are coerced to the
     // correct shape.
+    //
+    // Delegation to RankRules.applyDefaults eliminates the two-implementation
+    // drift the doc (§18) has long acknowledged. The local fallback mirrors
+    // applyDefaults field-for-field and coherence-rule-for-coherence-rule so
+    // a bare test harness produces the same shape as production. See
+    // NORMALISATION CONTRACT in the header.
 
     function _normaliseRank(raw) {
         var r = _isPlainObject(raw) ? raw : {};
 
-        var priority = _isValidPriority(r.priority) ? r.priority : 5;
-
-        var numberingType = r.numberingType;
-        if (numberingType !== 'ordinal' && numberingType !== 'roman'
-            && numberingType !== 'reign') {
-            numberingType = 'reign';
+        var shaped;
+        if (typeof window.RankRules !== 'undefined'
+            && typeof window.RankRules.applyDefaults === 'function') {
+            // Production path: single implementation of the shape.
+            shaped = window.RankRules.applyDefaults(r);
+        } else {
+            // Fallback path (bare test harness). Mirrors applyDefaults.
+            shaped = _normaliseRankFallback(r);
         }
 
-        var numberingGroup = r.numberingGroup;
-        if (numberingGroup !== 'global' && numberingGroup !== 'parent'
-            && numberingGroup !== 'spouse' && numberingGroup !== 'source') {
-            numberingGroup = 'global';
-        }
+        // Post-processing that applyDefaults does NOT do (state-layer
+        // concerns): id handling, self-reference guards, metadata
+        // preservation.
 
-        var inheritanceSource = r.inheritanceSource;
-        if (inheritanceSource !== 'none' && inheritanceSource !== 'parent'
-            && inheritanceSource !== 'spouse') {
-            inheritanceSource = 'none';
-        }
-
-        var genderRestriction = r.genderRestriction;
-        if (genderRestriction !== 'either' && genderRestriction !== 'male'
-            && genderRestriction !== 'female') {
-            genderRestriction = 'either';
-        }
-
-        // Preserve every field we know about; carry forward unknown fields.
         var out = {};
-        for (var key in r) {
-            if (Object.prototype.hasOwnProperty.call(r, key)) {
-                out[key] = r[key];
+        for (var key in shaped) {
+            if (Object.prototype.hasOwnProperty.call(shaped, key)) {
+                out[key] = shaped[key];
             }
         }
 
+        // Preserve the caller's id if present. applyDefaults does not
+        // manage id (that is the command layer's concern at create time
+        // and the persisted record's concern at load time).
         out.id = _hasId(r.id) ? r.id : out.id;
-        out.name = typeof r.name === 'string' ? r.name : 'New Rank';
-        out.priority = priority;
-        out.numbered = r.numbered === true;
-        out.numberingType = numberingType;
-        out.numberingGroup = numberingGroup;
-        out.numberingPrefix = typeof r.numberingPrefix === 'string'
-            ? r.numberingPrefix
-            : '';
-        out.numberingSuffix = typeof r.numberingSuffix === 'string'
-            ? r.numberingSuffix
-            : '';
-        out.sourceRankId = _hasId(r.sourceRankId) ? r.sourceRankId : null;
-        out.inheritanceSource = inheritanceSource;
-        out.symbol = typeof r.symbol === 'string' && r.symbol.length > 0
-            ? r.symbol
-            : '⟡';
-        out.genderRestriction = genderRestriction;
-        out.locationTypeId = _hasId(r.locationTypeId) ? r.locationTypeId : null;
-        out.deprecateOnDeath = r.deprecateOnDeath === true;
-        out.spouseInheritance = _hasId(r.spouseInheritance)
-            ? r.spouseInheritance
-            : null;
-        out.allowsMultipleSpouses = r.allowsMultipleSpouses === true;
-        out.parentRankId = _hasId(r.parentRankId) ? r.parentRankId : null;
-        out.customSurnameRule = r.customSurnameRule === true;
-        out.surnameConnector = typeof r.surnameConnector === 'string'
-            ? r.surnameConnector
-            : 'of';
-        out.surnamePrefix = typeof r.surnamePrefix === 'string'
-            ? r.surnamePrefix
-            : '';
-        out.surnameSuffix = typeof r.surnameSuffix === 'string'
-            ? r.surnameSuffix
-            : '';
-        out.createdAt = _isMissing(r.createdAt) ? null : r.createdAt;
-        out.updatedAt = _isMissing(r.updatedAt) ? null : r.updatedAt;
 
         // Self-parent guard.
         if (out.parentRankId !== null && out.parentRankId === out.id) {
@@ -367,6 +376,117 @@
         // Self-source guard.
         if (out.sourceRankId !== null && out.sourceRankId === out.id) {
             out.sourceRankId = null;
+        }
+
+        // Metadata preservation. applyDefaults does not touch createdAt /
+        // updatedAt (those are command-layer stamps); _normaliseRank
+        // preserves them if present.
+        out.createdAt = _isMissing(r.createdAt) ? null : r.createdAt;
+        out.updatedAt = _isMissing(r.updatedAt) ? null : r.updatedAt;
+
+        return out;
+    }
+
+    /**
+     * Fallback normaliser used when rank-rules.js is not loaded.
+     *
+     * Mirrors applyDefaults field-for-field and coherence-rule-for-coherence-
+     * rule. Any change to applyDefaults must be mirrored here. The delegation
+     * path is the production path, so drift in the fallback only affects bare
+     * test harnesses.
+     */
+    function _normaliseRankFallback(r) {
+        var defaults = _isPlainObject(window.DEFAULT_RANK) ? window.DEFAULT_RANK : {};
+
+        var out = {};
+        for (var key in r) {
+            if (Object.prototype.hasOwnProperty.call(r, key)) {
+                out[key] = r[key];
+            }
+        }
+
+        function pick(field, fallback, useWhen) {
+            var v = r[field];
+            if (useWhen ? useWhen(v) : !_isMissing(v)) return v;
+            var d = defaults[field];
+            if (useWhen ? useWhen(d) : !_isMissing(d)) return d;
+            return fallback;
+        }
+
+        out.name = pick('name', 'New Rank', function (v) {
+            return typeof v === 'string' && v.trim() !== '';
+        });
+        out.priority = pick('priority', 5, _isValidPriority);
+        out.numbered = r.numbered === true || (r.numbered === undefined
+            && defaults.numbered === true);
+        out.numberingType = pick('numberingType', 'reign', function (v) {
+            return v === 'ordinal' || v === 'roman' || v === 'reign';
+        });
+        out.numberingGroup = pick('numberingGroup', 'global', function (v) {
+            return v === 'global' || v === 'parent'
+                || v === 'spouse' || v === 'source';
+        });
+        out.numberingPrefix = typeof r.numberingPrefix === 'string'
+            ? r.numberingPrefix
+            : (typeof defaults.numberingPrefix === 'string'
+                ? defaults.numberingPrefix
+                : '');
+        out.numberingSuffix = typeof r.numberingSuffix === 'string'
+            ? r.numberingSuffix
+            : (typeof defaults.numberingSuffix === 'string'
+                ? defaults.numberingSuffix
+                : '');
+        out.symbol = pick('symbol', '⟡', function (v) {
+            return typeof v === 'string' && v.length > 0;
+        });
+        out.genderRestriction = pick('genderRestriction', 'either', function (v) {
+            return v === 'either' || v === 'male' || v === 'female';
+        });
+        out.locationTypeId = _hasId(r.locationTypeId) ? r.locationTypeId
+            : (defaults.locationTypeId || null);
+        out.deprecateOnDeath = r.deprecateOnDeath === true
+            || (r.deprecateOnDeath === undefined
+                && defaults.deprecateOnDeath === true);
+        out.spouseInheritance = _hasId(r.spouseInheritance)
+            ? r.spouseInheritance
+            : (defaults.spouseInheritance || null);
+        out.allowsMultipleSpouses = r.allowsMultipleSpouses === true
+            || (r.allowsMultipleSpouses === undefined
+                && defaults.allowsMultipleSpouses === true);
+        out.parentRankId = _hasId(r.parentRankId) ? r.parentRankId : null;
+        out.sourceRankId = _hasId(r.sourceRankId) ? r.sourceRankId : null;
+        out.inheritanceSource = pick('inheritanceSource', 'none', function (v) {
+            return v === 'none' || v === 'parent' || v === 'spouse';
+        });
+        out.customSurnameRule = r.customSurnameRule === true
+            || (r.customSurnameRule === undefined
+                && defaults.customSurnameRule === true);
+        out.surnameConnector = typeof r.surnameConnector === 'string'
+            ? r.surnameConnector
+            : (typeof defaults.surnameConnector === 'string'
+                ? defaults.surnameConnector
+                : 'of');
+        out.surnamePrefix = typeof r.surnamePrefix === 'string'
+            ? r.surnamePrefix
+            : (typeof defaults.surnamePrefix === 'string'
+                ? defaults.surnamePrefix
+                : '');
+        out.surnameSuffix = typeof r.surnameSuffix === 'string'
+            ? r.surnameSuffix
+            : (typeof defaults.surnameSuffix === 'string'
+                ? defaults.surnameSuffix
+                : '');
+
+        // Coherence: inheritanceSource requires a sourceRankId. Reset to
+        // 'none' when the source is absent. Do NOT infer 'parent' from a
+        // set sourceRankId (see rank-rules.js COHERENCE POLICY).
+        if (out.sourceRankId === null && out.inheritanceSource !== 'none') {
+            out.inheritanceSource = 'none';
+        }
+
+        // numbered === false implies numberingGroup is inert.
+        if (out.numbered !== true) {
+            out.numberingGroup = 'global';
         }
 
         return out;
@@ -530,6 +650,13 @@
      *   - non-object inheritanceRules argument (must be object or null)
      *   - duplicate rank ids
      *
+     * Calls _invalidateAccessorCaches at the end. Even though storage.js
+     * already invalidates before dispatching masterDataUpdated (see
+     * storage.js's CROSS-TAB CACHE INVALIDATION section), hydrateFromMasterData
+     * is also called directly by rank-bootstrap.js and by tests where the
+     * event path is not involved. Invalidating here ensures the accessor
+     * cache is fresh regardless of the caller.
+     *
      * @param {Array} ranks
      * @param {Object|null} inheritanceRules
      */
@@ -576,15 +703,16 @@
         _hydrated = true;
 
         // Reflect the normalised catalogue back into masterData so the two
-        // representations agree from the moment hydration finishes. No
-        // markDataDirty: hydration is a read from storage, not a mutation.
-        // No accessor cache invalidation: the accessor cache is also being
-        // built from the same source (masterData.data.ranks) and this
-        // function does not introduce any new data relative to that
-        // source, so the cache remains consistent.
+        // representations agree from the moment hydration finishes.
+        //
+        // Hydration is a READ from storage, not a mutation: we do NOT call
+        // markDataDirty. But the accessor cache keys records by id and is
+        // built from masterData.data.ranks, which we just replaced. It is
+        // stale. Invalidate it.
         window.masterData.data.ranks = _ranks.slice();
         window.masterData.data.rankInheritanceRules =
             _cloneInheritanceRules(_inheritanceRules);
+        _invalidateAccessorCaches();
     }
 
     function isHydrated() {
@@ -769,10 +897,18 @@
      *   - parentRankId, when set, points at an existing rank
      *   - sourceRankId, when set, points at an existing rank
      *   - no rank is its own parent
+     *   - no rank is its own source
      *   - inheritanceRules reference existing parent and child ranks
      *   - inheritanceRules[parentId] is an array
      *
      * Returns { valid: boolean, errors: string[] }. Never throws.
+     *
+     * Note: this check does NOT flag semantic incoherence such as
+     * sourceRankId set with inheritanceSource 'none'. That is a rules-layer
+     * concern (RankRules.validate); integrity here is about graph
+     * consistency, not policy. Incoherent records are preserved by
+     * _normaliseRank (which no longer silently coerces) so they remain
+     * visible to any caller that runs RankRules.validate on them.
      */
     function validateIntegrity() {
         if (!_hydrated) {
@@ -1178,7 +1314,7 @@
 
     window.RankState = {
         // Namespace ownership marker — see collision guard at top.
-        __owner: 'ranks/rank-state.js',
+        __owner: 'core/rank/rank-state.js',
 
         // Lifecycle
         hydrateFromMasterData: hydrateFromMasterData,
