@@ -21,6 +21,7 @@
  *   - Lifecycle              -> character-lifecycle.js
  *   - Presentation CSS       -> character-modals.css
  *   - Modal stack            -> modals-core.js
+ *   - Trait vocabulary       -> constants/character-traits.js
  *
  * SEMANTIC RULES:
  *   - Missing required dependencies throw at load.
@@ -28,32 +29,53 @@
  *   - No inline styles in this file. Classes only.
  *   - Errors are returned to the caller. No toasts.
  *
+ * TRAITS:
+ *   Traits are presented as a checkbox grid in the create and edit
+ *   modals, and as a read-only chip row in the details modal. The
+ *   checkbox order follows CHARACTER_TRAIT_VALUES declaration order
+ *   (positive dispositions first, antisocial dispositions second).
+ *
+ *   Trait writes go through CharacterCommands.addTrait / removeTrait
+ *   (per-trait) rather than replaceTraits (full array). This makes
+ *   the edit modal's save path additive: only the traits the user
+ *   actually added or removed are written, and an idempotent add or
+ *   remove is a no-op in the command layer. Bulk replace would
+ *   produce a full-array write on every save even when nothing
+ *   changed.
+ *
+ *   Trait selection happens BEFORE field updates in the edit modal.
+ *   This preserves the header's edit-modal transaction contract: a
+ *   failing trait write aborts the save before any other mutation is
+ *   applied, so the caller gets a structured error and can retry.
+ *
  * EDIT-MODAL TRANSACTION CONTRACT:
- *   openEditCharacterModal applies two independent change groups:
- *     - field updates via CharacterCommands.updateCharacter
+ *   openEditCharacterModal applies three independent change groups:
+ *     - trait changes      via CharacterCommands.addTrait / removeTrait
+ *     - field updates      via CharacterCommands.updateCharacter
  *     - parent edge changes via FamilyCommands.setParent / removeParent
  *
- *   These are applied in a fixed order that prevents partial commits:
+ *   They are applied in a fixed order that prevents partial commits:
  *
  *     1. All field updates are collected and validated against the
  *        current projection. A trivial no-op is a no-op, not an update.
  *     2. All parent changes are validated against FamilyRules
  *        (cycle check, duplicate check). If ANY parent change would
  *        fail, the whole edit is refused BEFORE any mutation.
- *     3. Field updates are applied.
- *     4. Parent changes are applied.
- *     5. If any parent change still fails (should not happen — step 2
+ *     3. Trait changes are applied.
+ *     4. Field updates are applied.
+ *     5. Parent changes are applied.
+ *     6. If any parent change still fails (should not happen — step 2
  *        validated them — but a concurrent mutation could cause it),
- *        the field updates are NOT rolled back (they are cheap and the
- *        parent change is the one that failed). The user gets a
+ *        the earlier steps are NOT rolled back (they are cheap and
+ *        the parent change is the one that failed). The user gets a
  *        structured error listing the parent that failed, and they
  *        can retry only the parent change.
  *
  *   The alternative (apply parents first, then fields, and roll back
- *   the parent on field failure) is also valid, but requires parent
- *   edge removal on rollback, which is a FamilyCommands call that can
- *   itself fail. The chosen order (validate-all-then-mutate) keeps
- *   every mutation site's failure story simple.
+ *   on failure) is also valid, but requires parent edge removal on
+ *   rollback, which is a FamilyCommands call that can itself fail.
+ *   The chosen order (validate-all-then-mutate, cheap-writes-first)
+ *   keeps every mutation site's failure story simple.
  *
  * FAMILY INTEGRATION:
  *   Parent selection and display use FamilyQueries and FamilyCommands.
@@ -65,7 +87,7 @@
  *   - modals-core.js:      openModal, closeTopModal, confirmDialog
  *   - accessors.js:        getPlaces
  *   - time.js:             getCurrentYear, isValidYear
- *   - CharacterCommands:   updateCharacter
+ *   - CharacterCommands:   updateCharacter, addTrait, removeTrait
  *   - CharacterQueries:    getCharacterSummary, getCharacterDisplayName
  *   - CharacterCreationCommands: createCharacter
  *   - CharacterDeletionCommands: deleteCharacter
@@ -73,12 +95,24 @@
  *                          getGrandchildIds
  *   - FamilyCommands:      setParent, removeBiologicalParentAtRole
  *
- * DEPENDENCIES (OPTIONAL, required only for the death modal route):
- *   - selectors/modals-char-selector.js (openCharacterSelector)
- *   - modals-death.js                   (openDeathModal)
+ * DEPENDENCIES (OPTIONAL, required only for specific routes):
+ *   - selectors/modals-char-selector.js (openCharacterSelector) — parent pickers
+ *   - modals-death.js                   (openDeathModal)       — kill route
+ *   - constants/character-traits.js     (CHARACTER_TRAIT_VALUES) — trait
+ *     rendering. When absent, the trait sections are omitted and the
+ *     modals behave as if traits are not part of the schema. Production
+ *     load order always has the vocabulary present.
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Trait checkboxes added to create/edit modals; trait chips added
+ *       to the details modal.
+ *     - Edit modal writes trait deltas via CharacterCommands.addTrait
+ *       and removeTrait before field and parent changes.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -224,6 +258,86 @@
     }
 
     // =========================================================================
+    // 1b. TRAIT RENDERING
+    // =========================================================================
+
+    /**
+     * Returns the trait checkbox grid HTML, or '' when the vocabulary is
+     * not loaded. The caller wraps this in a section and skips the
+     * section when the return is ''.
+     *
+     * @param {string[]} selectedTraits
+     * @returns {string}
+     */
+    function _renderTraitCheckboxes(selectedTraits) {
+        if (!Array.isArray(window.CHARACTER_TRAIT_VALUES)) return '';
+        var values = window.CHARACTER_TRAIT_VALUES;
+        if (values.length === 0) return '';
+
+        var selected = {};
+        if (Array.isArray(selectedTraits)) {
+            for (var s = 0; s < selectedTraits.length; s++) {
+                if (typeof selectedTraits[s] === 'string') {
+                    selected[selectedTraits[s]] = true;
+                }
+            }
+        }
+
+        var html = '<div class="character-modal__trait-grid">';
+        for (var i = 0; i < values.length; i++) {
+            var trait = values[i];
+            var checked = selected[trait] === true ? ' checked' : '';
+            html += '<label class="character-modal__trait-option">'
+                 + '<input type="checkbox" class="character-modal__trait-checkbox"'
+                 + ' value="' + _esc(trait) + '"' + checked + '>'
+                 + '<span class="character-modal__trait-label">' + _esc(trait) + '</span>'
+                 + '</label>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    /**
+     * Collects the checked trait values from a modal element.
+     * Returns [] if the modal has no trait section.
+     *
+     * @param {HTMLElement} modalElement
+     * @returns {string[]}
+     */
+    function _collectSelectedTraits(modalElement) {
+        if (!modalElement) return [];
+        var boxes = modalElement.querySelectorAll('.character-modal__trait-checkbox');
+        var out = [];
+        for (var i = 0; i < boxes.length; i++) {
+            if (boxes[i].checked === true) {
+                var v = boxes[i].getAttribute('value');
+                if (typeof v === 'string' && v.length > 0) out.push(v);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Returns a read-only chip row for a character's traits, or '' when
+     * the array is empty or the vocabulary is not loaded.
+     *
+     * @param {string[]} traits
+     * @returns {string}
+     */
+    function _renderTraitChips(traits) {
+        if (!Array.isArray(traits) || traits.length === 0) return '';
+
+        var html = '<div class="character-modal__trait-chips">';
+        for (var i = 0; i < traits.length; i++) {
+            var t = traits[i];
+            if (typeof t !== 'string' || t.length === 0) continue;
+            html += '<span class="character-modal__trait-chip">' + _esc(t) + '</span>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    // =========================================================================
     // 2. PARENT CHANGE VALIDATION
     // =========================================================================
     //
@@ -337,6 +451,7 @@
         }
 
         var familyHtml = _buildFamilySection(characterId);
+        var traitChipsHtml = _renderTraitChips(summary.traits);
 
         var content = '<div class="character-modal">';
 
@@ -363,6 +478,13 @@
             }
         }
         content += '<div class="character-modal__section">' + birthDeathHtml + '</div>';
+
+        if (traitChipsHtml) {
+            content += '<div class="character-modal__section character-modal__section--traits">'
+                     + '<div class="character-modal__field-label">Traits</div>'
+                     + traitChipsHtml
+                     + '</div>';
+        }
 
         content += familyHtml;
 
@@ -487,6 +609,8 @@
         var minYear = window.TIME_CONSTANTS ? window.TIME_CONSTANTS.MIN_YEAR : -10000;
         var maxYear = currentYear;
 
+        var traitCheckboxesHtml = _renderTraitCheckboxes([]);
+
         var content = '<div class="character-modal">';
 
         content += '<div class="character-modal__form-field">'
@@ -536,6 +660,13 @@
                  + '<button type="button" class="btn" data-action="clear-mother">Clear</button>'
                  + '</div>'
                  + '</div>';
+
+        if (traitCheckboxesHtml) {
+            content += '<div class="character-modal__form-field character-modal__form-field--traits">'
+                     + '<div class="character-modal__form-label">Traits</div>'
+                     + traitCheckboxesHtml
+                     + '</div>';
+        }
 
         content += '<div class="character-modal__form-field">'
                  + '<label class="character-modal__form-label" for="char-notes">Notes</label>'
@@ -626,11 +757,14 @@
                     throw new Error('Please enter a valid birth year');
                 }
 
+                var traits = _collectSelectedTraits(modal.element);
+
                 var data = {
                     name: name,
                     surname: surnameInput ? surnameInput.value.trim() : '',
                     gender: genderInput ? genderInput.value : 'unknown',
                     birthYear: birthYear,
+                    traits: traits,
                     birthplaceId: birthplaceInput && birthplaceInput.value
                         ? birthplaceInput.value
                         : null,
@@ -696,6 +830,9 @@
         var currentYear = window.getCurrentYear();
         var minYear = window.TIME_CONSTANTS ? window.TIME_CONSTANTS.MIN_YEAR : -10000;
 
+        var originalTraits = Array.isArray(summary.traits) ? summary.traits.slice() : [];
+        var traitCheckboxesHtml = _renderTraitCheckboxes(originalTraits);
+
         var content = '<div class="character-modal">';
 
         content += '<div class="character-modal__section">'
@@ -759,6 +896,13 @@
                  + '<button type="button" class="btn" data-action="clear-mother">Clear</button>'
                  + '</div>'
                  + '</div>';
+
+        if (traitCheckboxesHtml) {
+            content += '<div class="character-modal__form-field character-modal__form-field--traits">'
+                     + '<div class="character-modal__form-label">Traits</div>'
+                     + traitCheckboxesHtml
+                     + '</div>';
+        }
 
         content += '<div class="character-modal__form-field">'
                  + '<label class="character-modal__form-label" for="edit-char-notes">Notes</label>'
@@ -857,6 +1001,27 @@
                 var notes = notesInput ? notesInput.value : '';
                 if (notes !== (summary.notes || '')) updates.notes = notes;
 
+                // Compute trait delta against the projection we captured
+                // before the modal opened. Idempotent commands mean we
+                // only need the sets, not the order.
+                var selectedTraits = _collectSelectedTraits(modal.element);
+                var originalSet = {};
+                for (var ot = 0; ot < originalTraits.length; ot++) {
+                    originalSet[originalTraits[ot]] = true;
+                }
+                var selectedSet = {};
+                for (var st = 0; st < selectedTraits.length; st++) {
+                    selectedSet[selectedTraits[st]] = true;
+                }
+                var traitsToAdd = [];
+                var traitsToRemove = [];
+                for (var a = 0; a < selectedTraits.length; a++) {
+                    if (!originalSet[selectedTraits[a]]) traitsToAdd.push(selectedTraits[a]);
+                }
+                for (var r = 0; r < originalTraits.length; r++) {
+                    if (!selectedSet[originalTraits[r]]) traitsToRemove.push(originalTraits[r]);
+                }
+
                 // -----------------------------------------------------------------
                 // STEP 2: validate parent changes BEFORE any mutation.
                 // -----------------------------------------------------------------
@@ -875,7 +1040,46 @@
                 }
 
                 // -----------------------------------------------------------------
-                // STEP 3: apply field updates (if any).
+                // STEP 3: apply trait changes. Done before field updates so
+                // a failing trait write aborts the save with a clean
+                // error message about the trait, not the field.
+                // -----------------------------------------------------------------
+                var traitErrors = [];
+
+                for (var ti = 0; ti < traitsToAdd.length; ti++) {
+                    var addResult = window.CharacterCommands.addTrait(
+                        characterId, traitsToAdd[ti]
+                    );
+                    if (!addResult || addResult.success !== true) {
+                        traitErrors.push(
+                            'Failed to add trait "' + traitsToAdd[ti] + '": '
+                            + (addResult && addResult.reason
+                                ? addResult.reason
+                                : 'unknown')
+                        );
+                    }
+                }
+
+                for (var tr = 0; tr < traitsToRemove.length; tr++) {
+                    var remResult = window.CharacterCommands.removeTrait(
+                        characterId, traitsToRemove[tr]
+                    );
+                    if (!remResult || remResult.success !== true) {
+                        traitErrors.push(
+                            'Failed to remove trait "' + traitsToRemove[tr] + '": '
+                            + (remResult && remResult.reason
+                                ? remResult.reason
+                                : 'unknown')
+                        );
+                    }
+                }
+
+                if (traitErrors.length > 0) {
+                    throw new Error(traitErrors.join('; '));
+                }
+
+                // -----------------------------------------------------------------
+                // STEP 4: apply field updates (if any).
                 // -----------------------------------------------------------------
                 if (Object.keys(updates).length > 0) {
                     var updateResult = window.CharacterCommands.updateCharacter(characterId, updates);
@@ -887,10 +1091,8 @@
                 }
 
                 // -----------------------------------------------------------------
-                // STEP 4: apply parent changes. Failures here are surfaced
-                // individually; the field updates are NOT rolled back
-                // (they are cheap and the parent change is the operation
-                // that failed — the user can retry just the parent).
+                // STEP 5: apply parent changes. Failures here are surfaced
+                // individually; earlier steps are NOT rolled back.
                 // -----------------------------------------------------------------
                 var parentErrors = [];
 
