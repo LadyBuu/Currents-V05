@@ -27,6 +27,7 @@
  *     - relationship semantics      -> relationship domain
  *     - location movement history   -> location-*
  *     - rank semantics              -> rank domain
+ *     - trait semantics             -> character-commands.js (trait API)
  *     - domain rule validation      -> each domain's own rules module
  *
  * DEATH FIELDS:
@@ -57,6 +58,7 @@
  *   updateCharacters path refuses them; only applyDomainFieldPatch may write
  *   them, and only CharacterCommands calls applyDomainFieldPatch.
  *
+ *       traits                  -> CharacterCommands (trait API)
  *       professions             -> CharacterCommands (profession API)
  *       rankAssignments         -> CharacterCommands (rank API)
  *       activeRankId            -> CharacterCommands (rank API, derived)
@@ -70,6 +72,11 @@
  *       apprenticeshipDetails   -> ApprenticeshipCommands
  *       apprentices             -> ApprenticeshipCommands
  *       isDeleted, deletedAt    -> CharacterDeletionCommands
+ *
+ *   Projections include traits so cross-domain readers can access them
+ *   without reaching into the live record. No index is maintained for
+ *   traits; there is currently no consumer that requires one, and the
+ *   trait array is small (single-digit entries per character).
  *
  * REMOVED FIELDS:
  *   The parent-child compatibility mirrors (motherId, fatherId, children,
@@ -110,6 +117,8 @@
  *     is malformed and excluded from byStatus.
  *   - gender is normalized to 'male' | 'female' | 'unknown'.
  *   - A field is indexed only if present and non-empty.
+ *   - traits is projected as a defensive copy. Mutating the returned
+ *     array does not affect canonical data.
  *
  * NAMESPACE OWNERSHIP
  * -------------------
@@ -136,6 +145,13 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - traits added to the DOMAIN-OWNED EMBEDDED FIELDS block.
+ *     - _project() now includes traits as a defensive copy.
+ *     - No index added for traits; no consumer requires one.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -189,7 +205,7 @@
     // Fields the generic updateCharacter / updateCharacters path will accept.
     // Anything not listed here (and not the id) is refused.
     //
-    // Domain-owned embedded fields (professions, rankAssignments,
+    // Domain-owned embedded fields (traits, professions, rankAssignments,
     // activeRankId, activeRankNumber, education, educationHistory,
     // subjectProgress, isLiterate, relationships, friends,
     // apprenticeshipDetails, apprentices, isDeleted, deletedAt) are
@@ -638,6 +654,12 @@
         return out;
     }
 
+    function _cloneTraits(traits) {
+        if (!Array.isArray(traits)) return [];
+        // Traits are strings; a shallow slice is sufficient.
+        return traits.slice();
+    }
+
     function _project(c) {
         if (!c || !_hasId(c.id)) return null;
         return {
@@ -666,6 +688,7 @@
             cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
 
             // Embedded domain containers, defensively cloned.
+            traits: _cloneTraits(c.traits),
             professions: _cloneProfessions(c.professions),
             rankAssignments: _cloneRankAssignments(c.rankAssignments),
 
