@@ -63,9 +63,26 @@
  * PERSISTENCE CONTRACT:
  *   State does not persist. Every mutation writes _state into
  *   masterData.data.ranks / masterData.data.rankInheritanceRules in memory,
- *   then calls window.markDataDirty(). Storage decides when to flush.
+ *   then invalidates the accessor cache, then calls window.markDataDirty().
+ *   Storage decides when to flush.
  *
  *   RankCommands.persist() calls window.saveMasterData() once per batch.
+ *
+ * ACCESSOR CACHE CONTRACT:
+ *   accessors.js maintains an id -> record cache used by getRankById. Every
+ *   mutation of the rank catalogue must invalidate that cache via
+ *   window.invalidateAccessorCaches(). Without this, getRankById returns
+ *   stale records after a rank write, and downstream consumers
+ *   (character-queries.js's rank display, role-queries.js's getRankSummary,
+ *   modals-character.js, any cross-domain read that resolves a rank via
+ *   accessors) read the pre-mutation shape.
+ *
+ *   The invalidation happens at the memory-write boundary
+ *   (_syncToMasterData), not at persistence time, because the cache mirrors
+ *   canonical memory, not storage.
+ *
+ *   This mirrors the pattern established by character-state.js and
+ *   role-state.js.
  *
  * INITIALISATION CONTRACT:
  *   Hydration is explicit. Bootstrap calls:
@@ -117,6 +134,13 @@
  *                   mutation time only; storage.js must be loaded before
  *                   any mutation runs)
  *
+ * DEPENDENCIES (OPTIONAL, called defensively):
+ *   - accessors.js: invalidateAccessorCaches. If absent, the call is a
+ *                   no-op. Every mutation still works; the accessor cache
+ *                   will only go stale in environments without
+ *                   accessors.js, which do not have getRankById consumers
+ *                   anyway.
+ *
  * DEPENDENCIES (NONE AT LOAD):
  *   This module has no load-time dependencies beyond window. It validates
  *   the presence of window.masterData at hydrate time and of
@@ -124,6 +148,18 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _syncToMasterData now calls _invalidateAccessorCaches before
+ *       _markDataDirty. Without this, getRankById returned stale records
+ *       after any rank mutation, and downstream consumers
+ *       (character-queries.js, role-queries.js, modals-character.js) read
+ *       the pre-mutation shape. Matches the pattern in
+ *       character-state.js and role-state.js.
+ *     - _invalidateAccessorCaches helper added (defensive typeof check).
+ *     - ACCESSOR CACHE CONTRACT added to header.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -198,6 +234,20 @@
             );
         }
         window.markDataDirty();
+    }
+
+    /**
+     * Invalidates the accessor cache so getRankById reads fresh data.
+     *
+     * Defensive: if accessors.js is not loaded, the call is a no-op. Every
+     * mutation still works; the accessor cache will only go stale in
+     * environments that do not have accessors.js — which do not have any
+     * getRankById consumers anyway.
+     */
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
     }
 
     // =========================================================================
@@ -409,15 +459,21 @@
     //   - masterData.data.ranks is reassigned to a plain-array copy of _ranks
     //   - masterData.data.rankInheritanceRules is reassigned to a plain-object
     //     copy of _inheritanceRules
+    //   - the accessor cache is invalidated (getRankById reads fresh data)
     //   - markDataDirty() is called
     //
     // Storage flushes on its own schedule. RankCommands.persist() forces a
     // synchronous flush when a caller wants one.
+    //
+    // The accessor-cache invalidation happens here, at the memory-write
+    // boundary, because the cache mirrors canonical memory, not storage.
+    // See ACCESSOR CACHE CONTRACT in the module header.
 
     function _syncToMasterData() {
         _requireMasterData();
         window.masterData.data.ranks = _ranks.slice();
         window.masterData.data.rankInheritanceRules = _cloneInheritanceRules(_inheritanceRules);
+        _invalidateAccessorCaches();
         _markDataDirty();
     }
 
@@ -522,6 +578,10 @@
         // Reflect the normalised catalogue back into masterData so the two
         // representations agree from the moment hydration finishes. No
         // markDataDirty: hydration is a read from storage, not a mutation.
+        // No accessor cache invalidation: the accessor cache is also being
+        // built from the same source (masterData.data.ranks) and this
+        // function does not introduce any new data relative to that
+        // source, so the cache remains consistent.
         window.masterData.data.ranks = _ranks.slice();
         window.masterData.data.rankInheritanceRules =
             _cloneInheritanceRules(_inheritanceRules);
@@ -823,7 +883,8 @@
     // =========================================================================
     //
     // These write directly into the in-memory catalogue, sync masterData,
-    // and call markDataDirty. They do NOT call saveMasterData.
+    // invalidate the accessor cache, and call markDataDirty. They do NOT
+    // call saveMasterData.
     //
     // Every mutation runs a full index rebuild. Rank counts are small (the
     // catalogue is O(tens), not O(thousands)), so an incremental index is
