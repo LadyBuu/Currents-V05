@@ -3,7 +3,7 @@
  * STILL WATERS - RANK STATE (rank-state.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-state.js
+ * LOCATION: js/ranks/rank-state.js
  *
  * The authoritative in-memory store for rank records and inheritance rules.
  *
@@ -29,6 +29,10 @@
  *   Diagnostics:
  *     - RankState.validateIntegrity() -> { valid, errors }
  *
+ *   Facade compatibility surface (core/state.js reads these):
+ *     - RankState.rankCollapsedGroups  (get/set)
+ *     - RankState.reset()
+ *
  *   Internal (for RankCommands only):
  *     - RankState._getRankCanonical(id)
  *     - RankState._getAllRanksCanonical()
@@ -46,6 +50,7 @@
  *     - the in-memory inheritance rules map
  *     - derived indexes (byId, byPriority, byName)
  *     - subscription notification
+ *     - ephemeral UI state (rankCollapsedGroups) — facade surface only
  *
  *   RankState does NOT own:
  *     - persistence format (storage.js owns bytes)
@@ -95,6 +100,18 @@
  *   - No recursion guards. Mutations are synchronous and side-effect
  *     explicit; a caller may chain state calls freely.
  *
+ * NAMESPACE OWNERSHIP
+ * -------------------
+ *   This file is the SINGLE owner of window.RankState. The historical
+ *   js/core/rank-state.js UI shim has been deleted. The shim's surface
+ *   (rankCollapsedGroups, reset) is provided here as a compatibility
+ *   block backed by this module's own ephemeral UI state.
+ *
+ *   A collision guard at the top of this file throws if
+ *   window.RankState was already defined by another module when this file
+ *   loads. That makes any future accidental duplication loud instead of
+ *   silent.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - storage.js:   masterData, markDataDirty (markDataDirty is required at
  *                   mutation time only; storage.js must be loaded before
@@ -114,6 +131,24 @@
     'use strict';
 
     // =========================================================================
+    // 0. COLLISION GUARD
+    // =========================================================================
+    //
+    // If another module has already claimed window.RankState, refuse to
+    // load. Silent clobbering is how the role/rank/household namespace
+    // collisions happened. The core UI shim has been removed; there must
+    // be exactly one RankState in the tree.
+
+    if (typeof window.RankState !== 'undefined'
+        && window.RankState.__owner !== 'ranks/rank-state.js') {
+        throw new Error(
+            'ranks/rank-state.js: window.RankState is already defined by ' +
+            'another module. The historical core UI shim must be deleted, ' +
+            'not loaded alongside this file.'
+        );
+    }
+
+    // =========================================================================
     // 1. PRIVATE STATE
     // =========================================================================
 
@@ -128,6 +163,16 @@
 
     var _subscribers = [];
     var _hydrated = false;
+
+    // Ephemeral UI state — facade compatibility surface only.
+    // This is NOT canonical data. It does not go into masterData, does
+    // not survive reload, and is not persisted anywhere.
+    //
+    // Shape: { [groupKey]: boolean } — expansion state for collapsible
+    // rank-hierarchy groups in the UI. The core shim owned the same
+    // shape; we preserve it verbatim so any consumer that read or wrote
+    // window.rankCollapsedGroups keeps working.
+    var _rankCollapsedGroups = {};
 
     // =========================================================================
     // 2. DEPENDENCY WRAPPERS
@@ -1041,10 +1086,39 @@
     });
 
     // =========================================================================
-    // 18. EXPORTS
+    // 18. FACADE COMPATIBILITY SURFACE
+    // =========================================================================
+    //
+    // The historical js/core/rank-state.js exposed rankCollapsedGroups and
+    // reset as top-level properties/methods. That file has been deleted;
+    // the surface is provided here so core/state.js continues to work
+    // unchanged.
+    //
+    // These read/write _rankCollapsedGroups (declared in section 1). They
+    // do NOT touch the rank catalogue, do NOT call markDataDirty, and do
+    // NOT publish events on the state channel — the UI state is ephemeral
+    // and not part of the catalogue's persistence contract.
+
+    function _getRankCollapsedGroups() {
+        return _rankCollapsedGroups;
+    }
+
+    function _setRankCollapsedGroups(value) {
+        _rankCollapsedGroups = value;
+    }
+
+    function reset() {
+        _rankCollapsedGroups = {};
+    }
+
+    // =========================================================================
+    // 19. EXPORTS
     // =========================================================================
 
     window.RankState = {
+        // Namespace ownership marker — see collision guard at top.
+        __owner: 'ranks/rank-state.js',
+
         // Lifecycle
         hydrateFromMasterData: hydrateFromMasterData,
         isHydrated: isHydrated,
@@ -1063,6 +1137,11 @@
 
         // Diagnostics
         validateIntegrity: validateIntegrity,
+
+        // Facade compatibility surface (core/state.js reads these).
+        get rankCollapsedGroups() { return _getRankCollapsedGroups(); },
+        set rankCollapsedGroups(v) { _setRankCollapsedGroups(v); },
+        reset: reset,
 
         // Internal — reserved for RankCommands
         _getRankCanonical: _getRankCanonical,
