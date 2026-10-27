@@ -1,11 +1,16 @@
 /**
- * relationship-commands.js
+ * =============================================================================
+ * STILL WATERS - RELATIONSHIP COMMANDS (relationship-commands.js)
+ * =============================================================================
+ *
+ * LOCATION: js/social/relationship-commands.js
  *
  * Mutation boundary for relationship records.
  *
  * Owns:
  *   - id generation
- *   - structural validation of create / update / end / remove
+ *   - structural validation of create / createBatch / update / end /
+ *     remove
  *   - commit boundary (markDataDirty; never saveMasterData)
  *   - event dispatch through RelationshipState subscribers
  *
@@ -35,17 +40,39 @@
  * present, participantA !== participantB, attributes is an array with
  * no duplicates, metadata is a plain object. Nothing more.
  *
+ * COMMIT SEMANTICS
+ *
+ *   create                     one commit (one State.applyInserts)
+ *   createBatch                one commit (one State.applyInserts for
+ *                              the whole batch, atomic)
+ *   update                     one commit (one State.applyUpdates)
+ *   end                        one commit (one State.applyUpdates)
+ *   setWidowed                 one commit (one State.applyUpdates)
+ *   remove                     one commit (one State.applyRemovals)
+ *   addAttribute               one commit (delegates to update)
+ *   removeAttribute            one commit (delegates to update)
+ *   endAllActiveForCharacter   one commit (one State.applyUpdates for
+ *                              the whole batch)
+ *   removeAllReferencesTo      one commit (one State.applyRemovals for
+ *                              the whole batch)
+ *
+ *   Every public command in this file commits exactly once. Domain
+ *   commands that need to write multiple records as a single logical
+ *   operation must either use createBatch (for inserts) or compose
+ *   their own multi-write flows (documented per-command in the domain
+ *   module's own header).
+ *
  * CONTRACT
  *
  *   - Every command returns { success: true, ... } or
  *     { success: false, code, message }.
  *   - Never throws for domain errors.
  *   - One logical mutation = one batch call to State = one markDataDirty.
- *   - Multi-record operations (endAllActiveForCharacter, removeAllReferencesTo)
- *     commit once.
  *
  * Load order: after relationship-state.js, relationship-types.js,
  * relationship-utils.js, and relationship-queries.js.
+ *
+ * =============================================================================
  */
 
 (function() {
@@ -58,12 +85,15 @@
     var Queries = window.RelationshipQueries;
 
     if (!State || !Utils || !Types || !STATUS || !Queries) {
-        throw new Error('relationship-commands.js: state, utils, types, queries must load first');
+        throw new Error(
+            'relationship-commands.js: state, utils, types, queries ' +
+            'must load first'
+        );
     }
 
-    // -------------------------------------------------------------------------
-    // DEPENDENCY WRAPPERS (fail loud, no fallbacks)
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 0. DEPENDENCY WRAPPERS (fail loud, no fallbacks)
+    // =========================================================================
 
     function _generateId() {
         if (typeof window.generateId !== 'function') {
@@ -76,9 +106,9 @@
         return Date.now();
     }
 
-    // -------------------------------------------------------------------------
-    // RESULT HELPERS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 1. RESULT HELPERS
+    // =========================================================================
 
     function _fail(code, message) {
         return { success: false, code: code, message: message };
@@ -88,13 +118,13 @@
         return Object.assign({ success: true }, data || {});
     }
 
-    // -------------------------------------------------------------------------
-    // STRUCTURAL VALIDATION
+    // =========================================================================
+    // 2. STRUCTURAL VALIDATION
     //
     // This is the only validation RelationshipCommands performs. It
     // refuses records State cannot index. Domain policy is the caller's
     // responsibility.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function _validateCreateInput(input) {
         var errors = [];
@@ -137,25 +167,27 @@
         }
 
         if (input.metadata !== undefined &&
-            (input.metadata === null || typeof input.metadata !== 'object' || Array.isArray(input.metadata))) {
+            (input.metadata === null ||
+             typeof input.metadata !== 'object' ||
+             Array.isArray(input.metadata))) {
             errors.push('invalid_metadata');
         }
 
         return { valid: errors.length === 0, errors: errors };
     }
 
-    // -------------------------------------------------------------------------
-    // CREATE
+    // =========================================================================
+    // 3. CREATE (single)
     //
     // input: {
-    //   participantA, participantB, type,
-    //   status,                 required
-    //   startYear?, endYear?,
-    //   attributes?, metadata?
+    //   participantA, participantB, type, status,
+    //   startYear?, endYear?, attributes?, metadata?
     // }
     //
     // Returns { success: true, relationship: <projection> }.
-    // -------------------------------------------------------------------------
+    //
+    // One commit.
+    // =========================================================================
 
     function create(input) {
         var check = _validateCreateInput(input);
@@ -193,17 +225,155 @@
         return _ok({ relationship: Queries.getById(record.id) });
     }
 
-    // -------------------------------------------------------------------------
-    // UPDATE
+    // =========================================================================
+    // 4. CREATE BATCH
     //
-    // patch: { status?, endYear?, attributes?, metadata?, startYear? }
+    // Inserts N records in a single State batch: one applyInserts call,
+    // one markDataDirty, one subscriber notification. All-or-nothing.
+    //
+    // The caller is responsible for preparing fully-formed records
+    // (id, type, status, participantA/B, attributes, metadata,
+    // timestamps). This function validates structural input (the same
+    // checks applyInserts performs) plus duplicate-id-within-batch, and
+    // refuses the whole batch if any record fails.
+    //
+    // State.applyInserts performs the final structural check (including
+    // duplicate ids against existing State) and commits atomically.
+    //
+    // This is the primitive used by domain commands that need to create
+    // multiple edges as one logical operation (e.g.
+    // FriendshipCommands.createMutualFriendships). It is NOT a command
+    // itself; it knows nothing about any specific archetype.
+    //
+    // Returns { success: true, inserted: [id...] } on success, where
+    // inserted preserves the order of the input records. Returns
+    // { success: false, code, message } on any failure; nothing is
+    // inserted when the batch is refused.
+    // =========================================================================
+
+    function createBatch(records) {
+        if (!Array.isArray(records)) {
+            return _fail('INVALID_INPUT', 'records must be an array');
+        }
+        if (records.length === 0) {
+            return _ok({ inserted: [] });
+        }
+
+        var seen = {};
+        for (var i = 0; i < records.length; i++) {
+            var rec = records[i];
+            if (!rec || typeof rec !== 'object') {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' is not an object'
+                );
+            }
+            if (typeof rec.id !== 'string' || rec.id.length === 0) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has no id'
+                );
+            }
+            if (typeof rec.type !== 'string' || rec.type.length === 0) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has no type'
+                );
+            }
+            if (typeof rec.status !== 'string' || rec.status.length === 0) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has no status'
+                );
+            }
+            if (typeof rec.participantA !== 'string' || rec.participantA.length === 0) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has no participantA'
+                );
+            }
+            if (typeof rec.participantB !== 'string' || rec.participantB.length === 0) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has no participantB'
+                );
+            }
+            if (rec.participantA === rec.participantB) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has same_participant'
+                );
+            }
+            if (rec.startYear !== undefined && rec.startYear !== null &&
+                typeof rec.startYear !== 'number') {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has invalid startYear'
+                );
+            }
+            if (rec.endYear !== undefined && rec.endYear !== null &&
+                typeof rec.endYear !== 'number') {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has invalid endYear'
+                );
+            }
+            if (rec.attributes !== undefined && !Array.isArray(rec.attributes)) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has invalid attributes'
+                );
+            }
+            if (rec.metadata !== undefined &&
+                (rec.metadata === null ||
+                 typeof rec.metadata !== 'object' ||
+                 Array.isArray(rec.metadata))) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'record at index ' + i + ' has invalid metadata'
+                );
+            }
+            if (seen[rec.id]) {
+                return _fail(
+                    'INVALID_INPUT',
+                    'duplicate id within batch: ' + rec.id
+                );
+            }
+            seen[rec.id] = true;
+
+            if (rec.attributes && rec.attributes.length > 0) {
+                var uniqueness = Utils.validateAttributeUniqueness(rec.attributes);
+                if (!uniqueness.valid) {
+                    return _fail(
+                        'INVALID_ATTRIBUTES',
+                        'record at index ' + i + ': ' +
+                        uniqueness.errors.join('; ')
+                    );
+                }
+            }
+        }
+
+        var result = State.applyInserts(records);
+        if (!result.success) {
+            return _fail('STATE_REJECTED', result.reason);
+        }
+
+        return _ok({ inserted: result.inserted });
+    }
+
+    // =========================================================================
+    // 5. UPDATE
+    //
+    // patch: { status?, startYear?, endYear?, attributes?, metadata? }
     //
     // Status transitions are validated by the caller's domain rules
     // against that domain's transition table. RelationshipCommands does
     // not know what any status value means.
     //
     // Metadata is a shallow merge. Attributes is a full replace.
-    // -------------------------------------------------------------------------
+    //
+    // One commit.
+    // =========================================================================
 
     function update(id, patch) {
         if (typeof id !== 'string' || id.length === 0) {
@@ -268,8 +438,8 @@
         return _ok({ relationship: Queries.getById(id) });
     }
 
-    // -------------------------------------------------------------------------
-    // END
+    // =========================================================================
+    // 6. END
     //
     // Convenience for ending a single relationship. Callers that own a
     // transition table should validate the transition (ongoing -> ended)
@@ -279,7 +449,9 @@
     //
     // endYear is required. reason, when supplied, is written to
     // metadata.endReason as a shallow merge.
-    // -------------------------------------------------------------------------
+    //
+    // One commit.
+    // =========================================================================
 
     function end(id, endYear, reason) {
         if (typeof id !== 'string' || id.length === 0) {
@@ -314,12 +486,14 @@
         return _ok({ relationship: Queries.getById(id) });
     }
 
-    // -------------------------------------------------------------------------
-    // SET WIDOWED
+    // =========================================================================
+    // 7. SET WIDOWED
     //
     // Domain-appropriate for romance. Structural: refuses non-ongoing
     // records. Writes endYear and metadata.endReason = 'death_of_partner'.
-    // -------------------------------------------------------------------------
+    //
+    // One commit.
+    // =========================================================================
 
     function setWidowed(id, endYear) {
         if (typeof id !== 'string' || id.length === 0) {
@@ -353,14 +527,16 @@
         return _ok({ relationship: Queries.getById(id) });
     }
 
-    // -------------------------------------------------------------------------
-    // REMOVE
+    // =========================================================================
+    // 8. REMOVE
     //
     // Structural removal. This is a hard delete from State. Callers that
     // need a historical record should call end(), not remove(). Use
     // remove() only when a record was created in error and never should
     // have existed.
-    // -------------------------------------------------------------------------
+    //
+    // One commit.
+    // =========================================================================
 
     function remove(id) {
         if (typeof id !== 'string' || id.length === 0) {
@@ -378,15 +554,17 @@
         return _ok({ id: id });
     }
 
-    // -------------------------------------------------------------------------
-    // ATTRIBUTE PRIMITIVES
+    // =========================================================================
+    // 9. ATTRIBUTE PRIMITIVES
     //
     // Structural only. The caller's domain rules must validate that the
     // attribute is allowed for the archetype (and, for cultural
     // attributes, allowed for the participants' cultures). These
     // primitives refuse duplicates and unknown attribute ids, nothing
     // more.
-    // -------------------------------------------------------------------------
+    //
+    // Both delegate to update(), so both are one commit.
+    // =========================================================================
 
     function addAttribute(id, attribute) {
         if (typeof id !== 'string' || id.length === 0) {
@@ -436,8 +614,8 @@
         return update(id, { attributes: next });
     }
 
-    // -------------------------------------------------------------------------
-    // BATCH END
+    // =========================================================================
+    // 10. BATCH END
     //
     // endAllActiveForCharacter: end every ongoing record referencing a
     // character. Optional filters narrow by type and by role:
@@ -447,7 +625,7 @@
     //   options.reason
     //
     // One State batch, one markDataDirty, one subscriber notification.
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     function endAllActiveForCharacter(characterId, options) {
         options = options || {};
@@ -506,13 +684,15 @@
         return _ok({ ended: result.updated.slice(), count: result.updated.length });
     }
 
-    // -------------------------------------------------------------------------
-    // BATCH REMOVE
+    // =========================================================================
+    // 11. BATCH REMOVE
     //
     // removeAllReferencesTo: hard-remove every relationship record
     // referencing a character, in one batch. Used by
     // CharacterDeletionCommands on hard delete.
-    // -------------------------------------------------------------------------
+    //
+    // One State batch, one markDataDirty, one subscriber notification.
+    // =========================================================================
 
     function removeAllReferencesTo(characterId) {
         if (typeof characterId !== 'string' || characterId.length === 0) {
@@ -532,12 +712,13 @@
         return _ok({ removed: result.removed.slice(), count: result.removed.length });
     }
 
-    // -------------------------------------------------------------------------
-    // EXPORTS
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 12. EXPORTS
+    // =========================================================================
 
     window.RelationshipCommands = {
         create: create,
+        createBatch: createBatch,
         update: update,
         end: end,
         setWidowed: setWidowed,
@@ -549,5 +730,9 @@
         endAllActiveForCharacter: endAllActiveForCharacter,
         removeAllReferencesTo: removeAllReferencesTo
     };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.RelationshipCommands;
+    }
 
 })();
