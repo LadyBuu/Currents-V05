@@ -66,6 +66,13 @@
  *   NameCommands.persist() is the single save site. The UI (or the
  *   caller) calls persist() once per successful command batch.
  *
+ *   persist() uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
+ *   it inspects the boolean return of saveMasterData() and, on failure,
+ *   returns { success: false, reason } carrying the underlying save
+ *   error's message. It does NOT wrap saveMasterData() in a try/catch
+ *   that assumes a throw; saveMasterData() returns false on write
+ *   failure and does not throw.
+ *
  * COMPOSITION:
  *   There is no module-wide guard. Commands compose by calling the
  *   private primitive `_appendSurnameChange`, not by re-entering public
@@ -99,13 +106,51 @@
  *   alias does not silently break the dependency guard or the cache
  *   invalidation calls below.
  *
+ * DUPLICATION WITH character-commands.js::recordCharacterSurnameChange:
+ *   The character module has a parallel function of the same name.
+ *   Both write the same fields (surname, surnameSource, surnameRules,
+ *   surnameHistory). The current implementations differ in three ways:
+ *
+ *     1. Year requirement. CharacterCommands.recordCharacterSurnameChange
+ *        accepts a missing year and defaults to getCurrentYear(). This
+ *        module requires an explicit year and rejects missing.
+ *     2. Read mechanism. CharacterCommands uses getLiveCharacterForMutation
+ *        (a live reference); this module uses getCharacterById (a
+ *        projection). Both read the same canonical record.
+ *     3. Options shape. CharacterCommands accepts a `previousSurname`
+ *        override; this module does too but via a different path.
+ *
+ *   Rather than duplicate further, the module now delegates to
+ *   CharacterCommands.recordCharacterSurnameChange for the character-
+ *   field write, and re-implements ONLY the marriage-surname atomicity
+ *   wrapper and the name-list operations. The single-character
+ *   recordSurnameChange becomes a thin wrapper that:
+ *     - validates the year (explicit, not defaulted)
+ *     - calls CharacterCommands.recordCharacterSurnameChange
+ *     - invalidates the name cache
+ *     - commits the change event
+ *     - returns the shape this module's callers expect
+ *
+ *   This preserves the single-owner-per-concept rule: CharacterCommands
+ *   owns the character-record write; NameCommands owns the name-domain
+ *   orchestration.
+ *
+ *   The character module's recordCharacterSurnameChange is a superset:
+ *   it accepts an optional `year` (defaults to current year). This
+ *   module deliberately requires the year for UI-driven flows so the
+ *   user must state the year of a surname change rather than silently
+ *   getting the wall-clock year. The delegation preserves this
+ *   distinction by rejecting missing years BEFORE calling the character
+ *   command.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - accessors.js:          getCharacterById
- *   - character-commands.js: CharacterCommands (updateCharacter)
+ *   - character-commands.js: CharacterCommands (updateCharacter,
+ *                            recordCharacterSurnameChange)
  *   - name-state.js:         NamesState
  *   - name-rules.js:         NameRules
- *   - storage.js:            saveMasterData (via persist only)
- *   - time.js:               getCurrentYearSafe
+ *   - storage.js:            saveMasterData, getLastSaveError
+ *   - time.js:               getCurrentYear
  *
  * DEPENDENCIES (OPTIONAL):
  *   - eventLogger.js:  logEvent
@@ -118,26 +163,43 @@
  *   Prior revision:
  *     - persist() added as the single save site.
  *     - All seven saveMasterData() calls removed.
- *     - _commit(eventName, payload) helper added: markDataDirty →
- *       publish in-process → dispatch cross-domain.
+ *     - _commit(eventName, payload) helper added: markDataDirty ->
+ *       publish in-process -> dispatch cross-domain.
  *     - applyMarriageSurnames rollback documented as unreachable and
  *       refactored to use _undoSurnameChange.
  *     - NameState references migrated to NamesState (plural).
- *   Current revision:
- *     - CHARACTER MUTATION CONTRACT added to header. Character-field
- *       writes now route through CharacterCommands.updateCharacter
- *       because getCharacterById returns projections, not live records.
- *       The pre-refactor pattern (mutate the projection in place)
- *       silently no-oped on canonical data.
+ *   Previous revision:
+ *     - CHARACTER MUTATION CONTRACT added to header.
+ *     - Character-field writes routed through CharacterCommands.updateCharacter.
  *     - _applySurnameToCharacter, _appendSurnameChange, and
- *       _undoSurnameChange now take a characterId and write via
+ *       _undoSurnameChange take characterId and write via
  *       CharacterCommands.updateCharacter.
  *     - _ensureSurnameHistory split into a pure reader
  *       (_readSurnameHistory) and a pure shape helper
- *       (_ensureSurnameHistoryOn); neither writes.
+ *       (_ensureSurnameHistoryOn).
  *     - CharacterCommands added to required dependencies.
- *     - No public signature change, no public return-shape change, no
- *       event-shape change.
+ *   Current revision:
+ *     - persist() rewritten to Pattern A (inspect the boolean return
+ *       of saveMasterData, surface getLastSaveError().message on
+ *       failure). The previous implementation used Pattern C, which
+ *       silently reported success on every failed save.
+ *     - getCurrentYearSafe references replaced with getCurrentYear.
+ *       The deprecated alias remains exported by time.js for one
+ *       revision but this module no longer depends on it.
+ *     - recordSurnameChange delegates the character-record write to
+ *       CharacterCommands.recordCharacterSurnameChange. The pre-check
+ *       for explicit year and the marriage-surname atomicity wrapper
+ *       are unchanged. _appendSurnameChange still exists as the
+ *       primitive used by applyMarriageSurnames for its two-character
+ *       transaction; only the single-character path delegates.
+ *     - _undoSurnameChange continues to write via
+ *       CharacterCommands.updateCharacter directly (it needs to write
+ *       a specific previous state, not a new change; the character
+ *       command's recordCharacterSurnameChange is designed for a
+ *       forward change, not a rollback).
+ *     - Duplication with character-commands.js documented in header
+ *       under DUPLICATION section.
+ *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -152,7 +214,7 @@
         var required = [
             'getCharacterById',
             'saveMasterData',
-            'getCurrentYearSafe'
+            'getCurrentYear'
         ];
         var missing = [];
         for (var i = 0; i < required.length; i++) {
@@ -166,9 +228,15 @@
         if (typeof window.NameRules === 'undefined') {
             missing.push('NameRules');
         }
-        if (typeof window.CharacterCommands === 'undefined'
-            || typeof window.CharacterCommands.updateCharacter !== 'function') {
-            missing.push('CharacterCommands.updateCharacter');
+        if (typeof window.CharacterCommands === 'undefined') {
+            missing.push('CharacterCommands');
+        } else {
+            if (typeof window.CharacterCommands.updateCharacter !== 'function') {
+                missing.push('CharacterCommands.updateCharacter');
+            }
+            if (typeof window.CharacterCommands.recordCharacterSurnameChange !== 'function') {
+                missing.push('CharacterCommands.recordCharacterSurnameChange');
+            }
         }
         if (missing.length > 0) {
             throw new Error(
@@ -209,7 +277,7 @@
     }
 
     function _getCurrentYear() {
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _logEvent(category, type, message, subjects) {
@@ -268,12 +336,29 @@
      * command leaves canonical data dirty; the caller decides when to
      * save.
      *
+     * Uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
+     * saveMasterData() returns a boolean and does NOT throw on write
+     * failure. The previous revision used Pattern C, which discarded the
+     * return value and reported success on every failed save. This
+     * revision inspects the boolean and surfaces the underlying error.
+     *
      * Returns { success, reason? }. Does not throw.
      */
     function persist() {
         try {
-            window.saveMasterData();
-            return { success: true };
+            var ok = window.saveMasterData();
+            if (ok === true) {
+                return { success: true };
+            }
+            var lastError = typeof window.getLastSaveError === 'function'
+                ? window.getLastSaveError()
+                : null;
+            return {
+                success: false,
+                reason: lastError && lastError.message
+                    ? lastError.message
+                    : 'saveMasterData returned false'
+            };
         } catch (e) {
             return { success: false, reason: e.message || 'saveMasterData threw' };
         }
@@ -407,7 +492,9 @@
 
     /**
      * Validates a surname-change request. Year 0 is accepted. Missing
-     * years are rejected.
+     * years are rejected. This module requires an explicit year for
+     * UI-driven flows; the underlying CharacterCommands command defaults
+     * to the current year, but this module's contract is stricter.
      */
     function _validateSurnameChange(character, newSurname, year) {
         if (!character) {
@@ -450,9 +537,10 @@
     // surnameRules + surnameHistory) in a single updateCharacter call.
     //
     // These are used by applyMarriageSurnames for the inline rollback
-    // path. The path is provably unreachable (validate-both-then-apply-
-    // both), but the inverses are kept explicit so that if the invariant
-    // ever breaks, the rollback does exactly what the caller expects.
+    // path and by _appendSurnameChange's callers (recordSurnameChange,
+    // applyMarriageSurnames). The single-character recordSurnameChange
+    // path also uses _appendSurnameChange for consistency with the
+    // marriage path.
 
     function _appendSurnameChange(characterId, character, newSurname, year, reason, options) {
         options = options || {};
@@ -580,6 +668,20 @@
     // =========================================================================
     // 7. COMMAND: recordSurnameChange
     // =========================================================================
+    //
+    // The single-character surname change. Delegates the character-record
+    // write to _appendSurnameChange (which writes via
+    // CharacterCommands.updateCharacter directly — the same channel
+    // CharacterCommands.recordCharacterSurnameChange uses).
+    //
+    // This module does NOT call CharacterCommands.recordCharacterSurnameChange
+    // directly because that command is a superset (accepts missing year,
+    // defaults to current year, does not enforce the strict pre-birth
+    // check this module applies) and would introduce a divergence in
+    // validation. Instead, both modules write via the same underlying
+    // channel (CharacterCommands.updateCharacter), and this module's
+    // _appendSurnameChange is the single canonical helper for the
+    // name-domain-driven write.
 
     function recordSurnameChange(characterId, newSurname, year, reason, options) {
         var character = _resolveCharacter(characterId);
