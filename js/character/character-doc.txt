@@ -1,14 +1,20 @@
+# Fixed File 6: `character-doc.txt`
+
+Documentation refresh that folds in every change made across the five prior fixes: the schema additions, the `adoptedParents` removal, the `advanceMortality` result shape change, and the confirm/cancel containment fix. Also refreshes the section on persistence, integrity, and the "no dead-schema reads" rule to match reality.
+
+```txt
 # Still Waters — Character Subsystem Documentation
 
-Version: 3.1
-Last regenerated from: the code in `js/character/` and `js/core/` after the
-Phase 0–1.9 refactor passes.
+Version: 3.2
+Last regenerated from: the code in `js/character/`, `js/core/`, and the
+Phase 2.x refactor passes (see the "Refactor Notes" appendix for the
+current-phase deltas).
 
 Covers: character, family, children, education, mortality, lifecycle,
-parentage edge model, persistence, cross-domain dispatch, and
-compatibility shim.
+parentage edge model, persistence, cross-domain dispatch, integrity,
+and the compatibility shim.
 
-Status: character subsystem complete through Phase 1.9. Every module's
+Status: character subsystem complete through Phase 3.13. Every module's
 header matches its behaviour. Persistence is scheduled by
 markDataDirty. The relationship and role domains have their own docs;
 this file does not duplicate them.
@@ -30,8 +36,10 @@ The character subsystem manages:
 - UI modals for character CRUD, family view, death, birth, surrogacy,
   adoption, and education
 - Multi-year simulation clock coordination
+- Cross-tab reload coordination (via storage.js)
+- Data integrity detection and repair (via core/integrity.js)
 
-Seven architectural rules govern the whole subsystem:
+Eight architectural rules govern the whole subsystem:
 
 1. **One owner per concept.**
    Character record                → `CharacterState`.
@@ -72,6 +80,20 @@ Seven architectural rules govern the whole subsystem:
    character subsystem — or in the household subsystem that reads from
    it — may read those fields.
 
+   This rule is now enforced across every layer:
+   - `storage-schema.js` does not normalize them.
+   - `validation.js` does not list them in `ENTITY_SCHEMAS`.
+   - `integrity.js` does not audit them.
+   - `character-factory.js` does not emit them.
+   - `character-state.js` does not project them.
+
+8. **Per-character failures do not abort simulations.**
+   `CharacterLifecycle.advanceMortality` catches per-character death
+   failures (e.g. a corrupt birthYear) and records them in
+   `result.skipped` rather than throwing and aborting the multi-year
+   loop. See §7 for the full contract. `killCharacter` retains its
+   throw-through contract for explicit single-character commands.
+
 ---
 
 ## 2. File Manifest
@@ -86,8 +108,8 @@ Seven architectural rules govern the whole subsystem:
 | `character-factory.js` | Canonical `buildCharacter` constructor. Validates, defaults, and assembles every character record. Also provides `validateBuiltCharacter` for the pre-built insertion path. |
 | `character-generator.js` | Random character data generation. Produces the plain data object fed to `buildCharacter`. Does not construct entities. |
 | `character-creation-commands.js` | Creation boundary. Routes every creation path through `buildCharacter` + `CharacterState.addCharacter`. Establishes family edges and religion after insertion. |
-| `character-deletion-commands.js` | Deletion boundary. Soft delete, hard delete, purge, bulk. Dispatches cross-domain cleanup on hard delete. |
-| `character-lifecycle.js` | Time progression and mortality orchestration. `advanceMortality`, `killCharacter`, `triggerNaturalDeath`, `triggerAccidentalDeath`. Age/life-stage classification. Cross-domain death dispatch. |
+| `character-deletion-commands.js` | Deletion boundary. Soft delete, hard delete, purge, bulk. Dispatches cross-domain cleanup on hard delete. Also exposes `registerDeleteHandler` for modules that load after this file. |
+| `character-lifecycle.js` | Time progression and mortality orchestration. `advanceMortality`, `killCharacter`, `triggerNaturalDeath`, `triggerAccidentalDeath`. Age/life-stage classification. Cross-domain death dispatch. `registerDeathHandler` for modules that load after this file. |
 
 ### Family
 
@@ -106,7 +128,7 @@ Seven architectural rules govern the whole subsystem:
 | `children-rules.js` | Pure pregnancy, surrogacy, and adoption policy. Fertility, conception, complication, reconciliation heuristics. |
 | `children-state.js` | Canonical store for pregnancy records, surrogacy arrangements, adoption metadata. |
 | `children-queries.js` | Read projections for pregnancies, surrogacy arrangements, adoptions. Composes `FamilyQueries` for parent resolution. |
-| `children-commands.js` | Mutation boundary. `recordBirth`, `recordPregnancyAttempt`, `recordSurrogacyArrangement`, `recordAdoptionMetadata`, etc. Coordinates `CharacterCreationCommands` and `FamilyCommands`. |
+| `children-commands.js` | Mutation boundary. `recordBirth`, `recordPregnancyAttempt`, `recordSurrogacyArrangement`, `recordAdoptionMetadata`, etc. Coordinates `CharacterCreationCommands` and `FamilyCommands`. Routes maternal death through `CharacterLifecycle.killCharacter`. |
 | `children-generator.js` | Birth proposal generation. Does not construct children. |
 | `children-statistics.js` | Aggregate pregnancy, surrogacy, adoption, and per-parent family statistics. |
 
@@ -123,11 +145,11 @@ Seven architectural rules govern the whole subsystem:
 | File | Role |
 |---|---|
 | `character-ui-list.js` | Renders character lists and cards. Delegated click handling. |
-| `modals-character.js` | Character CRUD, details, family view. Edit-modal transaction contract (see §6). |
+| `modals-character.js` | Character CRUD, details, family view. Edit-modal transaction contract (see §8). |
 | `modals-children-adoption.js` | Adoption metadata modals. |
 | `modals-children-birth.js` | Birth, pregnancy, batch birth modals. |
 | `modals-children-surrogacy.js` | Surrogacy arrangement modals. |
-| `modals-death.js` | Death, murder, execution modals. Childbed-fever routing. |
+| `modals-death.js` | Death, murder, execution modals. Childbed-fever routing (see §9). |
 
 ### Compatibility
 
@@ -161,6 +183,8 @@ module-level throw guards to fire.
 <script src="js/core/ui.js"></script>
 <script src="js/core/modals-core.js"></script>
 <script src="js/core/validation.js"></script>
+<script src="js/core/integrity.js"></script>
+<script src="js/core/maintenance.js"></script>
 
 <!-- Character subsystem (order matters) -->
 <script src="js/character/character-state.js"></script>
@@ -204,3 +228,804 @@ module-level throw guards to fire.
 
 <!-- Compatibility shim (last) -->
 <script src="js/character/character-system.js"></script>
+```
+
+**Note on integrity.js and maintenance.js:** these are optional for the
+character subsystem's basic operation. `integrity.js` is required by
+`maintenance.js`; `maintenance.js` is required by the bootstrap that
+schedules automatic audits. Neither is required by the character
+commands, queries, or UI. They are listed in the core block above
+because they belong to the bootstrap that every page runs.
+
+---
+
+## 4. Persistence
+
+### Storage envelope
+
+`storage.js` owns the `masterData` envelope. The character subsystem
+writes to `masterData.data` and schedules persistence via
+`markDataDirty()`. It does NOT call `saveMasterData()` directly, except
+in the domain persist() wrappers documented in §4.2.
+
+### 4.1 The persistence trigger
+
+Every domain that mutates canonical data calls `window.markDataDirty()`.
+That call schedules a debounced save. The primary writers:
+
+- `CharacterState._emitChange`      → markDataDirty
+- `FamilyCommands._commit`           → markDataDirty
+- `ChildrenCommands._commit`         → markDataDirty
+
+The debounce is 100ms. Rapid mutations (bulk imports, multi-character
+updates) coalesce into a single localStorage write.
+
+### 4.2 The domain persist contract
+
+Some domain commands expose a `persist()` helper that calls
+`saveMasterData()` synchronously and returns `{ success, reason? }`.
+The two correct patterns are:
+
+```js
+// Pattern A (preferred):
+var ok = window.saveMasterData();
+if (ok === true) return { success: true };
+var err = window.getLastSaveError();
+return { success: false, reason: err ? err.message : 'unknown' };
+
+// Pattern B (also correct):
+try {
+    window.saveMasterDataOrThrow();
+    return { success: true };
+} catch (e) {
+    return { success: false, reason: e.message };
+}
+```
+
+Pattern C (the historical broken pattern, silently reporting success on
+every failed save) is documented in `storage.js`'s header and must not
+be reintroduced.
+
+### 4.3 Schema ownership
+
+`storage.js` owns BYTES. It does not own schema meaning.
+
+`storage-schema.js` owns the shape of `masterData.data`. The current
+schema declares:
+
+**Top-level arrays** (all normalized to `[]` when missing):
+```
+characters, places, ranks, roles, locationTypes, governmentTypes,
+governments, households, residences, disasters, eventLog,
+educationalInstitutions, parentChildEdges,
+pregnancyRecords, surrogacyArrangements, adoptionRecords
+```
+
+**Top-level objects** (all normalized to `{}` when missing):
+```
+nameLists, cityNameParts, rankInheritanceRules,
+educationalSubjects, subjectProgress
+```
+
+**Scalars:**
+```
+currentYear   (validated against TIME_CONSTANTS; falls back to default)
+```
+
+The `pregnancyRecords`, `surrogacyArrangements`, and `adoptionRecords`
+arrays are owned by `ChildrenState`. They are declared in the schema
+layer so that every fresh install and every old save gets the arrays
+up front. See §10 for how `ChildrenState` loads them.
+
+### 4.4 Cross-tab reload
+
+`storage.js` listens for the `storage` event. On cross-tab reload:
+
+1. If `_isDirty`, skip auto-reload (the current tab has unsaved changes).
+2. Otherwise, reload the envelope, call `invalidateAccessorCaches()`,
+   then dispatch `masterDataUpdated`.
+
+Every character-subsystem module that hydrates from `masterDataUpdated`
+sees a fresh accessor cache. No domain needs its own invalidation call.
+
+### 4.5 Import
+
+`storage.js::importData` runs the pipeline:
+
+```
+parse → recognize → normalize → validate → install → save
+```
+
+Failure in any step returns a structured `{ ok: false, error, message }`
+without replacing `masterData`. On success, the accessor cache is
+invalidated and `masterDataUpdated` is dispatched (implicitly via the
+install path).
+
+`validateImportData` (in `validation.js`) is required for import. If it
+is not loaded, import refuses the file rather than installing
+unvalidated data.
+
+### 4.6 Reset
+
+`resetMasterData()` creates a default envelope, saves it, and
+invalidates the accessor cache. On save failure, the prior state is
+restored and the function returns `{ ok: false, error }`.
+
+The storage key is never deleted before the save. A successful `setItem`
+replaces the value atomically. A failed `setItem` leaves the previous
+value intact.
+
+---
+
+## 5. Character Records
+
+### 5.1 Canonical shape
+
+The character record carries:
+
+**Identity**
+```
+id, name, surname, surnameSource, surnameRules, surnameHistory
+```
+
+**Demographics**
+```
+gender, attraction, traits, birthYear, isLegitimate
+```
+
+**Life / death** (written by `CharacterCommands.markDeceased` only)
+```
+isDeceased, deathYear, deathCause, deathCauseDetail, deathNotes,
+isMurder, killerId, murderMotive, murderMethod,
+isExecution, executionReason, executionMethod, executionLocation
+```
+
+**Location and movement**
+```
+birthplaceId, currentLocationId, moves, household, householdHistory
+```
+
+**Religion / culture**
+```
+religionId, religionHistory, cultureId
+```
+
+**Presentation**
+```
+epithet, notes, appearance
+```
+
+**Rank identity pointer**
+```
+activeRankId, activeRankNumber
+```
+
+**Apprenticeship identity pointer**
+```
+isMaster, masterId, masterProfessionId, apprenticeshipDetails
+```
+
+**Friendship blob**
+```
+friendshipDetails
+```
+
+**Domain-owned embedded containers** (empty at creation; mutated by
+their owning domain's commands)
+```
+traits                  (CharacterCommands trait API)
+professions             (CharacterCommands profession API)
+rankAssignments         (ranks domain)
+relationships           (relationships domain)
+friends                 (relationships domain)
+apprentices             (apprenticeship domain)
+education               (CharacterCommands education API)
+educationHistory        (CharacterCommands education API)
+subjectProgress         (CharacterCommands education API)
+isLiterate              (CharacterCommands education API)
+```
+
+**Soft delete**
+```
+isDeleted, deletedAt    (CharacterDeletionCommands)
+```
+
+**Metadata**
+```
+createdAt, updatedAt
+```
+
+### 5.2 Removed fields
+
+The character record no longer carries:
+```
+motherId, fatherId, children, adoptedParents, adoptedChildren
+```
+
+Parentage lives in `parentChildEdges` (family-state.js). No module may
+read or write these fields. See §1 Rule 7.
+
+### 5.3 Projection contract
+
+Every public read from `CharacterState` returns a defensive projection.
+Nested arrays and objects are cloned. Mutating a projection does NOT
+affect canonical data.
+
+The "deep enough" guarantees:
+- `projection.education[institutionId]` is a fresh object.
+- `projection.subjectProgress[key]` is a fresh object.
+- `projection.professions[i]` is a fresh object whose `specs` and
+  `salaryHistory` arrays are cloned.
+- `projection.rankAssignments[i]` is a fresh object whose `number` is
+  a fresh object.
+- `projection.traits` is a fresh array of strings.
+
+Authorized mutation code uses
+`CharacterState.getLiveCharacterForMutation(id)` to obtain the live
+reference. This is documented in the module header as the sanctioned
+back door.
+
+---
+
+## 6. Parentage
+
+### 6.1 The edge model
+
+Parentage is expressed as edges in `FamilyState`. Each edge carries:
+
+```
+id, parentId, childId,
+parentType      'biological' | 'legal' | 'social'
+parentRole      'father' | 'mother' | 'parent'
+startYear, endYear, status      'ongoing' | 'ended'
+notes, createdAt, updatedAt
+```
+
+Parent roles are labels, not gender constraints. A female character may
+occupy `'father'`; a male character may occupy `'mother'`. Explicit
+roles are preserved; missing roles are inferred from gender.
+
+### 6.2 Operations
+
+Create an edge:
+```js
+FamilyCommands.setParent(childId, parentId, {
+    parentType: 'biological',
+    parentRole: 'mother',
+    startYear: birthYear
+});
+```
+
+End an edge:
+```js
+FamilyCommands.removeParent(edgeId, { endYear: year });
+```
+
+Reclassify (e.g. legitimization):
+```js
+FamilyCommands.changeParentType(edgeId, 'legal');
+```
+
+Adoption is a legal-type edge plus a metadata record in
+`ChildrenState`. See §10.
+
+### 6.3 Kinship
+
+`FamilyRules.classifyKinship(aId, bId, provider)` walks biological
+ancestry (bounded by `MAX_KINSHIP_DEPTH = 6`). Returns types like
+`PARENT`, `SIBLING`, `GRANDPARENT`, `AUNT_UNCLE`, `COUSIN`. Legal and
+social parentage does not create blood kinship.
+
+`FamilyRules.wouldCreateBiologicalCycle(childId, candidateAncestorId,
+provider)` walks unbounded to detect cycles. Called before any
+biological edge is created.
+
+### 6.4 Death handling
+
+`FamilyCommands.handleCharacterDeath(characterId, year)` ends every
+ongoing edge in which the character is parent or child. Called by
+`CharacterLifecycle._notifyCrossDomainDeath` on every death.
+
+### 6.5 Delete handling
+
+`FamilyCommands.removeAllReferencesTo(characterId)` removes every edge
+in which the character appears. Called by
+`CharacterDeletionCommands._dispatchCleanup` on hard delete.
+
+---
+
+## 7. Lifecycle and mortality
+
+### 7.1 The clock contract
+
+`CharacterLifecycle` does NOT advance the simulation clock. It
+evaluates mortality against explicit years:
+
+- `advanceMortality(years, { startYear })` — evaluates N future years
+  from `startYear`. Returns `result.finalYear`.
+- `killCharacter(characterId, deathData)` — applies one death at
+  `deathData.deathYear`.
+
+After `advanceMortality` returns, the caller decides whether to advance
+the clock:
+```js
+masterData.data.currentYear = result.finalYear;
+markDataDirty();
+```
+
+The module deliberately does not touch `masterData.data.currentYear`.
+
+### 7.2 Death transition
+
+`CharacterCommands.markDeceased(characterId, deathData, options)` is the
+ONLY function that writes `isDeceased = true` and the associated death
+fields. It validates via `MortalityRules.validateDeath`, then calls
+`CharacterState.updateCharacter` once.
+
+`options.referenceYear` is the year to treat as "now" for validation.
+Simulations pass the simulated year here. UI callers omit it and get
+the wall-clock year from `getCurrentYear()`.
+
+### 7.3 Cross-domain death dispatch
+
+After `markDeceased` succeeds, `_dispatchDeathEffects` runs:
+
+1. `_logEvent('death', 'Death', ...)` (if `event-log.js` is loaded).
+2. `_notifyCrossDomainDeath`:
+   - `FamilyCommands.handleCharacterDeath(characterId, year)`
+   - `RelationshipIntegrations.handleCharacterDeath(characterId, { deathYear: year })`
+   - `RankIssues.handleCharacterDeath(characterId, { deathYear: year })`
+3. `_invokeDeathHandlers` (registered handlers — see §7.5).
+
+Each dispatch is contained. A failure in one subsystem does not stop
+the others. Death is NOT transactional across domains; each domain
+owns its own state.
+
+### 7.4 advanceMortality's failure isolation (Phase 3.x)
+
+`advanceMortality` evaluates mortality per-character per-year. A
+per-character death failure is defined as: `markDeceased` returns
+`{ success: false }`. This happens for reasons that are NOT load-order
+bugs:
+
+- Invalid death year (e.g. out of world bounds).
+- Already-deceased race (another caller marked the character dead
+  between evaluation and mutation).
+- Invalid cause id (custom `chooseDeathCause` produced garbage).
+
+The previous behaviour threw on such failures and aborted the entire
+multi-year simulation. That is wrong for a driver: one bad character
+should not stop the simulation.
+
+**Current behaviour:** failures are recorded in `result.skipped` and
+the loop continues.
+
+```js
+{
+    success: true,
+    startYear: 1250,
+    finalYear: 1270,
+    yearsAdvanced: 20,
+    deaths: [ ...applied deaths... ],
+    deathCount: N,
+    skipped: [
+        { characterId, name, year, reason }
+    ]
+}
+```
+
+`skipped` is always present (empty array when no deaths were skipped).
+
+**What still throws:** load-order bugs (missing dependencies, deleted
+`window.random` after load). Only per-character data failures are
+absorbed.
+
+**What does NOT change:** `killCharacter` retains its throw-through
+contract. A caller asking `killCharacter` for one specific character
+gets a thrown Error if the death cannot be applied. `advanceMortality`
+is a simulation driver; `killCharacter` is an explicit command. Same
+underlying failure, different presentation.
+
+### 7.5 The death handler registry
+
+`CharacterLifecycle.registerDeathHandler(fn)` accepts a function called
+as `fn(characterId, { deathYear })` on every successful death. Handlers
+run AFTER the named dispatch in §7.3.
+
+Registration is additive with the named dispatch. A domain that is both
+present in the named dispatch AND registers a handler will be called
+twice. That is safe because command-layer operations are idempotent
+per character id.
+
+Registration returns an `unregister` function. In a normal browser
+session nothing calls unregister; the handler lives for the page's
+lifetime. Test harnesses and hot reload should call it.
+
+**Load-order gap:** the named dispatch reaches only domains that load
+BEFORE `character-lifecycle.js`. Notably, `RelationshipIntegrations`
+loads AFTER. It registers a death handler at load time to close this
+gap. See `relationship-integrations.js`'s REGISTRATION HOOKS section.
+
+### 7.6 Age classification
+
+`CharacterLifecycle.getLifeStage`, `getAgeGroup`, `isElderly`,
+`groupCharactersByAgeGroup` read from `LIFE_STAGES` and `AGE_GROUPS`
+(both defined in `constants/age-constants.js`). If either is missing,
+the corresponding helper returns `null` rather than fabricating.
+
+---
+
+## 8. Modals
+
+### 8.1 Core modal contract (from modals-core.js)
+
+`openModal(options)` opens a modal. The returned handle exposes
+`{ element, close }`.
+
+Callback contract:
+- `onMount(root)` / `onOpen(root)` — fires after DOM insertion.
+  Exceptions are logged and swallowed. Modal stays open. `onMount` wins
+  if both are supplied.
+- `onConfirm(root)` — fires on the confirm button. Return `false` to
+  keep the modal open. Any other return closes as "confirmed."
+  Exceptions propagate; the modal stays open.
+- `onCancel(root)` — fires on ANY non-confirmed close: cancel button,
+  overlay click, Escape key, close (X) button, external
+  `closeTopModal()` / `closeAllModals()`. Confirm button does NOT
+  trigger `onCancel`. Programmatic close via `.close()` does NOT
+  trigger `onCancel`.
+
+Exceptions thrown from `onCancel` are logged and swallowed. **A
+throwing `onCancel` must not prevent the modal from closing.** All
+user-close paths (cancel button, overlay, close button, Escape) route
+through `_closeAsCancelled` → `_fireCancel`, which contains exceptions.
+
+### 8.2 The edit-modal transaction contract
+
+`openEditCharacterModal` applies three independent change groups:
+
+- trait changes via `CharacterCommands.addTrait` / `removeTrait`
+- field updates via `CharacterCommands.updateCharacter`
+- parent edge changes via `FamilyCommands.setParent` / `removeParent`
+
+They are applied in a fixed order that prevents partial commits:
+
+1. Field updates collected and validated against the current projection.
+2. Parent changes validated against `FamilyRules` (cycle check,
+   duplicate check). Any failure refuses the whole edit BEFORE any
+   mutation.
+3. Trait changes applied.
+4. Field updates applied.
+5. Parent changes applied.
+6. If a parent change still fails at step 5 (concurrent mutation),
+   earlier steps are NOT rolled back. The user gets a structured error
+   and can retry only the parent change.
+
+**Parent edge start year:** new parent edges added during an edit use
+the character's ORIGINAL birth year (captured before the modal opened),
+not the edited value. Rationale: the edge's `startYear` records when
+the relationship began, which is when the child was born. Correcting a
+typo in the birth year does not change the relationship's start.
+
+### 8.3 The childbed-fever routing
+
+The death modal (`modals-death.js`) offers "Childbed Fever" only for
+female characters inside the fertile window. Selecting it routes to
+`openPregnancyAttemptModal` rather than recording the death directly.
+
+Concretely:
+
+1. User selects "Childbed Fever" and confirms.
+2. `onConfirm` returns `false` (modal stays open) and calls
+   `_routeToPregnancyAttempt`. This opens the character selector to
+   pick a father (optional).
+3. On father selection, the death modal is closed programmatically
+   (no `onCancel` fires) and `openPregnancyAttemptModal` opens with
+   `deathFlow: true` and `defaultMaternalDeath: true`.
+4. The pregnancy attempt modal owns the transaction: it records the
+   birth and, when maternal death is true, calls
+   `CharacterLifecycle.killCharacter` with cause `childbed_fever`.
+5. `onSuccess` is wired to the pregnancy attempt modal's `onSuccess`.
+6. If the user CANCELS the pregnancy attempt modal, the death modal's
+   caller is notified via `onSuccess(null)`. No death was recorded.
+
+The death modal does NOT record a childbed-fever death itself. It only
+routes. This keeps the maternal-death + birth transaction atomic in one
+place.
+
+---
+
+## 9. The character-system.js shim
+
+`character-system.js` exposes historical global names as one-way
+aliases onto the canonical modules. It loads LAST. If any canonical
+module is missing, it throws.
+
+The shim:
+- declares NO constants
+- provides NO fallback implementations
+- returns NO fake empty data
+- contains NO business logic
+- does NOT re-export deleted modules
+
+Every alias is one-way. New code must call the canonical namespaces
+directly. Aliases should be removed once no caller references them.
+
+The shim's header lists the deleted modules that are NOT aliased (e.g.
+`FamilyAccessors`, `MortalityCommands`, `PregnancyService`). Callers
+referencing those names receive `undefined`. That is a bug in the
+caller, not a shim failure.
+
+**Note on projections:** `getCharacters` and `getCharacterById`
+historically returned live canonical objects. They now return
+projections (via `CharacterState.getAllCharacters` and
+`CharacterState.getCharacter`). Callers that mutated through these
+names were relying on removed behavior. Those callers must migrate to
+`CharacterCommands`.
+
+---
+
+## 10. Children (pregnancy, surrogacy, adoption)
+
+### 10.1 Storage
+
+`ChildrenState` owns three canonical collections stored in
+`masterData.data`:
+
+- `pregnancyRecords` — pregnancy/birth events.
+- `surrogacyArrangements` — surrogacy arrangement records.
+- `adoptionRecords` — adoption metadata records.
+
+These are declared in `storage-schema.js` (`createDefaultMasterDataOverride`
+and `normalizeMasterData`'s arrayKeys list). Every fresh install and
+every old save gets these arrays up front.
+
+`ChildrenState._loadFromMasterData()` reads the arrays from
+`masterData.data`. It normalizes each entry against the canonical
+shape. It rebuilds indexes. It is idempotent on `masterDataUpdated`.
+
+### 10.2 The two parts of an adoption
+
+An adoption has two canonical parts:
+
+1. The legal parent edge in `FamilyState` (type `'legal'`).
+2. The adoption metadata record in `ChildrenState` (type, year,
+   status, notes).
+
+The two are linked by `(childId, adopterId)`.
+
+Create:
+- `FamilyCommands.createAdoption(childId, adopterId, options)` creates
+  the edge.
+- `ChildrenCommands.recordAdoptionMetadata(childId, adopterId, options)`
+  creates the metadata.
+
+`openCreateAdoptionModal` performs both, in order, with rollback on
+metadata failure. `openEndAdoptionModal` reverses both, in reverse
+order.
+
+### 10.3 Maternal death
+
+When a pregnancy attempt produces a maternal death, the death is
+applied through `CharacterLifecycle.killCharacter`, not
+`CharacterCommands.markDeceased`. `killCharacter` dispatches the
+cross-domain death consequences (family edge closure, relationship
+termination, rank deprecation) that a bare `markDeceased` would not.
+
+If `CharacterLifecycle` is unavailable, the command refuses the
+maternal-death outcome rather than producing a half-dead world.
+
+### 10.4 Commit semantics
+
+Single-attempt commands (`recordBirth`, `recordPregnancyAttempt`,
+`recordSurrogacyArrangement`, `recordAdoptionMetadata`) commit exactly
+once per call.
+
+`recordPregnancyAttempts` is a BATCH wrapper. Each internal attempt
+commits independently. N attempts → N commits → N `childrenChanged`
+events. Callers that need atomic batch behavior must compose their own
+transaction around the individual calls.
+
+---
+
+## 11. Data integrity
+
+### 11.1 What integrity audits
+
+`integrity.js` audits cross-entity referential integrity for
+well-formed references. Current finders:
+
+- `findBrokenPlaceHierarchy` — dangling `parentId`, cycle edges.
+- `findBrokenRelationships` — dangling relationship `partnerId`.
+- `findBrokenFriendships` — dangling `friendId` in `char.friends`.
+- `findBrokenHouseholdMembers` — dangling `characterId` and `headId`.
+- `findBrokenRankAssignments` — dangling `rankId` and `activeRankId`.
+- `findBrokenRoleAssignments` — dangling `profId` in `char.professions`.
+- `findBrokenApprenticeships` — dangling `masterId`, `apprenticeId`;
+  contradictory two-sided records.
+
+### 11.2 What integrity does NOT audit
+
+Parentage on the character record is NOT audited. The fields it used to
+audit (`motherId`, `fatherId`, `adoptedParents`) are removed. Family
+edge integrity (dangling `parentId` in `parentChildEdges`, genealogy
+cycles) is owned by the family domain.
+
+When family integrity is added, the finders should be named
+`findBrokenFamilyEdges` / `findFamilyGenealogyCycles` and should live
+in `family-queries.js` or a new `family-integrity.js`. They should NOT
+be resurrected in `integrity.js` against the character record.
+
+### 11.3 The audit and repair entry points
+
+`auditDataIntegrity()` runs all finders, returns `{ ok, counts,
+totalIssues, totalCharacters, ... }`. Pure.
+
+`repairAllData(options)` runs all repairs in memory. Does NOT persist.
+Returns `{ repairs, contradictions, totalRepairs, changed, before,
+after }`. The caller commits via the mutation boundary.
+
+`maintenance.js` orchestrates: `autoAudit()` checks `isAuditDue()`, runs
+`auditDataIntegrity`, runs `repairAllData` if needed, calls
+`markDataDirty` on changed data, advances the timestamp.
+
+### 11.4 Apprenticeship conflict policies
+
+`repairBrokenApprenticeships({ conflictPolicy })` accepts:
+
+- `'report'` (default) — contradictions returned unrepaired.
+- `'trustMasterList'` — master.apprentices is authoritative; each
+  apprentice's masterId is rebuilt from the union of master lists.
+- `'trustApprenticeId'` — apprentice.masterId is authoritative; each
+  master's apprentices list is rebuilt from the union of apprentice
+  references.
+
+The trusting policies are GRAPH RECONCILIATION operations. They may
+touch entries that were not individually flagged. This is deliberate:
+reconciling one side of the graph requires updating the other side to
+match.
+
+---
+
+## 12. Deletion
+
+### 12.1 Soft delete
+
+`CharacterDeletionCommands.softDeleteCharacter(id)` sets `isDeleted:
+true` and `deletedAt`. The record stays in the canonical collection.
+`isDeleted` and `deletedAt` are domain-owned fields written via
+`applyDomainFieldPatch`.
+
+Restore: `restoreSoftDeletedCharacter(id)` clears both fields.
+
+### 12.2 Hard delete
+
+`CharacterDeletionCommands.deleteCharacter(id)` removes the record and
+dispatches cleanup:
+
+1. `FamilyCommands.removeAllReferencesTo(id)`
+2. `ChildrenCommands.removeAllReferencesTo(id)`
+3. `RelationshipIntegrations.removeAllReferencesTo(id)`
+4. `HouseholdCommands.removeCharacterReferences(id)`
+5. `RankIssues.removeAllReferencesTo(id)`
+6. `ApprenticeshipCommands.removeAllReferencesTo(id)`
+
+Each is called only if the module and method exist. The result includes
+a `cleanup` report: `{ applied: [], skipped: [], failed: [] }`.
+
+A failing cleanup does not refuse the delete. It means the domain's own
+data still references a now-deleted character id; that is a domain bug,
+not a reason to refuse deletion.
+
+### 12.3 The delete handler registry
+
+The named cleanup table only reaches domains whose modules load BEFORE
+`character-deletion-commands.js`. Under the documented load order,
+that means `FamilyCommands`, `ChildrenCommands`, `RankIssues`, and
+`HouseholdCommands`. NOT `RelationshipIntegrations` and NOT
+`ApprenticeshipCommands`.
+
+To close that gap, `registerDeleteHandler(fn)` is exposed on both the
+`CharacterDeletionCommands` namespace and `window`. Any module that
+loads after `character-deletion-commands.js` may register a handler.
+Every hard delete invokes every registered handler with
+`fn(characterId)` exactly once, after the named cleanup table.
+
+Handler contract: return value ignored. Exceptions caught and logged. A
+throwing handler does not prevent subsequent handlers from running.
+
+The relationship domain registers itself via this hook. See
+`relationship-integrations.js`'s REGISTRATION HOOKS section.
+
+---
+
+## 13. Simulation
+
+### 13.1 The multi-year advance
+
+```js
+var result = CharacterLifecycle.advanceMortality(20, {
+    startYear: masterData.data.currentYear,
+    // optional overrides:
+    // getMortalityRate(character, age, year) -> number|null
+    // chooseDeathCause(character, age, year) -> { deathCause, deathCauseDetail? }
+    // random() -> number in [0,1)
+    // maxDeaths: number
+});
+
+if (result.success) {
+    masterData.data.currentYear = result.finalYear;
+    markDataDirty();
+}
+```
+
+Result shape:
+```js
+{
+    success: true,
+    startYear, finalYear, yearsAdvanced,
+    deaths: [ { characterId, name, surname, deathYear, deathCause, ... } ],
+    deathCount: number,
+    skipped: [ { characterId, name, year, reason } ]
+}
+```
+
+Deaths applied. Skipped recorded. Clock not advanced. See §7.4 for the
+failure isolation contract.
+
+### 13.2 Determinism
+
+All randomness routes through `window.random()` from `randomness.js`.
+`Math.random` is forbidden. `options.random` overrides for a specific
+call do NOT replace the load-time dependency on `randomness.js`.
+
+Same seed → same births, deaths, and cause selection.
+
+---
+
+## 14. Refactor Notes (current phase deltas)
+
+The following changes were applied in the current phase and are
+reflected throughout this document:
+
+**Storage schema (§4.3):** `pregnancyRecords`, `surrogacyArrangements`,
+and `adoptionRecords` were added to `createDefaultMasterDataOverride`
+and to `normalizeMasterData`'s arrayKeys list. Previously the children
+domain relied on `ChildrenState`'s defensive `Array.isArray` guard at
+load; that worked but left the schema layer's shape declaration
+incomplete. No behavioural change for existing saves.
+
+**Integrity (§11):** `findBrokenParentReferences`,
+`repairBrokenParentReferences`, `findGenealogyCycles`,
+`repairGenealogyCycles`, and the deprecated aliases
+`findOrphanedCharacters` / `repairOrphanedCharacters` were removed.
+All read character-record fields (`motherId`, `fatherId`,
+`adoptedParents`) that are no longer part of the schema. They
+produced no findings on any current save. Family edge integrity is
+explicitly documented as owned by the family domain (see §11.2).
+
+**Modals-core (§8.1):** the cancel-button click path now routes
+through `_closeAsCancelled`. Previously it invoked `onCancel`
+directly without exception containment, which meant a throwing
+`onCancel` prevented the modal from closing — contradicting the
+documented contract. All user-close paths (cancel button, overlay,
+close button, Escape) now share one contained path.
+
+**Character lifecycle (§7.4):** `advanceMortality` now catches
+per-character death failures and records them in `result.skipped`.
+The previous behaviour threw and aborted the entire multi-year loop on
+the first failure. Per-character failures are a data problem, not a
+load-order bug, and should not stop the simulation. `killCharacter`
+retains its throw-through contract.
+
+**Validation (§1 Rule 7):** `adoptedParents` was removed from
+`ENTITY_SCHEMAS.character.optional`. This was the last remaining
+reference to a removed parentage field in `validation.js`. The
+character schema now lists no parentage fields at all, matching
+`storage-schema.js`'s "removed fields" note.
+
+**Documentation (this file):** refreshed to reflect all of the above,
+plus the `registerDeleteHandler` and `registerDeathHandler` hooks
+(§12.3, §7.5) and the `skipped` field on `advanceMortality` (§7.4).
+```
+```
