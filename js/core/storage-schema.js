@@ -69,11 +69,27 @@
  *     adoptionRecords         array   (adoption metadata records)
  *
  *   These are declared here (factory + normalization) so that every
- *   fresh install and every old save gets the arrays up front. The
- *   children domain was previously relying on ChildrenState's defensive
- *   `Array.isArray` guard at load; that worked but left the schema
- *   layer's shape declaration incomplete. This module now declares them
- *   as part of the canonical current shape.
+ *   fresh install and every old save gets the arrays up front.
+ *
+ * RANK RECORD FIELDS:
+ *   Rank records carry NO location pointer. The current rank shape
+ *   (rank-constants.js::DEFAULT_RANK, rank-rules.js::applyDefaults,
+ *   rank-state.js::_normaliseRank) declares:
+ *
+ *     locationTypeId      scope qualifier (which location TYPE the rank
+ *                         applies to — country, region, town, etc.)
+ *
+ *   It does NOT declare `locationId`. A rank applies to a type of
+ *   location, not to a specific location instance. Concrete holder
+ *   assignment is expressed by `parentRankId` / `sourceRankId` /
+ *   `character.activeRankId`, not by a location instance reference.
+ *
+ *   Older revisions of this schema normalized `rank.locationId` to
+ *   `null` on every load, which added a phantom field that no consumer
+ *   read. That normalization has been removed. Existing saves that
+ *   still carry a `locationId` field will pass through unchanged —
+ *   normalization does not delete fields, it only fills defaults —
+ *   but the field is inert.
  *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.DEFAULT_YEAR, MIN_YEAR, MAX_YEAR
@@ -83,17 +99,18 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords to
- *       createDefaultMasterDataOverride().data and to the arrayKeys list
- *       in normalizeMasterData. These are the three top-level children
- *       collections that ChildrenState owns. Previous revisions relied
- *       on ChildrenState's defensive `Array.isArray` guards at load,
- *       which worked but left the schema shape declaration incomplete.
- *       No behavioural change for existing saves: the arrays were either
- *       already present (written by ChildrenCommands._commit) or
- *       undefined (handled by the defensive guard). Both cases now
- *       normalize to [] through the standard path.
+ *     - Removed `rank.locationId` normalization. The current rank shape
+ *       has no `locationId` field. Older revisions added a phantom
+ *       `locationId: null` to every rank on load. Removed; the field is
+ *       no longer declared. Existing saves that still carry it pass
+ *       through unchanged (normalization fills defaults, it does not
+ *       delete fields).
+ *     - Header RANK RECORD FIELDS section added, explaining the
+ *       `locationTypeId` vs `locationId` distinction.
  *   Previous revision:
+ *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords
+ *       to createDefaultMasterDataOverride().data and to the arrayKeys
+ *       list in normalizeMasterData.
  *     - _ensureArrayField(char, 'traits') added to normalizeMasterData.
  *       Old saves gain traits: [] on load. No migration version bump;
  *       the field is additive and defaults safely.
@@ -391,13 +408,24 @@
         }
 
         // --- Entity field defaults (ranks) ---
+        //
+        // The rank shape is owned by rank-constants.js::DEFAULT_RANK,
+        // rank-rules.js::applyDefaults, and rank-state.js::_normaliseRank.
+        // This layer only guarantees the top-level field presence that
+        // external consumers rely on before the rank module hydrates.
+        //
+        // There is NO `locationId` field on the current rank shape. A rank
+        // applies to a location TYPE (`locationTypeId`), not to a specific
+        // location instance. The `locationId` normalization that used to
+        // live here was a schema-layer artifact from an older rank shape.
+        // It added a phantom field that no consumer read. Removed.
+        // See RANK RECORD FIELDS in the module header.
         for (var r = 0; r < out.ranks.length; r++) {
             var rank = out.ranks[r];
             if (!rank || typeof rank !== 'object') continue;
 
             if (rank.genderRestriction === undefined) rank.genderRestriction = 'either';
             if (rank.locationTypeId === undefined) rank.locationTypeId = null;
-            if (rank.locationId === undefined) rank.locationId = null;
             if (rank.numbered === undefined) rank.numbered = false;
             if (rank.symbol === undefined) rank.symbol = '';
             if (rank.deprecateOnDeath === undefined) rank.deprecateOnDeath = false;
