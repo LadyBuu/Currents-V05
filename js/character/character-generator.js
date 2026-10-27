@@ -39,10 +39,10 @@
  *     simulation year. Not a newborn. Not a womb-to-grave simulation.
  *     Profession startYear is chosen within [birthYear + MIN_PROFESSION_AGE,
  *     currentYear] so a 60-year-old blacksmith is not "just starting".
- *   - Missing optional dependencies are treated as a feature being
- *     unavailable. The generated field is left absent (never fabricated).
- *     Callers who need religion or appearance must ensure those modules
- *     are loaded.
+ *   - Missing optional dependencies (religion, culture, appearance) are
+ *     treated as a feature being unavailable. The generated field is left
+ *     absent (never fabricated). Callers who need religion or appearance
+ *     must ensure those modules are loaded.
  *   - A character without a resolvable country receives an empty surname.
  *     No fallback names are invented.
  *   - A character without any resolvable given name fails generation
@@ -59,11 +59,12 @@
  *   pickRandomMultiple (or shuffleArray when pickRandomMultiple is not
  *   present). Same seed → same traits. No Math.random.
  *
- *   Vocabulary absence: if CHARACTER_TRAIT_VALUES is not loaded, the
- *   generator emits `traits: []`. This is a soft-fail because the trait
- *   feature is optional to generation; a character without traits is
- *   still a complete character. It is NOT an error — production load
- *   order always has the vocabulary present.
+ *   The vocabulary (CHARACTER_TRAIT_VALUES) is a HARD load-time
+ *   dependency. Loading character-generator.js without
+ *   character-traits.js throws at load time. There is no soft-fail
+ *   path: an empty trait list is indistinguishable from a character
+ *   who happened to roll zero traits, and the load order is a
+ *   contract, not a runtime condition.
  *
  * DOMAIN-OWNED FIELDS:
  *   The generator produces ONLY character-owned input fields. Domain-owned
@@ -83,26 +84,43 @@
  *   - randomness.js: pickRandom, random, randomBoolean, randomInt,
  *                    pickWeighted
  *   - time.js:       getCurrentYear, isValidYear
- *   - world.js:      getPlaceById (via accessors.js)
+ *   - world.js:      getPlaceScope, getLocationTypeScope
+ *                    (used to resolve country from birthplace and to
+ *                    filter countries by name-data availability)
  *   - accessors.js:  getPlaces, getPlaceById, getNameLists, getRoles
  *   - names.js:      getRandomNameFromCountry, getRandomSurnameFromCountry
+ *   - constants/character-traits.js:
+ *                    CHARACTER_TRAIT_VALUES (validated at load time)
  *
  * DEPENDENCIES (OPTIONAL, feature-gated):
  *   - religion-queries.js  (ReligionQueries)   — for religion selection
  *   - culture-queries.js   (CultureQueries)    — for culture resolution
  *   - culture-generation.js (CultureGeneration) — for appearance generation
- *   - constants/character-traits.js (CHARACTER_TRAIT_VALUES) — for trait
- *     selection. Absence yields traits: [] rather than a throw.
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (Phase 1.5):
+ *     - world.js is now a HARD load-time dependency. getPlaceScope and
+ *       getLocationTypeScope are required at load time.
+ *     - _getCountryFromLocation uses window.getPlaceScope
+ *       unconditionally. The previous else-if fallback to
+ *       getLocationTypeScope was dead code that hid the world.js
+ *       dependency.
+ *     - _getRandomCountryWithNameData uses window.getPlaceScope
+ *       unconditionally. Same fallback removed.
+ *     - character-traits.js is now a HARD load-time dependency.
+ *       _selectTraits no longer soft-fails on missing vocabulary.
+ *     - Header DEPENDENCIES updated: world.js and
+ *       constants/character-traits.js are REQUIRED.
+ *     - Header TRAITS section rewritten to state the hard-require
+ *       contract.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - Random trait selection added: 1–3 unique traits picked from
  *       CHARACTER_TRAIT_VALUES via the shared RNG stream.
  *     - traits added to the assembled data object.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -121,6 +139,8 @@
         'pickWeighted',
         'getCurrentYear',
         'isValidYear',
+        'getPlaceScope',
+        'getLocationTypeScope',
         'getPlaces',
         'getPlaceById',
         'getNameLists',
@@ -138,6 +158,14 @@
         throw new Error(
             'character-generator.js: missing required dependencies: ' +
             _missing.join(', ')
+        );
+    }
+
+    if (!Array.isArray(window.CHARACTER_TRAIT_VALUES)) {
+        throw new Error(
+            'character-generator.js: character-traits.js must load first ' +
+            '(CHARACTER_TRAIT_VALUES missing). The generator requires the ' +
+            'canonical trait vocabulary; there is no soft-fail path.'
         );
     }
 
@@ -218,12 +246,12 @@
     // =========================================================================
     //
     // Picks MIN_TRAITS..MAX_TRAITS distinct traits from the canonical
-    // vocabulary. All randomness flows through randomness.js. Returns []
-    // when the vocabulary is not loaded, or when there are fewer traits
-    // available than the minimum requested.
+    // vocabulary. All randomness flows through randomness.js.
+    //
+    // The vocabulary is guaranteed by the load-time guard at the top of
+    // this file. The function does not re-check it.
 
     function _selectTraits() {
-        if (!Array.isArray(window.CHARACTER_TRAIT_VALUES)) return [];
         var pool = window.CHARACTER_TRAIT_VALUES;
         if (pool.length === 0) return [];
 
@@ -267,6 +295,12 @@
     // =========================================================================
     // 4. LOCATION RESOLUTION
     // =========================================================================
+    //
+    // Both functions below use window.getPlaceScope unconditionally.
+    // world.js provides it and is a required dependency. The previous
+    // revision had an else-if fallback to getLocationTypeScope; that
+    // was dead code (world.js always provides both) that hid the
+    // dependency from the header.
 
     /**
      * Walks the parent hierarchy of a place to find the country-scoped
@@ -286,11 +320,7 @@
             if (visited.has(current.id)) break;
             visited.add(current.id);
 
-            if (typeof window.getPlaceScope === 'function') {
-                if (window.getPlaceScope(current) === 'country') return current;
-            } else if (typeof window.getLocationTypeScope === 'function') {
-                if (window.getLocationTypeScope(current.typeId) === 'country') return current;
-            }
+            if (window.getPlaceScope(current) === 'country') return current;
 
             if (!_hasId(current.parentId)) break;
             current = window.getPlaceById(current.parentId);
@@ -360,13 +390,7 @@
         var places = window.getPlaces();
         var countries = [];
         for (var i = 0; i < places.length; i++) {
-            var scope = null;
-            if (typeof window.getPlaceScope === 'function') {
-                scope = window.getPlaceScope(places[i]);
-            } else if (typeof window.getLocationTypeScope === 'function') {
-                scope = window.getLocationTypeScope(places[i].typeId);
-            }
-            if (scope === 'country') countries.push(places[i]);
+            if (window.getPlaceScope(places[i]) === 'country') countries.push(places[i]);
         }
 
         return countries.length > 0 ? window.pickRandom(countries) : null;
@@ -618,7 +642,7 @@
         var birthYear = currentYear - age;
 
         // 3. Traits — 1..3 distinct from the canonical vocabulary.
-        //    Absence of the vocabulary yields []. Not an error.
+        //    The vocabulary is guaranteed by the load-time guard.
         var traits = _selectTraits();
 
         // 4. Birthplace
