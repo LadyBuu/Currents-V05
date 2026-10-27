@@ -53,13 +53,22 @@
  *   Both paths delegate to RelationshipCommands.update, which is the
  *   single writer for relationship records.
  *
+ * DIRECTIONALITY
+ *
+ *   Professional archetypes are directional. When checking whether an
+ *   active edge already exists between two characters, the check MUST
+ *   be directional (A → B). A reversed edge (B → A) is a different
+ *   relationship and must not be treated as a duplicate. The check
+ *   helpers below (getActiveDirectionalEdge, getGuildMembershipForMember)
+ *   enforce this.
+ *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js    (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
  *   - relationship-commands.js (RelationshipCommands)
  *   - relationship-queries.js  (RelationshipQueries — used by end/update)
  *   - professional-rules.js    (ProfessionalRules)
  *   - professional-queries.js  (ProfessionalQueries)
- *   - character-queries.js     (getCharacterById, calculateAge)
+ *   - character-queries.js     (getCharacterById)
  *   - time.js                  (getCurrentYearSafe)
  *
  * =============================================================================
@@ -171,14 +180,6 @@
         }
     }
 
-    function _archetypeId(name) {
-        if (name === 'apprenticeship')   return APPRENTICESHIP;
-        if (name === 'mastership')       return MASTERSHIP;
-        if (name === 'employment')       return EMPLOYMENT;
-        if (name === 'guild_membership') return GUILD_MEMBERSHIP;
-        return null;
-    }
-
     // =========================================================================
     // 3. RESULT HELPERS
     // =========================================================================
@@ -200,7 +201,44 @@
     }
 
     // =========================================================================
-    // 4. EDGE PRIMITIVE
+    // 4. DIRECTIONAL EDGE LOOKUP HELPERS
+    // =========================================================================
+    //
+    // Professional archetypes are directional: A → B. The generic
+    // RelationshipQueries.getActiveBetweenOfType returns active edges
+    // in EITHER direction. That is correct for symmetric archetypes
+    // (friendship, rivalry, committed) but wrong for professional edges:
+    // an "employer → employee" check must not match "employee → employer."
+    //
+    // These helpers do the directional filter once, so every command
+    // that needs "does this specific directional edge exist" gets a
+    // consistent answer.
+
+    /**
+     * Returns the active directional edge of `type` from `fromId` to
+     * `toId`, or null. Directionality is enforced.
+     *
+     * @param {string} fromId
+     * @param {string} toId
+     * @param {string} type
+     * @returns {Object|null}
+     */
+    function _getActiveDirectionalEdge(fromId, toId, type) {
+        if (typeof fromId !== 'string' || typeof toId !== 'string') return null;
+        if (fromId === toId) return null;
+
+        var records = RQ.getActiveBetweenOfType(fromId, toId, type);
+        for (var i = 0; i < records.length; i++) {
+            var rel = records[i];
+            if (rel.participantA === fromId && rel.participantB === toId) {
+                return rel;
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 5. EDGE PRIMITIVE
     // =========================================================================
 
     /**
@@ -219,8 +257,7 @@
         if (typeof args.archetype !== 'string') {
             return _fail('MISSING_ARCHETYPE', 'archetype is required');
         }
-        var type = _archetypeId(args.archetype);
-        if (!type) {
+        if (!PR.isProfessionalArchetype(args.archetype)) {
             return _fail('UNKNOWN_ARCHETYPE',
                 'Unknown professional archetype: ' + args.archetype);
         }
@@ -234,6 +271,11 @@
             return _fail('SAME_PERSON', 'participants must be distinct');
         }
 
+        // Professional edges carry no attributes in v1. This check
+        // rejects any attempt to smuggle attributes through the edge
+        // primitive. It is a live constraint: if a caller supplies
+        // args.metadata.attributes and the professional attribute set
+        // is ever extended beyond {}, this validation reflects it.
         var attrs = PR.validateAttributes(args.metadata && args.metadata.attributes);
         if (!attrs.valid) {
             return _fail('INVALID_ATTRIBUTES', attrs.errors.join('; '));
@@ -242,7 +284,7 @@
         var createResult = RC.create({
             participantA: args.participantA,
             participantB: args.participantB,
-            type: type,
+            type: args.archetype,
             status: typeof args.status === 'string' ? args.status : STATUS.ONGOING,
             startYear: (typeof args.startYear === 'number') ? args.startYear : null,
             attributes: [],
@@ -258,7 +300,7 @@
             );
         }
 
-        return _ok({ relationshipId: createResult.relationshipId });
+        return _ok({ relationshipId: createResult.relationship.relationshipId });
     }
 
     /**
@@ -410,7 +452,7 @@
     }
 
     // =========================================================================
-    // 5. MASTERSHIP
+    // 6. MASTERSHIP
     // =========================================================================
 
     function createMastership(masterId, expertId, options) {
@@ -426,8 +468,10 @@
             return _fail('MISSING_CHARACTER', 'character not found');
         }
 
-        var existing = RQ.getActiveBetweenOfType(masterId, expertId, MASTERSHIP);
-        if (existing.length > 0) {
+        // Directional: an active mastership master → expert. A reversed
+        // edge is a different relationship and does not block creation.
+        var existing = _getActiveDirectionalEdge(masterId, expertId, MASTERSHIP);
+        if (existing) {
             return _fail('ALREADY_MASTERED', 'active mastership already exists');
         }
 
@@ -436,7 +480,7 @@
             : _getCurrentYear();
 
         var result = createEdge({
-            archetype: 'mastership',
+            archetype: MASTERSHIP,
             participantA: masterId,
             participantB: expertId,
             startYear: startYear,
@@ -465,15 +509,7 @@
             return _fail('MISSING_ID', 'masterId and expertId are required');
         }
 
-        var records = RQ.getActiveBetweenOfType(masterId, expertId, MASTERSHIP);
-        var target = null;
-        for (var i = 0; i < records.length; i++) {
-            if (records[i].participantA === masterId &&
-                records[i].participantB === expertId) {
-                target = records[i];
-                break;
-            }
-        }
+        var target = _getActiveDirectionalEdge(masterId, expertId, MASTERSHIP);
         if (!target) return _fail('NOT_FOUND', 'no active mastership');
 
         var result = endEdge(
@@ -490,7 +526,7 @@
     }
 
     // =========================================================================
-    // 6. EMPLOYMENT
+    // 7. EMPLOYMENT
     // =========================================================================
 
     function createEmployment(employerId, employeeId, options) {
@@ -510,25 +546,28 @@
             ? options.startYear
             : _getCurrentYear();
 
-        var employer = _getCharacter(employerId);
         var employee = _getCharacter(employeeId);
 
+        // Employment rule currently constrains only the employee's
+        // minimum age. The employer age is not part of the policy; it
+        // is deliberately not computed here, to keep the fact bundle
+        // honest about what the rule actually uses.
         var validation = PR.canCreateEmployment({
             employerId: employerId,
             employeeId: employeeId,
-            employerAge: _ageAtYear(employer, startYear),
             employeeAge: _ageAtYear(employee, startYear)
         });
         if (!validation.valid) {
             return _fail('VALIDATION_FAILED', validation.errors.join('; '));
         }
 
-        if (PQ.getEmploymentBetween(employerId, employeeId)) {
+        var existing = _getActiveDirectionalEdge(employerId, employeeId, EMPLOYMENT);
+        if (existing) {
             return _fail('ALREADY_EMPLOYED', 'already employed by this employer');
         }
 
         var result = createEdge({
-            archetype: 'employment',
+            archetype: EMPLOYMENT,
             participantA: employerId,
             participantB: employeeId,
             startYear: startYear,
@@ -543,7 +582,7 @@
         _logEvent('professional', 'Employment Formed',
             _getCharacterName(employeeId) + ' employed by ' +
             _getCharacterName(employerId),
-            [employer, employee]);
+            [_getCharacter(employerId), employee]);
 
         return _ok({
             relationshipId: result.relationshipId,
@@ -558,7 +597,7 @@
             return _fail('MISSING_ID', 'employerId and employeeId are required');
         }
 
-        var rel = PQ.getEmploymentBetween(employerId, employeeId);
+        var rel = _getActiveDirectionalEdge(employerId, employeeId, EMPLOYMENT);
         if (!rel) return _fail('NOT_FOUND', 'no active employment');
 
         var patch = {};
@@ -570,12 +609,12 @@
             return _fail('NO_UPDATES', 'nothing to update');
         }
 
-        var result = updateEdgeMetadata(rel.relationshipId, patch);
+        var result = updateEdgeMetadata(rel.id, patch);
         if (!result.success) return result;
 
         return _ok({
-            relationshipId: rel.relationshipId,
-            relationship: RQ.getById(rel.relationshipId)
+            relationshipId: rel.id,
+            relationship: RQ.getById(rel.id)
         });
     }
 
@@ -586,24 +625,24 @@
             return _fail('MISSING_ID', 'employerId and employeeId are required');
         }
 
-        var rel = PQ.getEmploymentBetween(employerId, employeeId);
+        var rel = _getActiveDirectionalEdge(employerId, employeeId, EMPLOYMENT);
         if (!rel) return _fail('NOT_FOUND', 'no active employment');
 
         var result = endEdge(
-            rel.relationshipId,
+            rel.id,
             options.endYear,
             typeof options.reason === 'string' ? options.reason : 'employment ended'
         );
         if (!result.success) return result;
 
         return _ok({
-            relationshipId: rel.relationshipId,
-            relationship: RQ.getById(rel.relationshipId)
+            relationshipId: rel.id,
+            relationship: RQ.getById(rel.id)
         });
     }
 
     // =========================================================================
-    // 7. GUILD MEMBERSHIP
+    // 8. GUILD MEMBERSHIP
     // =========================================================================
 
     function createGuildMembership(guildId, memberId, options) {
@@ -635,12 +674,13 @@
             return _fail('VALIDATION_FAILED', validation.errors.join('; '));
         }
 
-        if (PQ.isInGuild(memberId, guildId)) {
+        var existing = _getActiveDirectionalEdge(guildId, memberId, GUILD_MEMBERSHIP);
+        if (existing) {
             return _fail('ALREADY_MEMBER', 'already a member of this guild');
         }
 
         var result = createEdge({
-            archetype: 'guild_membership',
+            archetype: GUILD_MEMBERSHIP,
             participantA: guildId,
             participantB: memberId,
             startYear: startYear,
@@ -669,19 +709,19 @@
             return _fail('MISSING_ID', 'guildId and memberId are required');
         }
 
-        var rel = PQ.getGuildMembership(memberId, guildId);
+        var rel = _getActiveDirectionalEdge(guildId, memberId, GUILD_MEMBERSHIP);
         if (!rel) return _fail('NOT_FOUND', 'no active guild membership');
 
         var result = endEdge(
-            rel.relationshipId,
+            rel.id,
             options.endYear,
             typeof options.reason === 'string' ? options.reason : 'left guild'
         );
         if (!result.success) return result;
 
         return _ok({
-            relationshipId: rel.relationshipId,
-            relationship: RQ.getById(rel.relationshipId)
+            relationshipId: rel.id,
+            relationship: RQ.getById(rel.id)
         });
     }
 
@@ -690,22 +730,22 @@
             return _fail('MISSING_ID', 'guildId and memberId are required');
         }
 
-        var rel = PQ.getGuildMembership(memberId, guildId);
+        var rel = _getActiveDirectionalEdge(guildId, memberId, GUILD_MEMBERSHIP);
         if (!rel) return _fail('NOT_FOUND', 'no active guild membership');
 
-        var result = updateEdgeMetadata(rel.relationshipId, {
+        var result = updateEdgeMetadata(rel.id, {
             rank: typeof rank === 'string' ? rank : null
         });
         if (!result.success) return result;
 
         return _ok({
-            relationshipId: rel.relationshipId,
-            relationship: RQ.getById(rel.relationshipId)
+            relationshipId: rel.id,
+            relationship: RQ.getById(rel.id)
         });
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.ProfessionalCommands = {
