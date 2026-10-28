@@ -1,3 +1,4 @@
+// js/households/household-commands.js
 /**
  * =============================================================================
  * STILL WATERS - HOUSEHOLD COMMANDS (js/households/household-commands.js)
@@ -64,6 +65,29 @@
  *   Both are part of one logical operation. Both call _commit (which
  *   notifies subscribers and dispatches CustomEvents). persist() is called
  *   once at the end of the batch.
+ *
+ * CROSS-DOMAIN PRESENCE CHECKS
+ * ----------------------------
+ *   ResidenceSystem and IndustryCommands are OPTIONAL dependencies of
+ *   this module. They are resolved at CALL time, not load time. Prior
+ *   revisions froze presence flags at load:
+ *
+ *     var _residenceSystemPresent = typeof window.ResidenceSystem !== 'undefined' && ...
+ *
+ *   That worked only when the module was loaded BEFORE its optional
+ *   dependency. The documented load order places residence-system.js
+ *   AFTER household-commands.js, so the flag froze to false and every
+ *   deleteHousehold call that touched a residence returned
+ *   RESIDENCE_SYSTEM_UNAVAILABLE — even though ResidenceSystem was
+ *   loaded by the time the command ran. The same fragility applied to
+ *   IndustryCommands (currently unused, but the same flag pattern would
+ *   break the first time an industry-touching command ships).
+ *
+ *   The fix: _residenceSystemAvailable() and _industryCommandsAvailable()
+ *   are call-time checks. A load-order change (either direction) no
+ *   longer affects behavior; only the state of window.ResidenceSystem /
+ *   window.IndustryCommands AT THE MOMENT THE COMMAND RUNS matters,
+ *   which is the correct semantic for an optional dependency.
  *
  * SET HEAD CONTRACT (REVISED)
  * ---------------------------
@@ -178,7 +202,21 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (P0-3):
+ *     - Replaced the load-time _residenceSystemPresent and
+ *       _industryCommandsPresent flags with call-time helpers
+ *       _residenceSystemAvailable() and _industryCommandsAvailable().
+ *       The load-time flags froze to false under the documented load
+ *       order (residence-system.js loads AFTER this file), which made
+ *       every deleteHousehold call that touched a residence return
+ *       RESIDENCE_SYSTEM_UNAVAILABLE even though ResidenceSystem was
+ *       loaded by the time the command ran. Call-time resolution fixes
+ *       this regardless of load order, and preserves the same behavior
+ *       when ResidenceSystem is genuinely absent.
+ *     - Header CROSS-DOMAIN PRESENCE CHECKS section added documenting
+ *       the policy and the historical bug.
+ *     - No behavioural change to any other command.
+ *   Previous revision:
  *     - Added clearLocationReferences(locationId). This is the cross-
  *       domain cleanup hook that LocationCommands.deletePlace dispatches
  *       when a place is removed. Prior to this revision, deletePlace
@@ -187,7 +225,6 @@
  *       revision closes that deferral.
  *     - Header CLEAR LOCATION REFERENCES section added, describing the
  *       commit contract (one event per batch, idempotent, no persist).
- *     - No other behavioural change.
  *   Previous revision:
  *     - Added removeCharacterReferences(characterId). The cross-domain
  *       cleanup hook that character-deletion-commands.js's
@@ -268,12 +305,6 @@
     _requireFunction('HouseholdState._internal.replaceHouseholdAssignments',
         _internal.replaceHouseholdAssignments);
 
-    // Optional deps — recorded at load, checked at call time.
-    var _industryCommandsPresent = typeof window.IndustryCommands !== 'undefined' &&
-        window.IndustryCommands !== null;
-    var _residenceSystemPresent = typeof window.ResidenceSystem !== 'undefined' &&
-        window.ResidenceSystem !== null;
-
     if (typeof window.markDataDirty !== 'function') {
         if (typeof console !== 'undefined' && console.warn) {
             console.warn(
@@ -281,6 +312,34 @@
                 'Dirty tracking will be a no-op for this domain.'
             );
         }
+    }
+
+    // =========================================================================
+    // 1b. CROSS-DOMAIN PRESENCE CHECKS (call time)
+    // =========================================================================
+    //
+    // ResidenceSystem and IndustryCommands are OPTIONAL dependencies.
+    // Resolve them at CALL time, not load time. See CROSS-DOMAIN PRESENCE
+    // CHECKS in the module header for the historical bug this fixes.
+    //
+    // Why this matters:
+    //   The documented HTML load order places household-commands.js
+    //   BEFORE residence-system.js. A load-time flag would freeze to
+    //   false and every deleteHousehold call that touched a residence
+    //   would fail with RESIDENCE_SYSTEM_UNAVAILABLE, even though the
+    //   command ran after ResidenceSystem finished loading. Call-time
+    //   resolution means the command's behavior depends only on whether
+    //   the optional module is present AT COMMAND TIME, which is the
+    //   correct semantic for an optional dependency.
+
+    function _residenceSystemAvailable() {
+        return typeof window.ResidenceSystem !== 'undefined'
+            && window.ResidenceSystem !== null;
+    }
+
+    function _industryCommandsAvailable() {
+        return typeof window.IndustryCommands !== 'undefined'
+            && window.IndustryCommands !== null;
     }
 
     // =========================================================================
@@ -699,10 +758,16 @@
         if (year === null) return _fail('INVALID_YEAR', 'Invalid year');
 
         // Step 1: disassociate residence occupancy via ResidenceSystem.
+        //
+        // The residence cleanup requires ResidenceSystem. Resolved at
+        // CALL time via _residenceSystemAvailable(). Under the documented
+        // load order, ResidenceSystem is present by the time this runs.
+        // If it is genuinely absent, the household still gets deleted;
+        // the reverse index is left dangling and reported below.
         var residenceId = household.residenceId || null;
         var unitNumber = household.residenceUnitNumber;
         if (residenceId) {
-            if (!_residenceSystemPresent) {
+            if (!_residenceSystemAvailable()) {
                 return _fail('RESIDENCE_SYSTEM_UNAVAILABLE',
                     'Household occupies a residence but ResidenceSystem ' +
                     'is not loaded');
@@ -2517,8 +2582,11 @@
     //     'householdReferencesRemoved'), not one per household. This
     //     keeps the event stream coherent with the "one logical
     //     operation, one commit" contract.
-    //   - Returns { success: true, removedCount, households } so the
-    //     caller's cleanup report can attribute the domain correctly.
+    //   - Returns { success: true, data: { removedCount, households } }
+    //     so the caller's cleanup report can attribute the domain
+    //     correctly. Note the shape: the counts and household list are
+    //     nested under `data`, matching the _ok convention used by the
+    //     rest of this module.
     //   - Idempotent: re-running against an already-cleaned character
     //     returns success with removedCount: 0 and does not commit.
 
@@ -2630,9 +2698,11 @@
     //   - Does NOT persist (the delete-place orchestration persists once
     //     at the end).
     //   - ONE commit for the whole sweep, not one per household.
-    //   - Returns { success: true, clearedCount, households } so the
-    //     caller's reconciliation report can attribute the domain
-    //     correctly.
+    //   - Returns { success: true, data: { clearedCount, households } }
+    //     so the caller's reconciliation report can attribute the
+    //     domain correctly. Note the shape: the counts and household
+    //     list are nested under `data`, matching the _ok convention used
+    //     by the rest of this module.
     //   - Idempotent: re-running against a location that no household
     //     references returns success with clearedCount: 0 and does not
     //     commit.
