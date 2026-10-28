@@ -66,7 +66,8 @@
  *   - persistence (markDataDirty happens in RelationshipState)
  *   - randomness (the annual affair pass uses window.Random)
  *
- * APPRENTICESHIP CLEANUP (Phase 3.9 fix):
+ * APPRENTICESHIP CLEANUP
+ *
  *   Apprenticeship lifecycle — creation, progression, completion,
  *   termination — is owned by ApprenticeshipCommands, not
  *   ProfessionalCommands. ProfessionalCommands owns the professional
@@ -74,19 +75,55 @@
  *   not expose createApprenticeship / endApprenticeship /
  *   progressApprenticeship / completeApprenticeship.
  *
- *   The prior revision of handleCharacterDeath called
- *   ProfessionalCommands.endApprenticeship, which does not exist. The
- *   first character death with an active apprenticeship threw
- *   TypeError inside handleCharacterDeath, which
- *   character-lifecycle.js swallowed. The result: the relationship
- *   domain never ended the apprenticeship, so the dead character kept
- *   holding one — a silent data-integrity problem.
+ *   ApprenticeshipCommands exposes terminateApprenticeship(masterId,
+ *   apprenticeId, roleId, reason) as its terminal method. There is no
+ *   `endApprenticeship` — that name was a bug in earlier revisions of
+ *   this module's dispatch. This revision calls the correct method.
  *
- *   This revision calls window.ApprenticeshipCommands.endApprenticeship
- *   when the module is loaded. If ApprenticeshipCommands is not loaded,
- *   the cleanup reports { success: false, code: 'APPRENTICESHIP_COMMANDS_UNAVAILABLE' }
- *   for that edge, which surfaces in the per-character report. It does
- *   not throw.
+ *   Prior revisions called ProfessionalCommands.endApprenticeship
+ *   (which does not exist) and then, after a partial fix, guarded on
+ *   ApprenticeshipCommands.endApprenticeship (which also does not
+ *   exist). In both cases the death cascade fell through to a
+ *   structured failure code and never actually ended the
+ *   apprenticeship — a silent data-integrity problem on every death
+ *   with an active apprenticeship.
+ *
+ *   This revision:
+ *     - guards on terminateApprenticeship (the real method)
+ *     - resolves roleId from the relationship record's metadata, since
+ *       the professional projection from getProfessionalRelationships
+ *       does not expose roleId
+ *     - passes the resolved roleId to terminateApprenticeship
+ *     - reports { code: 'APPRENTICESHIP_COMMANDS_UNAVAILABLE' } when
+ *       ApprenticeshipCommands is not loaded (unchanged — the guard is
+ *       still honest about absence)
+ *
+ *   See ROLEID RESOLUTION below for why the integration must read the
+ *   relationship record instead of using the projection.
+ *
+ * ROLEID RESOLUTION
+ *
+ *   ProfessionalQueries.getProfessionalRelationships returns a
+ *   projection with { relationshipId, type, status, participantA,
+ *   participantB, otherId, startYear, endYear } — deliberately WITHOUT
+ *   metadata. roleId lives on the underlying record's metadata and is
+ *   not exposed by that projection.
+ *
+ *   terminateApprenticeship requires roleId. So the death cascade for
+ *   an apprenticeship edge:
+ *
+ *     1. Reads the record via RelationshipQueries.getById(relationshipId).
+ *     2. Extracts metadata.roleId.
+ *     3. Calls ApprenticeshipCommands.terminateApprenticeship(
+ *            participantA, participantB, roleId, 'death_of_participant').
+ *
+ *   If the record is missing (shouldn't happen — the projection just
+ *   came from the same store) or metadata.roleId is absent (a
+ *   malformed record, or an apprenticeship created outside the
+ *   sanctioned path), the cascade reports
+ *   { code: 'APPRENTICESHIP_MISSING_ROLE' } for that edge instead of
+ *   guessing. This is the same policy as every other failure in the
+ *   cascade: record what happened, never fabricate.
  *
  * PARTNERSHIP PROJECTIONS
  *
@@ -143,18 +180,27 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 3.9 + Phase 3.13):
+ *   Current revision:
  *     - handleCharacterDeath's apprenticeship branch now calls
- *       window.ApprenticeshipCommands.endApprenticeship (where the
- *       method actually lives) instead of
- *       ProfessionalCommands.endApprenticeship (which does not exist
- *       and threw on every death with an active apprenticeship).
- *       When ApprenticeshipCommands is not loaded, the branch reports
- *       { code: 'APPRENTICESHIP_COMMANDS_UNAVAILABLE' } in the
- *       cleanup report.
- *     - handleCharacterDeath's death-cascade log now caches the
- *       character projection once instead of calling _getCharacter
- *       twice (once for the name, once for the subjects array).
+ *       ApprenticeshipCommands.terminateApprenticeship (the real
+ *       terminal method) instead of
+ *       ApprenticeshipCommands.endApprenticeship (which never existed
+ *       on the module). The prior guard admitted defeat silently; the
+ *       new guard actually dispatches. See APPRENTICESHIP CLEANUP.
+ *     - The apprenticeship branch now resolves roleId from the
+ *       relationship record via RelationshipQueries.getById, because
+ *       the professional projection does not expose metadata.roleId.
+ *       Malformed records (missing record or missing roleId) produce
+ *       { code: 'APPRENTICESHIP_MISSING_ROLE' } instead of a thrown
+ *       error or a silent skip. See ROLEID RESOLUTION.
+ *     - Header ROLEID RESOLUTION section added.
+ *     - APPRENTICESHIP CLEANUP section rewritten to name the real
+ *       method and to document both prior failure modes.
+ *   Prior revision (Phase 3.9 + Phase 3.13):
+ *     - Fixed the first incarnation of the same bug (which called
+ *       ProfessionalCommands.endApprenticeship, also nonexistent).
+ *       The fix was partial: it swapped one nonexistent method for
+ *       another. This revision completes it.
  *     - Added Phase 3.13 registration hooks: at load time, this module
  *       registers a death handler with window.registerDeathHandler and
  *       a delete handler with window.registerDeleteHandler (both
@@ -162,9 +208,6 @@
  *       when the register function is absent; a warning is printed.
  *     - Header DISPATCH MODEL section added, documenting the two
  *       dispatch paths (direct + hook) and why they coexist.
- *     - Header APPRENTICESHIP CLEANUP section added, documenting the
- *       ownership boundary that caused the prior crash.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -259,13 +302,13 @@
     // apprenticeships. When absent, the cascade records a structured
     // failure for each apprenticeship edge instead of throwing.
     //
-    // The accessor isolates the availability check so the death
-    // cascade can express its intent once and the accessor decides
-    // how to satisfy it.
+    // The accessor guards on terminateApprenticeship — the actual
+    // terminal method — not on endApprenticeship, which does not exist
+    // on the module. See APPRENTICESHIP CLEANUP.
 
     function _getApprenticeshipCommands() {
         if (window.ApprenticeshipCommands
-            && typeof window.ApprenticeshipCommands.endApprenticeship === 'function') {
+            && typeof window.ApprenticeshipCommands.terminateApprenticeship === 'function') {
             return window.ApprenticeshipCommands;
         }
         return null;
@@ -296,8 +339,10 @@
     //   work.
     //
     // APPRENTICESHIP
-    //   Routed through ApprenticeshipCommands.endApprenticeship (not
-    //   ProfessionalCommands). See APPRENTICESHIP CLEANUP in the header.
+    //   Routed through ApprenticeshipCommands.terminateApprenticeship
+    //   (the real terminal method), with roleId resolved from the
+    //   relationship record. See APPRENTICESHIP CLEANUP and ROLEID
+    //   RESOLUTION in the header.
     //
     // ONE COMMIT PER DOMAIN
     //   The whole operation is not atomic across domains because each
@@ -431,22 +476,37 @@
             if (p.type === A.APPRENTICESHIP) {
                 // Apprenticeship lifecycle lives on ApprenticeshipCommands,
                 // not ProfessionalCommands. See APPRENTICESHIP CLEANUP in
-                // the header for the ownership boundary.
-                if (apprenticeshipCommands) {
-                    endResult = apprenticeshipCommands.endApprenticeship(
-                        p.participantA,
-                        p.participantB,
-                        {
-                            endYear: deathYear,
-                            reason: 'death_of_participant'
-                        }
-                    );
-                } else {
+                // the header.
+                //
+                // terminateApprenticeship requires roleId, which the
+                // professional projection does not expose. Read the
+                // record to reach metadata.roleId. See ROLEID RESOLUTION.
+                if (!apprenticeshipCommands) {
                     endResult = {
                         success: false,
                         code: 'APPRENTICESHIP_COMMANDS_UNAVAILABLE',
-                        message: 'ApprenticeshipCommands.endApprenticeship required to end apprenticeships on death'
+                        message: 'ApprenticeshipCommands.terminateApprenticeship required to end apprenticeships on death'
                     };
+                } else {
+                    var rec = window.RelationshipQueries.getById(p.relationshipId);
+                    var roleId = rec && rec.metadata
+                        ? rec.metadata.roleId
+                        : null;
+
+                    if (!rec || typeof roleId !== 'string' || roleId.length === 0) {
+                        endResult = {
+                            success: false,
+                            code: 'APPRENTICESHIP_MISSING_ROLE',
+                            message: 'apprenticeship record has no metadata.roleId; cannot terminate'
+                        };
+                    } else {
+                        endResult = apprenticeshipCommands.terminateApprenticeship(
+                            p.participantA,
+                            p.participantB,
+                            roleId,
+                            'death_of_participant'
+                        );
+                    }
                 }
             } else if (p.type === A.MASTERSHIP) {
                 endResult = PrC.endMastership(p.participantA, p.participantB, {
@@ -486,12 +546,11 @@
             summary.professional.ended.length;
 
         if (totalEnded > 0) {
-            // Phase 3.9: cache the character projection once. The prior
-            // revision called _getCharacter twice (once for the name,
-            // once for the subjects array). Each call returns a
-            // defensive projection from CharacterState._project, which
-            // is a deep clone of the character record. One call is
-            // enough.
+            // Cache the character projection once. The prior revision
+            // called _getCharacter twice (once for the name, once for
+            // the subjects array). Each call returns a defensive
+            // projection from CharacterState._project, which is a deep
+            // clone of the character record. One call is enough.
             var deceasedChar = _getCharacter(characterId);
             _logEvent('relationship', 'Death Cascade',
                 totalEnded + ' relationship(s) ended by death of ' +
