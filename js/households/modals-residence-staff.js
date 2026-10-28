@@ -21,8 +21,9 @@
  * ---------
  *   Reads:  ResidenceSystem (getResidence, getUnits, getStaffPositions,
  *                            getStaffAssignments)
- *           CharacterQueries (getCharacterById, getCharacters)
- *           RoleQueries (getRoleById, getAllRoles) — via window.*
+ *           accessors.js (getCharacterById, getCharacters)
+ *           RoleQueries / RoleState — via HouseholdModals.getRoleById /
+ *                                     getAllRoles
  *   Writes: ResidenceSystem (addStaffPosition, updateStaffPosition,
  *                            removeStaffPosition,
  *                            assignCharacterToStaffPosition,
@@ -33,7 +34,8 @@
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
- *   - Every staff mutation ends with ResidenceSystem.persist().
+ *   - Every staff mutation ends with ResidenceSystem.persist() (via
+ *     HouseholdModals.persistResidenceOrFail).
  *   - No direct residence record mutation.
  *   - No direct _saveMasterData() from UI.
  *   - No _processingStaffModal guard.
@@ -42,6 +44,23 @@
  *     see the outcome. If the command later accepts the option, re-add
  *     the checkbox and pass addRoleIfMissing through.
  *
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom, persist*OrFail,
+ *   reportFailure, esc, readValue, readIntOrNull, readChecked, onOpen,
+ *   currentYear, closeThen, confirmDialog, getRoleById, getAllRoles,
+ *   buildRoleOptions, renderStaffCandidates, wireStaffCandidateSelection,
+ *   buildRecentAssignmentHistory — lives in HouseholdModals. This file
+ *   keeps only its local aliases (var _esc = _Modals.esc; etc.) and its
+ *   domain-specific builders (_buildUnitOptions, the wire functions for
+ *   the management modal, and the small presentation helpers).
+ *
+ *   Prior revisions carried local copies of getRoleById, getAllRoles,
+ *   buildRoleOptions, _buildCandidateList, _wireCandidateSelection, and
+ *   _buildRecentHistory. Those are now HouseholdModals exports;
+ *   modals-household-staff.js and modals-residence-staff.js both call
+ *   the same implementation.
+ *
  * DOM-SCOPE
  * ---------
  *   Every DOM lookup is scoped to the modal's own `handle.element` via
@@ -49,19 +68,12 @@
  *   rationale on why the prior _resolveModalRoot() fallback (which
  *   ended at document.body) was wrong.
  *
- * DEFAULT_SKILL_LEVEL
- * -------------------
- *   The prior version defined `var DEFAULT_SKILL_LEVEL = 10;` locally.
- *   That value now lives in HouseholdViewModels.DEFAULT_SKILL_LEVEL.
- *   This module reads from there so there's one canonical number.
- *   (Mirrors the same consolidation in modals-household-staff.js.)
- *
  * PERSIST CONTRACT
  * ----------------
  *   ResidenceSystem.persist returns { success, data } | { success:
- *   false, code, reason } — not boolean. The local `_persistOrFail`
- *   adapts the shape. HouseholdModals.persistOrFail is not used here
- *   because it calls HouseholdCommands.persist specifically.
+ *   false, code, reason } — not boolean. HouseholdModals.persistResidenceOrFail
+ *   adapts the shape to { ok, reason } for the modal flows. The local
+ *   wrapper that existed in prior revisions is gone.
  *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - modals-core.js (openModal, closeTopModal, confirmDialog)
@@ -71,12 +83,40 @@
  *   - residence-system.js (ResidenceSystem)
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
- *   - RoleQueries / RoleState (falls back to window.getRoleById /
- *     window.getAllRoles if not present)
+ *   - RoleQueries / RoleState — via HouseholdModals.getRoleById /
+ *     getAllRoles
  *   - selectors/modals-char-selector.js (openCharacterSelector)
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _persistOrFail, _currentYear,
+ *       _confirmDialog, and _closeThen. All four were structurally
+ *       identical to the shared versions exported by HouseholdModals.
+ *     - Removed the local copies of _getRoleById, _getAllRoles,
+ *       _buildRoleOptions, _buildCandidateList, _wireCandidateSelection,
+ *       and _buildRecentHistory. Those are now HouseholdModals exports;
+ *       modals-household-staff.js and this file both call the same
+ *       implementation, so the two staff modals stay in lockstep.
+ *     - _buildCandidateList now wraps HouseholdModals.renderStaffCandidates
+ *       by projecting the residence-specific candidate shape (which
+ *       carries characterName/surname) to the normalized shape the
+ *       shared renderer consumes.
+ *     - _wireCandidateSelection now delegates the candidate-list DOM
+ *       wiring to HouseholdModals.wireStaffCandidateSelection and only
+ *       adds the "Select Other Character" flow, which is
+ *       residence-specific.
+ *     - _buildRecentHistory now wraps
+ *       HouseholdModals.buildRecentAssignmentHistory with a residence-
+ *       specific label resolver (residence entries carry characterName,
+ *       not title).
+ *     - No behavioural change to any modal entry point.
+ *   Previous revisions:
+ *     - Every DOM lookup scoped to handle.element via rootFrom.
+ *     - addRoleIfMissing checkbox removed (residence command does not
+ *       support the flag).
  * =============================================================================
  */
 
@@ -138,99 +178,59 @@
 
     var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
     _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.persistResidenceOrFail',
+        _Modals.persistResidenceOrFail);
     _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
     _requireFunction('HouseholdModals.esc', _Modals.esc);
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.readChecked', _Modals.readChecked);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
+    _requireFunction('HouseholdModals.confirmDialog', _Modals.confirmDialog);
+    _requireFunction('HouseholdModals.getRoleById', _Modals.getRoleById);
+    _requireFunction('HouseholdModals.getAllRoles', _Modals.getAllRoles);
+    _requireFunction('HouseholdModals.buildRoleOptions',
+        _Modals.buildRoleOptions);
+    _requireFunction('HouseholdModals.renderStaffCandidates',
+        _Modals.renderStaffCandidates);
+    _requireFunction('HouseholdModals.wireStaffCandidateSelection',
+        _Modals.wireStaffCandidateSelection);
+    _requireFunction('HouseholdModals.buildRecentAssignmentHistory',
+        _Modals.buildRecentAssignmentHistory);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showWarning = _Modals.showWarning;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    function _currentYear() {
-        return (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    var _persistOrFail = _Modals.persistResidenceOrFail;
+    var _confirmDialog = _Modals.confirmDialog;
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
-    // 1. LOCAL PERSIST (ResidenceSystem shape)
+    // 1. LOCAL HELPERS
     // =========================================================================
-
-    function _persistOrFail(messagePrefix) {
-        var result;
-        try {
-            result = _residence.persist();
-        } catch (e) {
-            var threwReason = (e && e.message) ? e.message : 'persist threw';
-            _showError(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + threwReason);
-            return { ok: false, reason: threwReason };
-        }
-
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showError(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason);
-            return { ok: false, reason: reason };
-        }
-
-        return { ok: true };
-    }
-
-    // =========================================================================
-    // 2. CONFIRM DIALOG
-    // =========================================================================
-
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (window.confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else if (onCancel) {
-            onCancel();
-        }
-    }
-
-    // =========================================================================
-    // 3. ROLE / UNIT LOOKUPS
-    // =========================================================================
-
-    function _getRoleById(id) {
-        if (!id) return null;
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        if (typeof window.RoleQueries !== 'undefined'
-            && typeof window.RoleQueries.getRoleById === 'function') {
-            return window.RoleQueries.getRoleById(id);
-        }
-        return null;
-    }
-
-    function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined'
-            && typeof window.RoleState.getAllRoles === 'function') {
-            return window.RoleState.getAllRoles();
-        }
-        if (typeof window.RoleQueries !== 'undefined'
-            && typeof window.RoleQueries.getAllRoles === 'function') {
-            return window.RoleQueries.getAllRoles();
-        }
-        return [];
-    }
+    //
+    // The role lookups, role-option builder, candidate renderer, and
+    // candidate-selection wiring now live in HouseholdModals. The three
+    // helpers below are residence-specific:
+    //
+    //   _getAllCharacters       — accessors wrapper (getCharacters may be
+    //                             absent in a minimal test harness)
+    //   _openCharacterSelector  — fail-loud wrapper on openCharacterSelector
+    //   _buildUnitOptions       — residence-specific unit dropdown
+    //
+    // Everything else is a thin adapter over HouseholdModals.
 
     function _getAllCharacters() {
         if (typeof window.getCharacters === 'function') {
@@ -239,36 +239,12 @@
         return [];
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
         _showError('Character selector not available');
         return null;
-    }
-
-    function _buildRoleOptions(selectedId, emptyLabel) {
-        emptyLabel = emptyLabel || 'No role required';
-        var html = '<option value="">' + _esc(emptyLabel) + '</option>';
-        var roles = _getAllRoles();
-        if (!Array.isArray(roles)) return html;
-
-        for (var i = 0; i < roles.length; i++) {
-            var r = roles[i];
-            var selected = (r.id === selectedId) ? ' selected' : '';
-            var icon = _getIcon(r.iconKey || r.icon);
-            var category = r.category || 'Uncategorized';
-            var label = (icon ? icon + ' ' : '') + (r.name || 'Unnamed') +
-                ' (' + category + ')';
-            html += '<option value="' + _esc(r.id) + '"' + selected + '>' +
-                _esc(label) + '</option>';
-        }
-        return html;
     }
 
     function _buildUnitOptions(residenceId, selectedUnitNumber) {
@@ -287,7 +263,7 @@
     }
 
     // =========================================================================
-    // 4. CREATE STAFF POSITION MODAL
+    // 2. CREATE STAFF POSITION MODAL
     // =========================================================================
 
     function openCreateResidenceStaffPositionModal(residenceId, onSuccess) {
@@ -298,7 +274,7 @@
         }
 
         var unitOptions = _buildUnitOptions(residenceId, null);
-        var roleOptions = _buildRoleOptions(null, 'No role required');
+        var roleOptions = _Modals.buildRoleOptions(null, 'No role required');
 
         var content =
             '<div style="margin-bottom:16px;">' +
@@ -416,7 +392,7 @@
     }
 
     // =========================================================================
-    // 5. EDIT STAFF POSITION MODAL
+    // 3. EDIT STAFF POSITION MODAL
     // =========================================================================
 
     function openEditResidenceStaffPositionModal(residenceId, positionId, onSuccess) {
@@ -440,7 +416,7 @@
         }
 
         var unitOptions = _buildUnitOptions(residenceId, position.unitNumber);
-        var roleOptions = _buildRoleOptions(
+        var roleOptions = _Modals.buildRoleOptions(
             position.requiredRoleId, 'No role required');
 
         var content =
@@ -552,7 +528,7 @@
     }
 
     // =========================================================================
-    // 6. DELETE STAFF POSITION MODAL
+    // 4. DELETE STAFF POSITION MODAL
     // =========================================================================
 
     function openDeleteResidenceStaffPositionModal(residenceId, positionId, onSuccess) {
@@ -581,7 +557,7 @@
         });
 
         var roleName = position.requiredRoleId
-            ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+            ? (_Modals.getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
             : null;
 
         var content =
@@ -675,12 +651,20 @@
     }
 
     // =========================================================================
-    // 7. ASSIGN STAFF MODAL
+    // 5. ASSIGN STAFF MODAL
     // =========================================================================
     //
     // Note: the residence command does not support addRoleIfMissing. The
     // old checkbox is removed. Role indicators (has role / missing role)
     // are preserved so users can see the outcome.
+    //
+    // The candidate list rendering is delegated to
+    // HouseholdModals.renderStaffCandidates via _buildCandidateList
+    // (which projects residence-specific candidate objects to the
+    // shared normalized shape). The wiring is delegated to
+    // HouseholdModals.wireStaffCandidateSelection via
+    // _wireCandidateSelection (which adds the "select other character"
+    // flow that is residence-specific).
 
     function openAssignResidenceStaffModal(residenceId, positionId, onSuccess) {
         var residence = _residence.getResidence(residenceId);
@@ -749,10 +733,10 @@
         }
 
         var roleDisplay = position.requiredRoleId
-            ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+            ? (_Modals.getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
             : 'None';
 
-        var candidatesHtml = _buildCandidateList(candidates, position);
+        var candidatesHtml = _Modals.renderStaffCandidates(candidates, position);
         var history = _residence.getStaffAssignments(residenceId, {
             positionId: positionId,
             activeOnly: false
@@ -893,121 +877,29 @@
         return modal;
     }
 
-    function _buildCandidateList(candidates, position) {
-        if (candidates.length === 0) {
-            return '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">' +
-                'No available characters' +
-            '</div>';
-        }
+    // =========================================================================
+    // 6. CANDIDATE WIRING ADAPTERS
+    // =========================================================================
+    //
+    // The shared helpers live in HouseholdModals. These two adapters
+    // exist because the residence staff modal adds the "Select Other
+    // Character" flow (openCharacterSelector then reopen this modal),
+    // which is residence-specific. The candidate-list wiring itself is
+    // delegated.
 
-        var html = '<div style="max-height:250px;overflow-y:auto;">';
-        for (var i = 0; i < candidates.length; i++) {
-            var c = candidates[i];
-            var roleIndicator = position.requiredRoleId
-                ? (c.hasRole
-                    ? '<span style="font-size:0.45rem;color:var(--success);">has role</span>'
-                    : '<span style="font-size:0.45rem;color:var(--warn);">missing role</span>')
-                : '';
-            var skillText = c.skillLevel > 0
-                ? '<span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
-                    c.skillLevel + ')</span>'
-                : '';
-            var ageText = c.age !== null
-                ? ' <span style="font-size:0.5rem;color:var(--dim);">' +
-                    c.age + 'y</span>'
-                : '';
-
-            html += '<div class="staff-candidate" data-character-id="' +
-                _esc(c.characterId) +
-                '" style="padding:8px 10px;margin-bottom:4px;background:var(--bg2);' +
-                'border:1px solid var(--border);border-left:3px solid ' +
-                    (position.requiredRoleId && !c.hasRole
-                        ? 'var(--warn)' : 'var(--success)') +
-                ';border-radius:4px;cursor:pointer;transition:background 0.1s;">' +
-                '<div>' +
-                    '<strong>' + _esc(c.displayName) + '</strong>' +
-                    ageText +
-                    ' ' + roleIndicator + ' ' + skillText +
-                '</div>' +
-                '</div>';
-        }
-        html += '</div>';
-        return html;
-    }
-
-    function _buildRecentHistory(history, limit) {
-        if (!history || history.length === 0) return '';
-
-        var sorted = history.slice().sort(function(a, b) {
-            return (b.startYear || 0) - (a.startYear || 0);
-        });
-        var recent = sorted.slice(0, limit);
-
-        var html = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">';
-        html += '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Recent History</div>';
-        html += '<div style="max-height:120px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;">';
-
-        for (var i = 0; i < recent.length; i++) {
-            var h = recent[i];
-            var endDisplay = h.endYear !== null ? h.endYear : 'Present';
-            var color = !h.endYear ? 'var(--success)' : 'var(--dim)';
-            var roleName = h.roleIdAtAssignment
-                ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
-                : null;
-
-            html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
-                'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
-                '<span>' + _esc(h.characterName || 'Unknown') +
-                    (h.title
-                        ? ' <span style="color:var(--dim);">(' +
-                            _esc(h.title) + ')</span>'
-                        : '') +
-                    (roleName
-                        ? ' <span style="color:var(--accent);">(' +
-                            _esc(roleName) + ')</span>'
-                        : '') +
-                '</span>' +
-                '<span style="color:' + color + ';">' +
-                    h.startYear + ' - ' + endDisplay +
-                '</span>' +
-            '</div>';
-        }
-
-        html += '</div></div>';
-        return html;
-    }
-
+    /**
+     * Wires the candidate list plus the "Select Other Character" flow.
+     * Delegates the candidate-list wiring to
+     * HouseholdModals.wireStaffCandidateSelection.
+     *
+     * @param {HTMLElement} root
+     * @param {string} residenceId
+     * @param {string} positionId
+     * @param {Function} onSuccess
+     */
     function _wireCandidateSelection(root, residenceId, positionId, onSuccess) {
-        var candidates = root.querySelectorAll('.staff-candidate');
-        for (var i = 0; i < candidates.length; i++) {
-            (function(el) {
-                el.onclick = function() {
-                    var all = root.querySelectorAll('.staff-candidate');
-                    for (var j = 0; j < all.length; j++) {
-                        all[j].classList.remove('selected');
-                        all[j].style.background = 'var(--bg2)';
-                        all[j].style.borderColor = 'var(--border)';
-                    }
-                    el.classList.add('selected');
-                    el.style.background = 'rgba(var(--accent-rgb), 0.15)';
-                    el.style.borderColor = 'var(--accent)';
-                };
-                el.onmouseenter = function() {
-                    if (!el.classList.contains('selected')) {
-                        el.style.background = 'var(--bg3)';
-                    }
-                };
-                el.onmouseleave = function() {
-                    if (!el.classList.contains('selected')) {
-                        el.style.background = 'var(--bg2)';
-                    }
-                };
-            })(candidates[i]);
-        }
-
-        var otherBtn = root.querySelector('[data-action="select-other"]');
-        if (otherBtn) {
-            otherBtn.onclick = function() {
+        _Modals.wireStaffCandidateSelection(root, {
+            onSelectOther: function() {
                 _openCharacterSelector({
                     title: 'Select Character for Position',
                     onSelect: function(character) {
@@ -1019,12 +911,32 @@
                         }, 0);
                     }
                 });
-            };
-        }
+            }
+        });
+    }
+
+    /**
+     * Wraps HouseholdModals.buildRecentAssignmentHistory with a
+     * residence-specific label resolver. Residence staff assignments
+     * carry `characterName`, not `title`, so the label resolver picks
+     * the right field.
+     */
+    function _buildRecentHistory(history, limit) {
+        return _Modals.buildRecentAssignmentHistory(
+            history,
+            limit,
+            function resolveRoleName(roleId) {
+                var role = _Modals.getRoleById(roleId);
+                return role ? role.name : null;
+            },
+            function resolveName(entry) {
+                return entry.characterName || entry.title || 'Unknown';
+            }
+        );
     }
 
     // =========================================================================
-    // 8. VIEW STAFF POSITIONS MODAL (pure projection)
+    // 7. VIEW STAFF POSITIONS MODAL (pure projection)
     // =========================================================================
 
     function openViewResidenceStaffPositionsModal(residenceId, onSelect) {
@@ -1057,7 +969,7 @@
                 var pos = positions[p];
                 var activeCount = (assignmentMap[pos.id] || []).length;
                 var roleName = pos.requiredRoleId
-                    ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+                    ? (_Modals.getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
                     : 'None';
 
                 rows += '<div class="position-item" data-position-id="' +
@@ -1131,7 +1043,7 @@
     }
 
     // =========================================================================
-    // 9. VIEW STAFF ASSIGNMENTS MODAL (pure projection + one mutation path)
+    // 8. VIEW STAFF ASSIGNMENTS MODAL (pure projection + one mutation path)
     // =========================================================================
 
     function openViewResidenceStaffAssignmentsModal(residenceId) {
@@ -1161,7 +1073,7 @@
                 var asg = assignments[j];
                 var pos = positionMap[asg.positionId];
                 var roleName = asg.roleIdAtAssignment
-                    ? (_getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
+                    ? (_Modals.getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
                     : 'None';
 
                 rows += '<div style="display:flex;justify-content:space-between;align-items:center;' +
@@ -1258,7 +1170,7 @@
     }
 
     // =========================================================================
-    // 10. COMBINED STAFF MANAGEMENT MODAL
+    // 9. COMBINED STAFF MANAGEMENT MODAL
     // =========================================================================
 
     function openResidenceStaffManagementModal(residenceId, onSuccess) {
@@ -1291,7 +1203,7 @@
                 var pos = positions[p];
                 var activeCount = (assignmentMap[pos.id] || []).length;
                 var roleName = pos.requiredRoleId
-                    ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+                    ? (_Modals.getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
                     : 'None';
 
                 rows += '<div style="display:flex;justify-content:space-between;align-items:center;' +
@@ -1367,11 +1279,6 @@
     }
 
     function _wireStaffManagement(root, residenceId, onSuccess) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         function _reopen() {
             setTimeout(function() {
                 openResidenceStaffManagementModal(residenceId, onSuccess);
@@ -1436,7 +1343,7 @@
     }
 
     // =========================================================================
-    // 11. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.openCreateResidenceStaffPositionModal = openCreateResidenceStaffPositionModal;
