@@ -31,6 +31,32 @@
  *   the minimum-age guard. Age-at-year is resolved via _ageAtYear below,
  *   which delegates to window.calculateAge.
  *
+ * Note on RankQueries:
+ *   The optional noble-status warning reads through RankQueries. The
+ *   canonical method name is RankQueries.getRank(rankId) — NOT
+ *   getRankById(rankId). The latter is a name that appears on accessors.js
+ *   (legacy) and character-system.js (shim), but NOT on RankQueries.
+ *   Prior revisions of this file guarded on `RankQueries.getRankById`
+ *   (undefined), so the warning silently never fired. Fixed.
+ *
+ *   RankQueries remains an OPTIONAL dependency. When absent, the
+ *   warning is skipped and the rest of the module functions normally.
+ *   When present, the warning correctly identifies rank priority 1 and 2
+ *   holders (Sovereign, High Noble) as potentially travel-restricted.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getTravelRestrictions now reads RankQueries.getRank(activeRankId)
+ *       instead of the non-existent RankQueries.getRankById(...). The
+ *       previous guard (`typeof window.RankQueries.getRankById ===
+ *       'function'`) always returned false, so the "Noble status may
+ *       restrict travel" warning never fired. Now the guard checks the
+ *       correct method name, and the warning appears for characters
+ *       with rank priority 1 or 2.
+ *     - Header note on RankQueries added, documenting the method-name
+ *       discrepancy (getRank vs getRankById) and its history.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -311,6 +337,11 @@
      *
      * Does not throw on missing deps. Age and rank checks are best-effort;
      * a missing RankQueries module downgrades to no noble-status warning.
+     *
+     * The rank check reads RankQueries.getRank(activeRankId) — the
+     * canonical method on RankQueries. NOT getRankById, which lives on
+     * accessors.js and the character-system.js shim, not on RankQueries.
+     * See the header's note on RankQueries.
      */
     function getTravelRestrictions(characterId) {
         var character = CQ.getCharacterById(characterId);
@@ -337,8 +368,8 @@
 
         if (character.activeRankId &&
             window.RankQueries &&
-            typeof window.RankQueries.getRankById === 'function') {
-            var rank = window.RankQueries.getRankById(character.activeRankId);
+            typeof window.RankQueries.getRank === 'function') {
+            var rank = window.RankQueries.getRank(character.activeRankId);
             if (rank &&
                 rank.priority !== undefined &&
                 rank.priority !== null &&
