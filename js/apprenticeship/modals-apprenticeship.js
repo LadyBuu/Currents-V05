@@ -15,12 +15,12 @@
  * NO fallback dependencies.
  * NO policy decisions (thresholds come from Rules).
  * NO Math.random(). No timers. No global document.querySelectorAll.
- * All DOM queries are scoped to the modal's own subtree.
+ * All DOM queries are scoped to the modal's own subtree via onMount(modalEl).
  *
  * PERSISTENCE
  *
- *   ApprenticeshipCommands no longer flushes on every mutation. This
- *   module is the batch boundary: after a successful command, it calls
+ *   ApprenticeshipCommands does not flush on every mutation. This module
+ *   is the batch boundary: after a successful command, it calls
  *   ApprenticeshipCommands.persist() once. If the disk save fails, a
  *   warning toast is shown but the in-memory mutation stands — same
  *   policy as modals-roles.js (_persistAndWarn).
@@ -38,9 +38,29 @@
  *
  * CONFIRMATION DIALOG CONTRACT
  *
- *   This module uses window.confirmDialog(message, onConfirm) — the same
- *   contract as modals-roles.js. There is no _confirmDialog in this
- *   codebase.
+ *   This module uses window.confirmDialog(message, title, onConfirm) —
+ *   the three-argument signature from modals-core.js. Passing onConfirm
+ *   as the second argument (which earlier revisions of this file did)
+ *   sends the callback into the title slot and leaves the confirm
+ *   callback undefined; the dialog appears and closes but the callback
+ *   never fires. The _confirm wrapper below enforces the three-argument
+ *   form.
+ *
+ * MODAL LIFECYCLE
+ *
+ *   Every modal uses onMount to bind its post-open handlers. onMount runs
+ *   synchronously during openModal, so element lookups inside it are
+ *   scoped to the modal element and cannot collide with another modal's
+ *   IDs. Handlers are NOT bound after openModal returns — that would be
+ *   the same latent pattern modals-education.js fixed by moving to
+ *   onMount.
+ *
+ * ICON POLICY
+ *
+ *   Icons come from window.Icons[name] via _getIcon. The wrapper
+ *   self-defines rather than depending on a window._getIcon global,
+ *   which does not exist (icons.js exports window.getIcon, not
+ *   window._getIcon).
  *
  * AGE CALCULATION
  *
@@ -56,11 +76,11 @@
  *   with multiple masters for different roles.
  *
  * DEPENDENCIES (must be loaded first):
- *   - modals-core.js          (openModal, closeTopModal)
+ *   - modals-core.js          (openModal, closeTopModal, confirmDialog)
  *   - formatting.js           (_escapeHtml)
  *   - ui.js                   (_showToast, confirmDialog)
- *   - icons.js                (_getIcon)
- *   - time.js                 (getCurrentYearSafe, calculateAge)
+ *   - icons.js                (Icons)
+ *   - time.js                 (getCurrentYear, calculateAge)
  *   - accessors.js            (getCharacterById, getPlaceById, getCurrentLocation)
  *   - apprenticeship-constants.js  (APPRENTICESHIP_STAGES, TEACHING_CONSTANTS)
  *   - apprenticeship-queries.js    (ApprenticeshipQueries)
@@ -80,14 +100,14 @@
     var REQUIRED = [
         ['openModal',           'modals-core.js'],
         ['closeTopModal',       'modals-core.js'],
+        ['confirmDialog',       'ui.js'],
         ['_escapeHtml',         'formatting.js'],
         ['_showToast',          'ui.js'],
-        ['_getIcon',            'icons.js'],
-        ['confirmDialog',       'ui.js'],
+        ['Icons',               'icons.js'],
         ['getCharacterById',    'accessors.js'],
         ['getPlaceById',        'accessors.js'],
         ['getCurrentLocation',  'accessors.js'],
-        ['getCurrentYearSafe',  'time.js'],
+        ['getCurrentYear',      'time.js'],
         ['calculateAge',        'time.js'],
         ['ApprenticeshipQueries',  'apprenticeship-queries.js'],
         ['ApprenticeshipCommands', 'apprenticeship-commands.js'],
@@ -120,13 +140,47 @@
     function _getCharacterById(id)          { return window.getCharacterById(id); }
     function _getPlaceById(id)              { return window.getPlaceById(id); }
     function _getCurrentLocation(c)         { return window.getCurrentLocation(c); }
-    function _getCurrentYear()              { return window.getCurrentYearSafe(); }
+    function _getCurrentYear()              { return window.getCurrentYear(); }
     function _escapeHtml(s)                 { return window._escapeHtml(s); }
-    function _getIcon(n)                    { return window._getIcon(n); }
     function _openModal(o)                  { return window.openModal(o); }
     function _closeTopModal()               { return window.closeTopModal(); }
     function _showToast(m, t)               { return window._showToast(m, t); }
-    function _confirm(message, onConfirm)   { return window.confirmDialog(message, onConfirm); }
+
+    /**
+     * Returns trusted SVG markup for a named icon. icons.js exports
+     * window.Icons[name]; there is no window._getIcon. The wrapper
+     * self-defines so this module has one clear dependency (Icons) rather
+     * than two.
+     *
+     * Unknown names return the CIRCLE fallback so a typo produces a
+     * visible placeholder rather than throwing mid-render. If even CIRCLE
+     * is missing, the icons.js dependency check at load has already
+     * failed, so this cannot return '' in practice — but it returns ''
+     * defensively rather than throwing inside a render pass.
+     */
+    function _getIcon(name) {
+        if (window.Icons && typeof window.Icons[name] === 'string') {
+            return window.Icons[name];
+        }
+        if (window.Icons && typeof window.Icons.CIRCLE === 'string') {
+            return window.Icons.CIRCLE;
+        }
+        return '';
+    }
+
+    /**
+     * Three-argument confirm wrapper.
+     *
+     * modals-core.js::confirmDialog(message, title, onConfirm) takes THREE
+     * arguments. The two-argument form (message, onConfirm) sends the
+     * callback into the title slot and leaves the confirm callback
+     * undefined — the dialog appears and closes but the callback never
+     * runs. This is the bug that shipped in the previous revision of
+     * this file.
+     */
+    function _confirm(message, onConfirm) {
+        return window.confirmDialog(message, 'Confirm', onConfirm);
+    }
 
     function _ageOf(character) {
         if (!character) return null;
@@ -267,23 +321,23 @@
             '</div>';
 
         _openModal({
-            title: 'Create Apprenticeship: ' + master.name + ' → ' + candidate.name,
-            content: content,
+            titleHtml: 'Create Apprenticeship: ' + _escapeHtml(master.name) + ' → ' + _escapeHtml(candidate.name),
+            contentHtml: content,
             confirmText: 'Create Apprenticeship',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var roleId = document.getElementById('appRoleSelect').value;
+            onConfirm: function (modalEl) {
+                var roleId = modalEl.querySelector('#appRoleSelect').value;
                 if (!roleId) { _showToast('Please select a profession', 'error'); return false; }
 
-                var startYear = parseInt(document.getElementById('appStartYear').value, 10);
+                var startYear = parseInt(modalEl.querySelector('#appStartYear').value, 10);
                 if (!isFinite(startYear)) { _showToast('Invalid start year', 'error'); return false; }
 
-                var initialSkill = parseInt(document.getElementById('appInitialSkill').value, 10);
+                var initialSkill = parseInt(modalEl.querySelector('#appInitialSkill').value, 10);
                 if (!R.isSkillInRange(initialSkill)) {
                     _showToast('Skill must be 0-100', 'error'); return false;
                 }
 
-                var notes = document.getElementById('appNotes').value;
+                var notes = modalEl.querySelector('#appNotes').value;
 
                 var result = C.createApprenticeship({
                     masterId: master.id,
@@ -369,17 +423,53 @@
             '</div>';
 
         _openModal({
-            title: 'Edit Apprenticeship',
-            content: content,
+            titleHtml: 'Edit Apprenticeship',
+            contentHtml: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var skillLevel = parseInt(document.getElementById('editSkillLevel').value, 10);
+            onMount: function (modalEl) {
+                // Quick-action: progress
+                var progressBtn = modalEl.querySelector('#progressSkillBtn');
+                if (progressBtn) {
+                    progressBtn.addEventListener('click', function () {
+                        var result = C.progressApprenticeship(
+                            masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
+                        );
+                        if (result.success) {
+                            _persistAndWarn(null);
+                            _showToast('Progressed by ' + result.data.gained, 'success');
+                            var input = modalEl.querySelector('#editSkillLevel');
+                            if (input) input.value = result.data.newSkill;
+                        } else {
+                            _showToast('Failed: ' + (result.reason || result.code), 'error');
+                        }
+                    });
+                }
+
+                // Quick-action: complete
+                var completeBtn = modalEl.querySelector('#completeBtn');
+                if (completeBtn) {
+                    completeBtn.addEventListener('click', function () {
+                        _confirm('Complete this apprenticeship?', function () {
+                            var result = C.completeApprenticeship(masterId, apprenticeId, roleId);
+                            if (result.success) {
+                                _persistAndWarn('Apprenticeship completed');
+                                _closeTopModal();
+                                if (typeof onSuccess === 'function') onSuccess(result.data);
+                            } else {
+                                _showToast('Failed: ' + (result.reason || result.code), 'error');
+                            }
+                        });
+                    });
+                }
+            },
+            onConfirm: function (modalEl) {
+                var skillLevel = parseInt(modalEl.querySelector('#editSkillLevel').value, 10);
                 if (!R.isSkillInRange(skillLevel)) {
                     _showToast('Skill must be 0-100', 'error'); return false;
                 }
 
-                var notes = document.getElementById('editNotes').value;
+                var notes = modalEl.querySelector('#editNotes').value;
 
                 var result = C.updateApprenticeship(masterId, apprenticeId, {
                     roleId: roleId,
@@ -397,41 +487,6 @@
                 return false;
             }
         });
-
-        // Quick-action: progress
-        var progressBtn = document.getElementById('progressSkillBtn');
-        if (progressBtn) {
-            progressBtn.addEventListener('click', function () {
-                var result = C.progressApprenticeship(
-                    masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
-                );
-                if (result.success) {
-                    _persistAndWarn(null);
-                    _showToast('Progressed by ' + result.data.gained, 'success');
-                    var input = document.getElementById('editSkillLevel');
-                    if (input) input.value = result.data.newSkill;
-                } else {
-                    _showToast('Failed: ' + (result.reason || result.code), 'error');
-                }
-            });
-        }
-
-        // Quick-action: complete
-        var completeBtn = document.getElementById('completeBtn');
-        if (completeBtn) {
-            completeBtn.addEventListener('click', function () {
-                _confirm('Complete this apprenticeship?', function () {
-                    var result = C.completeApprenticeship(masterId, apprenticeId, roleId);
-                    if (result.success) {
-                        _persistAndWarn('Apprenticeship completed');
-                        _closeTopModal();
-                        if (typeof onSuccess === 'function') onSuccess(result.data);
-                    } else {
-                        _showToast('Failed: ' + (result.reason || result.code), 'error');
-                    }
-                });
-            });
-        }
     }
 
     // =========================================================================
@@ -514,87 +569,88 @@
             '</div>';
 
         _openModal({
-            title: 'Apprenticeship Details',
-            content: content,
+            titleHtml: 'Apprenticeship Details',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
+            onMount: function (modalEl) {
+                // Edit
+                var editBtn = modalEl.querySelector('#editAppBtn');
+                if (editBtn) {
+                    editBtn.addEventListener('click', function () {
+                        _closeTopModal();
+                        openEditApprenticeshipModal(
+                            masterId, apprenticeId, roleId,
+                            function (data) {
+                                if (typeof onClose === 'function') onClose(data);
+                            }
+                        );
+                    });
+                }
+
+                // Progress
+                var progressBtn = modalEl.querySelector('#progressBtn');
+                if (progressBtn) {
+                    progressBtn.addEventListener('click', function () {
+                        var result = C.progressApprenticeship(
+                            masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
+                        );
+                        if (result.success) {
+                            _persistAndWarn(null);
+                            _showToast('Progressed by ' + result.data.gained, 'success');
+                            _closeTopModal();
+                            openApprenticeshipDetailsModal(
+                                masterId, apprenticeId, roleId, onClose
+                            );
+                        } else {
+                            _showToast('Failed: ' + (result.reason || result.code), 'error');
+                        }
+                    });
+                }
+
+                // Complete
+                var completeBtn = modalEl.querySelector('#completeAppBtn');
+                if (completeBtn) {
+                    completeBtn.addEventListener('click', function () {
+                        _confirm('Complete this apprenticeship?', function () {
+                            var result = C.completeApprenticeship(
+                                masterId, apprenticeId, roleId
+                            );
+                            if (result.success) {
+                                _persistAndWarn('Completed');
+                                _closeTopModal();
+                                if (typeof onClose === 'function') onClose(result.data);
+                            } else {
+                                _showToast('Failed: ' + (result.reason || result.code), 'error');
+                            }
+                        });
+                    });
+                }
+
+                // Terminate — requires roleId
+                var terminateBtn = modalEl.querySelector('#terminateAppBtn');
+                if (terminateBtn) {
+                    terminateBtn.addEventListener('click', function () {
+                        _confirm('Terminate this apprenticeship?', function () {
+                            var result = C.terminateApprenticeship(
+                                masterId, apprenticeId, roleId, 'Terminated by user'
+                            );
+                            if (result.success) {
+                                _persistAndWarn(null);
+                                _showToast('Terminated', 'info');
+                                _closeTopModal();
+                                if (typeof onClose === 'function') onClose(result.data);
+                            } else {
+                                _showToast('Failed: ' + (result.reason || result.code), 'error');
+                            }
+                        });
+                    });
+                }
+            },
             onConfirm: function () {
                 if (typeof onClose === 'function') onClose();
             }
         });
-
-        // Edit
-        var editBtn = document.getElementById('editAppBtn');
-        if (editBtn) {
-            editBtn.addEventListener('click', function () {
-                _closeTopModal();
-                openEditApprenticeshipModal(
-                    masterId, apprenticeId, roleId,
-                    function (data) {
-                        if (typeof onClose === 'function') onClose(data);
-                    }
-                );
-            });
-        }
-
-        // Progress
-        var progressBtn = document.getElementById('progressBtn');
-        if (progressBtn) {
-            progressBtn.addEventListener('click', function () {
-                var result = C.progressApprenticeship(
-                    masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
-                );
-                if (result.success) {
-                    _persistAndWarn(null);
-                    _showToast('Progressed by ' + result.data.gained, 'success');
-                    _closeTopModal();
-                    openApprenticeshipDetailsModal(
-                        masterId, apprenticeId, roleId, onClose
-                    );
-                } else {
-                    _showToast('Failed: ' + (result.reason || result.code), 'error');
-                }
-            });
-        }
-
-        // Complete
-        var completeBtn = document.getElementById('completeAppBtn');
-        if (completeBtn) {
-            completeBtn.addEventListener('click', function () {
-                _confirm('Complete this apprenticeship?', function () {
-                    var result = C.completeApprenticeship(
-                        masterId, apprenticeId, roleId
-                    );
-                    if (result.success) {
-                        _persistAndWarn('Completed');
-                        _closeTopModal();
-                        if (typeof onClose === 'function') onClose(result.data);
-                    } else {
-                        _showToast('Failed: ' + (result.reason || result.code), 'error');
-                    }
-                });
-            });
-        }
-
-        // Terminate — requires roleId
-        var terminateBtn = document.getElementById('terminateAppBtn');
-        if (terminateBtn) {
-            terminateBtn.addEventListener('click', function () {
-                _confirm('Terminate this apprenticeship?', function () {
-                    var result = C.terminateApprenticeship(
-                        masterId, apprenticeId, roleId, 'Terminated by user'
-                    );
-                    if (result.success) {
-                        _persistAndWarn(null);
-                        _showToast('Terminated', 'info');
-                        _closeTopModal();
-                        if (typeof onClose === 'function') onClose(result.data);
-                    } else {
-                        _showToast('Failed: ' + (result.reason || result.code), 'error');
-                    }
-                });
-            });
-        }
     }
 
     // =========================================================================
@@ -646,30 +702,32 @@
         content += '</div>';
 
         _openModal({
-            title: 'Master Tree: ' + master.name,
-            content: content,
+            titleHtml: 'Master Tree: ' + _escapeHtml(master.name),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
+            onMount: function (modalEl) {
+                // Scoped to the modal element — no global querySelectorAll.
+                var items = modalEl.querySelectorAll('.apprentice-item');
+                for (var j = 0; j < items.length; j++) {
+                    (function (el) {
+                        el.addEventListener('click', function () {
+                            var masterIdAttr = el.dataset.masterId;
+                            var apprenticeIdAttr = el.dataset.apprenticeId;
+                            var roleIdAttr = el.dataset.roleId;
+                            _closeTopModal();
+                            openApprenticeshipDetailsModal(
+                                masterIdAttr,
+                                apprenticeIdAttr,
+                                roleIdAttr,
+                                onClose
+                            );
+                        });
+                    })(items[j]);
+                }
+            },
             onConfirm: function () { if (typeof onClose === 'function') onClose(); }
         });
-
-        var items = document.querySelectorAll('.apprentice-item');
-        for (var j = 0; j < items.length; j++) {
-            (function (el) {
-                el.addEventListener('click', function () {
-                    var masterIdAttr = el.dataset.masterId;
-                    var apprenticeIdAttr = el.dataset.apprenticeId;
-                    var roleIdAttr = el.dataset.roleId;
-                    _closeTopModal();
-                    openApprenticeshipDetailsModal(
-                        masterIdAttr,
-                        apprenticeIdAttr,
-                        roleIdAttr,
-                        onClose
-                    );
-                });
-            })(items[j]);
-        }
     }
 
     // =========================================================================
@@ -723,26 +781,28 @@
         content += '</div>';
 
         _openModal({
-            title: 'Find Masters',
-            content: content,
+            titleHtml: 'Find Masters',
+            contentHtml: content,
             confirmText: 'Cancel',
             cancelText: '',
+            onMount: function (modalEl) {
+                // Scoped to the modal element — no global querySelectorAll.
+                var items = modalEl.querySelectorAll('.master-item');
+                for (var j = 0; j < items.length; j++) {
+                    (function (el) {
+                        el.addEventListener('click', function () {
+                            var charId = el.dataset.charId;
+                            var char = _getCharacterById(charId);
+                            if (char && typeof onSelect === 'function') {
+                                _closeTopModal();
+                                onSelect(char);
+                            }
+                        });
+                    })(items[j]);
+                }
+            },
             onConfirm: function () {}
         });
-
-        var items = document.querySelectorAll('.master-item');
-        for (var j = 0; j < items.length; j++) {
-            (function (el) {
-                el.addEventListener('click', function () {
-                    var charId = el.dataset.charId;
-                    var char = _getCharacterById(charId);
-                    if (char && typeof onSelect === 'function') {
-                        _closeTopModal();
-                        onSelect(char);
-                    }
-                });
-            })(items[j]);
-        }
     }
 
     // =========================================================================
