@@ -111,8 +111,8 @@
  *   inside an orchestration — it does not call persist(), so the caller
  *   controls the batch boundary.
  *
- * REMOVE CHARACTER REFERENCES (NEW)
- * ---------------------------------
+ * REMOVE CHARACTER REFERENCES
+ * ---------------------------
  *   removeCharacterReferences(characterId) is the cross-domain cleanup
  *   hook that character-deletion-commands.js dispatches on hard delete.
  *   It walks every household that contains the character as a member,
@@ -131,6 +131,33 @@
  *   The command is idempotent: re-running it against a character that
  *   has already been fully cleaned up returns success with
  *   removedCount: 0 and does not commit.
+ *
+ * CLEAR LOCATION REFERENCES
+ * -------------------------
+ *   clearLocationReferences(locationId) is the cross-domain cleanup
+ *   hook that LocationCommands.deletePlace dispatches when a place is
+ *   removed. It walks every household whose locationId points at the
+ *   deleted place, sets locationId/locationName to null, and records a
+ *   location_history entry on the household so the deletion is
+ *   auditable.
+ *
+ *   This command does NOT persist. It runs inside the delete-place
+ *   orchestration, which persists once. It does NOT commit an event per
+ *   household — it accumulates affected household ids and commits a
+ *   single 'householdsLocationCleared' event at the end. Same pattern as
+ *   removeCharacterReferences.
+ *
+ *   The command is idempotent: re-running it against a location that no
+ *   household references returns success with clearedCount: 0 and does
+ *   not commit.
+ *
+ *   Preconditions:
+ *     - locationId must be a non-empty string.
+ *     - The location may or may not still exist in masterData. This
+ *       command does NOT look up the location; it operates on the
+ *       households that reference it. That allows deletePlace to call
+ *       it AFTER removing the place from canonical data, which is the
+ *       natural order (the place is gone, now reconcile references).
  *
  * DEPENDENCIES (REQUIRED):
  *   - household-state.js: HouseholdState
@@ -152,27 +179,27 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Added removeCharacterReferences(characterId). This is the cross-
- *       domain cleanup hook that character-deletion-commands.js's
+ *     - Added clearLocationReferences(locationId). This is the cross-
+ *       domain cleanup hook that LocationCommands.deletePlace dispatches
+ *       when a place is removed. Prior to this revision, deletePlace
+ *       returned householdReconciliation: 'deferred' and left every
+ *       household.locationId pointing at the deleted place. This
+ *       revision closes that deferral.
+ *     - Header CLEAR LOCATION REFERENCES section added, describing the
+ *       commit contract (one event per batch, idempotent, no persist).
+ *     - No other behavioural change.
+ *   Previous revision:
+ *     - Added removeCharacterReferences(characterId). The cross-domain
+ *       cleanup hook that character-deletion-commands.js's
  *       _CLEANUP_TARGETS entry for 'households' dispatches on hard
- *       delete. Prior to this revision, the cleanup target named
+ *       delete. Prior to that revision, the cleanup target named
  *       HouseholdCommands.removeCharacterReferences but this module did
  *       not export that function, so every hard delete reported the
- *       households domain as 'skipped: not loaded or method
- *       unavailable'. The result: deleted characters remained in their
- *       household.members[] arrays pointing at a now-nonexistent id,
- *       visible as isMissing:true in every subsequent getHouseholdMembers
- *       call. This revision closes that gap.
- *     - Header REMOVE CHARACTER REFERENCES section added.
- *     - No other behavioural change.
+ *       households domain as 'skipped'. That revision closed the gap.
  *   Previous revisions:
- *     - setHead became a single-commit command. The prior revision
- *       called addMember() for non-member characters, producing two
- *       commits (one for the add, one for the head change) and two
- *       different events. Now: single commit, event
- *       'householdHeadSet', addedInline flag in the result.
+ *     - setHead became a single-commit command.
  *     - assignCharacterToPosition and bulkAssign gained
- *       addRoleIfMissing support (via CharacterCommands.addProfession).
+ *       addRoleIfMissing support.
  *     - Deletion-routed residence cleanup uses ResidenceSystem's
  *       markUnitVacant / markResidenceVacant and reports failures in
  *       eventLog.
@@ -2564,7 +2591,120 @@
     }
 
     // =========================================================================
-    // 22. INTERNAL CHARACTER LOOKUP
+    // 22. CROSS-DOMAIN LOCATION CLEANUP
+    // =========================================================================
+    //
+    // clearLocationReferences is the cleanup hook that
+    // LocationCommands.deletePlace dispatches when a place is removed.
+    // It walks every household whose locationId points at the deleted
+    // place, sets locationId/locationName to null, and records a
+    // location_history entry on the household so the deletion is
+    // auditable.
+    //
+    // WHY NOT updateHousehold()? updateHousehold() accepts a single
+    // household id and a single patch. This command needs to sweep every
+    // household. Doing it via N updateHousehold() calls would:
+    //   - emit N 'householdUpdated' commits (one per household),
+    //   - trigger N hydrateFromMasterData() rebuilds (via each _commit),
+    //   - produce an event stream that is not the "one logical
+    //     operation, one commit" contract.
+    //
+    // WHAT THIS DOES INSTEAD:
+    //   - Iterates the canonical household array once.
+    //   - Mutates locationId/locationName directly on each match
+    //     (in-memory only; the record is canonical, so this is the
+    //     mutation).
+    //   - Appends a location_history entry per household to preserve the
+    //     audit trail.
+    //   - Accumulates affected household ids.
+    //   - Emits ONE 'householdsLocationCleared' commit at the end.
+    //
+    // PRECONDITIONS:
+    //   - locationId must be a non-empty string.
+    //   - The location need not still exist in masterData. This command
+    //     operates on households, not on the location. deletePlace calls
+    //     this AFTER removing the place from canonical data; that is the
+    //     natural order (the place is gone, now reconcile references).
+    //
+    // COMMIT CONTRACT:
+    //   - Does NOT persist (the delete-place orchestration persists once
+    //     at the end).
+    //   - ONE commit for the whole sweep, not one per household.
+    //   - Returns { success: true, clearedCount, households } so the
+    //     caller's reconciliation report can attribute the domain
+    //     correctly.
+    //   - Idempotent: re-running against a location that no household
+    //     references returns success with clearedCount: 0 and does not
+    //     commit.
+
+    function clearLocationReferences(locationId) {
+        if (!_hasId(locationId)) {
+            return _fail('INVALID_INPUT', 'locationId is required');
+        }
+
+        var year = _getCurrentYear();
+        var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
+        var affectedHouseholds = [];
+        var clearedCount = 0;
+
+        for (var i = 0; i < all.length; i++) {
+            var household = all[i];
+            if (household.locationId !== locationId) continue;
+
+            var previousLocationName = household.locationName || null;
+
+            household.locationId = null;
+            household.locationName = null;
+
+            if (!Array.isArray(household.residenceHistory)) {
+                // residenceHistory is the closest existing "location
+                // history" container on the household record. Reusing it
+                // here keeps the schema stable; the entry's action field
+                // disambiguates residence-from-location events.
+                household.residenceHistory = [];
+            }
+            household.residenceHistory.push({
+                action: 'location_cleared',
+                year: year,
+                previousLocationId: locationId,
+                previousLocationName: previousLocationName,
+                reason: 'Location deleted',
+                timestamp: Date.now()
+            });
+
+            household.updatedAt = Date.now();
+            clearedCount++;
+
+            affectedHouseholds.push({
+                householdId: household.id,
+                householdName: household.name,
+                previousLocationName: previousLocationName
+            });
+        }
+
+        if (clearedCount === 0) {
+            // Idempotent: nothing to clear, nothing to commit.
+            return _ok({
+                clearedCount: 0,
+                households: []
+            });
+        }
+
+        _commit('householdsLocationCleared', {
+            locationId: locationId,
+            clearedCount: clearedCount,
+            households: affectedHouseholds,
+            year: year
+        });
+
+        return _ok({
+            clearedCount: clearedCount,
+            households: affectedHouseholds
+        });
+    }
+
+    // =========================================================================
+    // 23. INTERNAL CHARACTER LOOKUP
     // =========================================================================
 
     function _getCharacterById(id) {
@@ -2583,7 +2723,7 @@
     }
 
     // =========================================================================
-    // 23. EXPORTS
+    // 24. EXPORTS
     // =========================================================================
 
     window.HouseholdCommands = {
@@ -2641,8 +2781,9 @@
         // Repair
         repairMemberships: repairMemberships,
 
-        // Cross-domain reference cleanup (character-deletion-commands.js)
-        removeCharacterReferences: removeCharacterReferences
+        // Cross-domain reference cleanup
+        removeCharacterReferences: removeCharacterReferences,
+        clearLocationReferences: clearLocationReferences
     };
 
     if (typeof module !== 'undefined' && module.exports) {
