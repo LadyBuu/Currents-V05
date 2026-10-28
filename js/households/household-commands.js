@@ -18,11 +18,22 @@
  *   - _commit does NOT save. It:
  *       hydrateFromMasterData()
  *       markDirty()
+ *       invalidateAccessorCaches()      <-- added (C1)
  *       publish(eventName, payload)
  *       dispatch CustomEvent(eventName, payload)
  *   - persist() is the ONLY place that calls saveMasterData().
  *   - Callers (modals, bootstraps, cross-domain orchestrators) call
  *     persist() once per batch.
+ *
+ * YEAR RESOLUTION
+ * ---------------
+ *   Every "current year" read in this module goes through
+ *   window.getCurrentYear (the canonical function in time.js), NOT
+ *   window.getCurrentYearSafe (the deprecated alias). This matches
+ *   the household-orchestration.js P3-1 migration: the household
+ *   subsystem's eventual removal of getCurrentYearSafe is a one-line
+ *   change in household-orchestration.js, and this file never
+ *   depended on the alias.
  *
  * RESULT SHAPE
  * ------------
@@ -88,6 +99,24 @@
  *   longer affects behavior; only the state of window.ResidenceSystem /
  *   window.IndustryCommands AT THE MOMENT THE COMMAND RUNS matters,
  *   which is the correct semantic for an optional dependency.
+ *
+ * ACCESSOR CACHE CONTRACT
+ * -----------------------
+ *   accessors.js maintains an id -> record cache used by getHouseholdById
+ *   and family-of accessors. Every mutation of the household collection
+ *   must invalidate that cache via window.invalidateAccessorCaches().
+ *   Without this, getHouseholdById returns stale records after a household
+ *   write, and downstream consumers (industry, settlement, modals) read
+ *   the pre-mutation shape.
+ *
+ *   The invalidation happens at the memory-write boundary (_commit), not
+ *   at persistence time, because the cache mirrors canonical memory, not
+ *   storage.
+ *
+ *   This mirrors the identical contract in character-state.js::_emitChange.
+ *   Prior to this revision, the household domain did not invalidate the
+ *   accessor cache at all — which is why industry-queries._resolveOwnerName
+ *   could return a stale household name after a rename.
  *
  * SET HEAD CONTRACT (REVISED)
  * ---------------------------
@@ -202,7 +231,18 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P0-3):
+ *   Current revision (P1 + household C1):
+ *     - _commit now calls _invalidateAccessorCaches(), matching the
+ *       identical contract in character-state.js::_emitChange. Prior to
+ *       this revision the household domain never invalidated the
+ *       accessor cache, which meant industry-queries._resolveOwnerName
+ *       (and any other consumer reaching for getHouseholdById after a
+ *       household write) could return a stale household name. See
+ *       ACCESSOR CACHE CONTRACT in the header.
+ *     - Header ACCESSOR CACHE CONTRACT section added.
+ *     - No behavioural change to any command. Only the commit tail
+ *       gained one more step.
+ *   Previous revision (P0-3):
  *     - Replaced the load-time _residenceSystemPresent and
  *       _industryCommandsPresent flags with call-time helpers
  *       _residenceSystemAvailable() and _industryCommandsAvailable().
@@ -216,24 +256,14 @@
  *     - Header CROSS-DOMAIN PRESENCE CHECKS section added documenting
  *       the policy and the historical bug.
  *     - No behavioural change to any other command.
- *   Previous revision:
+ *   Previous revisions:
  *     - Added clearLocationReferences(locationId). This is the cross-
  *       domain cleanup hook that LocationCommands.deletePlace dispatches
- *       when a place is removed. Prior to this revision, deletePlace
- *       returned householdReconciliation: 'deferred' and left every
- *       household.locationId pointing at the deleted place. This
- *       revision closes that deferral.
- *     - Header CLEAR LOCATION REFERENCES section added, describing the
- *       commit contract (one event per batch, idempotent, no persist).
- *   Previous revision:
+ *       when a place is removed.
  *     - Added removeCharacterReferences(characterId). The cross-domain
  *       cleanup hook that character-deletion-commands.js's
  *       _CLEANUP_TARGETS entry for 'households' dispatches on hard
- *       delete. Prior to that revision, the cleanup target named
- *       HouseholdCommands.removeCharacterReferences but this module did
- *       not export that function, so every hard delete reported the
- *       households domain as 'skipped'. That revision closed the gap.
- *   Previous revisions:
+ *       delete.
  *     - setHead became a single-commit command.
  *     - assignCharacterToPosition and bulkAssign gained
  *       addRoleIfMissing support.
@@ -381,8 +411,9 @@
     // =========================================================================
     //
     // _commit is NOT a persistence boundary. It hydrates the state index,
-    // marks data dirty, publishes an in-process event, and dispatches a
-    // cross-domain CustomEvent. The caller decides when to call persist().
+    // marks data dirty, invalidates the accessor cache, publishes an
+    // in-process event, and dispatches a cross-domain CustomEvent. The
+    // caller decides when to call persist().
     //
     // IMPORTANT: _commit is called by every command, including no-op
     // updates. See updateHousehold() below — a call with an empty updates
@@ -390,6 +421,14 @@
     // empty update is a valid "touch" operation that some callers
     // (notably household-economy.js) use to signal "the record changed
     // out-of-band, notify subscribers."
+    //
+    // ACCESSOR CACHE INVALIDATION:
+    //   getHouseholdById (accessors.js) caches household records by id.
+    //   Any mutation of the household collection must invalidate that
+    //   cache, or the accessor returns stale records. This mirrors
+    //   character-state.js::_emitChange, which invalidates the accessor
+    //   cache at the same memory-write boundary. See ACCESSOR CACHE
+    //   CONTRACT in the header.
 
     function _hydrateState() {
         if (typeof _state.hydrateFromMasterData === 'function') {
@@ -405,6 +444,33 @@
         }
         if (typeof _state.markDirty === 'function') {
             try { _state.markDirty(); } catch (e) { /* non-fatal */ }
+        }
+    }
+
+    /**
+     * Invalidates the accessor cache (accessors.js), if present.
+     *
+     * Called at every mutation boundary, matching
+     * character-state.js::_emitChange. Without this, getHouseholdById
+     * returns stale records after a household write.
+     *
+     * Defensive: if accessors.js is not loaded, the call is a no-op.
+     * In that case there is no cache to invalidate.
+     *
+     * @private
+     */
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            try {
+                window.invalidateAccessorCaches();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'HouseholdCommands: invalidateAccessorCaches threw',
+                        e
+                    );
+                }
+            }
         }
     }
 
@@ -431,6 +497,7 @@
     function _commit(eventName, payload) {
         _hydrateState();
         _markDirty();
+        _invalidateAccessorCaches();
         _publish(eventName, payload);
         _dispatch(eventName, payload);
     }
