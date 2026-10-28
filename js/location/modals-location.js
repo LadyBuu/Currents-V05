@@ -13,6 +13,46 @@
  *   LocationCommands.persist() exactly once. On failure, shows a toast and
  *   does NOT call persist.
  *
+ * MODAL CALLBACK API (from modals-core.js):
+ *   openModal(options) returns { element, close }.
+ *
+ *   The callbacks receive the modal DOM element as their argument:
+ *
+ *     onMount(root)      // root is the modal DOM element
+ *     onOpen(root)       // alias for onMount
+ *     onConfirm(root)    // root is the modal DOM element
+ *     onCancel(root)     // root is the modal DOM element
+ *
+ *   Inside the callbacks, use `root.querySelector('#id')` for scoped
+ *   input reads. Do NOT use `root.element.querySelector(...)` — the
+ *   argument is already the DOM element, not a `{ element }` wrapper.
+ *
+ *   Do NOT use `document.querySelector(...)` inside a callback. Two
+ *   modals of the same type can be open simultaneously (the modal
+ *   stack permits it), and `document.querySelector` returns the first
+ *   match in DOM order — always the older modal.
+ *
+ *   This file was previously written against `document.querySelector`.
+ *   Every modal's `onConfirm` read from the page scope, so two open
+ *   add-location modals would both confirm with the first modal's
+ *   inputs. Fixed in this revision: every callback accepts the
+ *   parameter and scopes to it. See MODAL INPUT READS below.
+ *
+ * MODAL INPUT READS:
+ *   Every modal reads its inputs via `root.querySelector('.<form-class>')`
+ *   where `root` is the callback parameter. The form class is used as
+ *   the scoping key because the form element is what the modal actually
+ *   constructs and what the caller's field accessors walk. Using an id
+ *   would require generating a unique id per modal instance; the class
+ *   is stable and unique within the modal element.
+ *
+ *   Form classes used by this file:
+ *     .location-form          add / edit place
+ *     .location-delete-form   delete place
+ *     .location-type-form     add / edit location type
+ *     .location-type-delete   delete location type
+ *     .hierarchy-list         view hierarchy
+ *
  * Depends on (checked at load time):
  *   - LocationViewModels
  *   - LocationQueries
@@ -27,6 +67,24 @@
  *   Confirm and cancel buttons render plain text. Icons appear only inside
  *   content when the modal format requires them.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - CRITICAL (compatibility with modals-core.js): every onConfirm
+ *       callback now accepts the modal DOM element as its parameter and
+ *       scopes its DOM reads via `root.querySelector`. Previously used
+ *       `document.querySelector`, which returned the first match in DOM
+ *       order — the older modal when two of the same type were open.
+ *       Every form-submission modal was affected:
+ *         openAddPlaceModal, openEditPlaceModal, openDeletePlaceModal,
+ *         openAddLocationTypeModal, openEditLocationTypeModal,
+ *         openDeleteLocationTypeModal.
+ *     - openViewHierarchyModal: the setTimeout(0) +
+ *       document.querySelectorAll + forEach wiring pattern is removed.
+ *       Click handlers are now wired synchronously in onMount, scoped
+ *       to the modal root. Same class of defect as the onConfirm fixes.
+ *     - Header MODAL CALLBACK API and MODAL INPUT READS sections added.
+ *     - No public signature change, no public return-shape change.
  * =============================================================================
  */
 
@@ -182,8 +240,8 @@
             contentHtml: html,
             confirmText: 'Create',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var form = document.querySelector('.location-form');
+            onConfirm: function (root) {
+                var form = root.querySelector('.location-form');
                 if (!form) return false;
 
                 var payload = {
@@ -259,8 +317,8 @@
             contentHtml: html,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var form = document.querySelector('.location-form');
+            onConfirm: function (root) {
+                var form = root.querySelector('.location-form');
                 if (!form) return false;
 
                 var updates = {
@@ -318,8 +376,8 @@
             contentHtml: html,
             confirmText: 'Delete',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var form = document.querySelector('.location-delete-form');
+            onConfirm: function (root) {
+                var form = root.querySelector('.location-delete-form');
                 if (!form) return false;
 
                 var cascadeEl = form.querySelector('input[name="cascade"]');
@@ -335,6 +393,16 @@
     // =========================================================================
     // 6. VIEW HIERARCHY
     // =========================================================================
+    //
+    // Read-only modal. Renders the ancestor chain of a place as a clickable
+    // list. Clicking an item closes the modal and calls the onSelect
+    // callback with the chosen place id.
+    //
+    // Click wiring is synchronous in onMount, scoped to the modal root.
+    // The previous revision used setTimeout(0) + document.querySelectorAll,
+    // which (a) introduced a race window between modal-open and click-wiring,
+    // and (b) hit the first .hierarchy-item in the page if two hierarchy
+    // modals were open. Both defects are eliminated by scoping to `root`.
 
     function openViewHierarchyModal(placeId, onSelect) {
         var place = LQ.getPlace(placeId);
@@ -365,22 +433,21 @@
             contentHtml: html,
             confirmText: 'Close',
             cancelText: '',
+            onMount: function (root) {
+                // Wire click-to-select synchronously. Scoped to the modal
+                // root so two open hierarchy modals do not cross-read.
+                root.addEventListener('click', function (e) {
+                    var item = e.target.closest && e.target.closest('.hierarchy-item');
+                    if (!item) return;
+                    var id = item.getAttribute('data-loc-id');
+                    _close();
+                    if (typeof onSelect === 'function' && id) onSelect(id);
+                });
+            },
             onConfirm: function () {
                 return true;
             }
         });
-
-        // Bind click-to-select after the modal renders.
-        setTimeout(function () {
-            var items = document.querySelectorAll('.hierarchy-item');
-            items.forEach(function (el) {
-                el.addEventListener('click', function () {
-                    var id = el.getAttribute('data-loc-id');
-                    _close();
-                    if (typeof onSelect === 'function' && id) onSelect(id);
-                });
-            });
-        }, 0);
     }
 
     // =========================================================================
@@ -406,8 +473,8 @@
             contentHtml: html,
             confirmText: 'Create',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var form = document.querySelector('.location-type-form');
+            onConfirm: function (root) {
+                var form = root.querySelector('.location-type-form');
                 if (!form) return false;
 
                 var payload = {
@@ -461,8 +528,8 @@
             contentHtml: html,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onConfirm: function () {
-                var form = document.querySelector('.location-type-form');
+            onConfirm: function (root) {
+                var form = root.querySelector('.location-type-form');
                 if (!form) return false;
 
                 var updates = {
