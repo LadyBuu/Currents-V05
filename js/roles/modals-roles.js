@@ -22,17 +22,15 @@
  *
  *   Every modal uses onMount (from modals-core.js) to attach handlers.
  *   onMount runs synchronously during openModal, before the caller
- *   regains control, so there is no setTimeout-based binding. This
- *   matches modals-education.js and modals-character.js.
- *
- *   Element lookups inside onMount and onConfirm are scoped to the
- *   modal element (modalEl.querySelector(...)), not to document. This
- *   prevents cross-modal ID collisions when a modal opens over another.
+ *   regains control, so there is no setTimeout-based binding. Element
+ *   lookups inside onMount and onConfirm are scoped to the modal element
+ *   (modalEl.querySelector(...)), not to document. This prevents
+ *   cross-modal ID collisions when a modal opens over another.
  *
  * PERSISTENCE
  *
- *   Every write modal calls RoleCommands.persist() exactly once, after
- *   a successful command. RoleState writes masterData.data.roles and
+ *   Every write modal calls RoleCommands.persist() exactly once, after a
+ *   successful command. RoleState writes masterData.data.roles and
  *   masterData.data.roleCategories on every mutation and marks the data
  *   dirty; persist() is the FLUSH. A persist failure is reported via
  *   toast but does not roll back the in-memory write.
@@ -48,8 +46,17 @@
  *   partial-failure warning. It does NOT read .success for the "did
  *   anything succeed" check; assignedCount === 0 is that check.
  *
+ * CROSS-MODAL CONFIRM
+ *
+ *   _confirmThen wraps window.confirmDialog(message, title, onConfirm) —
+ *   the three-argument signature from modals-core.js. Passing onConfirm
+ *   as the second argument (which some callers had done) sends the
+ *   callback into the title slot and leaves the confirm callback
+ *   undefined; the dialog appears and closes but the callback never
+ *   fires. The three-argument form is correct.
+ *
  * DEPENDENCIES (must be loaded first):
- *   - modals-core.js        (openModal, closeTopModal)
+ *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
  *   - formatting.js         (escapeHtml)
  *   - ui.js                 (_showToast / showToast)
  *   - icons.js              (Icons)
@@ -208,9 +215,17 @@
         return Number.isFinite(n) ? n : fallback;
     }
 
+    /**
+     * Confirm dialog wrapper.
+     *
+     * modals-core.js::confirmDialog(message, title, onConfirm) takes THREE
+     * arguments. The old two-argument form passed onConfirm as the title
+     * and left the confirm callback undefined — the dialog appeared and
+     * closed, but the callback never ran.
+     */
     function _confirmThen(message, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, onConfirm);
+            window.confirmDialog(message, 'Confirm', onConfirm);
         } else if (window.confirm(message)) {
             onConfirm();
         }
@@ -402,7 +417,7 @@
             for (var i = 0; i < draftSpecs.length; i++) {
                 html += '<span class="spec-item" style="display:inline-flex;align-items:center;gap:4px;background:var(--bg3);padding:4px 8px;border-radius:16px;font-size:0.6rem;">' +
                     _esc(draftSpecs[i]) +
-                    '<button type="button" class="remove-spec" data-index="' + i + '" style="background:none;border:none;cursor:pointer;color:var(--dim);">&times;</button>' +
+                    '<button type="button" class="remove-spec" data-index="' + i + '" style="background:none;border:none;cursor:pointer;color:var(--dim);">' + _icon('X') + '</button>' +
                 '</span>';
             }
             container.innerHTML = html;
@@ -723,12 +738,6 @@
             var idx = selectedIds.indexOf(characterId);
             if (add && idx === -1) selectedIds.push(characterId);
             if (!add && idx !== -1) selectedIds.splice(idx, 1);
-            updateCounter();
-        }
-
-        function updateCounter() {
-            var counter = document.getElementById('assignSelectedCount');
-            if (counter) counter.textContent = String(selectedIds.length);
         }
 
         function refreshSelectionStyles(modalEl) {
@@ -739,7 +748,8 @@
                 card.style.background = selected ? 'rgba(var(--accent-rgb),0.2)' : 'var(--bg3)';
                 card.style.borderColor = selected ? 'var(--accent)' : 'var(--border)';
             }
-            updateCounter();
+            var counter = modalEl.querySelector('#assignSelectedCount');
+            if (counter) counter.textContent = String(selectedIds.length);
         }
 
         var heading = mode === 'bulk'
@@ -851,6 +861,7 @@
                             var eligible = currentEligible();
                             selectedIds = eligible.map(function (c) { return c.id; });
                             renderList(modalEl);
+                            refreshSelectionStyles(modalEl);
                         });
                     }
                     var selectNone = modalEl.querySelector('#assignSelectNone');
@@ -858,6 +869,7 @@
                         selectNone.addEventListener('click', function () {
                             selectedIds = [];
                             renderList(modalEl);
+                            refreshSelectionStyles(modalEl);
                         });
                     }
                 }
@@ -896,8 +908,8 @@
                     //   { success: boolean, assignedCount, failedCount, errors }
                     // assignedCount === 0 is the "nothing succeeded" check.
                     // bulk.success tells us whether every assignment
-                    // succeeded; we use it only to decide if we should
-                    // surface partial-failure detail.
+                    // succeeded; we use assignedCount for the toast because
+                    // it tells the user how many actually landed.
                     if (bulk.assignedCount === 0) {
                         _showToast('No assignments succeeded', 'error');
                         return false;
@@ -964,9 +976,9 @@
                     '<td style="padding:4px 6px;">' + _esc(name) + '</td>' +
                     '<td style="padding:4px 6px;text-align:center;">' + _esc(d.skillLevel) + '</td>' +
                     '<td style="padding:4px 6px;text-align:center;">' + _esc(d.tierName) + '</td>' +
-                    '<td style="padding:4px 6px;text-align:center;">' + (d.canTeach ? '✓' : '') + '</td>' +
+                    '<td style="padding:4px 6px;text-align:center;">' + (d.canTeach ? _icon('CHECK_SIMPLE') : '') + '</td>' +
                     '<td style="padding:4px 6px;">' + specText + '</td>' +
-                    '<td style="padding:4px 6px;text-align:center;">' + (d.isPrimary ? '✓' : '') + '</td>' +
+                    '<td style="padding:4px 6px;text-align:center;">' + (d.isPrimary ? _icon('CHECK_SIMPLE') : '') + '</td>' +
                 '</tr>';
             }
 
@@ -990,10 +1002,7 @@
             titleHtml: 'Characters with ' + _esc(role.name),
             contentHtml: content,
             confirmText: 'Close',
-            cancelText: '',
-            onConfirm: function () {
-                // Nothing to do; the modal closes itself on confirm.
-            }
+            cancelText: ''
         });
     }
 
@@ -1148,9 +1157,6 @@
                     categorySelect.addEventListener('change', renderResults);
                 }
                 renderResults();
-            },
-            onConfirm: function () {
-                // Close action; no selection.
             }
         });
     }
