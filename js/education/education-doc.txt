@@ -1,38 +1,1279 @@
+# Still Waters — Education System
 
-## What changed vs. prior `roles-docs.txt`
+**Version:** 2.2
 
-**Added sections:**
+**Location:** `js/systems/education/`
 
-- §4.1 **Init** — documents `RoleState.init()` requirement and idempotency
-- §4.2 **Persistence** — new contract: state writes masterData per mutation, `persist()` flushes, `getLastSaveError()` for reason
-- §4.3 **Cross-tab reload** — the `masterDataUpdated` listener
-- §4.4 **Reads return clones** — the `getRole` / `getAllRoles` clone contract
-- §4.5 **Subscriber notifications** — the full event-type table and reentrancy note
-- §4.6 **UI state** — clarifies facade surface (unchanged from prior)
-- §5.2 **Persistence boundary** — `persist()` returns `{ success, reason }`; `getLastSaveError()` for underlying error
-- §5.6 **Events** — enumerates every CustomEvent dispatched by the command layer
-- §8 **Persistence** — three subsections: what is persisted, flush boundary, cross-tab
-- §10 **Rules of use** — Do / Don't, including the `assignedCount` vs `success` distinction for `bulkAssignRole`
-- §11 **Known deferrals** — expanded to include the `education-constants.js` divergence, apprenticeship progression consolidation, and `bulkAssignRole` atomicity
+**Scope:** formal schooling, curriculum, enrolment, graduation, teaching
+staff, tuition, ownership, finance, and education history.
 
-**Updated sections:**
+**Status:** education subsystem complete. Character-owned education fields
+routed through CharacterCommands. Role skill progression routed through
+RoleCommands.characterSkillProgress. State owns persistence (writes
+`masterData.data.educationalInstitutions` per mutation); `persist()` is
+the flush boundary. Cross-tab reload wired. Modal lifecycle uses
+`onMount`.
 
-- §5.1 **Result shape** — documents the `bulkAssignRole` boolean-`success` change and its consequence: `success` means "everything succeeded," not "anything succeeded"; callers use `assignedCount === 0` for "nothing succeeded"
-- §6.3 **Assign-modal candidate enumeration** — clarifies that literacy filtering happens at command time, not query time (matches the modal's behavior)
-- §7.2 **`modals-roles.js`** — documents `onMount` lifecycle, `modalEl.querySelector` scoping, and `_confirmThen` three-arg `confirmDialog` call
-- §9 **Skill tier authority** — clarifies `SkillUtils` is soft-required (empty strings on absence)
+---
 
-**Preserved:**
+## 1. Overview
 
-- §1 Overview
-- §2 File manifest
-- §3 Load order
-- §6.1 / §6.2 read sources and tier classification
-- §7.1 `role-ui-list.js`, §7.3 `modals-role-select.js`
+The education system manages educational institutions, enrolment,
+teaching staff, curriculum, learning progression, tuition, ownership,
+finance, and historical records. It is one of the layered domain
+subsystems alongside Character, Family, Children, Mortality,
+Relationship, Role, Apprenticeship, and Settlement.
 
-**Not included (out of scope for this doc pass):**
+Design principles:
 
-- The `_confirmThen` two-arg bug fix (that's in `modals-roles.js`, not the docs; noted in the earlier file review)
-- The `updateCounter` / `document.getElementById` latent issue (deferred)
-- The `spec-item` `&times;` vs "no inline Unicode glyphs" policy mismatch (deferred)
-- `bulkAssignRole` result shape change for external callers via `role-system.js` alias `window.bulkAssignRole` — noted in §5.1 but the shim doesn't document shape, so no shim doc change required
+- **Layered.** constants → rules → state → learning → history →
+  queries → commands → annual → UI → modals.
+- **Single source of truth.** `education-state.js` owns canonical
+  institution records. No other module stores institution data.
+- **State owns persistence.** `education-state.js` writes
+  `masterData.data.educationalInstitutions` on every mutation, calls
+  `markDataDirty()`, and invalidates the accessor cache. `EducationCommands.persist()`
+  is the flush.
+- **Projections.** Queries return frozen projections, never live records.
+- **Hydration is explicit.** Bootstrap calls
+  `EducationState.hydrateFromMasterData([...])` once after
+  `masterData` loads. Every read and mutation throws if hydration has
+  not run.
+- **Transaction boundary.** Commands mutate. The caller persists once.
+- **Fail loud.** Missing dependencies throw at load. Missing domain
+  entities return `null` or `[]`.
+- **Append-only history.** Education events are never edited or deleted.
+- **Cross-domain via commands.** Education calls Character, Role,
+  Household, Settlement, and Religion commands for cross-domain
+  effects. It never touches their state.
+- **No second skill authority.** Education owns educational progress
+  (`subjectProgress`). The canonical role skill lives on the character
+  record as `professions[].skillLevel`, written only through Role.
+  Education reports progression; Role writes it.
+- **No legacy shim.** `education-system.js` has been removed. Every
+  caller uses the canonical module.
+
+---
+
+## 2. File layout
+
+    js/systems/education/
+    ├── education-constants.js    Vocabulary, static config, tuning parameters.
+    ├── education-rules.js        Pure policy: level thresholds, eligibility.
+    ├── education-state.js        Canonical institutions, indexes, subscriptions,
+    │                             persistence sync, cross-tab reload.
+    ├── education-learning.js     Proficiency, literacy, education level reads.
+    ├── education-history.js      Append-only event ledger on each institution.
+    ├── education-queries.js      Semantic reads; returns frozen projections.
+    ├── education-commands.js     All writes; one save boundary per caller batch.
+    ├── education-annual.js       Annual pipeline orchestrator.
+    ├── education-ui-list.js      Renderers for lists, cards, tables, summaries.
+    └── modals-education.js       Interactive modals for all education mutations.
+
+### Load order
+
+    education-constants.js
+    education-rules.js
+    education-state.js
+    education-learning.js
+    education-history.js
+    education-queries.js
+    education-commands.js
+    education-annual.js
+    education-ui-list.js
+    modals-education.js
+
+App bootstrap calls `EducationState.hydrateFromMasterData([...])` once
+before any query or command runs. There is no implicit hydration on
+module load.
+
+---
+
+## 3. Persistence and cross-tab
+
+### 3.1 State owns writes
+
+`education-state.js` writes the canonical institution collection into
+`masterData.data.educationalInstitutions` on every mutation
+(`_addInstitution`, `_updateInstitution`, `_removeInstitution`,
+`hydrateFromMasterData`) and then:
+
+1. Rebuilds the id/location/type/ownership/religion indexes.
+2. Calls `window.invalidateAccessorCaches()` if present.
+3. Calls `window.markDataDirty()`.
+
+There is no aliasing between `_institutions` and
+`masterData.data.educationalInstitutions`. The two are kept in sync by
+assignment, not by reference sharing. A caller that mutates
+`masterData.data.educationalInstitutions` directly is bypassing the
+state module and will not update the in-memory indexes.
+
+### 3.2 Flush boundary
+
+`EducationCommands.persist()` is the FLUSH. It calls
+`window.saveMasterData()`, which serializes `masterData` (which already
+contains the education institutions) to `localStorage`.
+
+`persist()` inspects the boolean return from `saveMasterData()`. On
+`false`, it reads `window.getLastSaveError()` (if available) and logs
+the underlying error. It returns `true` on success and `false` on
+failure — callers can surface the failure to the user.
+
+`EducationState` does NOT call `saveMasterData` itself. The debounced
+save in `storage.js` will eventually run on its own if a caller forgets
+`persist()`, but `persist()` is what makes the write synchronous and
+lets the caller read the boolean result.
+
+### 3.3 Cross-tab reload
+
+`education-state.js` subscribes to `masterDataUpdated`. When another
+tab writes storage, this tab:
+
+1. Reads `masterData.data.educationalInstitutions`.
+2. Runs every record through `migrateInstitution`.
+3. Rebuilds indexes.
+4. Notifies subscribers with a `'reloaded'` event.
+
+The listener does NOT mark data dirty (inbound data is canonical) and
+does NOT call `_syncToMasterData`. It logs and drops a duplicate-id
+record rather than throwing — a bad cross-tab write should not break
+the current tab.
+
+Without this listener, an institution created in tab B would be
+invisible in tab A until tab A refreshed.
+
+### 3.4 Hydration
+
+`hydrateFromMasterData(rawInstitutions)` replaces the canonical state
+from scratch. It:
+
+- Rejects non-array input.
+- Runs each record through `migrateInstitution`.
+- Throws on duplicate ids.
+- Rebuilds indexes, calls `_syncToMasterData()` once, notifies.
+
+After hydration, `_hydrated` is `true`. Every read and every mutation
+primitive begins with `_assertHydrated()`. A forgotten hydrate call
+surfaces as an explicit error, not as an empty store that reads like
+"no institutions exist."
+
+The bootstrap must call `hydrateFromMasterData` after `masterData`
+loads. `education-state.js` does not hydrate itself.
+
+---
+
+## 4. Module responsibilities
+
+### 4.1 `education-constants.js`
+
+Vocabulary and configuration only. No logic.
+
+Exports on `window`:
+
+    EDUCATION_LEVELS          Literacy-based education tiers.
+    SUBJECTS                  Canonical subject registry, keyed by SCREAMING_CASE.
+    SUBJECTS_BY_ID            Parallel index keyed by lowercase subject id.
+    INSTITUTION_TYPES         Seven institution tiers, size/prestige-based.
+    OWNERSHIP_TYPES           public | private | religious.
+    SCHOOL_TIERS              Exclusive reputation bands (half-open).
+    ROLE_CATEGORIES           Role category vocabulary (for specialization).
+    TUITION_DEFAULTS          Tuition tuning parameters.
+    TUITION_TYPE_MULTIPLIERS  Per-type tuition multipliers.
+    HISTORY_EVENT_TYPES       Closed vocabulary for history events.
+
+Conventions:
+
+- `education-constants.js` is the only source for these values. No
+  other module may define fallback copies.
+- `SUBJECTS` is keyed by SCREAMING_CASE for direct named access
+  (`SUBJECTS.LITERACY`). The `id` field on each entry is lowercase
+  (`'literacy'`). For lowercase-id lookups use `SUBJECTS_BY_ID[id]`.
+- `INSTITUTION_TYPES[*].baseTuition` is canonical.
+  `TUITION_TYPE_MULTIPLIERS` adjusts it per type before reputation.
+  Neither overrides the other.
+- `SCHOOL_TIERS` boundaries are half-open `[min, max)`. A reputation of
+  40 is `lower_middle`, not `poor`.
+- `HISTORY_EVENT_TYPES` is closed. The history module rejects unknown
+  types.
+- `INSTITUTION_TYPES[*].tier` names a band in `SCHOOL_TIERS[*].id`. The
+  relationship is a foreign key, not duplicated data.
+- `ROLE_CATEGORIES` mirrors the education domain's grouping for
+  curriculum selection. It should agree with the role domain's own
+  category vocabulary. If the two diverge, this constant should be
+  removed and `RoleState` should provide categories instead. (Flagged,
+  not resolved.)
+
+### 4.2 `education-rules.js`
+
+Pure policy. No state, no I/O, no randomness, no mutation. Every
+function is deterministic. Missing constants throw at load.
+
+Key functions:
+
+    getEducationLevelForLiteracy(literacy)     Highest level whose threshold is met.
+    isLiterateAtLevel(literacy)                literacy >= LITERACY_THRESHOLD (30).
+    calculateLearningResult(current, delta)    Validated, clamped proficiency.
+    isGraduationEligible({...})                Single canonical graduation check.
+    progressKeyFor(curriculumItem)             `role_<id>` or `<id>`.
+
+`isGraduationEligible` is the only implementation of graduation
+readiness. It takes `{ yearsEnrolled, requiredYears, curriculum,
+proficiencyByKey }` and returns `{ eligible, missing, reason }`.
+Reason is `insufficient_years` or `insufficient_proficiency`.
+Malformed curriculum items are pushed to `missing` as `'(malformed)'`
+rather than skipped.
+
+`progressKeyFor` is the single source of truth for the key convention.
+No other module may reconstruct the key inline.
+
+Coercion: `getEducationLevelForLiteracy` and `isLiterateAtLevel` treat
+any non-finite or non-numeric input as 0.
+
+Constants exported: `LITERACY_THRESHOLD` (30), `GRADUATION_PROFICIENCY`
+(90), `MAX_PROFICIENCY` (100), `LITERACY_SUBJECT_ID` (`'literacy'`).
+
+`calculateLearningResult` throws on negative or non-finite input.
+Callers (`education-commands.advanceLearning`) wrap the call in
+try/catch.
+
+### 4.3 `education-state.js`
+
+Canonical institution records, indexes, subscriptions, UI state,
+hydration, cross-tab reload, persistence sync.
+
+Public reads (deep-enough clones; throw if not hydrated):
+
+    subscribe(callback)                        Subscribe to state events.
+    getAllInstitutions()                       Cloned records.
+    getInstitution(id)                         Cloned record or null.
+    getInstitutionsByLocation(locationId)      Cloned records.
+    getInstitutionsByType(typeId)              Cloned records.
+    getInstitutionsByOwnershipType(type)       Cloned records.
+    getInstitutionsByReligion(religionId)      Cloned records.
+    getUIState()                               Frozen snapshot.
+    updateUIState(partial)                     Merge known top-level fields.
+    hydrateFromMasterData(list)                Replace state from raw data.
+    migrateInstitution(raw)                    Normalize a raw record.
+    isHydrated()                               Whether hydration has run.
+
+Internal API (for Commands only, prefixed `_`):
+
+    _getInstitutionCanonical(id)               Live canonical record.
+    _getAllInstitutionsCanonical()             Live array.
+    _addInstitution(inst)                      Add, reindex, sync, notify.
+    _updateInstitution(id, patch)              Patch, reindex, sync, notify.
+    _removeInstitution(id)                     Remove, reindex, sync, notify.
+    _indexesRebuild()                          Rebuild indexes manually.
+
+Rules:
+
+- State does not interpret domain fields. No `religionId →
+  isReligiousSchool` inference, no `specializationCategory →
+  isSpecialized` inference.
+- Reads return deep-enough clones. Container array and object fields
+  (`students`, `graduates`, `teachers`, `curriculum`, `taughtRoles`,
+  `history`, `headmasterHistory`, `tuitionHistory`,
+  `governmentFundingHistory`, `profitHistory`, `headmaster`,
+  `demolishedRecord`) are copied so that mutating a returned container
+  cannot affect canonical state. Nested objects inside a container
+  element are still shared by reference — mutating them is a caller
+  bug that the state layer does not defend against.
+- The `masterDataUpdated` listener re-hydrates from masterData. It
+  logs and skips on missing masterData; it logs and drops duplicate
+  ids rather than throwing.
+- Every read and every mutation primitive calls `_assertHydrated()`
+  first. `isHydrated()` is exported for bootstrap code but is NOT a
+  substitute for the assert.
+- Mutation primitives call `_syncToMasterData`, which writes
+  `masterData.data.educationalInstitutions = _institutions.slice()`,
+  invalidates the accessor cache, and calls `markDataDirty()`.
+- Subscriptions are queued, not recursive. Nested mutations dispatch
+  after the outer notification finishes; events are never dropped.
+- `migrateInstitution` coerces container fields to the right type
+  (array/object) or nulls them out. Structural shape errors are
+  repaired at the boundary.
+- `hydrateFromMasterData` throws on duplicate institution ids.
+  Corrupted input fails loudly rather than silently keeping the last
+  record.
+- `updateUIState` restricts keys to the known top-level set
+  (`selectedInstitutionId`, `viewMode`, `filters`) and the known
+  filter set (`type`, `location`, `minReputation`, `ownershipType`,
+  `roleCategory`, `taughtRole`, `religionId`). Unknown keys are
+  ignored with a console warning.
+
+Index rebuild: `_updateInstitution` and the other mutation primitives
+call `_indexesRebuild` on every change. This is O(institutions) per
+update. In the annual pipeline the dominant cost is reindexing.
+Batch-mode indexing was considered and deferred; if annual performance
+becomes a problem, add a `_withSuspendedIndexing(fn)` wrapper rather
+than changing the incremental behavior.
+
+### 4.4 `education-learning.js`
+
+Proficiency, literacy, and education level reads. Hydration helper.
+
+Public API:
+
+    ensureCharacterEducationRecord(character)  Initialize education containers.
+    getProficiency(characterId, item)          Subject proficiency 0-100.
+    getSubjectProficiency(characterId, id)     By subject id or `role_<id>`.
+    getCharacterProficiencies(characterId)     All proficiency records.
+    getEducationLevel(characterId)             Level object from constants.
+    isLiterate(characterId)                    Delegates to CharacterCommands.
+
+Rules:
+
+- `subjectProgress.literacy.level` is the source of truth for
+  literacy. `character.isLiterate` is a materialized cache, written by
+  `CharacterCommands.setLiterate`, read by `CharacterCommands.isLiterate`.
+- `education-learning.isLiterate` delegates to
+  `CharacterCommands.isLiterate`. One reader, one writer, no drift
+  possible.
+- `getEducationLevel` reads `subjectProgress.literacy.level` directly
+  and asks `EducationRules.getEducationLevelForLiteracy` for the
+  classification. It does not consult `character.isLiterate`.
+- Reads do not mutate. `ensureCharacterEducationRecord` is the only
+  writer in this module, and it delegates entirely to
+  `CharacterCommands.initializeEducationContainers`. It is idempotent.
+
+### 4.5 `education-history.js`
+
+Append-only event ledger embedded on each institution as
+`institution.history`.
+
+**`addEvent(institutionId, event)` takes an institution ID, not an
+object.** Passing a cloned record (the kind `EducationState.getInstitution`
+returns) writes to the clone and silently loses the event. There is no
+object overload; passing a non-string throws. The canonical record is
+reached via `EducationState._getInstitutionCanonical(id)`.
+
+`addEvent` does NOT call `_updateInstitution` and does NOT persist. It
+mutates the canonical record's `history` array in place. Recorders
+called from Commands are always followed by at least one
+`_updateInstitution` in the same function (e.g. `hireTeacher` calls
+`_updateInstitution` for the teachers array before calling
+`recordTeacherHired`). No recorder runs after the last
+`_updateInstitution` in a command. If a future command adds a recorder
+after its last `_updateInstitution`, it must follow the recorder with
+an explicit `_updateInstitution({})` to force a sync — or (better) run
+the recorder before the last update.
+
+Public API:
+
+    addEvent(institutionId, event)             Append. No save.
+    getInstitutionHistory(id, options)         Frozen event copies.
+    getInstitutionHistoryStats(id)             Event type counts.
+    getTeacherEmploymentHistory(characterId)   Hiring + departure events.
+    getStudentEducationHistory(studentId)      Enrolment + graduation events.
+    getCharacterHeadmasterHistory(characterId) Appointment + end events.
+    getCharacterEducationHistory(characterId)  Combined history.
+
+Recorders (call these from Commands; they call `addEvent` internally):
+
+    recordTeacherHired(instId, teacherId, subjectId, year, skill, notes)
+    recordTeacherDeparted(instId, teacherId, year, reason, notes)
+    recordStudentEnrolled(instId, studentId, year, notes)
+    recordStudentGraduated(instId, studentId, year, notes)
+    recordStudentWithdrew(instId, studentId, year, reason, notes)
+    recordHeadmasterAppointed(instId, characterId, title, year, notes)
+    recordHeadmasterEnded(instId, characterId, year, reason, notes)
+    recordInstitutionRenamed(instId, oldName, newName, year, reason)
+    recordInstitutionMoved(instId, oldLocName, newLocName, year, reason)
+    recordReputationChanged(instId, oldRep, newRep, year, reason)
+
+Event shape:
+
+    { id, type, year, entityId, entityName, details, reason,
+      previousValue, newValue, metadata, timestamp }
+
+Rules:
+
+- Events are frozen on read. `metadata` is one-level frozen. Nested
+  mutation of metadata values is not protected. Documented.
+- Events are never edited or deleted. Corrections are new events.
+- `type` must be in `HISTORY_EVENT_TYPES`. Unknown types throw.
+- `metadata` is a structured flat object, not a JSON string.
+- Sort order is `(year desc, timestamp desc, id desc)`. Deterministic
+  for same-year events.
+- History does not persist. The enclosing Command's caller saves.
+- Formatted HTML is not produced here. Rendering is
+  `education-ui-list.js`.
+
+### 4.6 `education-queries.js`
+
+All semantic reads. Returns frozen projections, never live records.
+Reads through the public `EducationState` surface only. Never uses
+`_getInstitutionCanonical` or `_getAllInstitutionsCanonical`.
+
+Institution queries:
+
+    getInstitutions(filters)                Filtered summaries. Sorted by reputation.
+    getInstitution(id)                      Single summary.
+    getInstitutionDetails(id)               Detail projection.
+    getInstitutionsInRegion(locId, deep)    Region summaries.
+
+Filter options for `getInstitutions`:
+
+    type, location, ownershipType, religionId, isReligiousSchool,
+    minReputation, taughtRole, specializationCategory, roleCategory,
+    hasTaughtRoles, isSpecialized, search (name + description, case-insensitive).
+
+Religious school queries:
+
+    getReligiousInstitutions(religionId, locationId)
+    getInstitutionsByReligion(religionId)
+    getReligiousInstitutionsByLocation(locationId)
+
+The predicate is `isReligiousSchool === true`. Ownership type
+`'religious'` is a separate concept and is queried via
+`getInstitutions({ ownershipType })`.
+
+Student / teacher / headmaster:
+
+    getInstitutionStudents(id, includeChar)     Student projections.
+    getInstitutionGraduates(id, includeChar)    Graduate projections.
+    getInstitutionTeachers(id, includeChar)     Teacher projections.
+    getStudentInstitutions(studentId)           Institutions a student attended.
+    isStudentEnrolled(instId, studentId)        Enrolment check.
+    getHeadmaster(instId)                       Headmaster projection.
+    getHeadmasterHistory(instId)                History projections.
+
+Statistics:
+
+    getInstitutionStatistics(id)             Per-institution stats.
+    getLocationEducationSummary(loc, deep)   Aggregate for a location.
+
+Graduation readiness:
+
+    getStudentsReadyForGraduation(instId, year)  Projections of eligible students.
+
+Institutions needing teachers:
+
+    getInstitutionsNeedingTeachers(maxRep, minStudents)
+
+Role queries:
+
+    getInstitutionsByRole(roleId)
+    getInstitutionsBySpecializationCategory(cat)
+    getInstitutionsTeachingRoleCategory(cat)
+    getTaughtRolesByInstitution(instId)
+    getAvailableRolesForInstitution(instId)
+
+Demographic and learning reads:
+
+    getLiteracyRate(locId, minAge)
+    getSchoolAgePopulation(locId, minAge, maxAge)
+    getEligibleStudents(locId, minAge, maxAge, instId)
+    getStudentDemand(locId)
+
+Planning and recommendation:
+
+    getEducationHealthScore(locId)
+    recommendNewSchoolLocations(minSchoolAgePop)
+    getEducationDemandBySettlement(locId, options)
+    getStudentDensityBySettlement(locId, options)
+
+Literacy reads: `getLiteracyRate` reads
+`subjectProgress.literacy.level` and applies
+`EducationRules.isLiterateAtLevel`. The level is the source of truth;
+the threshold predicate is the only place the boundary is interpreted.
+`character.isLiterate` (read via `CharacterCommands.isLiterate`) is a
+cache for fast reads.
+
+Role helpers: `_getRoleById` falls back from `RoleState.getRole` to
+`getRoleById`. `_getAllRoles` falls back from `RoleState.getAllRoles`
+to `getAllRoles`. Both throw if neither source is available.
+
+Projection shapes:
+
+    InstitutionSummary
+        id, name, icon, type, typeName, locationId, locationName,
+        status, ownershipType, ownerId, ownerType, ownerName,
+        isReligiousSchool, religionId, religionName,
+        reputation, currentStudentCount, teacherCount, graduateCount,
+        maxStudents, utilization, curriculumCount, taughtRoleCount,
+        isSpecialized, specializationCategory, headmasterName, foundedYear
+
+    InstitutionDetail
+        summary, description, students[], teachers[], graduates[],
+        headmaster, curriculum[], taughtRoles[], educationBudget,
+        status, demolishedAt, demolishedReason, destroyedBy
+
+    StudentProjection
+        studentId, studentName, enrollmentYear, graduated, graduationYear,
+        attendance, notes, tuitionPaid, tuitionYear, tuitionWaived,
+        grantedRole, age, gender
+
+    TeacherProjection
+        teacherId, teacherName, subjectId, subjectName, subjectType, hiredYear
+
+    GraduateProjection
+        studentId, studentName, graduationYear, grantedRole
+
+Rules:
+
+- All projections are frozen. Callers cannot mutate canonical state
+  through them.
+- Queries compose freely. There is no global query mutex.
+- Missing infrastructure dependencies throw. Missing domain entities
+  return `null` or an empty list.
+
+### 4.7 `education-commands.js`
+
+All write operations. Every command:
+
+    1. Validates input and dependencies.
+    2. Reads canonical state via `_getInstitutionCanonical`.
+    3. Applies mutations via `_addInstitution` / `_updateInstitution` /
+       `_removeInstitution` and cross-domain commands.
+    4. Emits history events via `EducationHistory`.
+    5. Returns a structured result.
+
+Commands do not persist. The caller calls `EducationCommands.persist()`
+once after a batch. Commands do not toast. The caller surfaces
+notifications.
+
+Institution CRUD:
+
+    createInstitution(options)           Single object. Legacy positional also accepted.
+    createReligiousSchool(religionId, name, locationId, options)
+    updateInstitution(id, updates)
+    deleteInstitution(id, cascade)
+    updateReputation(id, delta)
+
+Teachers:
+
+    hireTeacher(institutionId, teacherId, subjectId)
+    fireTeacher(institutionId, teacherId, reason)
+
+Students:
+
+    enrollStudent(institutionId, studentId, startYear)
+    graduateStudent(institutionId, studentId, graduationYear, selectedRoleId)
+    withdrawStudent(institutionId, studentId, reason)
+
+Learning:
+
+    advanceLearning(characterId, curriculumItem, progress)
+
+Headmaster:
+
+    setHeadmaster(institutionId, characterId, title, startYear)
+    endHeadmasterTerm(institutionId, endYear, reason)
+
+Tuition:
+
+    calculateTuition(institutionId, year)
+    updateTuition(institutionId, newTuition, reason)
+    updateTuitionWaiver(institutionId, waiveTuition, reason)
+    getTuitionHistory(institutionId, limit)
+
+Ownership:
+
+    setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType)
+    setSchoolOwner(institutionId, ownerId, ownerType)
+
+Finance:
+
+    calculatePublicSchoolFunding(institutionId, year)
+    applyGovernmentFunding(institutionId, year)
+    calculatePrivateSchoolProfit(institutionId, year)
+    processPrivateSchoolProfit(institutionId, year)
+    processAllSchoolFinances(year)
+
+Settlement:
+
+    receiveSettlementBudget(locationId, amount, year)
+    getSettlementFundingSummary(locationId, year)
+
+Demolition:
+
+    demolishInstitution(id, reason, year, options)
+    rebuildInstitution(id, rebuildYear, options)
+    getDemolishedInstitutions(options)
+    getInstitutionDemolitionStats(locationId)
+
+Persistence:
+
+    persist()                            Flush. Returns boolean.
+
+Result shape:
+
+    { success: true, ...command-specific fields }
+    { success: false, reason: string, ...contextual fields }
+
+Command semantics:
+
+- `createInstitution` accepts a single options object. Legacy
+  positional `(name, typeId, locationId, options)` is detected and
+  normalized.
+- `enrollStudent` deducts tuition from the student's household if the
+  institution is private and tuition is non-zero. Household wealth is
+  read via `HouseholdEconomy`. If the household cannot afford tuition,
+  enrollment fails. The household debit and the institution-side write
+  are not rolled back if a later step fails. (Flagged, not resolved.)
+- `graduateStudent` grants a role on graduation if the institution
+  teaches roles. Multi-role institutions require `selectedRoleId`.
+  Role grant failures do not abort graduation; the error is recorded
+  on the result envelope as `roleGrantError` and graduation proceeds.
+  This is deliberate: a partial graduation — institution says
+  graduated, character does not hold the role — is visible via
+  `roleGrantError`, whereas a hard-fail would leave the institution's
+  graduate list out of sync with the character's profession list with
+  no record of the attempt.
+- `graduateStudent` grants the role with `skillLevel: 100`. This is a
+  placeholder pending the qualification model. It is a deliberate
+  design decision, not a bug. See §10.
+- `graduateStudent` caps the character's curriculum proficiencies at
+  100 via `CharacterCommands.updateSubjectProgress` after the
+  graduation record is written.
+- `advanceLearning` writes subject progress via
+  `CharacterCommands.ensureSubjectProgress` and
+  `CharacterCommands.updateSubjectProgress`. It records role skill
+  progression via `RoleCommands.recordCharacterSkillProgress` for
+  role-type curriculum items. It calls
+  `CharacterCommands.setLiterate` when the literacy threshold is
+  crossed, and emits `student_became_literate` on the institution
+  that has the character currently enrolled.
+- `advanceLearning` and role skill progression:
+  - For `type: 'role'` curriculum items, education reports the new
+    curriculum level to
+    `RoleCommands.recordCharacterSkillProgress`. That command writes
+    `character.professions[].skillLevel` non-decreasingly. Education
+    does not write `character.professions` directly.
+  - If the character does not hold the role,
+    `recordCharacterSkillProgress` fails. `advanceLearning` returns
+    `_ok(...)` with `roleSkillError` on the envelope. Subject
+    progress stands; role skill does not advance. Education does not
+    assign the role.
+  - If `RoleCommands.recordCharacterSkillProgress` is missing,
+    `advanceLearning` returns a failure. RoleCommands is a hard
+    requirement for role-type curriculum items.
+- `applyGovernmentFunding` and `processPrivateSchoolProfit` are the
+  write paths for public and private finance respectively.
+  `applyGovernmentFunding` debits the settlement via
+  `SettlementCommands.updateWealth`.
+- `receiveSettlementBudget` distributes a settlement's education
+  budget equally among its institutions.
+- `demolishInstitution` and `rebuildInstitution` are the only paths
+  that set `status` to `demolished` and back. Both preserve religion
+  fields. Both emit history events (`institution_demolished`,
+  `institution_rebuilt`) using `HISTORY_EVENT_TYPES` constants.
+- Character-owned education fields (`education`, `educationHistory`,
+  `subjectProgress`, `isLiterate`) are written only via
+  `CharacterCommands` methods: `recordEducationEnrollment`,
+  `recordEducationGraduation`, `recordEducationWithdrawal`,
+  `appendEducationHistory`, `ensureSubjectProgress`,
+  `updateSubjectProgress`, `setLiterate`. If `CharacterCommands` or a
+  required method is missing, the command fails loudly. There is no
+  degraded mode.
+- `persist()` calls `window.saveMasterData()` and returns its boolean
+  return. On `false`, reads `getLastSaveError()` and logs the
+  underlying error. Callers can surface the failure.
+- Missing infrastructure dependencies throw. `CharacterCommands` and
+  `SettlementCommands` are required when the corresponding feature is
+  used. `RoleCommands.recordCharacterSkillProgress` is required for
+  role-type curriculum items. `RoleCommands.assignRoleToCharacter` is
+  required for graduation role grants.
+  `RoleQueries.getCharactersWithRoleDetails` is required for hiring
+  role-type teachers. `HouseholdEconomy.updateHouseholdWealth` is
+  required when a household is present.
+
+### 4.8 `education-annual.js`
+
+Annual pipeline orchestrator. Owns sequence, not mutation.
+
+    processAnnualEducation(year, options)       Full pipeline.
+    processAnnualInstitution(id, year, options) Single-institution pipeline.
+    getStudentsReadyForGraduation(id, year)     Delegates to EducationQueries.
+
+Pipeline order (frozen):
+
+    1. Learning advancement for every enrolled student.
+    2. Graduation readiness evaluation (recorded, not committed).
+    3. Settlement education budget allocation (before finance).
+    4. School finances (public funding, private profit).
+    5. Persist once.
+
+Options:
+
+    autoGraduate     If true, auto-graduates students when the institution
+                     teaches at most one role. Multi-role institutions require
+                     explicit selection and are skipped.
+    processFinances  Default true. Runs step 4.
+    processBudgets   Default true. Runs step 3.
+    persist          Default true. Runs step 5.
+
+Result envelope:
+
+    {
+      year, success, status,
+      processedStudentCount,
+      skillGains[], withdrawals[], readyForGraduation[], graduations[],
+      finances, budgetProcessing,
+      errors[]
+    }
+
+`success` is `true` iff no fatal errors occurred. Fatal = a
+`scope === 'persist'` or `scope === 'learning'` entry in `errors`.
+Non-fatal entries (individual graduation, budget, finance failures) do
+NOT flip `success` to `false`; they are recorded in `errors[]` and, in
+some cases, in dedicated per-step arrays.
+
+`status` is `completed`, `completed_with_errors`, or `partial`. Kept
+for backward compatibility. New code should prefer `success` (see
+above) plus the individual step-result fields.
+
+`processedStudentCount` counts every student the pipeline touched: any
+student with a skill gain, any student evaluated for graduation
+readiness, any student withdrawn by the pipeline, and any student
+graduated. This is a superset of "students with skill gains."
+
+The annual pipeline saves once via `EducationCommands.persist()`. It
+inspects the boolean return; on `false` it records a
+`{ scope: 'persist', error }` entry and sets `success: false`. It never
+toasts. It never mutates state directly.
+
+Dependencies: `EducationCommands`, `EducationQueries`,
+`EducationState`, `EducationRules`, `SkillUtils`, `getCharacterById`,
+`getCurrentYear`, `getPlaces`, `SettlementState`. All required. The
+budget step is meaningless without
+`SettlementState.getEducationBudget`, so it is a hard requirement, not
+an optional one.
+
+### 4.9 `education-ui-list.js`
+
+Renderers. Reads via `EducationQueries` and `EducationHistory`. Never
+touches `EducationState`, `EducationCommands`, or canonical records.
+
+    renderInstitutionList(containerId, options)
+    renderInstitutionCard(institutionOrId, options)
+    renderInstitutionTable(institutions, options)
+    renderEducationSummary(containerId, locationId, options)
+    renderReligiousSchoolsList(containerId, religionId, options)
+    renderInstitutionHistory(containerId, institutionId, options)
+    renderTeacherHistory(containerId, characterId, options)
+    renderStudentHistory(containerId, characterId, options)
+    renderCharacterHistory(containerId, characterId, options)
+    refreshEducationList(containerId, options)
+    debouncedRefresh(containerId, options)
+
+Helpers exported:
+
+    getStatusBadge(status)
+    getOwnershipBadge(ownershipType, ownerName)
+    getReputationColor(reputation)
+
+Rules:
+
+- No emojis. Icons come from `Icons` via `_getIcon()`, with
+  `_getIconOr()` for fallback chains.
+- Semantic filtering is delegated to Queries. UI does presentation
+  sorting only.
+- Refresh timers are keyed per container.
+- History event rendering defensively sorts at the top of
+  `_renderEventList` using the same `(year desc, timestamp desc, id
+  desc)` ordering that `EducationHistory` uses. A caller passing
+  unsorted events still produces a deterministic render.
+- Null or undefined event years render as `—`, not as the literal
+  string `"null"`.
+- No legacy aliases. Callers use `EducationUI.*`.
+
+### 4.10 `modals-education.js`
+
+Interactive modals for all education mutations. Reads via Queries,
+writes via Commands, persists once per successful batch, surfaces
+command results.
+
+    openCreateInstitutionModal(onSuccess, defaultData)
+    openEditInstitutionModal(institutionId, onSuccess)
+    openInstitutionDetailsModal(institutionId, onSuccess)
+    openEditCurriculumModal(institutionId, onSuccess)
+    openEnrollStudentModal(institutionId, onSuccess)
+    openHireTeacherModal(institutionId, onSuccess)
+    openSetHeadmasterModal(institutionId, onSuccess)
+    openGraduateStudentModal(institutionId, onSuccess)
+    openDeleteInstitutionModal(institutionId, onSuccess)
+    openTuitionManagementModal(institutionId, onSuccess)
+    openOwnershipManagementModal(institutionId, onSuccess)
+
+Rules:
+
+- **Modal lifecycle uses `onMount`**, not `setTimeout`. `onMount` runs
+  synchronously during `openModal`; there is no race between "modal is
+  inserted" and "handlers are attached." Element lookups inside
+  `onMount` and `onConfirm` are scoped to the modal element
+  (`modalEl.querySelector(...)`), not to `document`. This avoids
+  cross-modal ID collisions when one modal opens over another.
+- **No module-level "already open" flag.** The modal stack in
+  `modals-core.js` enforces single-instance behaviour (opening a
+  second modal closes the first). This replaces the previous
+  `_processingModal` guard, which had two failure modes: (a) a fast
+  close left a pending timeout that fired against whichever modal
+  opened next with the same element IDs, and (b) a throw before the
+  flag was cleared left the guard stuck.
+- No direct state access. Details come from
+  `EducationQueries.getInstitutionDetails(id)`.
+- No policy. Thresholds, eligibility, and validation come from Rules
+  via Commands.
+- **One `EducationCommands.persist()` per successful mutation batch.**
+  The modals call `_persistAndWarn(successMessage)`, which checks the
+  boolean return and surfaces a warning toast on failure.
+- Command result shape is `{ success, reason, ... }`. The modal reads
+  `.success`, surfaces `.reason` on failure, and produces its own
+  success message on success.
+- No emojis.
+- No polling. Owner selection state is held in closure variables
+  inside the modal scope.
+- Custom subject ids in the curriculum modal are preserved across
+  saves. Existing custom items carry their id through `data-id` on the
+  chip; new items added during a session get a fresh id. This prevents
+  orphaning a student's `subjectProgress` entry when an institution's
+  curriculum is edited.
+- The graduate modal only shows the role selector when the institution
+  teaches more than one role. Single-role institutions auto-grant
+  their only role and the selector is omitted.
+
+---
+
+## 5. Data model
+
+### 5.1 Institution
+
+    id, name, type, typeName, icon,
+    locationId, locationName,
+    students[], graduates[], teachers[],
+    foundedYear, curriculum[], taughtRoles[],
+    isSpecialized, specializationCategory,
+    reputation, maxStudents, description,
+    requiredYears, skillGainPerYear, notes,
+
+    headmaster, headmasterHistory[], history[],
+
+    baseTuition, tuitionPerYear, customTuition, tuitionHistory[], waiveTuition,
+
+    ownershipType, ownerId, ownerType, ownerName,
+
+    governmentFunding, governmentFundingYear, lastFunded,
+    governmentFundingHistory[],
+    annualIncome, annualExpenses, netProfit, profitHistory[],
+
+    status, demolishedAt, demolishedReason, destroyedBy, disasterId,
+    demolishedRecord,
+
+    religionId, religionName, isReligiousSchool,
+    clergyHeadId, teachesDoctrine, hasMandatoryWorship
+
+Notes:
+
+- `type` is an `INSTITUTION_TYPES` id (`hut_school` …
+  `grand_university`).
+- `baseTuition` is derived from the type's constants entry.
+  `tuitionPerYear` is the current base. `customTuition` overrides
+  calculation when non-null.
+- `isReligiousSchool` is independent of `ownershipType`. A private
+  religious school has `ownershipType: 'private'` and
+  `isReligiousSchool: true`.
+- `isSpecialized` should be derived from `!!specializationCategory &&
+  taughtRoles.length > 0`. Commands maintain this invariant on write.
+- `history` is the append-only ledger. `historyEvents` does not exist.
+
+### 5.2 Student record
+
+    studentId, studentName, enrollmentYear, progress, graduated,
+    graduationYear, attendance, notes,
+    tuitionPaid, tuitionYear, tuitionWaived, grantedRole
+
+### 5.3 Teacher record
+
+    teacherId, teacherName, subjectId, subjectName, subjectType, hiredYear
+
+### 5.4 Graduate record
+
+    studentId, studentName, graduationYear, grantedRole
+
+### 5.5 Headmaster record
+
+    characterId, name, title, startYear
+    (in headmasterHistory: plus endYear, reason)
+
+### 5.6 History event
+
+    id, type, year, entityId, entityName, details, reason,
+    previousValue, newValue, metadata, timestamp
+
+### 5.7 Character education fields
+
+Written only via CharacterCommands. Read via EducationLearning or via
+direct field access in Queries.
+
+    education[<institutionId>]           Enrolment status per institution.
+        .institutionName
+        .institutionType
+        .enrolledYear
+        .graduated           boolean
+        .graduationYear      number|null
+        .grantedRole         string|null
+        .withdrawn           boolean
+        .withdrawnReason     string
+        .withdrawnYear       number|null
+
+    educationHistory[]                   Historical enrolment records.
+                                         Shape is caller-defined; the
+                                         CharacterCommands writer does not
+                                         validate it.
+
+    subjectProgress[<key>]               0-100 educational progress for a
+                                         curriculum item. Not a second skill
+                                         store: for role items, the canonical
+                                         role skill is professions[].skillLevel.
+        .level
+        .lastStudied
+        .source              string|null
+        .type                'subject' | 'role'
+        .roleId              string|null when type is 'role'
+
+    isLiterate                           Materialized cache. Written by
+                                         CharacterCommands.setLiterate; read by
+                                         CharacterCommands.isLiterate. The
+                                         threshold predicate is
+                                         EducationRules.isLiterateAtLevel, applied
+                                         by EducationCommands.advanceLearning.
+
+---
+
+## 6. Cross-domain integration
+
+Education reads and writes through other domains via their commands. It
+does not touch their state directly.
+
+### 6.1 Character
+
+- `CharacterCommands.recordEducationEnrollment` — enrolment.
+- `CharacterCommands.recordEducationGraduation` — graduation.
+- `CharacterCommands.recordEducationWithdrawal` — withdrawal.
+- `CharacterCommands.appendEducationHistory` — history append.
+- `CharacterCommands.ensureSubjectProgress` — create subject key.
+- `CharacterCommands.updateSubjectProgress` — merge onto subject key.
+- `CharacterCommands.setLiterate` /
+  `CharacterCommands.isLiterate` — literacy.
+- `CharacterCommands.initializeEducationContainers` — hydration.
+- The generic `CharacterCommands.updateCharacterFields` refuses
+  `education`, `educationHistory`, `subjectProgress`, `isLiterate`.
+  These fields have dedicated writers.
+- `getCharacterById`, `getCharacters`, `calculateAge` — read access.
+
+### 6.2 Role
+
+- `RoleCommands.assignRoleToCharacter(cid, rid, opts)` — used by
+  graduation. Administrative override: can raise or lower skill. Blind
+  write.
+- `RoleCommands.recordCharacterSkillProgress(cid, rid, level)` — used
+  by `advanceLearning` for role-type curriculum items. Domain
+  progression: can raise, never lowers. Fails if the character does
+  not hold the role.
+- `RoleCommands.updateCharacterSkill(cid, rid, level)` — **not** used
+  by education. Reserved for administrative override paths (the role
+  edit-skill modal).
+- `RoleState.getRole(id)`, `RoleState.getAllRoles()` — for
+  specialization and category lookups. Both return clones as of the
+  current revision.
+- `RoleQueries.getCharactersWithRoleDetails(roleId)` — hard
+  requirement for hiring role-type teachers.
+
+**The invariant:** no progression system may reduce a character's
+canonical role skill. An administrator can, deliberately, through the
+override command.
+
+**Why two commands.** `advanceLearning` is a process path. It reads the
+character's current role skill (via `recordCharacterSkillProgress`'s
+internal check) and refuses to write a lower value. The edit-skill
+modal is an administrative path. It writes exactly the value the
+administrator chose, even if lower. Overloading one command with both
+intents means the command would have to guess, so the two intents are
+two commands.
+
+**Skill authority.** `character.professions[].skillLevel` is
+canonical. `character.subjectProgress['role_<id>'].level` is
+educational progress and may legitimately differ from profession
+skill. A student can complete three years of Blacksmithing education
+at educational progress 100 while their actual role skill is 35. An
+experienced blacksmith can enter a course with role skill 80 and
+educational progress 10. Neither value overrides the other. Education
+reports progression; Role writes it.
+
+### 6.3 Household
+
+- `HouseholdEconomy.getHouseholdWealth(hid)`,
+  `updateHouseholdWealth(...)`, `trackTuitionExpense(...)` — for
+  private tuition payment on enrolment.
+
+### 6.4 Settlement
+
+- `SettlementState.getEducationBudget(locId)` — the annual budget
+  source.
+- `SettlementCommands.updateWealth(locId, delta, reason)` — debited
+  when a public school receives funding.
+
+### 6.5 Religion
+
+- `ReligionState.getReligion(id)`, `ReligionState.getAllReligions()` —
+  for religious school affiliation and ownership.
+
+### 6.6 Skill taxonomy
+
+- `SkillUtils.getTier(level)` — used by `education-annual` for the
+  student's stage label. The education system does not define its own
+  stage taxonomy.
+
+---
+
+## 7. Persistence
+
+### 7.1 State writes masterData
+
+Every mutation path in `education-state.js` writes the current
+institution collection into `masterData.data.educationalInstitutions`,
+rebuilds indexes, invalidates the accessor cache, and calls
+`markDataDirty()`.
+
+### 7.2 Flush
+
+`EducationCommands.persist()` calls `saveMasterData()` and returns the
+boolean result. It inspects `getLastSaveError()` on failure and logs
+the underlying error.
+
+Callers that mutate:
+
+- `education-annual.js` persists once at the end of the annual
+  pipeline and inspects the boolean return.
+- `modals-education.js` persists once per successful modal submission
+  via `_persistAndWarn`, which surfaces a warning toast on failure.
+- External orchestrators persist once after their batch.
+
+### 7.3 Hydration
+
+    EducationState.hydrateFromMasterData(
+        window.masterData?.data?.educationalInstitutions || []
+    );
+
+Called once at app bootstrap before any query or command runs. Every
+read and mutation throws if hydration has not been called.
+
+### 7.4 Cross-tab
+
+`masterDataUpdated` triggers a re-hydrate from
+`masterData.data.educationalInstitutions`. The listener does not mark
+data dirty (inbound data is canonical).
+
+---
+
+## 8. Literacy model
+
+`character.subjectProgress.literacy.level` is the source of truth.
+
+`character.isLiterate` is a materialized cache. It is written by
+`CharacterCommands.setLiterate` and read by
+`CharacterCommands.isLiterate`.
+
+`EducationRules.isLiterateAtLevel(level)` is the threshold predicate.
+It is applied by `EducationCommands.advanceLearning` to decide when to
+call `setLiterate`. It is also applied by
+`EducationQueries.getLiteracyRate` and
+`EducationQueries.getEligibleStudents` for aggregate reads.
+
+`EducationLearning.getEducationLevel(characterId)` reads the level
+directly and asks
+`EducationRules.getEducationLevelForLiteracy(level)` for the
+classification. It does not consult `character.isLiterate`.
+
+`EducationLearning.isLiterate(characterId)` delegates to
+`CharacterCommands.isLiterate(characterId)`. One reader, one writer, no
+drift.
+
+---
+
+## 9. Role skill model
+
+Role skill is `character.professions[].skillLevel`. It is written only
+through Role commands, which delegate to
+`CharacterCommands.updateProfession`.
+
+Two intents, two commands:
+
+    RoleCommands.updateCharacterSkill(cid, rid, level)
+        Administrative override. Blind write. Can raise or lower.
+        Used by the role edit-skill modal.
+
+    RoleCommands.recordCharacterSkillProgress(cid, rid, level)
+        Domain progression. Non-decreasing. Fails if the character does
+        not hold the role.
+        Used by EducationCommands.advanceLearning for role-type
+        curriculum items.
+
+Education's curriculum progress lives in
+`character.subjectProgress['role_<id>'].level`. It is not the same
+value as role skill and is not treated as such. Education reads its own
+value for the progression math; it reports the result to Role, which
+decides whether the canonical role skill advances.
+
+Apprenticeship also writes role skill. It reads the character's current
+skill, computes a progression, and calls
+`CharacterCommands.updateProfession` with the new value. It implements
+the same non-decreasing invariant internally. It does not currently use
+`recordCharacterSkillProgress` and does not need to — the invariant is
+satisfied either way. A future consolidation pass may route
+apprenticeship progression through `recordCharacterSkillProgress` for a
+single call site.
+
+---
+
+## 10. Known deferrals
+
+- **Qualification model.** Graduation currently grants a role directly
+  with `skillLevel: 100` hardcoded. The role skill level is an
+  education-domain claim about a role-domain fact. It should
+  eventually be `RoleRules`-owned (e.g.
+  `RoleRules.skillLevelOnGraduation(roleId, institutionType)`), or
+  replaced by a qualification record. The current value is a
+  placeholder, not a bug. Changing it requires deciding what a
+  qualification is, what a graduate is qualified for, and how role
+  eligibility reads a qualification.
+- **`recordCharacterSkillProgress` on missing profession.** The
+  command fails when the character does not hold the role. The
+  alternative — auto-creating the profession record on first
+  progression — would make education a creator of profession records,
+  which is the "Education becomes Apprenticeship 2.0" failure mode.
+  The narrow contract is chosen. If a school is meant to grant the
+  role at some earlier point (e.g. mid-curriculum), the correct fix is
+  to call `RoleCommands.assignRoleToCharacter` at that point, not to
+  make `recordCharacterSkillProgress` create records.
+- **Apprenticeship consolidation on `recordCharacterSkillProgress`.**
+  Apprenticeship currently implements the non-decreasing invariant
+  internally. It could switch to `recordCharacterSkillProgress` for a
+  single call site. Not required for correctness. Deferred.
+- **`ROLE_CATEGORIES` divergence.** `education-constants.js` defines
+  role categories that should agree with the role domain's own
+  category vocabulary. If they diverge, this constant should be
+  removed and `RoleState` should provide categories.
+- **Household wealth rollback.** `enrollStudent` debits the household
+  and writes the institution-side roster before the character-side
+  write. If the character-side write fails, the household is out the
+  gold and no rollback exists. Fixing this requires either a
+  `revertEducationEnrollment` on `CharacterCommands` or reordering so
+  the household debit is last.
+- **`metadata.teachingHistory` in apprenticeship.** Not an education
+  concern, but flagged: unbounded growth. Consider bounding it like
+  friendship events.
+- **Index rebuild cost.** `_indexesRebuild` runs on every update. In
+  the annual pipeline this is the dominant cost. A batch-indexing
+  wrapper (`_withSuspendedIndexing(fn)`) was considered and deferred.
+- **`getLiteracyRate` max age.** Passes `200` as `maxAge` to
+  `_getSchoolAgeResidents`. This is a magic number. Removing it
+  changes behavior for hypothetical characters over 200 (none).
+  Deferred.
+- **Planning functions in Queries.** `getEducationHealthScore`,
+  `recommendNewSchoolLocations`, `getEducationDemandBySettlement`,
+  `getStudentDensityBySettlement` currently live in Queries. They may
+  move to a dedicated planning module if the codebase justifies it. Do
+  not split them into more files solely for architectural tidiness.
+- **CSS class extraction.** CSS classes for `education-ui-list.js` and
+  `modals-education.js` are inline styles. Extraction is a separate UI
+  pass.
+- **Icon registry.** `TEACHER`, `GRADUATE`, `CHURCH` may need to be
+  added to the canonical `Icons` set. Until then the UI falls back
+  gracefully via `_getIconOr`.
+- **`getCurrentYearSafe` → `getCurrentYear`.** The deprecated alias
+  has been migrated out of `education-commands.js`,
+  `education-annual.js`, `education-history.js`, and
+  `modals-education.js`. If any residual call site exists outside this
+  domain, it should be migrated too.
+
+---
+
+## 11. Ownership contract
+
+| Concept | Owner | Readers |
+|---|---|---|
+| Institution records | `EducationState` | `EducationQueries` |
+| Institution mutations | `EducationCommands` | — |
+| Curriculum and tuition policy | `EducationRules` | `EducationCommands` |
+| Graduation readiness | `EducationRules.isGraduationEligible` | `EducationQueries`, `EducationAnnual` |
+| Subject key convention | `EducationRules.progressKeyFor` | every module |
+| Append-only history | `EducationHistory` | `EducationQueries` projections, `EducationUI` |
+| Annual sequence | `EducationAnnual` | callers |
+| Learning reads | `EducationLearning` | `EducationQueries`, callers |
+| `character.education` | `CharacterCommands` | `EducationQueries`, `EducationLearning` |
+| `character.educationHistory` | `CharacterCommands` | `EducationQueries`, `EducationLearning` |
+| `character.subjectProgress` | `CharacterCommands` | `EducationQueries`, `EducationLearning` |
+| `character.isLiterate` | `CharacterCommands.setLiterate` | `CharacterCommands.isLiterate`, `EducationLearning` |
+| `character.professions` | `CharacterCommands` | `EducationCommands` (via RoleCommands), callers |
+| Role skill progression (non-decreasing) | `RoleCommands.recordCharacterSkillProgress` | `EducationCommands` |
+| Role skill override (blind) | `RoleCommands.updateCharacterSkill` | `modals-roles.js` |
+| Role records | `RoleState` | `EducationCommands`, `EducationQueries` |
+| Household wealth | `HouseholdEconomy` | `EducationCommands` |
+| Settlement wealth | `SettlementCommands` | `EducationCommands` |
+| Skill taxonomy (tiers) | `SkillUtils` | `EducationAnnual` |
+
+---
+
+## 12. Rules of use
+
+### Do
+
+- Use `EducationQueries` for anything read-only.
+- Use `EducationCommands` for every mutation.
+- Read through `EducationState.getInstitution` (clone) in queries.
+  Never use `_getInstitutionCanonical` outside `EducationCommands` and
+  `EducationHistory`.
+- Route character-owned education fields through `CharacterCommands`.
+  Never write `character.education`, `character.educationHistory`,
+  `character.subjectProgress`, or `character.isLiterate` directly.
+- Route role skill progression through
+  `RoleCommands.recordCharacterSkillProgress`. Never write
+  `character.professions` directly.
+- Call `EducationCommands.persist()` once per batch, and only after
+  every mutation in the batch has succeeded. Check the boolean return.
+- Surface command results (`.success`, `.reason`) at the caller.
+- Use `HISTORY_EVENT_TYPES` constants for event types, never raw
+  strings.
+- Use `EducationRules.progressKeyFor` to build subject keys. Never
+  reconstruct the `role_<id>` convention inline.
+- Call `EducationState.hydrateFromMasterData` once after `masterData`
+  loads, before any education read or write.
+- Use `onMount` (not `setTimeout` or `onOpen`) in modal handlers.
+  Scope element lookups to the modal element
+  (`modalEl.querySelector(...)`), not to `document`.
+
+### Don't
+
+- Don't hold a live institution record outside `EducationCommands` or
+  `EducationHistory`. Use `getInstitution` (clone).
+- Don't mutate a clone returned by `EducationState`. Container
+  mutations on a clone have no effect on canonical state; nested
+  mutations inside a container element are a bug.
+- Don't call `saveMasterData` directly from education code. Call
+  `EducationCommands.persist()`.
+- Don't reconstruct subject keys inline.
+- Don't invent fallback values when a dependency is missing — throw.
+- Don't write character-owned education fields through
+  `CharacterCommands.updateCharacterFields`. The generic path refuses
+  them.
+- Don't use `RoleCommands.updateCharacterSkill` from a process path.
+  It is the administrative override, and it can lower skill. Use
+  `recordCharacterSkillProgress`.
+- Don't make education assign roles. Assignment is a Role or Character
+  decision.
+- Don't reintroduce `education-system.js` or any alias shim. Callers
+  use the canonical module surface.
+- Don't use `||` for numeric values where `0` is valid.
+- Don't pass an institution object to `EducationHistory.addEvent`. The
+  signature requires an institution id; passing an object throws.
+- Don't hold element IDs from `document.getElementById` for modal
+  state. Use `modalEl.querySelector`.
+- Don't use `getCurrentYearSafe`. It is deprecated; use
+  `getCurrentYear`.
+
+---
+
+**End of documentation.**
