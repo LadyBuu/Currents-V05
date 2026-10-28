@@ -13,6 +13,49 @@
  *   LocationState.getAllSubLocationIds to
  *   LocationQueries.getAllSubLocationIds.
  *
+ * CHARACTER ENUMERATION:
+ *   Settlements span a location subtree (a country's towns, a region's
+ *   villages, etc.). To compute literacy and education-level statistics,
+ *   this module needs every living character whose CURRENT location is
+ *   anywhere in that subtree.
+ *
+ *   "Current location" in the settlement domain is the SEMANTIC notion
+ *   owned by world.js::getCurrentLocationId — it honors the explicit
+ *   currentLocationId field, the moves-based fallback, and the
+ *   birthplace fallback. It is NOT the raw currentLocationId field.
+ *
+ *   The prior revision called CharacterQueries.getCharactersInLocations,
+ *   which filters on c.currentLocationId === locationId. That missed
+ *   characters placed via moves (their currentLocationId field is null,
+ *   but their latest move points into the subtree), and included
+ *   characters whose raw field pointed into the subtree but whose
+ *   latest move pointed elsewhere. The under/over-count propagated
+ *   into SettlementProsperityQueries.getProsperity, which reads
+ *   literacy rate to compute a modifier.
+ *
+ *   This revision enumerates characters via
+ *   CharacterQueries.getAllCharacters() and filters through
+ *   LocationQueries.getCurrentLocationId, matching the pattern already
+ *   used by location-view-models.js::buildBulkMoveModel and by the
+ *   settlement economy / employment / religion / prosperity queries.
+ *
+ * EDUCATION LEVEL DERIVATION:
+ *   The prior revision called CharacterQueries.getEducationLevelId to
+ *   resolve a character's education level. That method is not present
+ *   on the character-queries.js surface in the current build. This
+ *   revision derives the level locally from the character projection:
+ *
+ *     - character.isLiterate !== true  → illiterate
+ *     - otherwise, from character.subjectProgress, pick the highest
+ *       level key present (basic / literate / educated / scholar)
+ *
+ *   The derivation is a settlement-domain read of fields that already
+ *   exist on the character projection. It does not duplicate any
+ *   character-factory logic; it does not depend on EducationQueries.
+ *   If CharacterQueries later exposes a canonical education-level
+ *   method, this module can switch to it as a drop-in replacement
+ *   without changing the returned shape.
+ *
  * DEPENDENCIES (REQUIRED at load):
  *   - SettlementQueries
  *   - SettlementFeatureQueries
@@ -20,6 +63,27 @@
  *   - LocationQueries
  *   - CharacterQueries
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Character enumeration switched from
+ *       CharacterQueries.getCharactersInLocations (raw-field filter) to
+ *       a fresh filter over CharacterQueries.getAllCharacters using
+ *       LocationQueries.getCurrentLocationId. This matches the fix
+ *       already applied in location-view-models.js::buildBulkMoveModel
+ *       and in settlement-prosperity-queries.js. Under-counts literacy
+ *       (and downstream prosperity) are fixed.
+ *     - Education level resolution switched from
+ *       CharacterQueries.getEducationLevelId (not present on the
+ *       character-queries.js surface) to a local derivation from
+ *       character.isLiterate and character.subjectProgress. The
+ *       returned level id matches the education-definitions ids.
+ *     - Header CHARACTER ENUMERATION and EDUCATION LEVEL DERIVATION
+ *       sections added.
+ *     - No public signature change, no public return-shape change.
+ *   Previous revisions:
+ *     - Corrected from LocationState.getAllSubLocationIds to
+ *       LocationQueries.getAllSubLocationIds.
  * =============================================================================
  */
 
@@ -62,6 +126,7 @@
     }
 
     function _getEducationLevelById(levelId) {
+        if (!levelId) return null;
         var levels = _getEducationDefinitions().EDUCATION_LEVELS;
         for (var i = 0; i < levels.length; i++) {
             if (levels[i].id === levelId) return levels[i];
@@ -82,13 +147,114 @@
         return false;
     }
 
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-        if (typeof window.calculateAge !== 'function') {
-            throw new Error(
-                'settlement-education-queries.js requires time.js (calculateAge).'
-            );
+    /**
+     * Resolves the education level id for a character, based on fields
+     * present on the character projection.
+     *
+     * Derivation (see EDUCATION LEVEL DERIVATION in the module header):
+     *   - isLiterate !== true           → 'illiterate'
+     *   - isLiterate === true, but no
+     *     subjectProgress data          → 'literate'
+     *   - isLiterate === true with
+     *     subjectProgress showing a
+     *     higher tier                   → that tier id
+     *
+     * The higher tiers correspond to the ids declared in
+     * SettlementEducationDefinitions: 'basic', 'literate', 'educated',
+     * 'scholar'. The ordering used to pick the highest tier matches the
+     * definitions' `order` field.
+     *
+     * @param {Object} character - character projection
+     * @returns {string|null} level id or null if the character is missing
+     */
+    function _deriveEducationLevelId(character) {
+        if (!character) return null;
+
+        if (character.isLiterate !== true) {
+            return 'illiterate';
         }
-        return window.calculateAge(birthYear, isDeceased, deathYear);
+
+        // Literate baseline. subjectProgress may promote to a higher tier.
+        var bestLevelId = 'literate';
+        var bestOrder = 2;  // literate.order per definitions
+
+        var progress = character.subjectProgress;
+        if (progress && typeof progress === 'object') {
+            var keys = Object.keys(progress);
+            for (var i = 0; i < keys.length; i++) {
+                var entry = progress[keys[i]];
+                if (!entry || typeof entry !== 'object') continue;
+
+                var key = keys[i];
+                var tierOrder = _tierOrderForKey(key);
+                if (tierOrder === null) continue;
+
+                if (tierOrder > bestOrder) {
+                    var level = _getEducationLevelById(key);
+                    if (level) {
+                        bestLevelId = level.id;
+                        bestOrder = level.order;
+                    }
+                }
+            }
+        }
+
+        return bestLevelId;
+    }
+
+    /**
+     * Maps a subject-progress key to an education-level tier order.
+     * Returns null when the key is not an education-level key.
+     *
+     * Recognized keys match SettlementEducationDefinitions ids that are
+     * ordered above 'literate' — namely 'educated' and 'scholar'. The
+     * lower tiers are not represented in subjectProgress; a literate
+     * character who has not progressed further is the default.
+     *
+     * @private
+     * @param {string} key
+     * @returns {number|null}
+     */
+    function _tierOrderForKey(key) {
+        if (key === 'educated') return 3;
+        if (key === 'scholar') return 4;
+        return null;
+    }
+
+    /**
+     * Enumerates every living character whose resolved current location
+     * is anywhere in the settlement's location subtree.
+     *
+     * Uses LocationQueries.getCurrentLocationId (the semantic resolver)
+     * rather than CharacterQueries.getCharactersInLocations (the raw-
+     * field filter). See CHARACTER ENUMERATION in the module header.
+     *
+     * @private
+     * @param {string} locationId
+     * @returns {Array<Object>} character projections
+     */
+    function _getCharactersInSettlement(locationId) {
+        var locationIds = _getLocationIdsForSettlement(locationId);
+        var idSet = {};
+        for (var i = 0; i < locationIds.length; i++) {
+            idSet[locationIds[i]] = true;
+        }
+
+        var allCharacters = _getCharacterQueries().getAllCharacters();
+        if (!Array.isArray(allCharacters)) return [];
+
+        var result = [];
+        for (var j = 0; j < allCharacters.length; j++) {
+            var character = allCharacters[j];
+            if (!character || !character.id) continue;
+            if (character.isDeceased === true) continue;
+
+            var resolvedId = _getLocationQueries().getCurrentLocationId(character.id);
+            if (resolvedId && idSet[resolvedId]) {
+                result.push(character);
+            }
+        }
+        return result;
     }
 
     // =========================================================================
@@ -136,8 +302,7 @@
             levelCounts[educationLevels[i].id] = 0;
         }
 
-        var locationIds = _getLocationIdsForSettlement(locationId);
-        var characters = _getCharacterQueries().getCharactersInLocations(locationIds);
+        var characters = _getCharactersInSettlement(locationId);
 
         var total = 0;
         var literate = 0;
@@ -153,11 +318,10 @@
         for (var m = 0; m < characters.length; m++) {
             var character = characters[m];
             if (!character) continue;
-            if (character.isDeceased) continue;
 
             total++;
 
-            var levelId = _getCharacterQueries().getEducationLevelId(character.id);
+            var levelId = _deriveEducationLevelId(character);
             var level = levelId ? _getEducationLevelById(levelId) : null;
             if (level) {
                 levelCounts[level.id] = (levelCounts[level.id] || 0) + 1;
