@@ -28,6 +28,40 @@
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
+ * STORAGE KEY CANONICALITY
+ * ------------------------
+ *   This table enumerates every localStorage key the application uses.
+ *   Every module that reads or writes localStorage MUST use these constants,
+ *   not a literal string.
+ *
+ *   The location domain's expansion key is the one that has caused the
+ *   most confusion across revisions. History:
+ *
+ *     - The first location-ui-state.js used the literal
+ *       'location_tree_expanded'.
+ *     - A later constants.js revision renamed the entry to
+ *       'location_tree_state', which silently orphaned every user's
+ *       persisted expansion the first time constants.js loaded.
+ *     - A still later location-ui-state.js revision added a fallback
+ *       literal 'location_tree_expanded' to guard against missing
+ *       constants.js, which produced three inconsistent values
+ *       depending on load order (constants present → 'location_tree_state';
+ *       constants absent → 'location_tree_expanded'; docs → both).
+ *
+ *   This revision canonicalizes the key back to 'location_tree_expanded'.
+ *   That is the value location-ui-state.js's fallback uses, the value
+ *   location-docs.txt §9 documents, and the value every currently deployed
+ *   save carries in localStorage. Renaming to 'location_tree_state' again
+ *   without a migration shim would repeat the same orphaning bug.
+ *
+ *   If you ever want to rename a storage key:
+ *     1. Add the new key alongside the old one.
+ *     2. Add a migration shim that reads the old key, writes the new key,
+ *        and removes the old one.
+ *     3. Remove the old key from this table only after the shim has
+ *        shipped and been deployed long enough that no live save uses it.
+ *
+ * =============================================================================
  */
 
 // =============================================================================
@@ -51,6 +85,11 @@ window.__CONSTANTS_LOADED = true;
  * The MASTER and UI_STATE entries were previously absent while
  * storage.js and ui-state.js hardcoded them. That inconsistency has been
  * corrected: this table now enumerates every key the application uses.
+ *
+ * Every LOCATION_TREE_STATE read or write goes through here. The
+ * location-ui-state.js fallback ('location_tree_expanded') matches this
+ * entry. location-docs.txt §9 documents this entry. See STORAGE KEY
+ * CANONICALITY in the module header.
  */
 window.LOCAL_STORAGE_KEYS = Object.freeze({
     // Canonical application data (owned by storage.js)
@@ -60,7 +99,7 @@ window.LOCAL_STORAGE_KEYS = Object.freeze({
     UI_STATE: 'stillwaters_ui_state',
 
     // Tree states
-    LOCATION_TREE_STATE: 'location_tree_state',
+    LOCATION_TREE_STATE: 'location_tree_expanded',
     CHARACTER_TREE_STATE: 'character_tree_state_v3',
     RANK_TREE_STATE: 'rank_tree_state',
     HOUSEHOLD_TREE_STATE: 'household_tree_state',
