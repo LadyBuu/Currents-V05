@@ -25,8 +25,35 @@
  *     character.professions       → CharacterCommands
  *     relationship edges          → ProfessionalCommands
  *     role catalogue              → RoleState / RoleQueries
- *     specialization membership   → RoleRules.validateSpecialization
+ *     specialization membership   → inline _validateSpecialization
  *     teaching policy             → ApprenticeshipRules
+ *
+ * SPECIALIZATION VALIDATION
+ *
+ *   Specialization membership validation used to live in role-rules.js as
+ *   RoleRules.validateSpecialization. role-rules.js has been removed as
+ *   dead code (it was never called by role-commands.js, which validated
+ *   inline). The membership check now lives in this module as
+ *   _validateSpecialization, which is the sole validator for the
+ *   apprenticeship domain's use of role.specializations.
+ *
+ *   The check is narrow: it verifies that `specialization` appears in
+ *   `role.specializations`. It does NOT validate that the role exists
+ *   (that is checked by the caller before this function runs), and it
+ *   does NOT consult any other domain's rules.
+ *
+ * ROLE READS
+ *
+ *   _getRoleById prefers RoleState.getRole (returns clones) and falls
+ *   back to window.getRoleById (accessors.js, live records) only when
+ *   RoleState is unavailable. This matches education-commands.js and
+ *   ensures the apprenticeship command layer sees the same role shape
+ *   that apprenticeship-queries.js reads through RoleState.
+ *
+ *   Reading the live accessor record when RoleState is available would
+ *   make commands and queries observe different role data during a
+ *   category-reassignment mutation (RoleState.deleteCategory reassigns
+ *   roles before re-notifying).
  *
  * PERSISTENCE
  *
@@ -42,18 +69,19 @@
  *   callers (advanceApprenticeshipSkills, the annual pipeline) call
  *   persist() once at the end.
  *
- *   This matches the roles, rank, and character domains. The previous
- *   version flushed on every command; that is a policy drift from the
- *   rest of the codebase and has been corrected here.
+ *   persist() returns { success, reason }. On saveMasterData() returning
+ *   false, it reads window.getLastSaveError() for the underlying error
+ *   so the caller can surface the actual cause (quota, serialization,
+ *   disabled storage) rather than the generic "returned false".
  *
  * RANDOMNESS
  *
- *   Rolls go through window.Random.next (the canonical RNG stream
- *   used by affair-commands.js, jealousy-commands.js, and
- *   relationship-integrations.js). A legacy window.randomNext
- *   fallback is honoured for older callers, matching
- *   relationship-integrations.js. There is no Math.random() call and
- *   no window.RNG reference (window.RNG does not exist in this tree).
+ *   Rolls go through window.Random.next (the canonical RNG stream used
+ *   by affair-commands.js, jealousy-commands.js, and
+ *   relationship-integrations.js). A legacy window.randomNext fallback
+ *   is honoured for older callers, matching
+ *   relationship-integrations.js. There is no Math.random() call and no
+ *   window.RNG reference (window.RNG does not exist in this tree).
  *
  * METADATA SHAPE (owned by this module)
  *
@@ -74,11 +102,10 @@
  *   - apprenticeship-rules.js
  *   - apprenticeship-queries.js
  *   - professional-commands.js
- *   - role-rules.js
  *   - character-commands.js
  *   - accessors.js
- *   - time.js
- *   - storage.js
+ *   - time.js                (getCurrentYear)
+ *   - storage.js             (saveMasterData, getLastSaveError)
  *   - relationship-types.js
  *
  * =============================================================================
@@ -113,13 +140,6 @@
             '(createEdge/updateEdgeMetadata/updateEdgeFields/endEdge/removeEdge) first.'
         );
     }
-    if (!window.RoleRules ||
-        typeof window.RoleRules.validateSpecialization !== 'function') {
-        throw new Error(
-            'apprenticeship-commands.js requires role-rules.js ' +
-            '(RoleRules.validateSpecialization) first.'
-        );
-    }
     if (!window.CharacterCommands) {
         throw new Error(
             'apprenticeship-commands.js requires character-commands.js first.'
@@ -148,25 +168,29 @@
         return window.getCharacterById(id);
     }
 
+    /**
+     * Role reads prefer RoleState (returns clones) and fall back to
+     * accessors' window.getRoleById only when RoleState is unavailable.
+     * See ROLE READS in the module header.
+     */
     function _getRoleById(id) {
-        if (typeof window.getRoleById !== 'function') {
-            throw new Error('ApprenticeshipCommands: missing getRoleById');
+        if (window.RoleState && typeof window.RoleState.getRole === 'function') {
+            return window.RoleState.getRole(id);
         }
-        return window.getRoleById(id);
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
+        throw new Error(
+            'ApprenticeshipCommands: no role reader available ' +
+            '(RoleState.getRole or getRoleById required)'
+        );
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('ApprenticeshipCommands: missing getCurrentYearSafe');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('ApprenticeshipCommands: missing getCurrentYear');
         }
-        return window.getCurrentYearSafe();
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('ApprenticeshipCommands: missing saveMasterData');
-        }
-        return window.saveMasterData();
+        return window.getCurrentYear();
     }
 
     function _professionalCommands() {
@@ -199,7 +223,53 @@
     }
 
     // =========================================================================
-    // 3. NOTIFICATION
+    // 3. SPECIALIZATION VALIDATION
+    // =========================================================================
+    //
+    // Sole validator for role.specializations membership in the
+    // apprenticeship domain. Replaces the removed
+    // RoleRules.validateSpecialization. See SPECIALIZATION VALIDATION in
+    // the module header.
+
+    function _validateSpecialization(role, specialization) {
+        if (!role || typeof role !== 'object') {
+            return {
+                valid: false,
+                code: 'MISSING_ROLE',
+                reason: 'Role is required.'
+            };
+        }
+        if (typeof specialization !== 'string' || specialization.trim() === '') {
+            return {
+                valid: false,
+                code: 'MISSING_SPECIALIZATION',
+                reason: 'Specialization must be a non-empty string.'
+            };
+        }
+        if (!Array.isArray(role.specializations)) {
+            return {
+                valid: false,
+                code: 'ROLE_HAS_NO_SPECIALIZATIONS',
+                reason: 'Role "' + (role.name || role.id) +
+                        '" has no specialization catalogue.'
+            };
+        }
+        var target = specialization.trim();
+        for (var i = 0; i < role.specializations.length; i++) {
+            if (role.specializations[i] === target) {
+                return { valid: true };
+            }
+        }
+        return {
+            valid: false,
+            code: 'UNKNOWN_SPECIALIZATION',
+            reason: 'Specialization "' + target + '" is not registered on role "' +
+                    (role.name || role.id) + '".'
+        };
+    }
+
+    // =========================================================================
+    // 4. NOTIFICATION
     // =========================================================================
 
     function _notify(eventName, payload) {
@@ -218,7 +288,7 @@
     }
 
     // =========================================================================
-    // 4. PERSISTENCE
+    // 5. PERSISTENCE
     // =========================================================================
 
     /**
@@ -226,10 +296,12 @@
      *
      * The caller is responsible for invoking persist() exactly once per
      * batch, after every command in the batch has succeeded. This matches
-     * RoleCommands.persist().
+     * RoleCommands.persist() and EducationCommands.persist().
      *
-     * Returns { success: true } if the write succeeded, { success: false,
-     * reason } otherwise.
+     * Returns { success: true } on success. On failure, reads
+     * window.getLastSaveError() (if available) to surface the underlying
+     * error (quota, serialization, disabled storage) rather than the
+     * generic "returned false".
      */
     function persist() {
         if (typeof window.saveMasterData !== 'function') {
@@ -238,7 +310,12 @@
         try {
             var ok = window.saveMasterData();
             if (ok === true) return { success: true };
-            return { success: false, reason: 'saveMasterData returned false' };
+            var reason = 'saveMasterData returned false';
+            if (typeof window.getLastSaveError === 'function') {
+                var err = window.getLastSaveError();
+                if (err && err.message) reason = err.message;
+            }
+            return { success: false, reason: reason };
         } catch (e) {
             return {
                 success: false,
@@ -248,14 +325,14 @@
     }
 
     // =========================================================================
-    // 5. RESULT HELPERS
+    // 6. RESULT HELPERS
     // =========================================================================
 
     function ok(data)           { return { success: true, data: data }; }
     function fail(code, reason) { return { success: false, code: code, reason: reason }; }
 
     // =========================================================================
-    // 6. SHARED HELPERS
+    // 7. SHARED HELPERS
     // =========================================================================
 
     function _getSkill(characterId, roleId) {
@@ -331,7 +408,7 @@
     }
 
     // =========================================================================
-    // 7. CREATE
+    // 8. CREATE
     // =========================================================================
 
     function createApprenticeship(args) {
@@ -432,7 +509,7 @@
     }
 
     // =========================================================================
-    // 8. UPDATE
+    // 9. UPDATE
     // =========================================================================
     //
     // Two write paths are used here:
@@ -535,7 +612,7 @@
     }
 
     // =========================================================================
-    // 9. PROGRESS
+    // 10. PROGRESS
     // =========================================================================
 
     function progressApprenticeship(masterId, apprenticeId, amount) {
@@ -595,7 +672,7 @@
     }
 
     // =========================================================================
-    // 10. TEACH
+    // 11. TEACH
     // =========================================================================
 
     function teachSkill(masterId, apprenticeId, methodId) {
@@ -680,7 +757,7 @@
     }
 
     // =========================================================================
-    // 11. TEACH SPECIALIZATION
+    // 12. TEACH SPECIALIZATION
     // =========================================================================
 
     function teachSpecialization(masterId, apprenticeId, specialization) {
@@ -693,7 +770,7 @@
         var role = _getRoleById(meta.roleId);
         if (!role) return fail('ROLE_NOT_FOUND', 'Role not found: ' + meta.roleId);
 
-        var specValidation = window.RoleRules.validateSpecialization(role, specialization);
+        var specValidation = _validateSpecialization(role, specialization);
         if (!specValidation.valid) {
             return fail(specValidation.code, specValidation.reason);
         }
@@ -727,7 +804,7 @@
     }
 
     // =========================================================================
-    // 12. COMPLETE
+    // 13. COMPLETE
     // =========================================================================
 
     function completeApprenticeship(masterId, apprenticeId, roleId) {
@@ -780,7 +857,7 @@
     }
 
     // =========================================================================
-    // 13. TERMINATE / CANCEL
+    // 14. TERMINATE / CANCEL
     // =========================================================================
 
     function terminateApprenticeship(masterId, apprenticeId, roleId, reason) {
@@ -844,7 +921,7 @@
     }
 
     // =========================================================================
-    // 14. BATCH CLEANUP
+    // 15. BATCH CLEANUP
     // =========================================================================
 
     function removeAllReferencesTo(characterId) {
@@ -878,7 +955,7 @@
     }
 
     // =========================================================================
-    // 15. ANNUAL ADVANCEMENT
+    // 16. ANNUAL ADVANCEMENT
     // =========================================================================
 
     function advanceApprenticeshipSkills(year) {
@@ -946,7 +1023,7 @@
     }
 
     // =========================================================================
-    // 16. CROSS-DOMAIN LISTENER
+    // 17. CROSS-DOMAIN LISTENER
     // =========================================================================
 
     function _handleRoleDeleted(event) {
@@ -983,7 +1060,7 @@
     }
 
     // =========================================================================
-    // 17. EXPORTS
+    // 18. EXPORTS
     // =========================================================================
 
     window.ApprenticeshipCommands = {
