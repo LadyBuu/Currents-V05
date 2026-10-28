@@ -23,12 +23,15 @@
  *   caller is responsible for calling RoleCommands.persist() once per
  *   batch, after every command in the batch has succeeded.
  *
+ *   RoleState owns the sync from in-memory state into masterData.data
+ *   (roles and roleCategories) and the accessor-cache invalidation.
+ *   persist() is the FLUSH: it drives the debounced save to run
+ *   synchronously. persist() returns boolean; on false the caller can
+ *   read window.getLastSaveError() for the underlying reason.
+ *
  *   Batch callers (modal onConfirm, education graduation, annual
  *   pipeline) call persist() exactly once at the end. Single-operation
  *   callers may call persist() immediately after a successful command.
- *
- *   This matches the rank and character domains. The role domain no
- *   longer flushes eagerly per mutation.
  *
  * SKILL PROGRESSION vs SKILL OVERRIDE
  *
@@ -45,6 +48,22 @@
  *
  *   The invariant: no progression system may reduce a character's
  *   canonical role skill. An administrator can, deliberately.
+ *
+ * BULK ASSIGN RESULT SHAPE
+ *
+ *   bulkAssignRole returns { success, assignedCount, failedCount, errors }.
+ *   success is a BOOLEAN: true iff every requested character was assigned
+ *   without error, false otherwise. assignedCount is the number of
+ *   successful assignments; failedCount is the number of failures. errors
+ *   is an array of { characterId, reason } entries.
+ *
+ *   Prior revisions returned { success: number, failed: number }. That
+ *   shape collided with the boolean `success` convention used by every
+ *   other command in the codebase (character, family, children,
+ *   education), and a caller that wrote `if (!result.success)` behaved
+ *   differently from one that wrote `if (result.success === true)`.
+ *   The boolean form is unambiguous and matches character-creation-commands'
+ *   bulkCreateCharacters convention.
  *
  * Reentrancy:
  *   There is no module-wide guard. Commands may call other commands
@@ -65,8 +84,8 @@
  *   - character-commands.js  (CharacterCommands) — profession API only
  *   - accessors.js           (getCharacterById)
  *   - ids.js                 (generateId)
- *   - time.js                (getCurrentYearSafe, optional)
- *   - storage.js             (saveMasterData — persist boundary only)
+ *   - time.js                (getCurrentYear, optional)
+ *   - storage.js             (saveMasterData, getLastSaveError — persist boundary only)
  *
  * =============================================================================
  */
@@ -158,8 +177,9 @@
      * RoleState. persist() is the caller's explicit "I am done; write it
      * out" signal.
      *
-     * Returns { success: true } if the write succeeded, { success: false,
-     * reason } otherwise.
+     * Returns { success: true } on success. Returns { success: false,
+     * reason } on failure; the underlying error (if any) is also
+     * available via window.getLastSaveError().
      */
     function persist() {
         if (typeof window.saveMasterData !== 'function') {
@@ -168,7 +188,12 @@
         try {
             var ok = window.saveMasterData();
             if (ok === true) return _ok();
-            return _fail('saveMasterData returned false');
+            var reason = 'saveMasterData returned false';
+            if (typeof window.getLastSaveError === 'function') {
+                var err = window.getLastSaveError();
+                if (err && err.message) reason = err.message;
+            }
+            return _fail(reason);
         } catch (e) {
             return _fail(e && e.message ? e.message : 'saveMasterData threw');
         }
@@ -224,6 +249,13 @@
     function _validCategory(v) {
         if (v === RC.UNCATEGORIZED_ID) return true;
         return Object.prototype.hasOwnProperty.call(RC.DEFAULT_ROLE_CATEGORIES, v);
+    }
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYear === 'function') {
+            return window.getCurrentYear();
+        }
+        return 1250;
     }
 
     // =========================================================================
@@ -596,8 +628,8 @@
         if (startYear !== null && (typeof startYear !== 'number' || !Number.isFinite(startYear))) {
             return _fail('startYear must be a number or omitted.');
         }
-        if (startYear === null && typeof window.getCurrentYearSafe === 'function') {
-            startYear = window.getCurrentYearSafe();
+        if (startYear === null) {
+            startYear = _getCurrentYear();
         }
 
         var existing = CC.getProfession(characterId, role.id);
@@ -770,20 +802,50 @@
         });
     }
 
+    /**
+     * Bulk role assignment.
+     *
+     * Returns { success, assignedCount, failedCount, errors }.
+     *
+     * success is a BOOLEAN: true iff every requested character was
+     * assigned without error. assignedCount is the number of successful
+     * assignments; failedCount is the number of failures. errors is an
+     * array of { characterId, reason }.
+     *
+     * The boolean form matches character-creation-commands.bulkCreateCharacters
+     * and every single-command result in the codebase. The prior
+     * `{ success: number, failed: number }` shape collided with the
+     * boolean `success` convention.
+     */
     function bulkAssignRole(characterIds, roleId, options) {
         if (!Array.isArray(characterIds)) {
-            return { success: 0, failed: 0, errors: [{ reason: 'characterIds must be an array' }] };
+            return {
+                success: false,
+                assignedCount: 0,
+                failedCount: 0,
+                errors: [{ reason: 'characterIds must be an array' }]
+            };
         }
         if (!_validString(roleId)) {
-            return { success: 0, failed: 0, errors: [{ reason: 'Role id is required' }] };
+            return {
+                success: false,
+                assignedCount: 0,
+                failedCount: 0,
+                errors: [{ reason: 'Role id is required' }]
+            };
         }
 
         var role = RS.getRole(roleId);
         if (!role) {
-            return { success: 0, failed: 0, errors: [{ reason: 'Role not found' }] };
+            return {
+                success: false,
+                assignedCount: 0,
+                failedCount: 0,
+                errors: [{ reason: 'Role not found' }]
+            };
         }
 
-        var successCount = 0;
+        var assignedCount = 0;
         var failedCount = 0;
         var errors = [];
 
@@ -791,22 +853,27 @@
             var characterId = characterIds[i];
             var result = _assignRoleInternal(characterId, role, options);
             if (result.success) {
-                successCount++;
+                assignedCount++;
             } else {
                 failedCount++;
                 errors.push({ characterId: characterId, reason: result.reason });
             }
         }
 
-        if (successCount > 0) {
+        if (assignedCount > 0) {
             _notify('rolesBulkAssigned', {
                 roleId: roleId,
-                assignedCount: successCount,
+                assignedCount: assignedCount,
                 failedCount: failedCount
             });
         }
 
-        return { success: successCount, failed: failedCount, errors: errors };
+        return {
+            success: failedCount === 0,
+            assignedCount: assignedCount,
+            failedCount: failedCount,
+            errors: errors
+        };
     }
 
     // =========================================================================
