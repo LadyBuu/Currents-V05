@@ -13,6 +13,22 @@
  *   LocationCommands.persist() exactly once. On failure, shows a toast and
  *   does NOT call persist.
  *
+ *   The invoke-then-persist-then-close pattern lives in
+ *   LocationModals.runCommand (from modals-location-helper.js). Every
+ *   onConfirm below routes through it.
+ *
+ * SHARED HELPERS
+ * --------------
+ *   _escapeHtml, _toast, _close, and _runCommand are aliases to the
+ *   corresponding helpers exported by modals-location-helper.js. They
+ *   were previously defined locally in this file AND in modals-moves.js;
+ *   both files were byte-identical copies. This file no longer defines
+ *   them.
+ *
+ *   The helper module (modals-location-helper.js) must load BEFORE this
+ *   file. It owns the LocationCommands.persist dependency; this file
+ *   does not need to call persist() directly.
+ *
  * MODAL CALLBACK API (from modals-core.js):
  *   openModal(options) returns { element, close }.
  *
@@ -42,9 +58,7 @@
  *   Every modal reads its inputs via `root.querySelector('.<form-class>')`
  *   where `root` is the callback parameter. The form class is used as
  *   the scoping key because the form element is what the modal actually
- *   constructs and what the caller's field accessors walk. Using an id
- *   would require generating a unique id per modal instance; the class
- *   is stable and unique within the modal element.
+ *   constructs and what the caller's field accessors walk.
  *
  *   Form classes used by this file:
  *     .location-form          add / edit place
@@ -57,11 +71,12 @@
  *   - LocationViewModels
  *   - LocationQueries
  *   - LocationCommands
+ *   - modals-location-helper.js  (escapeHtml, toast, close, runCommand)
  *   - window.openModal, window.closeTopModal
  *
  * Optional, used when present:
- *   - window.escapeHtml  (formatting.js)
- *   - window.showToast   (ui.js)
+ *   - window.escapeHtml  (formatting.js)  — via helper fallback
+ *   - window.showToast   (ui.js)          — via helper fallback
  *
  * Icon policy:
  *   Confirm and cancel buttons render plain text. Icons appear only inside
@@ -70,21 +85,25 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Removed the local copies of _escapeHtml, _toast, _close, and
+ *       _runCommand. All four were byte-identical to modals-moves.js
+ *       and are now shared via modals-location-helper.js. The aliases
+ *       at the top of this file delegate to the helper.
+ *     - Added load-time dependency on modals-location-helper.js.
+ *     - No behavioural change to any modal entry point. Every
+ *       onConfirm still routes through _runCommand, which now
+ *       delegates to the shared helper.
+ *   Previous revision:
  *     - CRITICAL (compatibility with modals-core.js): every onConfirm
- *       callback now accepts the modal DOM element as its parameter and
- *       scopes its DOM reads via `root.querySelector`. Previously used
- *       `document.querySelector`, which returned the first match in DOM
- *       order — the older modal when two of the same type were open.
- *       Every form-submission modal was affected:
- *         openAddPlaceModal, openEditPlaceModal, openDeletePlaceModal,
- *         openAddLocationTypeModal, openEditLocationTypeModal,
- *         openDeleteLocationTypeModal.
+ *       callback now accepts the modal DOM element as its parameter
+ *       and scopes its DOM reads via `root.querySelector`. Previously
+ *       used `document.querySelector`, which returned the first match
+ *       in DOM order — the older modal when two of the same type were
+ *       open.
  *     - openViewHierarchyModal: the setTimeout(0) +
  *       document.querySelectorAll + forEach wiring pattern is removed.
  *       Click handlers are now wired synchronously in onMount, scoped
- *       to the modal root. Same class of defect as the onConfirm fixes.
- *     - Header MODAL CALLBACK API and MODAL INPUT READS sections added.
- *     - No public signature change, no public return-shape change.
+ *       to the modal root.
  * =============================================================================
  */
 
@@ -115,88 +134,30 @@
             'modals-location.js requires modals-core.js (openModal).'
         );
     }
+    if (!window.LocationModals
+        || typeof window.LocationModals.escapeHtml !== 'function'
+        || typeof window.LocationModals.toast !== 'function'
+        || typeof window.LocationModals.close !== 'function'
+        || typeof window.LocationModals.runCommand !== 'function') {
+        throw new Error(
+            'modals-location.js requires modals-location-helper.js ' +
+            '(escapeHtml / toast / close / runCommand missing from ' +
+            'window.LocationModals).'
+        );
+    }
 
     var VM = window.LocationViewModels;
     var LQ = window.LocationQueries;
     var LC = window.LocationCommands;
 
-    // =========================================================================
-    // 2. HELPERS
-    // =========================================================================
-
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _toast(msg, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(msg, type || 'info');
-        }
-    }
-
-    function _close() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-    }
-
-    /**
-     * Runs a command, then persists on success. On failure, shows a toast
-     * and returns false. On success, closes the modal (unless
-     * options.keepOpen is true) and calls onSuccess.
-     *
-     * Every modal write path routes through this helper so persist() is
-     * called exactly once per user action.
-     */
-    function _runCommand(commandFn, onSuccess, options) {
-        options = options || {};
-        var result;
-        try {
-            result = commandFn();
-        } catch (e) {
-            _toast(e && e.message ? e.message : 'Command failed', 'error');
-            return false;
-        }
-
-        if (!result || result.success !== true) {
-            _toast(
-                result && result.reason ? result.reason : 'Command failed',
-                'error'
-            );
-            return false;
-        }
-
-        var persistResult = LC.persist();
-        if (!persistResult || persistResult.success !== true) {
-            _toast(
-                persistResult && persistResult.reason
-                    ? persistResult.reason
-                    : 'Failed to persist changes',
-                'error'
-            );
-            return false;
-        }
-
-        if (options.keepOpen !== true) {
-            _close();
-        }
-        if (typeof onSuccess === 'function') {
-            onSuccess(result);
-        }
-        return true;
-    }
+    // Local aliases to the shared helpers. Keep the call sites short.
+    var _escapeHtml = window.LocationModals.escapeHtml;
+    var _toast = window.LocationModals.toast;
+    var _close = window.LocationModals.close;
+    var _runCommand = window.LocationModals.runCommand;
 
     // =========================================================================
-    // 3. ADD PLACE
+    // 2. ADD PLACE
     // =========================================================================
 
     function openAddPlaceModal(parentId, onSuccess) {
@@ -263,7 +224,7 @@
     }
 
     // =========================================================================
-    // 4. EDIT PLACE
+    // 3. EDIT PLACE
     // =========================================================================
 
     function openEditPlaceModal(placeId, onSuccess) {
@@ -336,7 +297,7 @@
     }
 
     // =========================================================================
-    // 5. DELETE PLACE
+    // 4. DELETE PLACE
     // =========================================================================
 
     function openDeletePlaceModal(placeId, onSuccess) {
@@ -391,7 +352,7 @@
     }
 
     // =========================================================================
-    // 6. VIEW HIERARCHY
+    // 5. VIEW HIERARCHY
     // =========================================================================
     //
     // Read-only modal. Renders the ancestor chain of a place as a clickable
@@ -451,7 +412,7 @@
     }
 
     // =========================================================================
-    // 7. ADD LOCATION TYPE
+    // 6. ADD LOCATION TYPE
     // =========================================================================
 
     function openAddLocationTypeModal(onSuccess) {
@@ -495,7 +456,7 @@
     }
 
     // =========================================================================
-    // 8. EDIT LOCATION TYPE
+    // 7. EDIT LOCATION TYPE
     // =========================================================================
 
     function openEditLocationTypeModal(typeId, onSuccess) {
@@ -546,7 +507,7 @@
     }
 
     // =========================================================================
-    // 9. DELETE LOCATION TYPE
+    // 8. DELETE LOCATION TYPE
     // =========================================================================
 
     function openDeleteLocationTypeModal(typeId, onSuccess) {
@@ -584,9 +545,24 @@
     }
 
     // =========================================================================
-    // 10. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
+    // LocationModals was created by modals-location-helper.js with the
+    // shared helpers. This file adds the entry points to the same
+    // namespace.
+    window.LocationModals = window.LocationModals || {};
+
+    window.LocationModals.openAddPlaceModal = openAddPlaceModal;
+    window.LocationModals.openEditPlaceModal = openEditPlaceModal;
+    window.LocationModals.openDeletePlaceModal = openDeletePlaceModal;
+    window.LocationModals.openViewHierarchyModal = openViewHierarchyModal;
+    window.LocationModals.openAddLocationTypeModal = openAddLocationTypeModal;
+    window.LocationModals.openEditLocationTypeModal = openEditLocationTypeModal;
+    window.LocationModals.openDeleteLocationTypeModal = openDeleteLocationTypeModal;
+
+    // Flat aliases (historical surface; callers that used
+    // window.openAddPlaceModal etc. keep working).
     window.openAddPlaceModal = openAddPlaceModal;
     window.openEditPlaceModal = openEditPlaceModal;
     window.openDeletePlaceModal = openDeletePlaceModal;
@@ -595,18 +571,16 @@
     window.openEditLocationTypeModal = openEditLocationTypeModal;
     window.openDeleteLocationTypeModal = openDeleteLocationTypeModal;
 
-    window.LocationModals = {
-        openAddPlaceModal: openAddPlaceModal,
-        openEditPlaceModal: openEditPlaceModal,
-        openDeletePlaceModal: openDeletePlaceModal,
-        openViewHierarchyModal: openViewHierarchyModal,
-        openAddLocationTypeModal: openAddLocationTypeModal,
-        openEditLocationTypeModal: openEditLocationTypeModal,
-        openDeleteLocationTypeModal: openDeleteLocationTypeModal
-    };
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.LocationModals;
+        module.exports = {
+            openAddPlaceModal: openAddPlaceModal,
+            openEditPlaceModal: openEditPlaceModal,
+            openDeletePlaceModal: openDeletePlaceModal,
+            openViewHierarchyModal: openViewHierarchyModal,
+            openAddLocationTypeModal: openAddLocationTypeModal,
+            openEditLocationTypeModal: openEditLocationTypeModal,
+            openDeleteLocationTypeModal: openDeleteLocationTypeModal
+        };
     }
 
 })();
