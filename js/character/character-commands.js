@@ -1,3 +1,4 @@
+// js/character/character-commands.js
 /**
  * =============================================================================
  * STILL WATERS - CHARACTER COMMANDS (js/character/character-commands.js)
@@ -96,10 +97,31 @@
  *   rankAssignments follow. The single write mechanism is
  *   CS.applyDomainFieldPatch.
  *
- *   Note on naming: `replaceTraits` is the canonical name, matching
- *   `replaceProfessions`. `setTraits` is provided as a one-line alias
- *   for callers that reach for the plan's original name; it does the
- *   same thing.
+ *   TRAIT VOCABULARY CONTRACT (REVISED):
+ *   The canonical trait vocabulary (constants/character-traits.js,
+ *   window.CHARACTER_TRAIT_VALUES) is a HARD dependency of the trait
+ *   write path. It is NOT soft-failed.
+ *
+ *   Prior revisions allowed `addTrait` / `replaceTraits` to accept any
+ *   non-empty string when the vocabulary was not loaded. That produced a
+ *   silent divergence between the write boundary (accepts anything) and
+ *   the read boundary (character-factory.js::buildCharacter rejects
+ *   unknown ids). A bare test harness could write traits that the
+ *   factory would later refuse to load — or, worse, that would persist
+ *   as canonical data that validation.js's entity validator (which
+ *   checks via the same vocabulary) would flag as malformed on import.
+ *
+ *   The current contract matches character-factory.js:
+ *     - missing vocabulary → trait writes REFUSE, with a clear reason
+ *     - unknown trait id    → trait writes REFUSE
+ *     - valid trait id      → trait writes proceed
+ *
+ *   The refusal is at the write boundary, not at load, because
+ *   character-commands.js is loaded in contexts (test harnesses,
+ *   diagnostic tooling) where the vocabulary may legitimately be absent
+ *   and only reads are used. Refusing at the write boundary keeps those
+ *   contexts functional for their purpose while closing the write-path
+ *   divergence.
  *
  * EDUCATION FIELDS:
  *   Four character-owned fields are written only by this module:
@@ -152,13 +174,16 @@
  *                         applyDomainFieldPatch, getAllCharacters)
  *   - time.js: getCurrentYear, isValidYear
  *
+ * DEPENDENCIES (REQUIRED for trait writes only):
+ *   - constants/character-traits.js (CHARACTER_TRAIT_VALUES)
+ *     Loaded before this file in every production bootstrap. Test
+ *     harnesses that only read characters may omit it; trait writes
+ *     in such a harness will fail loudly with a clear reason, matching
+ *     character-factory.js's behavior.
+ *
  * DEPENDENCIES (OPTIONAL, called only when the feature is used):
  *   - religion-commands.js (ReligionCommands)
  *   - mortality-rules.js (MortalityRules) — required for markDeceased only
- *   - constants/character-traits.js (CHARACTER_TRAIT_VALUES) — used
- *     defensively by trait commands to reject unknown ids at the write
- *     boundary. When absent, the commands accept any non-empty string.
- *     Production load order guarantees presence.
  *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?: string, ... }.
@@ -171,7 +196,24 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 1.2):
+ *   Current revision (P1-4):
+ *     - Trait vocabulary is now a HARD dependency of the trait write path.
+ *       _validateTraitId refuses when window.CHARACTER_TRAIT_VALUES is
+ *       not an array; it no longer falls through to "accept any
+ *       non-empty string". This matches character-factory.js's contract.
+ *       Prior revisions soft-failed on missing vocabulary, which let the
+ *       write boundary accept trait ids the factory would later reject,
+ *       producing persisted data that only failed on the next read.
+ *     - _vocabularyAvailable() is retained but only used for diagnostics
+ *       (nothing in production calls it). Its docstring now states that
+ *       it does NOT gate trait writes; the write path refuses without
+ *       the vocabulary regardless of what this function reports.
+ *     - Header TRAITS section rewritten to document the hard-dependency
+ *       contract and the refusal-at-write-boundary design.
+ *     - Header DEPENDENCIES updated: constants/character-traits.js is
+ *       listed under REQUIRED (for trait writes).
+ *     - No other behavioural change.
+ *   Previous revision (Phase 1.2):
  *     - Renamed every _getLiveCharacterForMutation call to
  *       getLiveCharacterForMutation (matching CharacterState's
  *       Phase 1.1 public rename). _requiredStateMethods now checks
@@ -187,8 +229,7 @@
  *       normalisation helpers, so all four readers return the same
  *       shape.
  *     - Header READ CONTRACT section added.
- *     - No other behavioural change.
- *   Previous revision:
+ *   Prior revisions:
  *     - Trait API added: getTraits, hasTrait, replaceTraits, setTraits
  *       (alias), addTrait, removeTrait.
  *     - traits added to _DOMAIN_OWNED_FIELDS so the generic update path
@@ -408,11 +449,23 @@
     //
     // Traits are canonical trait ids (see constants/character-traits.js).
     // The write path uses CS.applyDomainFieldPatch — the same mechanism
-    // professions and rankAssignments use. The vocabulary check is
-    // defensive: if the constants file is not loaded, the commands
-    // accept any non-empty string. In production the vocabulary is
-    // always loaded before this file; the soft-fail behaviour exists so
-    // that a bare test harness that didn't load constants/ still works.
+    // professions and rankAssignments use.
+    //
+    // TRAIT VOCABULARY CONTRACT (see header):
+    //   The vocabulary (window.CHARACTER_TRAIT_VALUES) is REQUIRED for
+    //   every trait write. This matches character-factory.js's contract.
+    //   A write that cannot resolve the vocabulary refuses with a clear
+    //   reason rather than accepting arbitrary strings. The refusal is
+    //   at the write boundary so that load-order bugs surface as
+    //   explicit trait-write failures, not as silently-corrupted
+    //   canonical data.
+    //
+    // _vocabularyAvailable() is retained for diagnostics only. It does
+    // NOT gate the write path — the write path's _validateTraitId
+    // refuses without the vocabulary regardless of what
+    // _vocabularyAvailable returns. Do not introduce a call to
+    // _vocabularyAvailable() in any write function; the correct check
+    // is embedded in _validateTraitId.
 
     function _vocabularyAvailable() {
         return Array.isArray(window.CHARACTER_TRAIT_VALUES);
@@ -422,10 +475,23 @@
         if (typeof traitId !== 'string' || traitId.length === 0) {
             return { ok: false, reason: 'Trait id must be a non-empty string.' };
         }
-        if (_vocabularyAvailable()
-            && window.CHARACTER_TRAIT_VALUES.indexOf(traitId) === -1) {
+
+        if (!_vocabularyAvailable()) {
+            // Hard refusal. See TRAIT VOCABULARY CONTRACT in the header.
+            // A caller that reaches here is missing character-traits.js;
+            // the correct fix is to load it, not to weaken the boundary.
+            return {
+                ok: false,
+                reason: 'character-traits.js is not loaded; cannot validate ' +
+                    'trait id. Load js/core/constants/character-traits.js ' +
+                    'before writing traits.'
+            };
+        }
+
+        if (window.CHARACTER_TRAIT_VALUES.indexOf(traitId) === -1) {
             return { ok: false, reason: 'Unknown trait: "' + traitId + '".' };
         }
+
         return { ok: true };
     }
 
@@ -435,7 +501,8 @@
      * - Rejects non-arrays.
      * - Rejects non-string entries.
      * - Rejects duplicates.
-     * - Rejects unknown ids (when the vocabulary is loaded).
+     * - Rejects unknown ids (the vocabulary is required; see
+     *   TRAIT VOCABULARY CONTRACT in the header).
      * - Returns a fresh array.
      */
     function _normaliseTraits(traits) {
@@ -506,8 +573,8 @@
     /**
      * Replaces the character's entire trait array.
      *
-     * Validates each entry (shape, deduplication, and — when the
-     * vocabulary is loaded — canonicality) before writing.
+     * Validates each entry (shape, deduplication, and — because the
+     * vocabulary is a hard requirement — canonicality) before writing.
      */
     function replaceTraits(characterId, traits) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
