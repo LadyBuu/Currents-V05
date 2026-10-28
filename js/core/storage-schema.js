@@ -85,11 +85,34 @@
  *   declarations, a fresh install or an old save would fail bootstrap
  *   with "householdPositions must be an array".
  *
- *   Prior to this revision, only `households` was declared. The two
- *   auxiliary collections (householdPositions, householdAssignments)
- *   were written by HouseholdCommands but never normalized, so every
- *   fresh install and every pre-household-subdomain save failed
- *   household bootstrap. This revision closes that gap.
+ *   Prior to the v6.1 revision of household-doc.txt, only `households`
+ *   was declared. The two auxiliary collections (householdPositions,
+ *   householdAssignments) were written by HouseholdCommands but never
+ *   normalized, so every fresh install and every pre-household-subdomain
+ *   save failed household bootstrap. The v6.1 revision closed that gap.
+ *   See HOUSEHOLD COLLECTIONS in the v6.1 refactor history below.
+ *
+ * INDUSTRY COLLECTIONS:
+ *   IndustryState owns two top-level collections that live in
+ *   masterData.data:
+ *
+ *     enterprises             array   (enterprise records)
+ *     enterpriseTypes         array   (enterprise type registry)
+ *
+ *   Both are declared here (factory + normalization). The industry
+ *   domain's bootstrap (industry-bootstrap.js::_verifyCanonicalShape)
+ *   TOLERATES absence — it defaults both to [] before hydrating — but
+ *   `industry-migration.js` and `industry-type-init.js` write the
+ *   defaults back via `saveMasterData` on every load if absence is
+ *   detected. That means a fresh install or a pre-industry save went
+ *   through the "defaults-then-persist" path on EVERY load, instead of
+ *   the schema layer producing the shape once and the load path just
+ *   reading it.
+ *
+ *   Declaring both collections here (factory + normalization) closes
+ *   that gap in the same way the v6.1 household revision closed the
+ *   householdPositions / householdAssignments gap. See INDUSTRY
+ *   COLLECTIONS in the refactor history below.
  *
  * SETTLEMENT DATA:
  *   The settlement domain owns one top-level object that lives in
@@ -135,6 +158,15 @@
  *   normalization does not delete fields, it only fills defaults —
  *   but the field is inert.
  *
+ * YEAR RESOLUTION:
+ *   This module reads window.TIME_CONSTANTS.DEFAULT_YEAR (a schema
+ *   constant) and window.TIME_CONSTANTS.MIN_YEAR / MAX_YEAR (the
+ *   canonical world-year bounds). It does NOT read getCurrentYearSafe
+ *   or getCurrentYear. Current-year resolution belongs to time.js and
+ *   to the runtime callers; the schema layer produces a default
+ *   envelope whose currentYear is TIME_CONSTANTS.DEFAULT_YEAR. No
+ *   year migration is required in this file.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.DEFAULT_YEAR, MIN_YEAR, MAX_YEAR
  *
@@ -142,44 +174,42 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
- *     - Added settlementData to createDefaultMasterDataOverride().data
- *       and to the objectKeys list in normalizeMasterData. Prior
- *       revisions relied on SettlementCommandCommit._getCanonicalStore
- *       to lazily create the object on first commit, which meant
- *       normalizeMasterData did not produce the shape the settlement
- *       commit path expected. Every fresh install and every save
- *       written by an older build now normalizes to the shape the
- *       settlement domain requires.
- *     - Header SETTLEMENT DATA section added, explaining the
- *       declaration and the lazy-init path it replaces.
- *     - No behavioural change to any other field. Existing saves
- *       normalize identically except that they now carry the
- *       settlementData object.
+ *   Current revision (C3 + D3):
+ *     - Added `enterprises` and `enterpriseTypes` to
+ *       createDefaultMasterDataOverride().data and to the arrayKeys
+ *       list in normalizeMasterData. Prior revisions declared neither,
+ *       which meant every fresh install and every save written before
+ *       the industry domain shipped relied on industry-migration.js
+ *       and industry-type-init.js to default them and call
+ *       saveMasterData on the next load. That produced a
+ *       "defaults-then-persist on every fresh load" pattern for the
+ *       industry collections, exactly the pattern the v6.1 household
+ *       revision closed for householdPositions and
+ *       householdAssignments. The fix is additive and defaults safely
+ *       for old saves. See INDUSTRY COLLECTIONS in the header.
+ *     - Header INDUSTRY COLLECTIONS section added.
+ *     - Header YEAR RESOLUTION section added (documenting that the
+ *       schema layer reads only TIME_CONSTANTS.DEFAULT_YEAR / MIN_YEAR
+ *       / MAX_YEAR, never getCurrentYearSafe / getCurrentYear; no year
+ *       migration is required here).
+ *     - No other field or behavior changed. Existing saves normalize
+ *       identically except that they now carry the two industry
+ *       collections.
  *   Previous revisions:
+ *     - Added settlementData to createDefaultMasterDataOverride().data
+ *       and to the objectKeys list in normalizeMasterData.
  *     - Added householdPositions and householdAssignments to
  *       createDefaultMasterDataOverride().data and to the arrayKeys
- *       list in normalizeMasterData. Prior revisions only declared
- *       `households`, which made household-bootstrap.js::_verifyCanonical
- *       throw on every fresh install and every save that predated the
- *       household subdomain. The fix is additive and defaults safely.
- *     - Header HOUSEHOLD COLLECTIONS section added, explaining the
- *       three-collection requirement and why the two auxiliary arrays
- *       must be declared at the schema layer.
- *     - Removed `rank.locationId` normalization. The current rank shape
- *       has no `locationId` field. Older revisions added a phantom
- *       `locationId: null` to every rank on load. Removed; the field is
- *       no longer declared. Existing saves that still carry it pass
- *       through unchanged (normalization fills defaults, it does not
- *       delete fields).
- *     - Header RANK RECORD FIELDS section added, explaining the
- *       `locationTypeId` vs `locationId` distinction.
+ *       list in normalizeMasterData. (See HOUSEHOLD COLLECTIONS in
+ *       the header for the v6.1 rationale.)
+ *     - Removed `rank.locationId` normalization.
  *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords
  *       to createDefaultMasterDataOverride().data and to the arrayKeys
  *       list in normalizeMasterData.
- *     - _ensureArrayField(char, 'traits') added to normalizeMasterData.
- *       Old saves gain traits: [] on load. No migration version bump;
- *       the field is additive and defaults safely.
+ *     - _ensureArrayField(char, 'traits') added to
+ *       normalizeMasterData. Old saves gain traits: [] on load. No
+ *       migration version bump; the field is additive and defaults
+ *       safely.
  * =============================================================================
  */
 
@@ -208,6 +238,18 @@
 
     // Envelope schema version. See SCHEMA VERSIONING in the file header for
     // the relationship between this and any application data version.
+    //
+    // NOTE ON VERSION BUMPS:
+    //   Additive field declarations (declaring a previously-undeclared
+    //   collection so normalizeMasterData fills it with []) do NOT require
+    //   a version bump. Old saves normalize cleanly: the missing field
+    //   becomes [] the first time the save is loaded. Only a breaking
+    //   shape change (renaming a field, changing an existing field's type,
+    //   removing a field consumers depend on) requires a migration and a
+    //   version bump.
+    //
+    //   The C3 revision declares enterprises and enterpriseTypes. Both
+    //   are additive. SCHEMA_VERSION stays at 3.
     var SCHEMA_VERSION = 3;
 
     // =========================================================================
@@ -339,6 +381,17 @@
                 households: [],
                 householdPositions: [],
                 householdAssignments: [],
+
+                // ─── Industry collections ─────────────────────────────────
+                // Owned by IndustryState; declared here so every fresh
+                // install and every pre-industry save gets the arrays up
+                // front. Prior revisions relied on industry-migration.js
+                // and industry-type-init.js to default them and persist,
+                // producing a "defaults-then-persist on every fresh load"
+                // pattern. See INDUSTRY COLLECTIONS in the module header.
+                enterprises: [],
+                enterpriseTypes: [],
+
                 residences: [],
                 disasters: [],
                 eventLog: [],
@@ -406,12 +459,20 @@
         // canonical verification passes on every fresh install and every
         // save that predates the household subdomain.
         //
+        // enterprises and enterpriseTypes are industry-domain collections.
+        // Declared here so industry-migration.js and industry-type-init.js
+        // do not have to default them on every load, and so a fresh
+        // install produces the same envelope shape as a save that has been
+        // through the industry bootstrap once. See INDUSTRY COLLECTIONS in
+        // the module header.
+        //
         // parentChildEdges, pregnancyRecords, surrogacyArrangements, and
         // adoptionRecords are children/family-owned top-level collections.
         var arrayKeys = [
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
             'governmentTypes', 'governments', 'households',
             'householdPositions', 'householdAssignments',
+            'enterprises', 'enterpriseTypes',
             'residences', 'disasters', 'eventLog',
             'educationalInstitutions', 'parentChildEdges',
             'pregnancyRecords', 'surrogacyArrangements', 'adoptionRecords'
