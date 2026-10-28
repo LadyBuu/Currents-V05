@@ -33,7 +33,7 @@
  *     - IndustryState.getEnterpriseTypeCount()
  *
  *   Diagnostics:
- *     - IndustryState.validateIntegrity() -> { valid, errors }
+ *     - IndustryState.validateIntegrity() -> { valid, errors, checksSkipped }
  *
  *   Internal (commands + bootstrap only):
  *     - IndustryState._getEnterpriseCanonical(id)
@@ -72,6 +72,40 @@
  *   IndustryCommands.persist() and IndustryTypeCommands.persist() call
  *   window.saveMasterData() once per batch.
  *
+ * ACCESSOR CACHE CONTRACT:
+ *   Unlike household-commands.js and residence-system.js, this module does
+ *   NOT call invalidateAccessorCaches() from _syncToMasterData. The reason:
+ *   accessors.js maintains id-map caches for getCharacterById,
+ *   getHouseholdById, getPlaceById, getRankById, etc. It does NOT cache
+ *   enterprises or enterpriseTypes. Writing masterData.data.enterprises and
+ *   masterData.data.enterpriseTypes cannot make any accessor return stale
+ *   data, because no accessor reads those collections.
+ *
+ *   If a future revision adds an accessor for enterprises or enterpriseTypes,
+ *   then _syncToMasterData MUST gain an invalidateAccessorCaches() call
+ *   (with the same try/catch pattern used by household-commands.js and
+ *   residence-system.js). Do not add it now; the cache is unaffected.
+ *
+ * INTEGRITY REPORT SEMANTICS:
+ *   validateIntegrity() returns:
+ *
+ *     {
+ *       valid: boolean,
+ *       errors: string[],
+ *       checksSkipped: string[]   // cross-domain checks skipped because
+ *                                 // the required accessor was absent
+ *     }
+ *
+ *   valid: true means "no integrity issues were detected by the checks
+ *   that could run". It does NOT mean "all checks ran and passed". A
+ *   caller that needs to distinguish the two must inspect checksSkipped.
+ *
+ *   In production, industry-bootstrap.js verifies getCharacterById,
+ *   getPlaceById, and getHouseholdById as required globals, so
+ *   checksSkipped is empty. In a reduced test harness that omits some
+ *   accessors, the corresponding checks are skipped and their names
+ *   appear in checksSkipped.
+ *
  * INITIALISATION CONTRACT:
  *   Hydration is explicit. IndustryBootstrap calls:
  *       IndustryState.hydrateFromMasterData(
@@ -103,12 +137,52 @@
  *   - storage.js:  window.masterData, window.markDataDirty
  *   - industry-constants.js: window.IndustryConstants
  *
+ * DEPENDENCIES (OPTIONAL at load, checked at call time in
+ * validateIntegrity only):
+ *   - accessors.js: getCharacterById, getPlaceById, getHouseholdById
+ *     (used for cross-domain reference checks; absent accessors cause the
+ *     corresponding checks to be skipped and reported in checksSkipped)
+ *
  * DEPENDENCIES (NONE at load):
  *   industry-rules.js is NOT required here — state does not validate
  *   policy. Records are normalised for shape only.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (M3 + D4):
+ *     - validateIntegrity now cross-checks the household enterprise reverse
+ *       index. For every household in masterData.data.households, each
+ *       enterprises[] entry must (a) resolve to an existing enterprise and
+ *       (b) have ownerType === 'household' with ownerId === household.id.
+ *       This surfaces pre-existing reverse-index desyncs written before
+ *       the C2 fix in industry-commands.js (updateEnterprise now reconciles
+ *       the reverse index on owner change). The check is deliberately
+ *       one-directional: it walks households -> enterprises. The reverse
+ *       direction (enterprise.ownerId -> household.enterprises[]) is
+ *       covered by the enterprise-side check already in validateIntegrity
+ *       (ownerType household with ownerId resolves to an existing
+ *       household) plus the household-side check just added.
+ *     - validateIntegrity now returns `checksSkipped: string[]` alongside
+ *       `valid` and `errors`. Prior revisions silently skipped cross-domain
+ *       checks when the corresponding accessor was absent, which made
+ *       `valid: true` ambiguous between "no issues" and "no issues the
+ *       loaded accessors could see". Callers now have the information to
+ *       distinguish the two. See INTEGRITY REPORT SEMANTICS in the header.
+ *     - Header ACCESSOR CACHE CONTRACT section added, documenting why this
+ *       module does NOT need to invalidate the accessor cache (unlike
+ *       household-commands.js and residence-system.js) and warning future
+ *       maintainers not to add the call unless an enterprise accessor is
+ *       introduced.
+ *     - Header INTEGRITY REPORT SEMANTICS section added.
+ *     - Header DEPENDENCIES list updated to list accessors under OPTIONAL
+ *       with a call-time-only note.
+ *     - No behavioural change to any public read, mutation primitive, or
+ *       hydration path.
+ *   Previous revisions:
+ *     - Initial implementation with subscription, hydration, and
+ *       duplicate-id detection.
  * =============================================================================
  */
 
@@ -417,6 +491,9 @@
     //
     // Storage flushes on its own schedule. IndustryCommands.persist() forces
     // a synchronous flush when the caller wants one.
+    //
+    // ACCESSOR CACHE: this write does NOT invalidate the accessor cache.
+    // See ACCESSOR CACHE CONTRACT in the header for the reason.
 
     function _syncToMasterData() {
         _requireMasterData();
@@ -652,28 +729,48 @@
      *   - ownershipType is public|private
      *   - ownerType/ownerId coherence
      *   - typeId points at an existing type (broken reference reported)
-     *   - locationId, when set, points at an existing place (only if
-     *     getPlaceById is available; skipped otherwise)
+     *   - locationId, when set, points at an existing place
      *   - ownerId, when set with ownerType household, points at an existing
-     *     household (only if getHouseholdById is available; skipped otherwise)
+     *     household
      *   - ownerId, when set with ownerType character, points at an existing
-     *     character (only if getCharacterById is available; skipped otherwise)
+     *     character
      *   - ownerId, when set with ownerType settlement|state, points at an
-     *     existing place (only if getPlaceById is available; skipped otherwise)
-     *   - every workerList entry resolves to an existing character (only if
-     *     getCharacterById is available; skipped otherwise)
+     *     existing place
+     *   - every workerList entry resolves to an existing character
      *   - every enterprise type has a valid id, name, category
      *   - no duplicate type ids
      *   - maxWorkers >= 1; baseWorkers <= maxWorkers
      *
-     * Returns { valid: boolean, errors: string[] }. Never throws.
+     *   NEW (M3): cross-check the household enterprise reverse index.
+     *   For every household in masterData.data.households, each
+     *   enterprises[] entry must:
+     *     (a) be a non-empty string id
+     *     (b) resolve to an existing enterprise in this catalogue
+     *     (c) have that enterprise's ownerType === 'household' and
+     *         ownerId === household.id
+     *
+     *   This check is one-directional (households -> enterprises). The
+     *   reverse direction (enterprise.ownerId -> household.enterprises[])
+     *   is covered by the enterprise-side ownerType household + ownerId
+     *   check above, combined with this check.
+     *
+     *   Cross-domain reference checks require the corresponding accessor
+     *   to be loaded. Absent accessors cause the corresponding checks to
+     *   be skipped, and their names appear in `checksSkipped`.
+     *
+     * Returns { valid, errors, checksSkipped }. Never throws.
      */
     function validateIntegrity() {
         if (!_hydrated) {
-            return { valid: false, errors: ['state not hydrated'] };
+            return {
+                valid: false,
+                errors: ['state not hydrated'],
+                checksSkipped: []
+            };
         }
 
         var errors = [];
+        var checksSkipped = [];
 
         var typeIds = {};
         for (var t = 0; t < _enterpriseTypes.length; t++) {
@@ -722,12 +819,35 @@
 
         // Cross-domain reference checks are best-effort. Skip cleanly when
         // the accessor is not loaded; the bootstrap reports their absence.
+        // The skip is recorded in checksSkipped so callers can distinguish
+        // "no issues" from "no issues I could check".
         var getPlaceById = typeof window.getPlaceById === 'function'
             ? window.getPlaceById : null;
         var getCharacterById = typeof window.getCharacterById === 'function'
             ? window.getCharacterById : null;
         var getHouseholdById = typeof window.getHouseholdById === 'function'
             ? window.getHouseholdById : null;
+
+        if (!getPlaceById) checksSkipped.push('place-references');
+        if (!getCharacterById) checksSkipped.push('character-references');
+        if (!getHouseholdById) checksSkipped.push('household-references');
+
+        // Household reverse-index check needs masterData.data.households,
+        // which is a canonical collection but is read directly here (not
+        // via an accessor). Even without getHouseholdById we can walk the
+        // array; the accessor is only needed for the enterprise -> household
+        // direction, not the household -> enterprise direction.
+        var canonicalHouseholds = null;
+        try {
+            if (typeof window.masterData !== 'undefined'
+                && window.masterData
+                && window.masterData.data
+                && Array.isArray(window.masterData.data.households)) {
+                canonicalHouseholds = window.masterData.data.households;
+            }
+        } catch (e) {
+            canonicalHouseholds = null;
+        }
 
         for (var k = 0; k < _enterprises.length; k++) {
             var ee = _enterprises[k];
@@ -777,6 +897,77 @@
             }
         }
 
+        // M3: household reverse-index cross-check.
+        //
+        // For every household's enterprises[] entry, the entry must:
+        //   (a) be a non-empty string id
+        //   (b) resolve to an existing enterprise in this catalogue
+        //   (c) have that enterprise's ownerType === 'household' and
+        //       ownerId === household.id
+        //
+        // If (b) fails, the household's reverse index points at an
+        // enterprise that no longer exists — this is what
+        // HouseholdCommands.deleteHousehold and deleteEnterprise should
+        // have prevented via the delete path, but a botched migration or a
+        // pre-C2 updateEnterprise call (which did not reconcile the
+        // reverse index) can leave it behind.
+        //
+        // If (c) fails, the enterprise exists but its owner is someone
+        // else — the reverse index and the canonical owner field disagree.
+        // This is the exact class of desync that C2 fixes going forward;
+        // this check surfaces pre-existing instances.
+        if (canonicalHouseholds) {
+            for (var hh = 0; hh < canonicalHouseholds.length; hh++) {
+                var household = canonicalHouseholds[hh];
+                if (!household || !_hasId(household.id)) continue;
+                if (!Array.isArray(household.enterprises)) continue;
+
+                for (var ei = 0; ei < household.enterprises.length; ei++) {
+                    var entryId = household.enterprises[ei];
+
+                    if (!_hasId(entryId)) {
+                        errors.push(
+                            'household "' + household.id +
+                            '" enterprises[' + ei +
+                            '] is not a non-empty string id'
+                        );
+                        continue;
+                    }
+
+                    var enterprise = _cache.byId.get(entryId);
+                    if (!enterprise) {
+                        errors.push(
+                            'household "' + household.id +
+                            '" enterprises[] references non-existent ' +
+                            'enterprise "' + entryId + '"'
+                        );
+                        continue;
+                    }
+
+                    if (enterprise.ownerType !== C.OWNER_TYPE.HOUSEHOLD) {
+                        errors.push(
+                            'household "' + household.id +
+                            '" enterprises[] includes enterprise "' +
+                            entryId + '" but that enterprise has ' +
+                            'ownerType "' + enterprise.ownerType + '"'
+                        );
+                        continue;
+                    }
+
+                    if (enterprise.ownerId !== household.id) {
+                        errors.push(
+                            'household "' + household.id +
+                            '" enterprises[] includes enterprise "' +
+                            entryId + '" but that enterprise is owned by ' +
+                            'household "' + enterprise.ownerId + '"'
+                        );
+                    }
+                }
+            }
+        } else {
+            checksSkipped.push('household-reverse-index');
+        }
+
         var seenTypeIds = {};
         for (var ti = 0; ti < _enterpriseTypes.length; ti++) {
             var tt = _enterpriseTypes[ti];
@@ -807,7 +998,11 @@
             }
         }
 
-        return { valid: errors.length === 0, errors: errors };
+        return {
+            valid: errors.length === 0,
+            errors: errors,
+            checksSkipped: checksSkipped
+        };
     }
 
     // =========================================================================
