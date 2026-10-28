@@ -32,6 +32,7 @@
  *   - _commit(eventName, payload) closes every mutation. It:
  *       hydrateFromMasterData (cheap; no cache to rebuild yet)
  *       markDirty
+ *       invalidateAccessorCaches      <-- added (C1)
  *       dispatch CustomEvent
  *     It does NOT save.
  *   - persist() is the ONLY save call site. Callers call it once per
@@ -53,21 +54,31 @@
  *   history-cap threshold lives in household-constants.js. This module
  *   reads them at load; it does NOT redefine them.
  *
- *   This file previously carried inline copies of the residence catalogs
- *   and thresholds. Those copies were byte-identical to the constants
- *   module at every revision they existed. The duplication was documented
- *   as deferred technical debt in household-doc.txt and the risk was
- *   concrete: a policy change in household-constants.js (say, increasing
- *   ESTATE.capacity from 20 to 25) would silently diverge from the
- *   runtime behaviour of this module, which would still use 20. Any
- *   consumer reading HouseholdConstants.RESIDENCE_TYPES.estate.capacity
- *   would show the UI "25" while residence-system.js created estates at
- *   20.
+ *   The inline copies that lived here through v6.0 are gone.
+ *   household-constants.js is a HARD load-time dependency. A missing
+ *   constant is a load-order bug, not a runtime condition; this module
+ *   throws at load if any required catalog is absent.
  *
- *   The inline copies are now gone. household-constants.js is a HARD
- *   load-time dependency. A missing constant is a load-order bug, not a
- *   runtime condition; this module throws at load if any required
- *   catalog is absent.
+ * YEAR RESOLUTION
+ * ---------------
+ *   Every "current year" read in this module goes through
+ *   window.getCurrentYear (the canonical function in time.js), NOT
+ *   window.getCurrentYearSafe (the deprecated alias). The prior
+ *   revision bound _getCurrentYearSafe to the deprecated alias;
+ *   time.js declares the alias as @deprecated, and its eventual
+ *   removal would have been a load-order break here. The migration
+ *   matches the household subsystem's overall direction: only
+ *   household-orchestration.js resolves getCurrentYearSafe directly
+ *   (with a documented fallback to getCurrentYear); every other
+ *   household file goes through the canonical function.
+ *
+ *   _pushHistory accepts an optional explicit year so a multi-year
+ *   simulation driver can tag history entries with the simulated year
+ *   rather than wall-clock now. Prior revisions always used
+ *   getCurrentYearSafe() inside _pushHistory, which meant every
+ *   history entry in a 20-year simulation advance was tagged with the
+ *   wall-clock year. _pushTimeline already accepted an explicit year;
+ *   _pushHistory now matches.
  *
  * CROSS-DOMAIN PRESENCE CHECKS (P3-3)
  * -----------------------------------
@@ -94,6 +105,20 @@
  *   command time, which is the correct semantic for an optional
  *   dependency.
  *
+ * ACCESSOR CACHE CONTRACT
+ * -----------------------
+ *   accessors.js maintains id -> record caches used by getPlaceById and
+ *   getHouseholdById. Every mutation of the residence collection must
+ *   invalidate those caches via window.invalidateAccessorCaches().
+ *   Without this, getPlaceById returns stale residence records after a
+ *   residence write, and downstream consumers (industry, settlement,
+ *   modals) read the pre-mutation shape.
+ *
+ *   The invalidation happens at the memory-write boundary (_commit), not
+ *   at persistence time, because the cache mirrors canonical memory, not
+ *   storage. This mirrors the identical contract in
+ *   character-state.js::_emitChange and household-commands.js::_commit.
+ *
  * REVERSE-INDEX FAILURE POLICY (REVISED)
  * --------------------------------------
  *   The prior version returned reverse-index failures as
@@ -108,10 +133,9 @@
  *     - The failure is recorded in the residence's damageHistory as
  *       a reverse_index_failure entry, so it survives as an audit trail
  *       even if the caller doesn't check the field.
- *     - HouseholdState._diagnostics.getIntegrityReport() (see
- *       household-state.js) now cross-checks household.residenceId
- *       against the canonical residences array. Dangling reverse
- *       indexes surface there.
+ *     - HouseholdState._diagnostics.getIntegrityReport() now cross-checks
+ *       household.residenceId against the canonical residences array.
+ *       Dangling reverse indexes surface there.
  *
  *   The result of these changes: a reverse-index failure is loud (in
  *   the result), persistent (in damageHistory), and detectable (in
@@ -147,7 +171,7 @@
  * also call HouseholdCommands.persist() — one save flushes everything.
  *
  * DEPENDENCIES (required, verified at load):
- *   - getCurrentYearSafe
+ *   - getCurrentYear
  *   - getCharacterById
  *   - getPlaceById
  *   - generateId
@@ -162,7 +186,32 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P3-3):
+ *   Current revision (P3-3 + C1 + year migration):
+ *     - _commit now calls _invalidateAccessorCaches(), matching
+ *       character-state.js::_emitChange and
+ *       household-commands.js::_commit. Without this, getPlaceById
+ *       (used by industry-queries._resolveOwnerName for place-owned
+ *       enterprises, and by industry-state.validateIntegrity's
+ *       place-owner cross-check) returned stale records after a
+ *       residence write.
+ *     - Migrated the load-time dependency from getCurrentYearSafe (the
+ *       @deprecated alias in time.js) to getCurrentYear (the canonical
+ *       function). Every call site was migrated; the local binding is
+ *       renamed _getCurrentYear. No behavioral change (both functions
+ *       are aliases in the current time.js). The migration makes the
+ *       file self-sufficient under time.js's eventual deletion of the
+ *       deprecated alias.
+ *     - _pushHistory now accepts an optional `year` parameter.
+ *       Prior revisions always tagged history entries with
+ *       getCurrentYearSafe(), which meant every entry produced during
+ *       a multi-year simulation advance was tagged with the wall-clock
+ *       year rather than the simulated year. _pushTimeline already
+ *       accepted an explicit year; _pushHistory now matches. Callers
+ *       that have an explicit year in scope pass it; callers that
+ *       don't fall back to the current year.
+ *     - Header ACCESSOR CACHE CONTRACT and YEAR RESOLUTION sections
+ *       added.
+ *   Previous revision (P3-3):
  *     - Replaced the load-time _householdCommandsPresent and
  *       _householdQueriesPresent flags with call-time helpers
  *       _householdCommandsAvailable() and _householdQueriesAvailable().
@@ -171,27 +220,12 @@
  *       existed here as in household-commands.js (P0-3): a load-order
  *       change or a reduced test harness would freeze the flags to
  *       false and break every operation that needed the optional
- *       module. Call-time resolution matches the P0-3 fix and the
- *       DEPENDENCIES header, which already said "checked at call time".
- *     - Every call site that consulted _householdCommandsPresent /
- *       _householdQueriesPresent now calls the corresponding helper.
- *       Roughly 12 call sites across _lookupOwnerName,
- *       setResidenceOwner, setResidenceRenter, assignHouseholdToUnit,
- *       and the disassociation paths.
- *     - Header CROSS-DOMAIN PRESENCE CHECKS (P3-3) section added,
- *       documenting the historical fragility and the fix.
- *     - No behavioural change under the documented load order. The
- *       flags froze to true there; the helpers also return true there.
- *       The difference is a load-order-independent semantics: the
- *       helper's answer depends on the state at command time, not the
- *       state at load time.
+ *       module. Call-time resolution matches the P0-3 fix.
+ *     - Header CROSS-DOMAIN PRESENCE CHECKS (P3-3) section added.
  *   Previous revisions:
- *     - Replaced the inline RESIDENCE_TYPES / RESIDENCE_STATUS /
- *       RENTAL_STATUS / RESIDENCE_CONDITIONS / CONDITION_MULTIPLIER
- *       catalogs and MAX_TIMELINE_ENTRIES / MAX_HISTORY_ENTRIES /
- *       MAX_RENTAL_HISTORY / MAX_RENT_PAYMENTS thresholds with reads
- *       from HouseholdConstants. HouseholdConstants is now a HARD
- *       load-time dependency; a missing catalog throws at load.
+ *     - Replaced the inline residence catalogs and thresholds with
+ *       reads from HouseholdConstants. HouseholdConstants is now a
+ *       HARD load-time dependency.
  *     - reverseIndexFailed is now a HARD field on the result of every
  *       command that touches the household reverse index.
  *     - Reverse-index failures are recorded in the residence's
@@ -199,15 +233,11 @@
  *     - HouseholdState._diagnostics.getIntegrityReport() now
  *       cross-checks both directions of the household↔residence
  *       association.
- *     - Unified vacancy accounting: deleteResidence,
- *       markResidenceVacant, and demolishResidence all write
- *       vacancyHistory entries.
+ *     - Unified vacancy accounting.
  *     - Duplicate-id detection on hydrate throws by default;
  *       _diagnostics.getIntegrityReport inspects without throwing.
- *     - Unit history, name history, timeline, staff, rental, and
- *       ownership history all live on the residence record.
- *     - destroyResidence was renamed demolishResidence for
- *       consistency with demolishUnit.
+ *     - destroyResidence was renamed demolishResidence for consistency
+ *       with demolishUnit.
  * =============================================================================
  */
 
@@ -232,8 +262,8 @@
         return obj;
     }
 
-    var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
-        window.getCurrentYearSafe);
+    var _getCurrentYear = _requireFunction('getCurrentYear',
+        window.getCurrentYear);
     var _getCharacterById = _requireFunction('getCharacterById',
         window.getCharacterById);
     var _getPlaceById = _requireFunction('getPlaceById',
@@ -344,7 +374,7 @@
         return result;
     }
     function _resolveYear(value) {
-        if (value === undefined || value === null) return _getCurrentYearSafe();
+        if (value === undefined || value === null) return _getCurrentYear();
         if (typeof value !== 'number' || !isFinite(value)) return null;
         return value;
     }
@@ -424,6 +454,20 @@
     // =========================================================================
     // 4. COMMIT TAIL + PERSIST BOUNDARY
     // =========================================================================
+    //
+    // _commit runs four steps at every mutation boundary:
+    //   1. hydrate   — ensures shape (cheap; no cache to rebuild)
+    //   2. markDirty — schedules a debounced save via storage
+    //   3. invalidateAccessorCaches — clears the accessor id-map cache so
+    //                                 getPlaceById and getHouseholdById
+    //                                 see the new data
+    //   4. dispatch  — emits the cross-domain CustomEvent
+    //
+    // The accessor cache invalidation matches character-state.js and
+    // household-commands.js. Without it, industry-queries._resolveOwnerName
+    // returns stale residence names after a rename, and
+    // industry-state.validateIntegrity's place-owner cross-check reports
+    // false positives against the pre-mutation residence name.
 
     function _hydrateState() {
         try {
@@ -450,6 +494,32 @@
         }
     }
 
+    /**
+     * Invalidates the accessor cache (accessors.js), if present.
+     *
+     * Called at every mutation boundary, matching
+     * character-state.js::_emitChange and household-commands.js::_commit.
+     * Without this, getPlaceById returns stale residence records after a
+     * residence write.
+     *
+     * Defensive: if accessors.js is not loaded, the call is a no-op.
+     *
+     * @private
+     */
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            try {
+                window.invalidateAccessorCaches();
+            } catch (e) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'ResidenceSystem: invalidateAccessorCaches threw', e
+                    );
+                }
+            }
+        }
+    }
+
     function _dispatch(eventName, payload) {
         if (typeof window.dispatchEvent !== 'function') return;
         if (typeof window.CustomEvent !== 'function') return;
@@ -468,6 +538,7 @@
     function _commit(eventName, payload) {
         _hydrateState();
         _markDirty();
+        _invalidateAccessorCaches();
         if (eventName) _dispatch(eventName, payload);
     }
 
@@ -629,7 +700,7 @@
     function _pushTimeline(r, event) {
         if (!Array.isArray(r.timeline)) r.timeline = [];
         r.timeline.push({
-            year: event.year !== undefined ? event.year : _getCurrentYearSafe(),
+            year: event.year !== undefined ? event.year : _getCurrentYear(),
             type: event.type || 'event',
             details: event.details || '',
             householdName: event.householdName || null,
@@ -641,10 +712,27 @@
         }
     }
 
-    function _pushHistory(r, action, details, actorId) {
+    /**
+     * Records a history entry.
+     *
+     * The `year` parameter is optional. When omitted, the entry is
+     * tagged with the current simulation year. Callers that have an
+     * explicit year in scope (from a caller-supplied argument) MUST
+     * pass it, so a multi-year simulation advance tags history entries
+     * with the simulated year rather than wall-clock now.
+     *
+     * Prior revisions always used getCurrentYearSafe() here, which
+     * meant every entry in a 20-year advance was tagged with the same
+     * wall-clock year.
+     *
+     * @private
+     */
+    function _pushHistory(r, action, details, actorId, year) {
         if (!Array.isArray(r.history)) r.history = [];
         r.history.push({
-            year: _getCurrentYearSafe(),
+            year: (year !== undefined && year !== null)
+                ? year
+                : _getCurrentYear(),
             action: action,
             details: details,
             actorId: actorId || null,
@@ -665,7 +753,7 @@
     function _recordReverseIndexFailure(r, householdId, unitNumber, reason) {
         if (!Array.isArray(r.damageHistory)) r.damageHistory = [];
         r.damageHistory.push({
-            year: _getCurrentYearSafe(),
+            year: _getCurrentYear(),
             type: 'reverse_index_failure',
             householdId: householdId,
             unitNumber: unitNumber,
@@ -929,7 +1017,7 @@
                 'Field "' + key + '" is not an allowed residence field');
         }
 
-        var year = _getCurrentYearSafe();
+        var year = _getCurrentYear();
         var changed = [];
 
         if (updates.locationId !== undefined) {
@@ -1004,7 +1092,7 @@
         var reverseIndexFailed = false;
 
         if (occupied > 0) {
-            var year = _getCurrentYearSafe();
+            var year = _getCurrentYear();
             for (var j = 0; j < r.units.length; j++) {
                 var unit = r.units[j];
                 if (!unit.isDemolished && !unit.isVacant && unit.householdId) {
@@ -1083,14 +1171,15 @@
             }
         }
 
+        var year = _getCurrentYear();
         var unit = _makeUnit(unitNumber);
         unit.notes = options.notes || '';
         r.units.push(unit);
-        r.lastUpdated = _getCurrentYearSafe();
+        r.lastUpdated = year;
 
-        _pushHistory(r, 'unit_added', 'Added Unit ' + unitNumber);
+        _pushHistory(r, 'unit_added', 'Added Unit ' + unitNumber, null, year);
         _pushTimeline(r, {
-            year: _getCurrentYearSafe(),
+            year: year,
             type: 'unit_added',
             details: 'Unit ' + unitNumber + ' was added',
             unitNumber: unitNumber
@@ -1128,13 +1217,13 @@
             return _fail('UNIT_OCCUPIED', 'Unit is occupied');
         }
 
+        var year = _getCurrentYear();
         var reverseIndexFailed = false;
         var reverseIndexReason = null;
 
         if (!unit.isVacant && unit.householdId) {
             var dis = _disassociateHouseholdFromUnit(
-                r, unit, _getCurrentYearSafe(),
-                options.reason || 'Unit removed'
+                r, unit, year, options.reason || 'Unit removed'
             );
             if (!dis.success) {
                 reverseIndexFailed = true;
@@ -1143,13 +1232,14 @@
         }
 
         r.units.splice(idx, 1);
-        r.lastUpdated = _getCurrentYearSafe();
+        r.lastUpdated = year;
 
         _pushHistory(r, 'unit_removed',
             'Removed Unit ' + unitNumber +
-            (options.reason ? ' (' + options.reason + ')' : ''));
+            (options.reason ? ' (' + options.reason + ')' : ''),
+            null, year);
         _pushTimeline(r, {
-            year: _getCurrentYearSafe(),
+            year: year,
             type: 'unit_removed',
             details: 'Unit ' + unitNumber + ' was removed' +
                 (options.reason ? ' (' + options.reason + ')' : ''),
@@ -1253,7 +1343,8 @@
         r.lastUpdated = y;
 
         _pushHistory(r, 'unit_assigned',
-            resolvedHouseholdName + ' assigned to Unit ' + unitNumber);
+            resolvedHouseholdName + ' assigned to Unit ' + unitNumber,
+            null, y);
         _pushTimeline(r, {
             year: y,
             type: 'unit_assigned',
@@ -1316,7 +1407,8 @@
         r.lastUpdated = y;
 
         _pushHistory(r, 'unit_vacated',
-            'Vacated Unit ' + unitNumber + ' (' + householdName + '): ' + reasonText);
+            'Vacated Unit ' + unitNumber + ' (' + householdName + '): ' + reasonText,
+            null, y);
         _pushTimeline(r, {
             year: y,
             type: 'unit_vacated',
@@ -1440,7 +1532,8 @@
         r.lastUpdated = y;
 
         _pushHistory(r, 'unit_demolished',
-            'Demolished Unit ' + unitNumber + ': ' + (reason || 'Demolished'));
+            'Demolished Unit ' + unitNumber + ': ' + (reason || 'Demolished'),
+            null, y);
         _pushTimeline(r, {
             year: y,
             type: 'unit_demolished',
@@ -1502,7 +1595,8 @@
 
         _pushHistory(r, 'marked_vacant',
             'Marked vacant: ' + reasonText +
-            ' (' + affectedHouseholds.length + ' households affected)');
+            ' (' + affectedHouseholds.length + ' households affected)',
+            null, y);
         _pushTimeline(r, {
             year: y,
             type: 'vacant',
@@ -1988,6 +2082,7 @@
         }
         if (!Array.isArray(r.staffPositions)) r.staffPositions = [];
 
+        var year = _getCurrentYear();
         var position = {
             id: _generateId('rspos'),
             name: String(data.name).trim(),
@@ -1996,14 +2091,14 @@
             minSkillLevel: data.minSkillLevel !== undefined
                 ? data.minSkillLevel : 0,
             notes: data.notes || '',
-            createdAt: _getCurrentYearSafe(),
-            updatedAt: _getCurrentYearSafe()
+            createdAt: year,
+            updatedAt: year
         };
         r.staffPositions.push(position);
-        r.lastUpdated = _getCurrentYearSafe();
+        r.lastUpdated = year;
 
         _pushHistory(r, 'staff_position_added',
-            'Added staff position: ' + position.name);
+            'Added staff position: ' + position.name, null, year);
 
         _commit('residenceStaffPositionAdded', {
             residenceId: residenceId,
@@ -2036,11 +2131,13 @@
             var key = allowed[j];
             if (updates[key] !== undefined) pos[key] = updates[key];
         }
-        pos.updatedAt = _getCurrentYearSafe();
-        r.lastUpdated = _getCurrentYearSafe();
+
+        var year = _getCurrentYear();
+        pos.updatedAt = year;
+        r.lastUpdated = year;
 
         _pushHistory(r, 'staff_position_updated',
-            'Updated staff position: ' + pos.name);
+            'Updated staff position: ' + pos.name, null, year);
 
         _commit('residenceStaffPositionUpdated', {
             residenceId: residenceId,
@@ -2085,10 +2182,11 @@
             r.staffAssignments = filtered;
         }
 
-        r.lastUpdated = _getCurrentYearSafe();
+        var year = _getCurrentYear();
+        r.lastUpdated = year;
 
         _pushHistory(r, 'staff_position_removed',
-            'Removed staff position: ' + pos.name);
+            'Removed staff position: ' + pos.name, null, year);
 
         _commit('residenceStaffPositionRemoved', {
             residenceId: residenceId,
@@ -2168,7 +2266,8 @@
         r.lastUpdated = startYear;
 
         _pushHistory(r, 'staff_assigned',
-            assignment.characterName + ' assigned as ' + assignment.title);
+            assignment.characterName + ' assigned as ' + assignment.title,
+            null, startYear);
 
         _commit('residenceStaffAssigned', {
             residenceId: residenceId,
@@ -2236,7 +2335,7 @@
         if (idx === -1) return _fail('NOT_FOUND', 'Assignment not found');
 
         r.staffAssignments.splice(idx, 1);
-        r.lastUpdated = _getCurrentYearSafe();
+        r.lastUpdated = _getCurrentYear();
 
         _commit('residenceStaffAssignmentDeleted', {
             residenceId: residenceId,
@@ -2295,7 +2394,8 @@
 
         _pushHistory(r, 'rehabilitated',
             'Rehabilitated from ' + currentCondition + ' to ' + targetCondition +
-            ' (Cost: ' + cost + ')');
+            ' (Cost: ' + cost + ')',
+            null, y);
         _pushTimeline(r, {
             year: y,
             type: 'rehabilitated',
@@ -2398,7 +2498,7 @@
         _pushVacancyHistory(r, y, 'Residence demolished: ' + r.demolishedReason,
             affectedHouseholds);
 
-        _pushHistory(r, 'demolished', r.demolishedReason);
+        _pushHistory(r, 'demolished', r.demolishedReason, null, y);
         _pushTimeline(r, {
             year: y,
             type: 'demolished',
@@ -2696,7 +2796,7 @@
         var r = _getResidenceRecord(residenceId);
         if (!r) return [];
         var recs = [];
-        var year = _getCurrentYearSafe();
+        var year = _getCurrentYear();
 
         if (r.isDemolished) {
             return [{ priority: 'low', code: 'DEMOLISHED',
