@@ -17,6 +17,23 @@
  *   - Toasts shown here based on command results.
  *   - No icons in confirm/cancel buttons.
  *
+ * DOM SCOPING (C4):
+ *   Every DOM lookup in this file is scoped to the modal's own root element
+ *   via _root(handle) / _byId(handle, id) / _query(handle, selector).
+ *
+ *   Prior revisions used document.getElementById for every field access.
+ *   When two modals were open simultaneously (e.g. enterprise details →
+ *   edit enterprise, or edit → manage workers), document.getElementById
+ *   resolved to the FIRST matching element in the entire document,
+ *   potentially the wrong modal's field. The fix matches the pattern that
+ *   modals-helper.js::rootFrom established for the household modals: every
+ *   lookup goes through handle.element, never document.
+ *
+ *   A null handle is a caller bug (the openModal return value was not
+ *   captured). _root(null) returns null; _byId(null, id) returns null;
+ *   callers that then dereference null see a clear TypeError instead of a
+ *   silent wrong-modal mutation.
+ *
  * PERSISTENCE CONTRACT:
  *   Every onConfirm handler that invokes a mutating command calls
  *   IndustryCommands.persist() (or IndustryTypeCommands.persist()) once,
@@ -47,6 +64,26 @@
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (C4):
+ *     - Every DOM lookup is scoped to the modal's own handle.element via
+ *       _root / _byId / _query. Prior revisions used document.getElementById
+ *       for every field, which produced cross-modal field collisions when
+ *       two modals were open at once (details → edit, edit → workers).
+ *       The fix matches modals-helper.js::rootFrom's contract for the
+ *       household modals.
+ *     - _afterRender now takes the handle and re-resolves the root at
+ *       deferred time, so a modal that was closed before the deferred
+ *       callback fires is a no-op instead of operating on document.
+ *     - _closeThen helper added locally (mirrors
+ *       modals-helper.js::closeThen) so every "close current modal, open
+ *       next modal" transition routes through the same 0-tick teardown.
+ *     - Header DOM SCOPING section added.
+ *     - No behavioural change to any modal entry point. No public
+ *       signatures changed. No rendered HTML changed.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -142,9 +179,61 @@
     // =========================================================================
     // 2. HELPERS
     // =========================================================================
+    //
+    // DOM SCOPE:
+    //   Every helper below is scoped to the modal's handle.element. The
+    //   helpers return null (never document.body) when the handle is
+    //   missing or malformed. A caller that dereferences null sees a clear
+    //   TypeError instead of a silent wrong-modal mutation.
 
-    function _afterRender(fn) {
-        setTimeout(fn, 0);
+    function _root(handle) {
+        if (!handle) return null;
+        if (!handle.element) return null;
+        if (typeof handle.element.querySelector !== 'function') return null;
+        return handle.element;
+    }
+
+    function _byId(handle, id) {
+        var r = _root(handle);
+        if (!r) return null;
+        return r.querySelector('[id="' + id + '"]');
+    }
+
+    function _query(handle, selector) {
+        var r = _root(handle);
+        if (!r) return null;
+        return r.querySelector(selector);
+    }
+
+    /**
+     * Defers a wiring step to the next tick, re-resolving the modal root at
+     * that time. If the modal was closed before the deferred callback
+     * fires, the callback is a no-op instead of operating on document.
+     *
+     * The household modals use the same pattern via
+     * modals-helper.js::onOpen with { defer: true }.
+     */
+    function _afterRender(handle, fn) {
+        setTimeout(function () {
+            var r = _root(handle);
+            if (!r) return;
+            fn(handle, r);
+        }, 0);
+    }
+
+    /**
+     * Closes the top modal, then defers `fn` to the next tick. Matches
+     * modals-helper.js::closeThen. Used to chain modals (details → edit,
+     * edit → workers, worker management → details, etc.) with a single
+     * tick of teardown between them.
+     */
+    function _closeThen(fn) {
+        if (typeof _closeTopModal === 'function') {
+            _closeTopModal();
+        }
+        if (typeof fn === 'function') {
+            setTimeout(fn, 0);
+        }
     }
 
     function _readOptionalInt(element) {
@@ -345,27 +434,41 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Create Enterprise',
             contentHtml: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
             onConfirm: function () {
-                var name = document.getElementById('entName').value.trim();
+                var nameEl = _byId(modal, 'entName');
+                var typeEl = _byId(modal, 'entType');
+                var ownerTypeEl = _byId(modal, 'entOwnerType');
+                var ownerIdEl = _byId(modal, 'entOwnerId');
+                var ownerDisplayEl = _byId(modal, 'entOwnerDisplay');
+                var locationEl = _byId(modal, 'entLocation');
+                var notesEl = _byId(modal, 'entNotes');
+
+                if (!nameEl || !typeEl) {
+                    _showToast('Modal root unavailable', 'error');
+                    return false;
+                }
+
+                var name = nameEl.value.trim();
                 if (!name) {
                     _showToast('Enterprise name is required', 'error');
                     return false;
                 }
 
-                var typeId = document.getElementById('entType').value;
+                var typeId = typeEl.value;
                 if (!typeId) {
                     _showToast('Please select an enterprise type', 'error');
                     return false;
                 }
 
-                var ownerType = document.getElementById('entOwnerType').value;
-                var ownerId = document.getElementById('entOwnerId').value || null;
-                var ownerName = document.getElementById('entOwnerDisplay').value || null;
+                var ownerType = ownerTypeEl ? ownerTypeEl.value : 'none';
+                var ownerId = ownerIdEl ? (ownerIdEl.value || null) : null;
+                var ownerName = ownerDisplayEl
+                    ? (ownerDisplayEl.value || null) : null;
 
                 if (ownerType === 'none') {
                     ownerId = null;
@@ -378,7 +481,7 @@
                     return false;
                 }
 
-                var locationId = document.getElementById('entLocation').value || null;
+                var locationId = locationEl ? (locationEl.value || null) : null;
 
                 var data = {
                     name: name,
@@ -387,26 +490,26 @@
                     ownerId: ownerId,
                     ownerName: ownerName,
                     locationId: locationId,
-                    notes: document.getElementById('entNotes').value,
+                    notes: notesEl ? notesEl.value : '',
                     foundedYear: _getCurrentYear()
                 };
 
-                var wealth = _readOptionalInt(document.getElementById('entWealth'));
+                var wealth = _readOptionalInt(_byId(modal, 'entWealth'));
                 if (wealth !== undefined) data.wealth = wealth;
 
-                var debt = _readOptionalInt(document.getElementById('entDebt'));
+                var debt = _readOptionalInt(_byId(modal, 'entDebt'));
                 if (debt !== undefined) data.debt = debt;
 
-                var maxWorkers = _readOptionalInt(document.getElementById('entMaxWorkers'));
+                var maxWorkers = _readOptionalInt(_byId(modal, 'entMaxWorkers'));
                 if (maxWorkers !== undefined) data.maxWorkers = maxWorkers;
 
-                var income = _readOptionalInt(document.getElementById('entIncome'));
+                var income = _readOptionalInt(_byId(modal, 'entIncome'));
                 if (income !== undefined) data.income = income;
 
-                var expenses = _readOptionalInt(document.getElementById('entExpenses'));
+                var expenses = _readOptionalInt(_byId(modal, 'entExpenses'));
                 if (expenses !== undefined) data.expenses = expenses;
 
-                var wages = _readOptionalInt(document.getElementById('entWages'));
+                var wages = _readOptionalInt(_byId(modal, 'entWages'));
                 if (wages !== undefined) data.wages = wages;
 
                 var result = IC.createEnterprise(data);
@@ -428,15 +531,15 @@
             }
         });
 
-        _afterRender(function () {
-            _wireCreateCategoryFilter();
-            _wireCreateOwnerSelector();
+        _afterRender(modal, function (handle, root) {
+            _wireCreateCategoryFilter(handle);
+            _wireCreateOwnerSelector(handle);
         });
     }
 
-    function _wireCreateCategoryFilter() {
-        var categorySelect = document.getElementById('entCategory');
-        var typeSelect = document.getElementById('entType');
+    function _wireCreateCategoryFilter(handle) {
+        var categorySelect = _byId(handle, 'entCategory');
+        var typeSelect = _byId(handle, 'entType');
         if (!categorySelect || !typeSelect) return;
 
         categorySelect.addEventListener('change', function () {
@@ -455,11 +558,13 @@
         });
     }
 
-    function _wireCreateOwnerSelector() {
-        var selectBtn = document.getElementById('selectOwnerBtn');
-        var clearBtn = document.getElementById('clearOwnerBtn');
-        var ownerTypeSelect = document.getElementById('entOwnerType');
-        if (!selectBtn || !ownerTypeSelect) return;
+    function _wireCreateOwnerSelector(handle) {
+        var selectBtn = _byId(handle, 'selectOwnerBtn');
+        var clearBtn = _byId(handle, 'clearOwnerBtn');
+        var ownerTypeSelect = _byId(handle, 'entOwnerType');
+        var ownerDisplay = _byId(handle, 'entOwnerDisplay');
+        var ownerId = _byId(handle, 'entOwnerId');
+        if (!selectBtn || !ownerTypeSelect || !ownerDisplay || !ownerId) return;
 
         selectBtn.addEventListener('click', function () {
             var ownerType = ownerTypeSelect.value;
@@ -467,18 +572,16 @@
             if (ownerType === 'character') {
                 _openCharSelector('Select Owner', function (character) {
                     if (!character) return;
-                    document.getElementById('entOwnerDisplay').value =
-                        character.name +
+                    ownerDisplay.value = character.name +
                         (character.surname ? ' ' + character.surname : '');
-                    document.getElementById('entOwnerId').value = character.id;
+                    ownerId.value = character.id;
                     _showToast('Selected: ' + character.name, 'success');
                 });
             } else if (ownerType === 'household') {
                 _openHHSelector('Select Household Owner', function (household) {
                     if (!household) return;
-                    document.getElementById('entOwnerDisplay').value =
-                        household.name;
-                    document.getElementById('entOwnerId').value = household.id;
+                    ownerDisplay.value = household.name;
+                    ownerId.value = household.id;
                     _showToast('Selected: ' + household.name, 'success');
                 });
             } else {
@@ -491,8 +594,8 @@
 
         if (clearBtn) {
             clearBtn.addEventListener('click', function () {
-                document.getElementById('entOwnerDisplay').value = '';
-                document.getElementById('entOwnerId').value = '';
+                ownerDisplay.value = '';
+                ownerId.value = '';
                 _showToast('Owner cleared', 'info');
             });
         }
@@ -595,7 +698,7 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Enterprise Details',
             contentHtml: content,
             confirmText: 'Close',
@@ -603,16 +706,17 @@
             onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function () {
-            var editBtn = document.getElementById('editEnterpriseBtn');
+        _afterRender(modal, function (handle) {
+            var editBtn = _byId(handle, 'editEnterpriseBtn');
             if (editBtn) {
                 editBtn.addEventListener('click', function () {
-                    _closeTopModal();
-                    openEditEnterpriseModal(enterpriseId, onSuccess);
+                    _closeThen(function () {
+                        openEditEnterpriseModal(enterpriseId, onSuccess);
+                    });
                 });
             }
 
-            var processBtn = document.getElementById('processYearBtn');
+            var processBtn = _byId(handle, 'processYearBtn');
             if (processBtn) {
                 processBtn.addEventListener('click', function () {
                     var result = IP.processAnnualEnterprise(enterpriseId);
@@ -637,7 +741,7 @@
                 });
             }
 
-            var deleteBtn = document.getElementById('deleteEnterpriseBtn');
+            var deleteBtn = _byId(handle, 'deleteEnterpriseBtn');
             if (deleteBtn) {
                 deleteBtn.addEventListener('click', function () {
                     _confirmDialog(
@@ -661,11 +765,12 @@
                 });
             }
 
-            var manageWorkersBtn = document.getElementById('manageWorkersBtn');
+            var manageWorkersBtn = _byId(handle, 'manageWorkersBtn');
             if (manageWorkersBtn) {
                 manageWorkersBtn.addEventListener('click', function () {
-                    _closeTopModal();
-                    openManageWorkersModal(enterpriseId, onSuccess);
+                    _closeThen(function () {
+                        openManageWorkersModal(enterpriseId, onSuccess);
+                    });
                 });
             }
         });
@@ -743,59 +848,69 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Edit Enterprise: ' + _escapeHtml(enterprise.name),
             contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function () {
+                var nameEl = _byId(modal, 'editName');
+                if (!nameEl) {
+                    _showToast('Modal root unavailable', 'error');
+                    return false;
+                }
+
                 var updates = {};
 
-                var name = document.getElementById('editName').value.trim();
+                var name = nameEl.value.trim();
                 if (!name) {
                     _showToast('Enterprise name is required', 'error');
                     return false;
                 }
                 updates.name = name;
-                updates.status = document.getElementById('editStatus').value;
-                updates.notes = document.getElementById('editNotes').value;
 
-                var wealth = _readRequiredInt(document.getElementById('editWealth'));
+                var statusEl = _byId(modal, 'editStatus');
+                if (statusEl) updates.status = statusEl.value;
+
+                var notesEl = _byId(modal, 'editNotes');
+                if (notesEl) updates.notes = notesEl.value;
+
+                var wealth = _readRequiredInt(_byId(modal, 'editWealth'));
                 if (wealth === undefined) {
                     _showToast('Wealth must be a valid number', 'error');
                     return false;
                 }
                 updates.wealth = wealth;
 
-                var debt = _readRequiredInt(document.getElementById('editDebt'));
+                var debt = _readRequiredInt(_byId(modal, 'editDebt'));
                 if (debt === undefined || debt < 0) {
                     _showToast('Debt must be a non-negative number', 'error');
                     return false;
                 }
                 updates.debt = debt;
 
-                var income = _readRequiredInt(document.getElementById('editIncome'));
+                var income = _readRequiredInt(_byId(modal, 'editIncome'));
                 if (income === undefined) {
                     _showToast('Income must be a valid number', 'error');
                     return false;
                 }
                 updates.income = income;
 
-                var expenses = _readRequiredInt(document.getElementById('editExpenses'));
+                var expenses = _readRequiredInt(_byId(modal, 'editExpenses'));
                 if (expenses === undefined) {
                     _showToast('Expenses must be a valid number', 'error');
                     return false;
                 }
                 updates.expenses = expenses;
 
-                var wages = _readRequiredInt(document.getElementById('editWages'));
+                var wages = _readRequiredInt(_byId(modal, 'editWages'));
                 if (wages === undefined || wages < 0) {
                     _showToast('Wages must be a non-negative number', 'error');
                     return false;
                 }
                 updates.wages = wages;
 
-                var maxWorkers = _readRequiredInt(document.getElementById('editMaxWorkers'));
+                var maxWorkers = _readRequiredInt(_byId(modal, 'editMaxWorkers'));
                 if (maxWorkers === undefined || maxWorkers < 1) {
                     _showToast('Max workers must be at least 1', 'error');
                     return false;
@@ -883,7 +998,7 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Manage Workers: ' + _escapeHtml(enterprise.name),
             contentHtml: content,
             confirmText: 'Close',
@@ -891,13 +1006,13 @@
             onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function () {
+        _afterRender(modal, function (handle) {
             var existingWorkerIds = {};
             for (var i = 0; i < vm.workers.length; i++) {
                 existingWorkerIds[vm.workers[i].id] = true;
             }
 
-            var container = document.getElementById('workerListContainer');
+            var container = _byId(handle, 'workerListContainer');
             if (container) {
                 container.addEventListener('click', function (event) {
                     var btn = event.target.closest('[data-action]');
@@ -921,8 +1036,10 @@
                                 if (result.success) {
                                     if (!_persistOrToastError()) return;
                                     _showToast('Worker removed', 'info');
-                                    _closeTopModal();
-                                    openManageWorkersModal(enterpriseId, onSuccess);
+                                    _closeThen(function () {
+                                        openManageWorkersModal(
+                                            enterpriseId, onSuccess);
+                                    });
                                 } else {
                                     _showToast(
                                         'Failed to remove worker: ' +
@@ -945,8 +1062,10 @@
                         if (result2.success) {
                             if (!_persistOrToastError()) return;
                             _showToast('Wage updated', 'success');
-                            _closeTopModal();
-                            openManageWorkersModal(enterpriseId, onSuccess);
+                            _closeThen(function () {
+                                openManageWorkersModal(
+                                    enterpriseId, onSuccess);
+                            });
                         } else {
                             _showToast(
                                 'Failed to update wage: ' + result2.reason,
@@ -957,8 +1076,10 @@
                 });
             }
 
-            var selectBtn = document.getElementById('selectWorkerBtn');
-            if (selectBtn) {
+            var selectBtn = _byId(handle, 'selectWorkerBtn');
+            var addWorkerDisplay = _byId(handle, 'addWorkerDisplay');
+            var addWorkerId = _byId(handle, 'addWorkerId');
+            if (selectBtn && addWorkerDisplay && addWorkerId) {
                 selectBtn.addEventListener('click', function () {
                     _openCharSelector('Select Worker', function (character) {
                         if (!character) return;
@@ -968,35 +1089,31 @@
                             );
                             return;
                         }
-                        document.getElementById('addWorkerDisplay').value =
-                            character.name +
+                        addWorkerDisplay.value = character.name +
                             (character.surname ? ' ' + character.surname : '');
-                        document.getElementById('addWorkerId').value =
-                            character.id;
+                        addWorkerId.value = character.id;
                         _showToast('Selected: ' + character.name, 'success');
                     });
                 });
             }
 
-            var clearBtn = document.getElementById('clearWorkerBtn');
-            if (clearBtn) {
+            var clearBtn = _byId(handle, 'clearWorkerBtn');
+            if (clearBtn && addWorkerDisplay && addWorkerId) {
                 clearBtn.addEventListener('click', function () {
-                    document.getElementById('addWorkerDisplay').value = '';
-                    document.getElementById('addWorkerId').value = '';
+                    addWorkerDisplay.value = '';
+                    addWorkerId.value = '';
                 });
             }
 
-            var addBtn = document.getElementById('addWorkerBtn');
-            if (addBtn) {
+            var addBtn = _byId(handle, 'addWorkerBtn');
+            if (addBtn && addWorkerId) {
                 addBtn.addEventListener('click', function () {
-                    var workerId = document.getElementById('addWorkerId').value;
+                    var workerId = addWorkerId.value;
                     if (!workerId) {
                         _showToast('Please select a worker first', 'error');
                         return;
                     }
-                    var wage = _readRequiredInt(
-                        document.getElementById('addWorkerWage')
-                    );
+                    var wage = _readRequiredInt(_byId(handle, 'addWorkerWage'));
                     if (wage === undefined || wage < 0) {
                         _showToast('Please enter a valid wage', 'error');
                         return;
@@ -1008,8 +1125,9 @@
                     if (result.success) {
                         if (!_persistOrToastError()) return;
                         _showToast('Worker added', 'success');
-                        _closeTopModal();
-                        openManageWorkersModal(enterpriseId, onSuccess);
+                        _closeThen(function () {
+                            openManageWorkersModal(enterpriseId, onSuccess);
+                        });
                     } else {
                         _showToast(
                             'Failed to add worker: ' + result.reason, 'error'
@@ -1074,7 +1192,7 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Manage Enterprise Types',
             contentHtml: content,
             confirmText: 'Close',
@@ -1082,29 +1200,33 @@
             onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function () {
-            var addBtn = document.getElementById('addTypeBtn');
+        _afterRender(modal, function (handle, root) {
+            var addBtn = _byId(handle, 'addTypeBtn');
             if (addBtn) {
                 addBtn.addEventListener('click', function () {
-                    _closeTopModal();
-                    openCreateEnterpriseTypeModal(function () {
-                        openManageEnterpriseTypesModal(onSuccess);
+                    _closeThen(function () {
+                        openCreateEnterpriseTypeModal(function () {
+                            openManageEnterpriseTypesModal(onSuccess);
+                        });
                     });
                 });
             }
 
-            var modalRoot = document.querySelector('.modal-content')
-                || document.body;
-            modalRoot.addEventListener('click', function (event) {
+            // Delegated click handler on the modal root, not document.body.
+            // Prior revisions attached to document.body, which meant a
+            // click in ANY other modal would fire this handler if the
+            // selector happened to match.
+            root.addEventListener('click', function (event) {
                 var btn = event.target.closest('[data-action]');
                 if (!btn) return;
                 var action = btn.dataset.action;
                 var typeId = btn.dataset.typeId;
 
                 if (action === 'edit-type') {
-                    _closeTopModal();
-                    openEditEnterpriseTypeModal(typeId, function () {
-                        openManageEnterpriseTypesModal(onSuccess);
+                    _closeThen(function () {
+                        openEditEnterpriseTypeModal(typeId, function () {
+                            openManageEnterpriseTypesModal(onSuccess);
+                        });
                     });
                 } else if (action === 'delete-type') {
                     var type = IT.getEnterpriseTypeById(typeId);
@@ -1118,8 +1240,9 @@
                             if (result.success) {
                                 if (!_persistTypesOrToastError()) return;
                                 _showToast('Type deleted', 'info');
-                                _closeTopModal();
-                                openManageEnterpriseTypesModal(onSuccess);
+                                _closeThen(function () {
+                                    openManageEnterpriseTypesModal(onSuccess);
+                                });
                             } else {
                                 _showToast(
                                     'Failed to delete type: ' + result.reason,
@@ -1201,19 +1324,26 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Add Enterprise Type',
             contentHtml: content,
             confirmText: 'Create Type',
             cancelText: 'Cancel',
             onConfirm: function () {
-                var name = document.getElementById('newTypeName').value.trim();
+                var nameEl = _byId(modal, 'newTypeName');
+                var categoryEl = _byId(modal, 'newTypeCategory');
+                if (!nameEl || !categoryEl) {
+                    _showToast('Modal root unavailable', 'error');
+                    return false;
+                }
+
+                var name = nameEl.value.trim();
                 if (!name) {
                     _showToast('Type name is required', 'error');
                     return false;
                 }
 
-                var category = document.getElementById('newTypeCategory').value;
+                var category = categoryEl.value;
                 if (!category) {
                     _showToast('Category is required', 'error');
                     return false;
@@ -1222,14 +1352,17 @@
                 var data = {
                     name: name,
                     category: category,
-                    baseIncome: _readRequiredInt(document.getElementById('newTypeIncome')),
-                    baseExpenses: _readRequiredInt(document.getElementById('newTypeExpenses')),
-                    baseWages: _readRequiredInt(document.getElementById('newTypeWages')),
-                    baseWorkers: _readRequiredInt(document.getElementById('newTypeWorkers')),
-                    maxWorkers: _readRequiredInt(document.getElementById('newTypeMaxWorkers')),
-                    baseCost: _readRequiredInt(document.getElementById('newTypeCost')),
-                    description: document.getElementById('newTypeDescription').value.trim()
+                    baseIncome: _readRequiredInt(_byId(modal, 'newTypeIncome')),
+                    baseExpenses: _readRequiredInt(_byId(modal, 'newTypeExpenses')),
+                    baseWages: _readRequiredInt(_byId(modal, 'newTypeWages')),
+                    baseWorkers: _readRequiredInt(_byId(modal, 'newTypeWorkers')),
+                    maxWorkers: _readRequiredInt(_byId(modal, 'newTypeMaxWorkers')),
+                    baseCost: _readRequiredInt(_byId(modal, 'newTypeCost')),
+                    description: _readRequiredInt ? '' : ''
                 };
+
+                var descEl = _byId(modal, 'newTypeDescription');
+                if (descEl) data.description = descEl.value.trim();
 
                 var result = ITC.createEnterpriseType(data);
                 if (!result.success) {
@@ -1321,23 +1454,30 @@
             </div>
         `;
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Edit Enterprise Type: ' + _escapeHtml(type.name),
             contentHtml: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
             onConfirm: function () {
+                var nameEl = _byId(modal, 'editTypeName');
+                var categoryEl = _byId(modal, 'editTypeCategory');
+                if (!nameEl || !categoryEl) {
+                    _showToast('Modal root unavailable', 'error');
+                    return false;
+                }
+
                 var updates = {};
 
-                var name = document.getElementById('editTypeName').value.trim();
+                var name = nameEl.value.trim();
                 if (!name) {
                     _showToast('Type name is required', 'error');
                     return false;
                 }
                 updates.name = name;
-                updates.category = document.getElementById('editTypeCategory').value;
+                updates.category = categoryEl.value;
 
-                var baseIncome = _readRequiredInt(document.getElementById('editTypeIncome'));
+                var baseIncome = _readRequiredInt(_byId(modal, 'editTypeIncome'));
                 if (baseIncome === undefined || baseIncome < 0) {
                     _showToast(
                         'Base income must be a non-negative number', 'error'
@@ -1346,7 +1486,7 @@
                 }
                 updates.baseIncome = baseIncome;
 
-                var baseExpenses = _readRequiredInt(document.getElementById('editTypeExpenses'));
+                var baseExpenses = _readRequiredInt(_byId(modal, 'editTypeExpenses'));
                 if (baseExpenses === undefined || baseExpenses < 0) {
                     _showToast(
                         'Base expenses must be a non-negative number', 'error'
@@ -1355,7 +1495,7 @@
                 }
                 updates.baseExpenses = baseExpenses;
 
-                var baseWages = _readRequiredInt(document.getElementById('editTypeWages'));
+                var baseWages = _readRequiredInt(_byId(modal, 'editTypeWages'));
                 if (baseWages === undefined || baseWages < 0) {
                     _showToast(
                         'Base wages must be a non-negative number', 'error'
@@ -1364,7 +1504,7 @@
                 }
                 updates.baseWages = baseWages;
 
-                var baseWorkers = _readRequiredInt(document.getElementById('editTypeWorkers'));
+                var baseWorkers = _readRequiredInt(_byId(modal, 'editTypeWorkers'));
                 if (baseWorkers === undefined || baseWorkers < 0) {
                     _showToast(
                         'Base workers must be a non-negative number', 'error'
@@ -1373,14 +1513,14 @@
                 }
                 updates.baseWorkers = baseWorkers;
 
-                var maxWorkers = _readRequiredInt(document.getElementById('editTypeMaxWorkers'));
+                var maxWorkers = _readRequiredInt(_byId(modal, 'editTypeMaxWorkers'));
                 if (maxWorkers === undefined || maxWorkers < 1) {
                     _showToast('Max workers must be at least 1', 'error');
                     return false;
                 }
                 updates.maxWorkers = maxWorkers;
 
-                var baseCost = _readRequiredInt(document.getElementById('editTypeCost'));
+                var baseCost = _readRequiredInt(_byId(modal, 'editTypeCost'));
                 if (baseCost === undefined || baseCost < 0) {
                     _showToast(
                         'Base cost must be a non-negative number', 'error'
@@ -1389,7 +1529,8 @@
                 }
                 updates.baseCost = baseCost;
 
-                updates.description = document.getElementById('editTypeDescription').value.trim();
+                var descEl = _byId(modal, 'editTypeDescription');
+                if (descEl) updates.description = descEl.value.trim();
 
                 var result = ITC.updateEnterpriseType(typeId, updates);
                 if (!result.success) {
@@ -1443,7 +1584,7 @@
         var content = '<div style="padding: 8px; max-height: 400px; overflow-y: auto;" id="enterpriseListContainer">' +
             rowsHtml + '</div>';
 
-        _openModal({
+        var modal = _openModal({
             titleHtml: 'Enterprises',
             contentHtml: content,
             confirmText: 'Close',
@@ -1451,20 +1592,21 @@
             onConfirm: function () { /* Close is the only action. */ }
         });
 
-        _afterRender(function () {
-            var container = document.getElementById('enterpriseListContainer');
+        _afterRender(modal, function (handle) {
+            var container = _byId(handle, 'enterpriseListContainer');
             if (!container) return;
 
             container.addEventListener('click', function (event) {
                 var row = event.target.closest('[data-enterprise-id]');
                 if (!row) return;
                 var id = row.dataset.enterpriseId;
-                _closeTopModal();
-                if (onSelect) {
-                    onSelect(id);
-                } else {
-                    openEnterpriseDetailsModal(id);
-                }
+                _closeThen(function () {
+                    if (onSelect) {
+                        onSelect(id);
+                    } else {
+                        openEnterpriseDetailsModal(id);
+                    }
+                });
             });
         });
     }
