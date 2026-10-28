@@ -1,3 +1,4 @@
+// js/households/residence-system.js
 /**
  * =============================================================================
  * STILL WATERS - RESIDENCE SYSTEM (residence-system.js)
@@ -55,18 +56,43 @@
  *   This file previously carried inline copies of the residence catalogs
  *   and thresholds. Those copies were byte-identical to the constants
  *   module at every revision they existed. The duplication was documented
- *   as deferred technical debt in household-doc.txt §REMAINING
- *   ARCHITECTURAL DEBT #2 and #7, and the risk was concrete: a policy
- *   change in household-constants.js (say, increasing ESTATE.capacity
- *   from 20 to 25) would silently diverge from the runtime behaviour of
- *   this module, which would still use 20. Any consumer reading
- *   HouseholdConstants.RESIDENCE_TYPES.estate.capacity would show the
- *   UI "25" while residence-system.js created estates at 20.
+ *   as deferred technical debt in household-doc.txt and the risk was
+ *   concrete: a policy change in household-constants.js (say, increasing
+ *   ESTATE.capacity from 20 to 25) would silently diverge from the
+ *   runtime behaviour of this module, which would still use 20. Any
+ *   consumer reading HouseholdConstants.RESIDENCE_TYPES.estate.capacity
+ *   would show the UI "25" while residence-system.js created estates at
+ *   20.
  *
  *   The inline copies are now gone. household-constants.js is a HARD
  *   load-time dependency. A missing constant is a load-order bug, not a
  *   runtime condition; this module throws at load if any required
  *   catalog is absent.
+ *
+ * CROSS-DOMAIN PRESENCE CHECKS (P3-3)
+ * -----------------------------------
+ *   HouseholdCommands and HouseholdQueries are OPTIONAL dependencies of
+ *   this module. They are resolved at CALL time via
+ *   _householdCommandsAvailable() and _householdQueriesAvailable(), not
+ *   at load time via frozen boolean flags.
+ *
+ *   Prior revisions froze the flags at load:
+ *
+ *     var _householdCommandsPresent = typeof window.HouseholdCommands !== 'undefined' && ...
+ *
+ *   Under the documented HTML load order, residence-system.js loads
+ *   AFTER household-commands.js and household-queries.js, so the flags
+ *   freeze to true and no command fails. But the same fragility exists
+ *   here as was fixed in household-commands.js (P0-3): a load-order
+ *   change in either direction — or a test harness that loads
+ *   residence-system.js in isolation — would freeze the flags
+ *   incorrectly and break every operation that needs the optional
+ *   module.
+ *
+ *   The fix: call-time resolution. The command's behavior now depends
+ *   only on whether HouseholdCommands / HouseholdQueries are present at
+ *   command time, which is the correct semantic for an optional
+ *   dependency.
  *
  * REVERSE-INDEX FAILURE POLICY (REVISED)
  * --------------------------------------
@@ -136,37 +162,46 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (P3-3):
+ *     - Replaced the load-time _householdCommandsPresent and
+ *       _householdQueriesPresent flags with call-time helpers
+ *       _householdCommandsAvailable() and _householdQueriesAvailable().
+ *       Under the documented load order the flags froze correctly
+ *       (true), so there was no live bug — but the same fragility
+ *       existed here as in household-commands.js (P0-3): a load-order
+ *       change or a reduced test harness would freeze the flags to
+ *       false and break every operation that needed the optional
+ *       module. Call-time resolution matches the P0-3 fix and the
+ *       DEPENDENCIES header, which already said "checked at call time".
+ *     - Every call site that consulted _householdCommandsPresent /
+ *       _householdQueriesPresent now calls the corresponding helper.
+ *       Roughly 12 call sites across _lookupOwnerName,
+ *       setResidenceOwner, setResidenceRenter, assignHouseholdToUnit,
+ *       and the disassociation paths.
+ *     - Header CROSS-DOMAIN PRESENCE CHECKS (P3-3) section added,
+ *       documenting the historical fragility and the fix.
+ *     - No behavioural change under the documented load order. The
+ *       flags froze to true there; the helpers also return true there.
+ *       The difference is a load-order-independent semantics: the
+ *       helper's answer depends on the state at command time, not the
+ *       state at load time.
+ *   Previous revisions:
  *     - Replaced the inline RESIDENCE_TYPES / RESIDENCE_STATUS /
  *       RENTAL_STATUS / RESIDENCE_CONDITIONS / CONDITION_MULTIPLIER
  *       catalogs and MAX_TIMELINE_ENTRIES / MAX_HISTORY_ENTRIES /
  *       MAX_RENTAL_HISTORY / MAX_RENT_PAYMENTS thresholds with reads
  *       from HouseholdConstants. HouseholdConstants is now a HARD
  *       load-time dependency; a missing catalog throws at load.
- *       See CONSTANTS OWNERSHIP in the header.
- *     - Exports re-reference the same frozen objects as
- *       HouseholdConstants, so a consumer that reads
- *       window.ResidenceSystem.RESIDENCE_TYPES and a consumer that
- *       reads window.HouseholdConstants.RESIDENCE_TYPES see the SAME
- *       frozen catalog. No divergence surface.
- *     - getResidenceTypes() and getResidenceConditions() now return
- *       copies derived from HouseholdConstants; the previous inline
- *       shapes are byte-identical.
- *     - No behavioural change.
- *   Previous revision:
  *     - reverseIndexFailed is now a HARD field on the result of every
- *       command that touches the household reverse index
- *       (assignHouseholdToUnit, markUnitVacant, markResidenceVacant,
- *       demolishResidence, deleteResidence).
+ *       command that touches the household reverse index.
  *     - Reverse-index failures are recorded in the residence's
- *       damageHistory as reverse_index_failure entries (persistent
- *       audit trail).
+ *       damageHistory as reverse_index_failure entries.
  *     - HouseholdState._diagnostics.getIntegrityReport() now
  *       cross-checks both directions of the household↔residence
  *       association.
- *     - Unified vacancy accounting: deleteResidence, markResidenceVacant,
- *       and demolishResidence all write vacancyHistory entries.
- *   Previous revisions:
+ *     - Unified vacancy accounting: deleteResidence,
+ *       markResidenceVacant, and demolishResidence all write
+ *       vacancyHistory entries.
  *     - Duplicate-id detection on hydrate throws by default;
  *       _diagnostics.getIntegrityReport inspects without throwing.
  *     - Unit history, name history, timeline, staff, rental, and
@@ -264,11 +299,31 @@
     var MAX_RENTAL_HISTORY = C.THRESHOLDS.MAX_RENTAL_HISTORY;
     var MAX_RENT_PAYMENTS = C.THRESHOLDS.MAX_RENT_PAYMENTS;
 
-    // Optional deps — recorded at load
-    var _householdCommandsPresent = typeof window.HouseholdCommands !== 'undefined' &&
-        window.HouseholdCommands !== null;
-    var _householdQueriesPresent = typeof window.HouseholdQueries !== 'undefined' &&
-        window.HouseholdQueries !== null;
+    // =========================================================================
+    // 1b. CROSS-DOMAIN PRESENCE CHECKS (call time)
+    // =========================================================================
+    //
+    // HouseholdCommands and HouseholdQueries are OPTIONAL dependencies.
+    // Resolve them at CALL time, not load time. See CROSS-DOMAIN PRESENCE
+    // CHECKS (P3-3) in the module header for the historical fragility
+    // this fixes.
+    //
+    // The P0-3 fix in household-commands.js established this pattern for
+    // its own optional ResidenceSystem / IndustryCommands dependencies.
+    // This module now uses the same pattern for its own optional
+    // HouseholdCommands / HouseholdQueries dependencies. Both are
+    // consistent: the answer to "is the optional dependency available?"
+    // depends on state at command time, not state at load time.
+
+    function _householdCommandsAvailable() {
+        return typeof window.HouseholdCommands !== 'undefined'
+            && window.HouseholdCommands !== null;
+    }
+
+    function _householdQueriesAvailable() {
+        return typeof window.HouseholdQueries !== 'undefined'
+            && window.HouseholdQueries !== null;
+    }
 
     // =========================================================================
     // 2. RESULT HELPERS
@@ -646,9 +701,12 @@
     // =========================================================================
     // 9. HOUSEHOLD REVERSE INDEX (via HouseholdCommands)
     // =========================================================================
+    //
+    // Presence checks are CALL-TIME via _householdCommandsAvailable().
+    // See CROSS-DOMAIN PRESENCE CHECKS (P3-3) in the header.
 
     function _associateHouseholdReverseIndex(householdId, r, unitNumber, year, notes) {
-        if (!_householdCommandsPresent) {
+        if (!_householdCommandsAvailable()) {
             return _fail('HOUSEHOLD_COMMANDS_UNAVAILABLE',
                 'HouseholdCommands not available');
         }
@@ -667,7 +725,7 @@
     }
 
     function _disassociateHouseholdReverseIndex(householdId, r, unitNumber, year, reason) {
-        if (!_householdCommandsPresent) {
+        if (!_householdCommandsAvailable()) {
             return _fail('HOUSEHOLD_COMMANDS_UNAVAILABLE',
                 'HouseholdCommands not available');
         }
@@ -1130,13 +1188,13 @@
         if (!unit.isVacant) return _fail('UNIT_OCCUPIED', 'Unit is already occupied');
 
         var household = null;
-        if (_householdQueriesPresent) {
+        if (_householdQueriesAvailable()) {
             var hq = window.HouseholdQueries;
             if (typeof hq.getHousehold === 'function') {
                 household = hq.getHousehold(householdId);
             }
         }
-        if (!household && _householdQueriesPresent) {
+        if (!household && _householdQueriesAvailable()) {
             return _fail('HOUSEHOLD_NOT_FOUND', 'Household not found');
         }
 
@@ -1565,7 +1623,7 @@
 
     function _lookupOwnerName(type, id) {
         if (type === 'household') {
-            if (_householdQueriesPresent) {
+            if (_householdQueriesAvailable()) {
                 var hq = window.HouseholdQueries;
                 if (typeof hq.getHousehold === 'function') {
                     var h = hq.getHousehold(id);
@@ -1593,7 +1651,7 @@
         }
 
         if (ownerType === 'household') {
-            if (_householdQueriesPresent) {
+            if (_householdQueriesAvailable()) {
                 var hq = window.HouseholdQueries;
                 if (typeof hq.getHousehold === 'function' &&
                     !hq.getHousehold(ownerId)) {
@@ -1679,7 +1737,7 @@
                 'Renter type must be household or character');
         }
         if (renterType === 'household') {
-            if (_householdQueriesPresent) {
+            if (_householdQueriesAvailable()) {
                 var hq = window.HouseholdQueries;
                 if (typeof hq.getHousehold === 'function' &&
                     !hq.getHousehold(renterId)) {
@@ -2804,7 +2862,7 @@
                 return { ok: false, reason: e.message };
             }
         },
-        getVersion: function() { return 8; }
+        getVersion: function() { return 9; }
     };
 
     // =========================================================================
