@@ -18,11 +18,37 @@
  * Contract:
  *   - Reads via RoleQueries.
  *   - No recursion guards.
- *   - No timers. Handlers attach in openModal's onOpen callback.
+ *   - No timers. Handlers attach in openModal's onMount callback.
  *   - No fallback APIs. Required modules are checked at load time.
- *   - No global document.querySelectorAll. Everything is scoped to the
- *     modal's own list container.
+ *   - No global document.querySelectorAll / getElementById. Everything is
+ *     scoped to the modal element passed to onMount.
  *   - Icons come from Icons via Icons[name].
+ *
+ * MODAL LIFECYCLE
+ *
+ *   Every modal uses onMount (from modals-core.js) to attach handlers.
+ *   onMount runs synchronously during openModal, before the caller
+ *   regains control, so there is no setTimeout-based binding. Element
+ *   lookups inside onMount and item handlers are scoped to the modal
+ *   element (modalEl.querySelector(...)), not to document. This prevents
+ *   cross-modal ID collisions when one modal opens over another.
+ *
+ * PREVIOUS REVISION (FIXED IN THIS ONE)
+ *
+ *   Every call site previously used `title:` / `content:`. modals-core.js
+ *   reads ONLY `titleHtml:` / `contentHtml:`; it does not read `title` or
+ *   `content`. Result: the picker rendered with "Modal" as the title and
+ *   empty body — no roles listed, nothing to click, no callback. This is
+ *   the same class of bug that modals-apprenticeship.js had; both were
+ *   fixed in the same pass.
+ *
+ *   The mount hook was also written as `onOpen`, which is a compatibility
+ *   alias in modals-core.js. It works, but the canonical name is
+ *   `onMount`. Switched to `onMount` so this file does not depend on the
+ *   alias staying.
+ *
+ *   Element lookups inside the mount hook went through document
+ *   (document.getElementById). Scoped to the modal element instead.
  *
  * Public API:
  *
@@ -69,6 +95,7 @@
         ['closeTopModal', 'modals-core.js'],
         ['_escapeHtml',   'formatting.js'],
         ['_showToast',    'ui.js'],
+        ['Icons',         'icons.js'],
         ['RoleConstants', 'role-constants.js'],
         ['RoleState',     'role-state.js'],
         ['RoleQueries',   'role-queries.js']
@@ -110,11 +137,6 @@
         var cats = RS.getCategories();
         var c = cats[categoryId];
         return c ? c.name : RC.UNCATEGORIZED_NAME;
-    }
-
-    function _readValue(id) {
-        var el = document.getElementById(id);
-        return el ? el.value : '';
     }
 
     // =========================================================================
@@ -312,14 +334,16 @@
             '<div id="roleSelList" style="max-height:350px;overflow-y:auto;"></div>';
 
         window.openModal({
-            title: title,
-            content: content,
+            titleHtml: _esc(title),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onOpen: function () {
-                var listEl = document.getElementById('roleSelList');
-                var searchEl = document.getElementById('roleSelSearch');
-                var categoryEl = document.getElementById('roleSelCategory');
+            onMount: function (modalEl) {
+                // Scoped to the modal element — not document. See MODAL
+                // LIFECYCLE in the module header.
+                var listEl = modalEl.querySelector('#roleSelList');
+                var searchEl = modalEl.querySelector('#roleSelSearch');
+                var categoryEl = modalEl.querySelector('#roleSelCategory');
 
                 function refresh() {
                     var search = searchEl ? searchEl.value.trim() : '';
@@ -329,6 +353,7 @@
                 }
 
                 function attachItemHandlers(container) {
+                    if (!container) return;
                     var items = container.querySelectorAll('.role-select-item');
                     for (var i = 0; i < items.length; i++) {
                         (function (item) {
