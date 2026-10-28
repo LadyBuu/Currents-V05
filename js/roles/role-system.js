@@ -37,19 +37,32 @@
  *   To find remaining consumers:  grep -rn "window\.getRoles\b" js/
  *   (repeat for each alias; delete the alias when the count reaches zero.)
  *
- * KNOWN GAPS (documented, not fixed here):
- *   modals-roles.js calls two RoleQueries functions that are not yet
- *   exported by role-queries.js:
+ * LOAD ORDER (IMPORTANT)
  *
- *     RQ.getOccupiedLocationIds(getLocation)
- *     RQ.getEligibleCharactersForRole(roleId, options)
+ *   This file aliases window.getRoles = RQ.getRoles, where RQ is
+ *   role-queries.js. role-queries.js defends against that aliasing by
+ *   capturing window.getRoles at its own load time (before this file
+ *   overwrites it) and using the captured reference internally. That
+ *   capture only works if role-queries.js loads BEFORE role-system.js.
  *
- *   Both are used by the assign-role modal. Until they exist, that modal
- *   fails at runtime. They are NOT aliased here, because aliasing an
- *   undefined function would move the failure earlier without making
- *   anything work. The fix belongs in role-queries.js.
+ *   If load order ever flips — role-system.js before role-queries.js —
+ *   the capture in role-queries.js will resolve to this file's alias,
+ *   which is RoleQueries.getRoles itself, and any call to getRoles() will
+ *   recurse until the stack overflows.
  *
- *   This shim does not paper over them.
+ *   The documented load order in roles-docs.txt places role-queries.js
+ *   before role-system.js. Any future change to that order must also
+ *   remove or rewrite the aliasing below. There is no runtime guard for
+ *   this; the capture-and-document is the guard.
+ *
+ * KNOWN GAPS
+ *
+ *   None. Every alias installed here resolves to a real function exported
+ *   by its canonical module. An earlier revision of this header listed
+ *   RoleQueries.getOccupiedLocationIds and
+ *   RoleQueries.getEligibleCharactersForRole as missing; both are now
+ *   exported by role-queries.js and the modals-roles.js assign-role
+ *   modal that consumes them works.
  *
  * =============================================================================
  */
@@ -299,10 +312,12 @@
     // migrate to one of those two.
 
     // NOTE: window.getOccupiedLocationIds and window.getEligibleCharactersForRole
-    // are NOT aliased because RoleQueries does not yet export them. They
-    // are called directly on RQ by modals-roles.js, and that modal will
-    // fail at runtime until role-queries.js exports them. Documented in
-    // the module header under KNOWN GAPS.
+    // are NOT aliased because RoleQueries now exports them but they are not
+    // part of the pre-refactor global API. modals-roles.js calls them
+    // directly on RQ. Adding globals for them would create a second surface
+    // to keep in sync for no compatibility benefit — no caller in the tree
+    // referenced window.getOccupiedLocationIds or
+    // window.getEligibleCharactersForRole.
 
     // =========================================================================
     // 7. DELETED ALIASES (intentionally not reinstated)
@@ -332,9 +347,7 @@
         window.console.debug(
             'role-system.js: legacy aliases installed (compatibility shim). ' +
             'New code should use RoleConstants / RoleState / RoleQueries / ' +
-            'RoleCommands / SkillUtils directly. ' +
-            'Known gaps: RQ.getOccupiedLocationIds, ' +
-            'RQ.getEligibleCharactersForRole (see modals-roles.js).'
+            'RoleCommands / SkillUtils directly.'
         );
     }
 
