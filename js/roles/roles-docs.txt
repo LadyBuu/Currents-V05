@@ -1,16 +1,8 @@
-
----
-
-## File 2 — `js/systems/roles/roles-doc.md`
-
-Replaces `roles-docs.txt`.
-
-```markdown
 # Still Waters — Role System
 
 **Location:** `js/systems/roles/`
-**Last regenerated from:** the code in this folder after the ownership
-refactor.
+**Last regenerated from:** the code in this folder after the ownership refactor
+and the state/persistence fixes.
 
 ---
 
@@ -43,7 +35,7 @@ João."
 |------|---------|
 | `role-constants.js` | Categories, salary policy, literacy vocabulary, teaching thresholds (mirrored from `SkillUtils`). Pure constants. |
 | `role-rules.js` | Pure policy: specialization membership validation, and future role-domain validity rules. No state access. |
-| `role-state.js` | The authoritative in-memory role collection. Derived indexes, subscriptions, persistence sync. |
+| `role-state.js` | The authoritative in-memory role collection. Derived indexes, subscriptions, persistence sync, cross-tab reload, clone-on-read. |
 | `role-queries.js` | Read-only projections: role collections, categories, character-role joins, statistics. |
 | `role-commands.js` | Write operations: role CRUD, category management, specialization catalogue, character assignment, salary, literacy. |
 | `role-system.js` | Compatibility shim. One-way aliases onto the canonical modules for legacy callers. |
