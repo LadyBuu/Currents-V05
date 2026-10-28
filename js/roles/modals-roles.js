@@ -13,22 +13,45 @@
  *   - Never re-derives eligibility, salary, literacy, or skill rules.
  *     Those live in the command/query/constant layers.
  *   - No recursion guards. Modal handlers are synchronous event callbacks.
- *   - No timers. Handlers are attached in the modal's onOpen callback.
+ *   - No timers. Handlers are attached in the modal's onMount callback.
  *   - No fallback APIs. Required modules are checked at load time.
  *   - Icons come from Icons via Icons[name]. No inline Unicode glyphs.
  *   - NO EMOJIS anywhere in this file.
  *
- * PERSISTENCE:
+ * MODAL LIFECYCLE
+ *
+ *   Every modal uses onMount (from modals-core.js) to attach handlers.
+ *   onMount runs synchronously during openModal, before the caller
+ *   regains control, so there is no setTimeout-based binding. This
+ *   matches modals-education.js and modals-character.js.
+ *
+ *   Element lookups inside onMount and onConfirm are scoped to the
+ *   modal element (modalEl.querySelector(...)), not to document. This
+ *   prevents cross-modal ID collisions when a modal opens over another.
+ *
+ * PERSISTENCE
+ *
  *   Every write modal calls RoleCommands.persist() exactly once, after
- *   a successful command. The role domain no longer flushes on every
- *   mutation; the modal is the batch boundary for a single user action.
- *   A persist failure is reported via toast but does not roll back the
- *   in-memory write.
+ *   a successful command. RoleState writes masterData.data.roles and
+ *   masterData.data.roleCategories on every mutation and marks the data
+ *   dirty; persist() is the FLUSH. A persist failure is reported via
+ *   toast but does not roll back the in-memory write.
+ *
+ * BULK ASSIGNMENT RESULT SHAPE
+ *
+ *   RoleCommands.bulkAssignRole returns
+ *   { success: boolean, assignedCount, failedCount, errors }.
+ *
+ *   success is true iff every requested character was assigned without
+ *   error. assignedCount is the number of successes. This modal reads
+ *   assignedCount for the success message and failedCount for the
+ *   partial-failure warning. It does NOT read .success for the "did
+ *   anything succeed" check; assignedCount === 0 is that check.
  *
  * DEPENDENCIES (must be loaded first):
  *   - modals-core.js        (openModal, closeTopModal)
- *   - formatting.js         (_escapeHtml)
- *   - ui.js                 (_showToast)
+ *   - formatting.js         (escapeHtml)
+ *   - ui.js                 (_showToast / showToast)
  *   - icons.js              (Icons)
  *   - skill-utils.js        (SkillUtils)
  *   - role-constants.js     (RoleConstants)
@@ -36,7 +59,7 @@
  *   - role-queries.js       (RoleQueries)
  *   - role-commands.js      (RoleCommands)
  *   - accessors.js          (getCharacterById, getCharacters, getCurrentLocation)
- *   - time.js               (getCurrentYearSafe, calculateAge)
+ *   - time.js               (getCurrentYear, calculateAge)
  *
  * =============================================================================
  */
@@ -51,8 +74,7 @@
     var REQUIRED = [
         ['openModal',         'modals-core.js'],
         ['closeTopModal',     'modals-core.js'],
-        ['_escapeHtml',       'formatting.js'],
-        ['_showToast',        'ui.js'],
+        ['escapeHtml',        'formatting.js'],
         ['Icons',             'icons.js'],
         ['SkillUtils',        'skill-utils.js'],
         ['RoleConstants',     'role-constants.js'],
@@ -82,7 +104,7 @@
     // =========================================================================
 
     function _esc(v) {
-        return window._escapeHtml(v == null ? '' : String(v));
+        return window.escapeHtml(v == null ? '' : String(v));
     }
 
     function _icon(name) {
@@ -95,6 +117,14 @@
     function _iconSpan(name) {
         return '<span style="display:inline-flex;align-items:center;vertical-align:middle;">' +
             _icon(name) + '</span>';
+    }
+
+    function _showToast(message, type) {
+        if (typeof window._showToast === 'function') {
+            window._showToast(message, type);
+        } else if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
+        }
     }
 
     function _categoryLabel(categoryId) {
@@ -133,6 +163,13 @@
         return window.calculateAge(birthYear, false, null);
     }
 
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('modals-roles.js requires getCurrentYear (time.js)');
+        }
+        return window.getCurrentYear();
+    }
+
     /**
      * Runs RoleCommands.persist() and toasts a warning if the disk write
      * failed. The in-memory write is already done; this only reports
@@ -141,7 +178,7 @@
     function _persistAndWarn(successMessage) {
         var persistResult = RCMD.persist();
         if (!persistResult.success) {
-            window._showToast(
+            _showToast(
                 'Change saved in memory, but disk save failed: ' +
                 (persistResult.reason || 'unknown'),
                 'warning'
@@ -149,13 +186,38 @@
             return false;
         }
         if (successMessage) {
-            window._showToast(successMessage, 'success');
+            _showToast(successMessage, 'success');
         }
         return true;
     }
 
+    function _readInput(modalEl, id) {
+        var el = modalEl.querySelector('#' + id);
+        return el ? el.value : '';
+    }
+
+    function _readChecked(modalEl, id) {
+        var el = modalEl.querySelector('#' + id);
+        return el ? el.checked === true : false;
+    }
+
+    function _readNumber(modalEl, id, fallback) {
+        var raw = _readInput(modalEl, id);
+        if (raw === '') return fallback;
+        var n = Number(raw);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    function _confirmThen(message, onConfirm) {
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(message, onConfirm);
+        } else if (window.confirm(message)) {
+            onConfirm();
+        }
+    }
+
     // =========================================================================
-    // 3. SHARED SMALL BUILDERS
+    // 3. SHARED BUILDERS
     // =========================================================================
 
     function _buildCategoryOptions(selectedId) {
@@ -199,31 +261,6 @@
                 _esc(RC.LITERACY_LEVEL_NAMES[lvl]) + '</option>';
         }
         return html;
-    }
-
-    function _readFormValue(id) {
-        var el = document.getElementById(id);
-        return el ? el.value : '';
-    }
-
-    function _readFormChecked(id) {
-        var el = document.getElementById(id);
-        return el ? el.checked === true : false;
-    }
-
-    function _readFormNumber(id, fallback) {
-        var raw = _readFormValue(id);
-        if (raw === '') return fallback;
-        var n = Number(raw);
-        return Number.isFinite(n) ? n : fallback;
-    }
-
-    function _confirmThen(message, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, onConfirm);
-        } else if (window.confirm(message)) {
-            onConfirm();
-        }
     }
 
     // =========================================================================
@@ -284,24 +321,24 @@
             '</div>';
 
         window.openModal({
-            title: 'Create New Role',
-            content: content,
+            titleHtml: 'Create New Role',
+            contentHtml: content,
             confirmText: 'Create Role',
             cancelText: 'Cancel',
-            onOpen: function () {
-                var nameInput = document.getElementById('newRoleName');
+            onMount: function (modalEl) {
+                var nameInput = modalEl.querySelector('#newRoleName');
                 if (nameInput) nameInput.focus();
 
-                var checkbox = document.getElementById('newRoleRequiresLiteracy');
-                var container = document.getElementById('newRoleLiteracyContainer');
+                var checkbox = modalEl.querySelector('#newRoleRequiresLiteracy');
+                var container = modalEl.querySelector('#newRoleLiteracyContainer');
                 if (checkbox && container) {
                     checkbox.addEventListener('change', function () {
                         container.style.display = this.checked ? 'block' : 'none';
                     });
                 }
 
-                var categorySelect = document.getElementById('newRoleCategory');
-                var salaryInput = document.getElementById('newRoleSalary');
+                var categorySelect = modalEl.querySelector('#newRoleCategory');
+                var salaryInput = modalEl.querySelector('#newRoleSalary');
                 if (categorySelect && salaryInput) {
                     categorySelect.addEventListener('change', function () {
                         var cat = this.value;
@@ -312,35 +349,33 @@
                     });
                 }
             },
-            onConfirm: function () {
-                var requires = _readFormChecked('newRoleRequiresLiteracy');
-                var literacyLevel = requires ? _readFormValue('newRoleLiteracyLevel') : null;
-                var specsRaw = _readFormValue('newRoleSpecs');
+            onConfirm: function (modalEl) {
+                var requires = _readChecked(modalEl, 'newRoleRequiresLiteracy');
+                var literacyLevel = requires ? _readInput(modalEl, 'newRoleLiteracyLevel') : null;
+                var specsRaw = _readInput(modalEl, 'newRoleSpecs');
                 var specializations = specsRaw
                     ? specsRaw.split(',').map(function (s) { return s.trim(); }).filter(Boolean)
                     : [];
 
                 var result = RCMD.createRole({
-                    name: _readFormValue('newRoleName'),
-                    category: _readFormValue('newRoleCategory'),
-                    genderRestriction: _readFormValue('newRoleGender'),
-                    icon: _readFormValue('newRoleIcon') || 'CIRCLE',
-                    baseSalary: _readFormNumber('newRoleSalary', RC.DEFAULT_SALARY),
+                    name: _readInput(modalEl, 'newRoleName'),
+                    category: _readInput(modalEl, 'newRoleCategory'),
+                    genderRestriction: _readInput(modalEl, 'newRoleGender'),
+                    icon: _readInput(modalEl, 'newRoleIcon') || 'CIRCLE',
+                    baseSalary: _readNumber(modalEl, 'newRoleSalary', RC.DEFAULT_SALARY),
                     requiresLiteracy: requires,
                     literacyLevel: literacyLevel,
                     specializations: specializations,
-                    notes: _readFormValue('newRoleNotes')
+                    notes: _readInput(modalEl, 'newRoleNotes')
                 });
 
                 if (!result.success) {
-                    window._showToast(result.reason || 'Failed to create role', 'error');
+                    _showToast(result.reason || 'Failed to create role', 'error');
                     return false;
                 }
 
                 _persistAndWarn('Role "' + result.role.name + '" created');
-                window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess(result.role.id);
-                return true;
             }
         });
     }
@@ -352,7 +387,7 @@
     function openEditRoleModal(roleId, onSuccess) {
         var role = RS.getRole(roleId);
         if (!role) {
-            window._showToast('Role not found', 'error');
+            _showToast('Role not found', 'error');
             return;
         }
 
@@ -424,25 +459,25 @@
             '</div>';
 
         window.openModal({
-            title: 'Edit Role: ' + role.name,
-            content: content,
+            titleHtml: 'Edit Role: ' + _esc(role.name),
+            contentHtml: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
-            onOpen: function () {
-                var nameInput = document.getElementById('editRoleName');
+            onMount: function (modalEl) {
+                var nameInput = modalEl.querySelector('#editRoleName');
                 if (nameInput) nameInput.focus();
 
-                var checkbox = document.getElementById('editRoleRequiresLiteracy');
-                var container = document.getElementById('editRoleLiteracyContainer');
+                var checkbox = modalEl.querySelector('#editRoleRequiresLiteracy');
+                var container = modalEl.querySelector('#editRoleLiteracyContainer');
                 if (checkbox && container) {
                     checkbox.addEventListener('change', function () {
                         container.style.display = this.checked ? 'block' : 'none';
                     });
                 }
 
-                var specsList = document.getElementById('editSpecsList');
-                var newSpecInput = document.getElementById('editNewSpec');
-                var addSpecBtn = document.getElementById('editAddSpecBtn');
+                var specsList = modalEl.querySelector('#editSpecsList');
+                var newSpecInput = modalEl.querySelector('#editNewSpec');
+                var addSpecBtn = modalEl.querySelector('#editAddSpecBtn');
 
                 function refreshSpecs() {
                     renderSpecsInto(specsList);
@@ -464,7 +499,7 @@
                     var value = newSpecInput.value.trim();
                     if (!value) return;
                     if (draftSpecs.indexOf(value) !== -1) {
-                        window._showToast('Specialization already present', 'warning');
+                        _showToast('Specialization already present', 'warning');
                         return;
                     }
                     draftSpecs.push(value);
@@ -484,31 +519,29 @@
                     refreshSpecs();
                 }
             },
-            onConfirm: function () {
-                var requires = _readFormChecked('editRoleRequiresLiteracy');
-                var literacyLevel = requires ? _readFormValue('editRoleLiteracyLevel') : null;
+            onConfirm: function (modalEl) {
+                var requires = _readChecked(modalEl, 'editRoleRequiresLiteracy');
+                var literacyLevel = requires ? _readInput(modalEl, 'editRoleLiteracyLevel') : null;
 
                 var result = RCMD.updateRole(roleId, {
-                    name: _readFormValue('editRoleName'),
-                    category: _readFormValue('editRoleCategory'),
-                    genderRestriction: _readFormValue('editRoleGender'),
-                    icon: _readFormValue('editRoleIcon') || 'CIRCLE',
-                    baseSalary: _readFormNumber('editRoleSalary', role.baseSalary),
+                    name: _readInput(modalEl, 'editRoleName'),
+                    category: _readInput(modalEl, 'editRoleCategory'),
+                    genderRestriction: _readInput(modalEl, 'editRoleGender'),
+                    icon: _readInput(modalEl, 'editRoleIcon') || 'CIRCLE',
+                    baseSalary: _readNumber(modalEl, 'editRoleSalary', role.baseSalary),
                     requiresLiteracy: requires,
                     literacyLevel: literacyLevel,
                     specializations: draftSpecs.slice(),
-                    notes: _readFormValue('editRoleNotes')
+                    notes: _readInput(modalEl, 'editRoleNotes')
                 });
 
                 if (!result.success) {
-                    window._showToast(result.reason || 'Failed to update role', 'error');
+                    _showToast(result.reason || 'Failed to update role', 'error');
                     return false;
                 }
 
                 _persistAndWarn('Role "' + result.role.name + '" updated');
-                window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
-                return true;
             }
         });
     }
@@ -520,7 +553,7 @@
     function openDeleteRoleModal(roleId, onSuccess) {
         var role = RS.getRole(roleId);
         if (!role) {
-            window._showToast('Role not found', 'error');
+            _showToast('Role not found', 'error');
             return;
         }
 
@@ -549,13 +582,13 @@
             '</div>';
 
         window.openModal({
-            title: 'Delete Role: ' + role.name,
-            content: content,
+            titleHtml: 'Delete Role: ' + _esc(role.name),
+            contentHtml: content,
             confirmText: 'Delete Permanently',
             cancelText: 'Cancel',
-            onConfirm: function () {
+            onConfirm: function (modalEl) {
                 var removeAssignments = holderCount > 0
-                    ? _readFormChecked('deleteRemoveAssignments')
+                    ? _readChecked(modalEl, 'deleteRemoveAssignments')
                     : false;
 
                 var result = RCMD.deleteRole(roleId, {
@@ -563,14 +596,12 @@
                 });
 
                 if (!result.success) {
-                    window._showToast(result.reason || 'Failed to delete role', 'error');
+                    _showToast(result.reason || 'Failed to delete role', 'error');
                     return false;
                 }
 
                 _persistAndWarn('Role "' + role.name + '" deleted');
-                window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
-                return true;
             }
         });
     }
@@ -582,7 +613,7 @@
     function _openAssignModal(roleId, mode, onSuccess) {
         var role = RS.getRole(roleId);
         if (!role) {
-            window._showToast('Role not found', 'error');
+            _showToast('Role not found', 'error');
             return;
         }
 
@@ -647,9 +678,9 @@
             '</div>';
         }
 
-        function renderList() {
+        function renderList(modalEl) {
             var eligible = currentEligible();
-            var container = document.getElementById('assignList');
+            var container = modalEl.querySelector('#assignList');
             if (!container) return;
 
             if (eligible.length === 0) {
@@ -670,7 +701,7 @@
                         var characterId = card.dataset.characterId;
                         if (mode === 'single') {
                             selectedIds = [characterId];
-                            refreshSelectionStyles(container);
+                            refreshSelectionStyles(modalEl);
                             return;
                         }
                         if (e.target && e.target.classList &&
@@ -682,7 +713,7 @@
                             if (cb) cb.checked = next;
                             toggleSelection(characterId, next);
                         }
-                        refreshSelectionStyles(container);
+                        refreshSelectionStyles(modalEl);
                     });
                 })(cards[j]);
             }
@@ -692,20 +723,23 @@
             var idx = selectedIds.indexOf(characterId);
             if (add && idx === -1) selectedIds.push(characterId);
             if (!add && idx !== -1) selectedIds.splice(idx, 1);
+            updateCounter();
+        }
+
+        function updateCounter() {
             var counter = document.getElementById('assignSelectedCount');
             if (counter) counter.textContent = String(selectedIds.length);
         }
 
-        function refreshSelectionStyles(container) {
-            var cards = container.querySelectorAll('.assign-card');
+        function refreshSelectionStyles(modalEl) {
+            var cards = modalEl.querySelectorAll('.assign-card');
             for (var i = 0; i < cards.length; i++) {
                 var card = cards[i];
                 var selected = isSelected(card.dataset.characterId);
                 card.style.background = selected ? 'rgba(var(--accent-rgb),0.2)' : 'var(--bg3)';
                 card.style.borderColor = selected ? 'var(--accent)' : 'var(--border)';
             }
-            var counter = document.getElementById('assignSelectedCount');
-            if (counter) counter.textContent = String(selectedIds.length);
+            updateCounter();
         }
 
         var heading = mode === 'bulk'
@@ -772,37 +806,37 @@
             '</div>';
 
         window.openModal({
-            title: heading,
-            content: content,
+            titleHtml: heading,
+            contentHtml: content,
             confirmText: mode === 'bulk' ? 'Assign to Selected' : 'Assign',
             cancelText: 'Cancel',
-            onOpen: function () {
-                var searchInput = document.getElementById('assignSearch');
+            onMount: function (modalEl) {
+                var searchInput = modalEl.querySelector('#assignSearch');
                 if (searchInput) {
                     searchInput.addEventListener('input', function () {
                         filters.search = this.value;
-                        renderList();
+                        renderList(modalEl);
                     });
                 }
 
-                var genderSelect = document.getElementById('assignGender');
+                var genderSelect = modalEl.querySelector('#assignGender');
                 if (genderSelect) {
                     genderSelect.addEventListener('change', function () {
                         filters.gender = this.value;
-                        renderList();
+                        renderList(modalEl);
                     });
                 }
 
-                var locationSelect = document.getElementById('assignLocation');
+                var locationSelect = modalEl.querySelector('#assignLocation');
                 if (locationSelect) {
                     locationSelect.addEventListener('change', function () {
                         filters.locationId = this.value;
-                        renderList();
+                        renderList(modalEl);
                     });
                 }
 
-                var slider = document.getElementById('assignSkill');
-                var display = document.getElementById('assignSkillDisplay');
+                var slider = modalEl.querySelector('#assignSkill');
+                var display = modalEl.querySelector('#assignSkillDisplay');
                 if (slider && display) {
                     slider.addEventListener('input', function () {
                         var v = parseInt(this.value, 10) || 0;
@@ -811,34 +845,34 @@
                 }
 
                 if (mode === 'bulk') {
-                    var selectAll = document.getElementById('assignSelectAll');
+                    var selectAll = modalEl.querySelector('#assignSelectAll');
                     if (selectAll) {
                         selectAll.addEventListener('click', function () {
                             var eligible = currentEligible();
                             selectedIds = eligible.map(function (c) { return c.id; });
-                            renderList();
+                            renderList(modalEl);
                         });
                     }
-                    var selectNone = document.getElementById('assignSelectNone');
+                    var selectNone = modalEl.querySelector('#assignSelectNone');
                     if (selectNone) {
                         selectNone.addEventListener('click', function () {
                             selectedIds = [];
-                            renderList();
+                            renderList(modalEl);
                         });
                     }
                 }
 
-                renderList();
+                renderList(modalEl);
             },
-            onConfirm: function () {
+            onConfirm: function (modalEl) {
                 if (selectedIds.length === 0) {
-                    window._showToast('Select at least one character', 'error');
+                    _showToast('Select at least one character', 'error');
                     return false;
                 }
 
-                var skill = parseInt(_readFormValue('assignSkill'), 10);
+                var skill = parseInt(_readInput(modalEl, 'assignSkill'), 10);
                 if (!Number.isFinite(skill)) skill = 0;
-                var notes = _readFormValue('assignNotes');
+                var notes = _readInput(modalEl, 'assignNotes');
 
                 if (mode === 'single') {
                     var result = RCMD.assignRoleToCharacter(selectedIds[0], roleId, {
@@ -846,7 +880,7 @@
                         notes: notes
                     });
                     if (!result.success) {
-                        window._showToast(result.reason || 'Failed to assign role', 'error');
+                        _showToast(result.reason || 'Failed to assign role', 'error');
                         return false;
                     }
                     var character = window.getCharacterById(selectedIds[0]);
@@ -857,20 +891,26 @@
                         skillLevel: skill,
                         notes: notes
                     });
-                    if (bulk.success === 0) {
-                        window._showToast('No assignments succeeded', 'error');
+
+                    // bulkAssignRole returns
+                    //   { success: boolean, assignedCount, failedCount, errors }
+                    // assignedCount === 0 is the "nothing succeeded" check.
+                    // bulk.success tells us whether every assignment
+                    // succeeded; we use it only to decide if we should
+                    // surface partial-failure detail.
+                    if (bulk.assignedCount === 0) {
+                        _showToast('No assignments succeeded', 'error');
                         return false;
                     }
-                    var msg = 'Assigned ' + role.name + ' to ' + bulk.success + ' character(s)';
-                    if (bulk.failed > 0) {
-                        msg += '; ' + bulk.failed + ' failed';
+                    var msg = 'Assigned ' + role.name + ' to ' +
+                        bulk.assignedCount + ' character(s)';
+                    if (bulk.failedCount > 0) {
+                        msg += '; ' + bulk.failedCount + ' failed';
                     }
                     _persistAndWarn(msg);
                 }
 
-                window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
-                return true;
             }
         });
     }
@@ -890,7 +930,7 @@
     function openViewCharactersWithRoleModal(roleId) {
         var role = RS.getRole(roleId);
         if (!role) {
-            window._showToast('Role not found', 'error');
+            _showToast('Role not found', 'error');
             return;
         }
 
@@ -947,13 +987,12 @@
             '</div>';
 
         window.openModal({
-            title: 'Characters with ' + role.name,
-            content: content,
+            titleHtml: 'Characters with ' + _esc(role.name),
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
             onConfirm: function () {
-                window.closeTopModal();
-                return true;
+                // Nothing to do; the modal closes itself on confirm.
             }
         });
     }
@@ -966,13 +1005,13 @@
         var role = RS.getRole(roleId);
         var character = window.getCharacterById(characterId);
         if (!role || !character) {
-            window._showToast('Role or character not found', 'error');
+            _showToast('Role or character not found', 'error');
             return;
         }
 
         var current = RQ.getSkillLevel(characterId, roleId);
         if (current === null) {
-            window._showToast('Character does not hold this role', 'error');
+            _showToast('Character does not hold this role', 'error');
             return;
         }
 
@@ -994,13 +1033,14 @@
             '</div>';
 
         window.openModal({
-            title: 'Edit Skill: ' + _displayName(character) + ' (' + role.name + ')',
-            content: content,
+            titleHtml: 'Edit Skill: ' + _esc(_displayName(character)) +
+                ' (' + _esc(role.name) + ')',
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onOpen: function () {
-                var slider = document.getElementById('editSkillSlider');
-                var display = document.getElementById('editSkillDisplay');
+            onMount: function (modalEl) {
+                var slider = modalEl.querySelector('#editSkillSlider');
+                var display = modalEl.querySelector('#editSkillDisplay');
                 if (slider && display) {
                     slider.addEventListener('input', function () {
                         var v = parseInt(this.value, 10) || 0;
@@ -1008,20 +1048,18 @@
                     });
                 }
             },
-            onConfirm: function () {
-                var value = parseInt(_readFormValue('editSkillSlider'), 10);
+            onConfirm: function (modalEl) {
+                var value = parseInt(_readInput(modalEl, 'editSkillSlider'), 10);
                 if (!Number.isFinite(value)) value = 0;
 
                 var result = RCMD.updateCharacterSkill(characterId, roleId, value);
                 if (!result.success) {
-                    window._showToast(result.reason || 'Failed to update skill', 'error');
+                    _showToast(result.reason || 'Failed to update skill', 'error');
                     return false;
                 }
 
                 _persistAndWarn('Skill updated to ' + value);
-                window.closeTopModal();
                 if (typeof onSuccess === 'function') onSuccess();
-                return true;
             }
         });
     }
@@ -1044,75 +1082,75 @@
                 'Select a role to continue.' +
             '</div>';
 
-        function renderResults() {
-            var search = _readFormValue('listRoleSearch');
-            var category = _readFormValue('listRoleCategory');
-            var container = document.getElementById('listRoleResults');
-            if (!container) return;
-
-            var roles = RQ.getRoles({
-                search: search,
-                category: category === 'all' ? null : category
-            });
-
-            if (roles.length === 0) {
-                container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--dim);">No roles match your filters.</div>';
-                return;
-            }
-
-            var html = '';
-            for (var i = 0; i < roles.length; i++) {
-                var r = roles[i];
-                var stats = RQ.getRoleStatistics(r.id);
-                html += '<div class="list-role-item" data-role-id="' + _esc(r.id) + '" style="' +
-                        'display:flex;justify-content:space-between;align-items:center;' +
-                        'padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:4px;cursor:pointer;">' +
-                    '<div>' +
-                        '<span>' + _esc(r.name) + '</span>' +
-                        '<span style="font-size:0.55rem;color:var(--dim);margin-left:8px;">' +
-                            _esc(_categoryLabel(r.category)) +
-                        '</span>' +
-                    '</div>' +
-                    '<div style="font-size:0.55rem;color:var(--accent);">' +
-                        stats.totalCharacters + ' holder(s)' +
-                    '</div>' +
-                '</div>';
-            }
-            container.innerHTML = html;
-
-            var items = container.querySelectorAll('.list-role-item');
-            for (var j = 0; j < items.length; j++) {
-                (function (item) {
-                    item.addEventListener('click', function () {
-                        var roleId = item.dataset.roleId;
-                        var role = RS.getRole(roleId);
-                        if (!role) return;
-                        window.closeTopModal();
-                        if (typeof onSelect === 'function') onSelect(role);
-                    });
-                })(items[j]);
-            }
-        }
-
         window.openModal({
-            title: 'Select Role',
-            content: content,
+            titleHtml: 'Select Role',
+            contentHtml: content,
             confirmText: 'Close',
             cancelText: '',
-            onOpen: function () {
-                var searchInput = document.getElementById('listRoleSearch');
+            onMount: function (modalEl) {
+                var searchInput = modalEl.querySelector('#listRoleSearch');
+                var categorySelect = modalEl.querySelector('#listRoleCategory');
+                var container = modalEl.querySelector('#listRoleResults');
+
+                function renderResults() {
+                    var search = searchInput ? searchInput.value : '';
+                    var category = categorySelect ? categorySelect.value : 'all';
+                    if (!container) return;
+
+                    var roles = RQ.getRoles({
+                        search: search,
+                        category: category === 'all' ? null : category
+                    });
+
+                    if (roles.length === 0) {
+                        container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--dim);">No roles match your filters.</div>';
+                        return;
+                    }
+
+                    var html = '';
+                    for (var i = 0; i < roles.length; i++) {
+                        var r = roles[i];
+                        var stats = RQ.getRoleStatistics(r.id);
+                        html += '<div class="list-role-item" data-role-id="' + _esc(r.id) + '" style="' +
+                                'display:flex;justify-content:space-between;align-items:center;' +
+                                'padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:4px;cursor:pointer;">' +
+                            '<div>' +
+                                '<span>' + _esc(r.name) + '</span>' +
+                                '<span style="font-size:0.55rem;color:var(--dim);margin-left:8px;">' +
+                                    _esc(_categoryLabel(r.category)) +
+                                '</span>' +
+                            '</div>' +
+                            '<div style="font-size:0.55rem;color:var(--accent);">' +
+                                stats.totalCharacters + ' holder(s)' +
+                            '</div>' +
+                        '</div>';
+                    }
+                    container.innerHTML = html;
+
+                    var items = container.querySelectorAll('.list-role-item');
+                    for (var j = 0; j < items.length; j++) {
+                        (function (item) {
+                            item.addEventListener('click', function () {
+                                var roleId = item.dataset.roleId;
+                                var role = RS.getRole(roleId);
+                                if (!role) return;
+                                window.closeTopModal();
+                                if (typeof onSelect === 'function') onSelect(role);
+                            });
+                        })(items[j]);
+                    }
+                }
+
                 if (searchInput) {
                     searchInput.addEventListener('input', renderResults);
                 }
-                var categorySelect = document.getElementById('listRoleCategory');
                 if (categorySelect) {
                     categorySelect.addEventListener('change', renderResults);
                 }
                 renderResults();
             },
             onConfirm: function () {
-                window.closeTopModal();
-                return true;
+                // Close action; no selection.
             }
         });
     }
@@ -1122,7 +1160,7 @@
     // =========================================================================
 
     function openCategoryManagerModal(onSuccess) {
-        function renderManager() {
+        function buildManagerHtml() {
             var categories = RS.getCategories();
             var roles = RS.getAllRoles();
 
@@ -1167,27 +1205,27 @@
         }
 
         function openManagerModal() {
-            var content = renderManager();
+            var content = buildManagerHtml();
 
             window.openModal({
-                title: 'Manage Categories',
-                content: content,
+                titleHtml: 'Manage Categories',
+                contentHtml: content,
                 confirmText: 'Close',
                 cancelText: '',
-                onOpen: function () {
-                    var addBtn = document.getElementById('catAddBtn');
+                onMount: function (modalEl) {
+                    var addBtn = modalEl.querySelector('#catAddBtn');
                     if (addBtn) {
                         addBtn.addEventListener('click', function () {
                             var name = window.prompt('Category name:');
                             if (!name || !name.trim()) return;
                             var id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
                             if (!id) {
-                                window._showToast('Invalid category name', 'error');
+                                _showToast('Invalid category name', 'error');
                                 return;
                             }
                             var result = RCMD.addCategory(id, name.trim());
                             if (!result.success) {
-                                window._showToast(result.reason || 'Failed to add category', 'error');
+                                _showToast(result.reason || 'Failed to add category', 'error');
                                 return;
                             }
                             _persistAndWarn('Category added');
@@ -1196,7 +1234,7 @@
                         });
                     }
 
-                    var editBtns = document.querySelectorAll('.cat-edit');
+                    var editBtns = modalEl.querySelectorAll('.cat-edit');
                     for (var i = 0; i < editBtns.length; i++) {
                         (function (btn) {
                             btn.addEventListener('click', function () {
@@ -1208,7 +1246,7 @@
                                 if (!newName || !newName.trim() || newName.trim() === current.name) return;
                                 var result = RCMD.updateCategory(catId, { name: newName.trim() });
                                 if (!result.success) {
-                                    window._showToast(result.reason || 'Failed to update category', 'error');
+                                    _showToast(result.reason || 'Failed to update category', 'error');
                                     return;
                                 }
                                 _persistAndWarn('Category updated');
@@ -1218,7 +1256,7 @@
                         })(editBtns[i]);
                     }
 
-                    var deleteBtns = document.querySelectorAll('.cat-delete');
+                    var deleteBtns = modalEl.querySelectorAll('.cat-delete');
                     for (var j = 0; j < deleteBtns.length; j++) {
                         (function (btn) {
                             btn.addEventListener('click', function () {
@@ -1237,7 +1275,7 @@
                                 _confirmThen(msg, function () {
                                     var result = RCMD.deleteCategory(catId);
                                     if (!result.success) {
-                                        window._showToast(result.reason || 'Failed to delete category', 'error');
+                                        _showToast(result.reason || 'Failed to delete category', 'error');
                                         return;
                                     }
                                     _persistAndWarn('Category deleted');
@@ -1249,9 +1287,7 @@
                     }
                 },
                 onConfirm: function () {
-                    window.closeTopModal();
                     if (typeof onSuccess === 'function') onSuccess();
-                    return true;
                 }
             });
         }
