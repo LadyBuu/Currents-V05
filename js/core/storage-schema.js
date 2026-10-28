@@ -71,6 +71,26 @@
  *   These are declared here (factory + normalization) so that every
  *   fresh install and every old save gets the arrays up front.
  *
+ * HOUSEHOLD COLLECTIONS:
+ *   HouseholdState owns three top-level collections that live in
+ *   masterData.data:
+ *
+ *     households              array   (household records)
+ *     householdPositions      array   (staff position records)
+ *     householdAssignments    array   (staff assignment records)
+ *
+ *   All three are declared here (factory + normalization). The household
+ *   domain's bootstrap (household-bootstrap.js::_verifyCanonical)
+ *   requires all three to be arrays at load time; without these
+ *   declarations, a fresh install or an old save would fail bootstrap
+ *   with "householdPositions must be an array".
+ *
+ *   Prior to this revision, only `households` was declared. The two
+ *   auxiliary collections (householdPositions, householdAssignments)
+ *   were written by HouseholdCommands but never normalized, so every
+ *   fresh install and every pre-household-subdomain save failed
+ *   household bootstrap. This revision closes that gap.
+ *
  * RANK RECORD FIELDS:
  *   Rank records carry NO location pointer. The current rank shape
  *   (rank-constants.js::DEFAULT_RANK, rank-rules.js::applyDefaults,
@@ -99,6 +119,19 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Added householdPositions and householdAssignments to
+ *       createDefaultMasterDataOverride().data and to the arrayKeys
+ *       list in normalizeMasterData. Prior revisions only declared
+ *       `households`, which made household-bootstrap.js::_verifyCanonical
+ *       throw on every fresh install and every save that predated the
+ *       household subdomain. The fix is additive and defaults safely.
+ *     - Header HOUSEHOLD COLLECTIONS section added, explaining the
+ *       three-collection requirement and why the two auxiliary arrays
+ *       must be declared at the schema layer.
+ *     - No behavioural change to any other field. Existing saves
+ *       normalize identically except that they now carry the two
+ *       household auxiliary arrays.
+ *   Previous revisions:
  *     - Removed `rank.locationId` normalization. The current rank shape
  *       has no `locationId` field. Older revisions added a phantom
  *       `locationId: null` to every rank on load. Removed; the field is
@@ -107,7 +140,6 @@
  *       delete fields).
  *     - Header RANK RECORD FIELDS section added, explaining the
  *       `locationTypeId` vs `locationId` distinction.
- *   Previous revision:
  *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords
  *       to createDefaultMasterDataOverride().data and to the arrayKeys
  *       list in normalizeMasterData.
@@ -262,33 +294,40 @@
             schemaVersion: SCHEMA_VERSION,
             savedAt: new Date().toISOString(),
             data: {
+                // ─── Top-level arrays ─────────────────────────────────────
                 characters: [],
                 places: [],
                 ranks: [],
                 roles: [],
                 locationTypes: [],
                 governmentTypes: [],
-                nameLists: {},
-                cityNameParts: {},
                 governments: [],
                 households: [],
+                householdPositions: [],
+                householdAssignments: [],
                 residences: [],
-                rankInheritanceRules: {},
-                parentChildEdges: [],
                 disasters: [],
                 eventLog: [],
-                currentYear: window.TIME_CONSTANTS.DEFAULT_YEAR,
                 educationalInstitutions: [],
+                parentChildEdges: [],
+
+                // ─── Children domain collections ──────────────────────────
+                // Owned by ChildrenState; declared here so every fresh
+                // install and every old save gets the arrays up front.
+                // See CHILDREN COLLECTIONS in the module header.
+                pregnancyRecords: [],
+                surrogacyArrangements: [],
+                adoptionRecords: [],
+
+                // ─── Top-level objects ────────────────────────────────────
+                nameLists: {},
+                cityNameParts: {},
+                rankInheritanceRules: {},
                 educationalSubjects: {},
                 subjectProgress: {},
 
-                // Children domain collections. Owned by ChildrenState;
-                // declared here so every fresh install and every old
-                // save gets the arrays up front. See CHILDREN COLLECTIONS
-                // in the module header.
-                pregnancyRecords: [],
-                surrogacyArrangements: [],
-                adoptionRecords: []
+                // ─── Scalars ──────────────────────────────────────────────
+                currentYear: window.TIME_CONSTANTS.DEFAULT_YEAR
             }
         };
     }
@@ -319,27 +358,29 @@
         var source = envelope.data;
         var out = {};
 
-        // --- Array fields ---
+        // ─── Top-level array fields ───────────────────────────────────────
+        //
+        // householdPositions and householdAssignments are household-domain
+        // auxiliary collections. Declared here so household-bootstrap.js's
+        // canonical verification passes on every fresh install and every
+        // save that predates the household subdomain.
         //
         // parentChildEdges, pregnancyRecords, surrogacyArrangements, and
         // adoptionRecords are children/family-owned top-level collections.
-        // They are declared here so that every loaded envelope carries
-        // them as arrays, matching createDefaultMasterDataOverride().
         var arrayKeys = [
             'characters', 'places', 'ranks', 'roles', 'locationTypes',
-            'governmentTypes', 'governments', 'households', 'residences',
-            'disasters', 'eventLog', 'educationalInstitutions',
-            'parentChildEdges',
-            'pregnancyRecords',
-            'surrogacyArrangements',
-            'adoptionRecords'
+            'governmentTypes', 'governments', 'households',
+            'householdPositions', 'householdAssignments',
+            'residences', 'disasters', 'eventLog',
+            'educationalInstitutions', 'parentChildEdges',
+            'pregnancyRecords', 'surrogacyArrangements', 'adoptionRecords'
         ];
         for (var i = 0; i < arrayKeys.length; i++) {
             var k = arrayKeys[i];
             out[k] = _normalizeArrayField(source[k], k);
         }
 
-        // --- Object fields ---
+        // ─── Top-level object fields ──────────────────────────────────────
         var objectKeys = [
             'nameLists', 'cityNameParts', 'rankInheritanceRules',
             'educationalSubjects', 'subjectProgress'
@@ -349,7 +390,7 @@
             out[ok] = _normalizeObjectField(source[ok], ok);
         }
 
-        // --- Year ---
+        // ─── Year ─────────────────────────────────────────────────────────
         // Missing → default. Present-but-invalid → warn and default, so
         // corruption is visible but the application still loads.
         if (_isMissing(source.currentYear)) {
@@ -364,7 +405,7 @@
             out.currentYear = defaults.currentYear;
         }
 
-        // --- Entity field defaults (characters) ---
+        // ─── Entity field defaults (characters) ──────────────────────────
         //
         // Embedded domain-owned containers on the character record are
         // guaranteed to be present with the correct shape. Contents are
@@ -396,7 +437,7 @@
             _ensurePlainObjectField(char, 'appearance');
         }
 
-        // --- Entity field defaults (places) ---
+        // ─── Entity field defaults (places) ──────────────────────────────
         for (var p = 0; p < out.places.length; p++) {
             var place = out.places[p];
             if (!place || typeof place !== 'object') continue;
@@ -407,7 +448,7 @@
             _ensureArrayField(place, 'leaderAssignments');
         }
 
-        // --- Entity field defaults (ranks) ---
+        // ─── Entity field defaults (ranks) ───────────────────────────────
         //
         // The rank shape is owned by rank-constants.js::DEFAULT_RANK,
         // rank-rules.js::applyDefaults, and rank-state.js::_normaliseRank.
@@ -432,14 +473,14 @@
             if (rank.spouseInheritance === undefined) rank.spouseInheritance = null;
         }
 
-        // --- Entity field defaults (government types) ---
+        // ─── Entity field defaults (government types) ────────────────────
         for (var g = 0; g < out.governmentTypes.length; g++) {
             var govType = out.governmentTypes[g];
             if (!govType || typeof govType !== 'object') continue;
             _ensureArrayField(govType, 'allowedRankIds');
         }
 
-        // --- Entity field defaults (households) ---
+        // ─── Entity field defaults (households) ──────────────────────────
         for (var h = 0; h < out.households.length; h++) {
             var household = out.households[h];
             if (!household || typeof household !== 'object') continue;
@@ -447,7 +488,7 @@
             _ensureArrayField(household, 'members');
         }
 
-        // --- Entity field defaults (roles) ---
+        // ─── Entity field defaults (roles) ───────────────────────────────
         for (var ro = 0; ro < out.roles.length; ro++) {
             var role = out.roles[ro];
             if (!role || typeof role !== 'object') continue;
@@ -456,7 +497,7 @@
             if (role.notes === undefined) role.notes = '';
         }
 
-        // --- Envelope ---
+        // ─── Envelope ─────────────────────────────────────────────────────
         // schemaVersion: this module does NOT decide which version the
         // incoming data belongs to. If the envelope declares the current
         // version, we preserve the declaration. If it declares anything
