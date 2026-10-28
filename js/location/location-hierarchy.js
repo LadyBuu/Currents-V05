@@ -11,18 +11,86 @@
  *
  * Depends on (checked at load time):
  *   - LocationState     (primitive indexes)
+ *
+ * Depends on (checked at call time):
  *   - LocationQueries   (chain/hierarchy retrieval)
+ *
+ *   LocationQueries is CALL-TIME, not load-time. This is deliberate:
+ *   the documented load order is state → hierarchy → commands → queries.
+ *   Hierarchy must load before commands (commands requires hierarchy's
+ *   validateHierarchy), and commands loads before queries (queries has
+ *   no dependents among commands, but the HTML order keeps queries last
+ *   to ensure commands never accidentally requires it). Therefore
+ *   hierarchy loads before queries. If hierarchy required queries at
+ *   load time, it would throw at load. See LOAD ORDER AND THE
+ *   QUERIES DEPENDENCY below.
  *
  * Does NOT delegate hierarchy rules back to State.
  * Does NOT format display strings (ViewModel layer does).
  * Does NOT mutate. All writes belong to LocationCommands.
  *
- * Load order note:
- *   This file loads after location-queries.js per the HTML order.
- *   It has no dependents among commands (commands reimplements the one
- *   hierarchy check it needs by calling LocationHierarchy.validateHierarchy,
- *   which is the only command-facing export of this module).
+ * LOAD ORDER AND THE QUERIES DEPENDENCY:
+ *   The canonical HTML load order is:
  *
+ *     location-state.js
+ *     location-hierarchy.js
+ *     location-commands.js
+ *     location-queries.js
+ *
+ *   This module needs LocationQueries for hierarchy walks
+ *   (getPlaceHierarchy, getParentChain, getPlaceChildren,
+ *   findLowestCommonAncestor, etc.). Those functions are only reachable
+ *   through the LocationQueries namespace, which is installed by
+ *   location-queries.js — loaded AFTER this file.
+ *
+ *   Prior revisions treated LocationQueries as a load-time dependency,
+ *   which threw at load with the documented HTML order. That is a bug,
+ *   not a load-order mistake. The fix is to resolve LocationQueries at
+ *   call time, not at load time. Every function below that needs
+ *   LocationQueries calls _requireQueries() first, which throws a clear
+ *   error when LocationQueries is missing at call time — a real
+ *   load-order bug (some HTML file loaded this module without ever
+ *   loading queries) is still loud, but the module itself is
+ *   loadable in the documented order.
+ *
+ *   Call-time resolution matches the pattern established by
+ *   family-queries.js for its optional FamilyQueries dependency and by
+ *   location-bootstrap.js for its "init after masterData is available"
+ *   model. It is not a workaround; it is the correct dependency shape
+ *   for a module that is part of a load-order chain where one of its
+ *   dependencies loads after it.
+ *
+ * CALL-TIME DEPENDENCY GUARD:
+ *   _requireQueries() throws if window.LocationQueries is missing or
+ *   lacks a required method. Every public function that reaches into
+ *   LocationQueries calls it first. Public functions that only touch
+ *   LocationState do not call it.
+ *
+ *   This means a bare test harness that loads only LocationState and
+ *   LocationHierarchy can call, e.g., validateHierarchy (which needs
+ *   LocationQueries) and get a clear error, or isRootPlace (which does
+ *   not) and get a real result. That is more useful than a load-time
+ *   throw that precludes any use of the module.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Previous revision:
+ *     - Hard load-time dependency on LocationQueries. Every public
+ *       function that reaches into queries relied on the load-time
+ *       guard having already fired.
+ *   Current revision:
+ *     - Removed the load-time LocationQueries dependency. Added
+ *       _requireQueries() call-time guard. Every public function that
+ *       reads from LocationQueries now calls _requireQueries() first.
+ *     - Header LOAD ORDER AND THE QUERIES DEPENDENCY section added,
+ *       explaining the dependency shape and the reasoning for moving
+ *       the guard to call time.
+ *     - Header CALL-TIME DEPENDENCY GUARD section added, explaining
+ *       which functions trigger it and which do not.
+ *     - No public signature change, no public return-shape change.
+ *       Callers see the same functions with the same behavior; the
+ *       only difference is that the module can now be loaded in the
+ *       documented order.
  * =============================================================================
  */
 
@@ -36,13 +104,22 @@
     if (!window.LocationState) {
         throw new Error('location-hierarchy.js requires location-state.js first.');
     }
-    if (!window.LocationQueries) {
-        throw new Error(
-            'location-hierarchy.js requires location-queries.js first.'
-        );
-    }
 
-    var _requiredQueryMethods = [
+    var LS = window.LocationState;
+
+    // =========================================================================
+    // 2. CALL-TIME DEPENDENCY GUARD
+    // =========================================================================
+    //
+    // LocationQueries loads after this file in the documented HTML order.
+    // Every function below that reaches into it calls _requireQueries()
+    // first. Functions that touch only LocationState do not.
+    //
+    // _requireQueries() checks the whole required surface once, so a
+    // caller that triggers it gets a single clear error naming exactly
+    // which methods are missing — not a scattered null dereference later.
+
+    var _REQUIRED_QUERY_METHODS = [
         'getPlaceHierarchy',
         'getPlaceChildren',
         'getParentChain',
@@ -53,21 +130,43 @@
         'getCountryId',
         'getLocationAtPriority'
     ];
-    for (var _i = 0; _i < _requiredQueryMethods.length; _i++) {
-        var _m = _requiredQueryMethods[_i];
-        if (typeof window.LocationQueries[_m] !== 'function') {
+
+    function _requireQueries() {
+        if (!window.LocationQueries) {
             throw new Error(
-                'location-hierarchy.js: LocationQueries.' + _m +
-                ' is required.'
+                'location-hierarchy.js: LocationQueries is required at call ' +
+                'time. Load location-queries.js before invoking hierarchy ' +
+                'operations. (This module loads before queries per the ' +
+                'canonical HTML order; it is not a load-time dependency.)'
             );
         }
+        var missing = [];
+        for (var i = 0; i < _REQUIRED_QUERY_METHODS.length; i++) {
+            var m = _REQUIRED_QUERY_METHODS[i];
+            if (typeof window.LocationQueries[m] !== 'function') {
+                missing.push('LocationQueries.' + m);
+            }
+        }
+        if (missing.length > 0) {
+            throw new Error(
+                'location-hierarchy.js: LocationQueries is loaded but ' +
+                'missing required methods: ' + missing.join(', ')
+            );
+        }
+        return window.LocationQueries;
     }
 
-    var LS = window.LocationState;
-    var LQ = window.LocationQueries;
+    // Convenience alias for call sites that use LQ repeatedly.
+    // Every function that reads from LocationQueries calls _requireQueries()
+    // at its own entry point, then uses this alias. The alias is refreshed
+    // by _requireQueries() so a broken or replaced LocationQueries after
+    // load time is caught here, not silently used.
+    function _queries() {
+        return _requireQueries();
+    }
 
     // =========================================================================
-    // 2. VALIDATION
+    // 3. VALIDATION
     // =========================================================================
 
     /**
@@ -79,6 +178,7 @@
      * Returns false if either type has no priority (unknown type).
      */
     function isValidParentType(parentTypeId, childTypeId) {
+        var LQ = _queries();
         var parentPrio = LQ.getLocationTypePriority(parentTypeId);
         var childPrio = LQ.getLocationTypePriority(childTypeId);
         if (parentPrio === null || childPrio === null) return false;
@@ -98,6 +198,12 @@
      * Returns { valid: boolean, reason: string }.
      * Does not mutate. Does not validate business intent (location status,
      * leadership, etc.) — those are command-level concerns.
+     *
+     * Note: the place and parent existence checks go through
+     * LocationState.getPlaceById, which does not require LocationQueries.
+     * The cycle and type checks do. _queries() is called once at the top
+     * so the whole validation path is coherent (no partial evaluation if
+     * LocationQueries is missing).
      */
     function validateHierarchy(placeId, newParentId) {
         if (!placeId) {
@@ -112,6 +218,8 @@
         if (!newParentId) {
             return { valid: true, reason: 'Valid: no parent (root)' };
         }
+
+        var LQ = _queries();
 
         if (newParentId === placeId) {
             return { valid: false, reason: 'Place cannot be its own parent' };
@@ -137,18 +245,21 @@
     }
 
     // =========================================================================
-    // 3. ANCESTRY (delegates to LocationQueries)
+    // 4. ANCESTRY (delegates to LocationQueries)
     // =========================================================================
 
     function isAncestorOf(ancestorId, placeId) {
+        var LQ = _queries();
         return LQ.isAncestorOf(ancestorId, placeId);
     }
 
     function areInSameCountry(id1, id2) {
+        var LQ = _queries();
         return LQ.areInSameCountry(id1, id2);
     }
 
     function findLowestCommonAncestor(id1, id2) {
+        var LQ = _queries();
         return LQ.findLowestCommonAncestor(id1, id2);
     }
 
@@ -159,6 +270,7 @@
     function getLocationDepth(placeId) {
         var place = LS.getPlaceById(placeId);
         if (!place) return null;
+        var LQ = _queries();
         return LQ.getPlaceHierarchy(placeId).length - 1;
     }
 
@@ -168,6 +280,7 @@
      */
     function getNearestAncestorAtPriority(placeId, targetPriority) {
         if (targetPriority === null || targetPriority === undefined) return null;
+        var LQ = _queries();
         var chain = LQ.getParentChain(placeId);
         for (var i = chain.length - 1; i >= 0; i--) {
             if (LQ.getLocationTypePriority(chain[i].typeId) === targetPriority) {
@@ -179,6 +292,7 @@
 
     function getDescendantsAtPriority(placeId, targetPriority) {
         if (targetPriority === null || targetPriority === undefined) return [];
+        var LQ = _queries();
         var descendants = LQ.getPlaceChildren(placeId, true);
         var result = [];
         for (var i = 0; i < descendants.length; i++) {
@@ -192,6 +306,7 @@
 
     function hasChildAtPriority(placeId, targetPriority) {
         if (targetPriority === null || targetPriority === undefined) return false;
+        var LQ = _queries();
         var children = LQ.getPlaceChildren(placeId, false);
         for (var i = 0; i < children.length; i++) {
             if (LQ.getLocationTypePriority(children[i].typeId) ===
@@ -203,13 +318,13 @@
     }
 
     // =========================================================================
-    // 4. IDs AT PRIORITY
+    // 5. IDs AT PRIORITY
     // =========================================================================
 
     function getRegionId(placeId) {
+        var LQ = _queries();
         var p = getNearestAncestorAtPriority(placeId, 2);
         if (p) return p.id;
-        // Region may be the place itself.
         var self = LS.getPlaceById(placeId);
         if (self && LQ.getLocationTypePriority(self.typeId) === 2) {
             return self.id;
@@ -218,6 +333,7 @@
     }
 
     function getCountyId(placeId) {
+        var LQ = _queries();
         var p = getNearestAncestorAtPriority(placeId, 3);
         if (p) return p.id;
         var self = LS.getPlaceById(placeId);
@@ -228,12 +344,15 @@
     }
 
     function getCountryId(placeId) {
+        var LQ = _queries();
         return LQ.getCountryId(placeId);
     }
 
     /**
      * Returns true/false/null.
      * null when the place does not exist (distinct from "not root").
+     *
+     * Does NOT require LocationQueries — reads only LocationState.
      */
     function isRootPlace(placeId) {
         var place = LS.getPlaceById(placeId);
@@ -255,6 +374,7 @@
      *   }
      */
     function getInheritanceChain(placeId) {
+        var LQ = _queries();
         var chain = LQ.getPlaceHierarchy(placeId);
         var result = [];
         for (var i = 0; i < chain.length; i++) {
@@ -271,7 +391,7 @@
     }
 
     // =========================================================================
-    // 5. DISTANCE / RELATION
+    // 6. DISTANCE / RELATION
     // =========================================================================
 
     /**
@@ -286,6 +406,7 @@
         if (id1 === id2) return 0;
         if (!LS.getPlaceById(id1) || !LS.getPlaceById(id2)) return null;
 
+        var LQ = _queries();
         var lca = LQ.findLowestCommonAncestor(id1, id2);
         if (!lca) return null;
 
@@ -298,6 +419,7 @@
     function areLocationsRelated(id1, id2) {
         if (!id1 || !id2) return false;
         if (id1 === id2) return true;
+        var LQ = _queries();
         return LQ.findLowestCommonAncestor(id1, id2) !== null;
     }
 
@@ -305,6 +427,7 @@
         if (!locationIds || locationIds.length === 0) return null;
         var common = LS.getPlaceById(locationIds[0]);
         if (!common) return null;
+        var LQ = _queries();
         for (var i = 1; i < locationIds.length; i++) {
             if (!LS.getPlaceById(locationIds[i])) return null;
             var lca = LQ.findLowestCommonAncestor(common.id, locationIds[i]);
@@ -315,7 +438,7 @@
     }
 
     // =========================================================================
-    // 6. TYPE HIERARCHY
+    // 7. TYPE HIERARCHY
     // =========================================================================
 
     /**
@@ -324,6 +447,7 @@
      */
     function getTypeHierarchy(typePriority) {
         if (typePriority === null || typePriority === undefined) return [];
+        var LQ = _queries();
         var ids = LS.getAllPlaceIds();
         var out = [];
         for (var i = 0; i < ids.length; i++) {
@@ -342,6 +466,7 @@
      */
     function getAncestorAtPriority(placeId, targetPriority) {
         if (targetPriority === null || targetPriority === undefined) return null;
+        var LQ = _queries();
         var self = LS.getPlaceById(placeId);
         if (self && LQ.getLocationTypePriority(self.typeId) === targetPriority) {
             return self;
@@ -357,7 +482,7 @@
     }
 
     // =========================================================================
-    // 7. REGION / COUNTY NAMES (display helpers)
+    // 8. REGION / COUNTY NAMES (display helpers)
     // =========================================================================
 
     function getRegionName(placeId) {
@@ -375,7 +500,7 @@
     }
 
     // =========================================================================
-    // 8. DISPLAY PATH
+    // 9. DISPLAY PATH
     // =========================================================================
 
     /**
@@ -391,6 +516,7 @@
         var joiner = (separator === undefined || separator === null)
             ? ' > '
             : separator;
+        var LQ = _queries();
         var chain = LQ.getPlaceHierarchy(placeId);
         if (chain.length === 0) return '';
         var names = [];
@@ -402,7 +528,7 @@
     }
 
     // =========================================================================
-    // 9. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.LocationHierarchy = {
