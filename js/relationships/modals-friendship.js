@@ -17,6 +17,35 @@
  *   - strength bounds (read from FriendshipRules)
  *   - any interpretation of friendship metadata
  *
+ * MODAL LIFECYCLE
+ *
+ *   Every modal uses onMount (from modals-core.js) to attach handlers.
+ *   onMount runs synchronously during openModal, before the caller
+ *   regains control, so there is no setTimeout-based binding. Element
+ *   lookups inside onMount and onConfirm are scoped to the modal
+ *   element (modalEl.querySelector(...)), not to document. This
+ *   prevents cross-modal ID collisions when one modal opens over
+ *   another.
+ *
+ * PREVIOUS REVISION (FIXED IN THIS ONE)
+ *
+ *   Every call site used `title:` / `content:`. modals-core.js reads
+ *   ONLY `titleHtml:` / `contentHtml:`. Result: all four friendship
+ *   modals rendered with "Modal" as their title and empty body —
+ *   nothing to interact with. This is the same class of bug that
+ *   modals-relationship.js, modals-role-select.js, and
+ *   modals-apprenticeship.js had; all four were fixed in the same
+ *   pass.
+ *
+ *   The bulk-create and edit modals used setTimeout(50) +
+ *   document.getElementById to wire the strength slider and the "End
+ *   Friendship" button. Converted to onMount + modalEl.querySelector.
+ *
+ *   onConfirm handlers used document.getElementById; all scoped to
+ *   modalEl.querySelector.
+ *
+ *   getCurrentYearSafe (deprecated alias in time.js) → getCurrentYear.
+ *
  * Load order: after friendship-rules.js, friendship-queries.js,
  * friendship-commands.js, relationship-ui-metadata.js.
  */
@@ -43,6 +72,7 @@
 
     function _escape(str) {
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
+        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (str === null || str === undefined) return '';
         return String(str)
             .replace(/&/g, '&amp;')
@@ -54,7 +84,7 @@
 
     function _toast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
-        else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
+        else if (typeof window._showToast === 'function') window._showToast(msg, type);
     }
 
     function _openModal(opts) {
@@ -76,10 +106,10 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('modals-friendship.js: getCurrentYearSafe required');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('modals-friendship.js: getCurrentYear required');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _age(character) {
@@ -192,18 +222,29 @@
             '</div>';
 
         _openModal({
-            title: (infoIcon ? infoIcon + ' ' : '') + 'Create Friendships',
-            content: html,
+            titleHtml: _escape((infoIcon ? infoIcon + ' ' : '') + 'Create Friendships'),
+            contentHtml: html,
             confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Create ' + validPairs.length,
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var yearEl = document.getElementById('fndStartYear');
-                var strengthEl = document.getElementById('fndStartStrength');
-                var notesEl = document.getElementById('fndNotes');
+            onMount: function(modalEl) {
+                // Scoped to the modal element — not document. See
+                // MODAL LIFECYCLE in the module header.
+                var slider = modalEl.querySelector('#fndStartStrength');
+                var display = modalEl.querySelector('#fndStartStrengthDisplay');
+                if (slider && display) {
+                    slider.addEventListener('input', function() {
+                        display.textContent = slider.value + '%';
+                    });
+                }
+            },
+            onConfirm: function(modalEl) {
+                var yearEl = modalEl.querySelector('#fndStartYear');
+                var strengthEl = modalEl.querySelector('#fndStartStrength');
+                var notesEl = modalEl.querySelector('#fndNotes');
 
                 if (!yearEl || !strengthEl) {
                     _toast('Form missing', 'error');
-                    return;
+                    return false;
                 }
 
                 var year = parseInt(yearEl.value, 10);
@@ -212,7 +253,7 @@
 
                 if (isNaN(year)) {
                     _toast('Invalid start year', 'error');
-                    return;
+                    return false;
                 }
                 if (isNaN(strength)) strength = FR.STRENGTH_DEFAULT;
 
@@ -227,24 +268,15 @@
 
                 if (!result.success) {
                     _toast(result.message || 'Failed to create friendships', 'error');
-                    return;
+                    return false;
                 }
 
                 _toast(result.createdCount + ' friendship(s) created', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result);
                 _closeModal();
+                return true;
             }
         });
-
-        setTimeout(function() {
-            var slider = document.getElementById('fndStartStrength');
-            var display = document.getElementById('fndStartStrengthDisplay');
-            if (slider && display) {
-                slider.addEventListener('input', function() {
-                    display.textContent = slider.value + '%';
-                });
-            }
-        }, 50);
     }
 
     // -------------------------------------------------------------------------
@@ -342,8 +374,8 @@
             notesHtml;
 
         _openModal({
-            title: (friendshipIcon ? friendshipIcon + ' ' : '') + 'Friendship Details',
-            content: html,
+            titleHtml: _escape((friendshipIcon ? friendshipIcon + ' ' : '') + 'Friendship Details'),
+            contentHtml: html,
             confirmText: 'Edit',
             cancelText: 'Close',
             onConfirm: function() {
@@ -423,18 +455,34 @@
             '</div>';
 
         _openModal({
-            title: (editIcon ? editIcon + ' ' : '') + 'Edit Friendship',
-            content: html,
+            titleHtml: _escape((editIcon ? editIcon + ' ' : '') + 'Edit Friendship'),
+            contentHtml: html,
             confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Save',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var strengthEl = document.getElementById('fndEditStrength');
-                var notesEl = document.getElementById('fndEditNotes');
-                var yearEl = document.getElementById('fndEditYear');
+            onMount: function(modalEl) {
+                var slider = modalEl.querySelector('#fndEditStrength');
+                var display = modalEl.querySelector('#fndStrengthDisplay');
+                if (slider && display) {
+                    slider.addEventListener('input', function() {
+                        display.textContent = slider.value + '%';
+                    });
+                }
+                var endBtn = modalEl.querySelector('#fndEndBtn');
+                if (endBtn) {
+                    endBtn.addEventListener('click', function() {
+                        _closeModal();
+                        openBreakupFriendshipModal(aId, bId, onSuccess);
+                    });
+                }
+            },
+            onConfirm: function(modalEl) {
+                var strengthEl = modalEl.querySelector('#fndEditStrength');
+                var notesEl = modalEl.querySelector('#fndEditNotes');
+                var yearEl = modalEl.querySelector('#fndEditYear');
 
                 if (!strengthEl || !notesEl || !yearEl) {
                     _toast('Form missing', 'error');
-                    return;
+                    return false;
                 }
 
                 var newStrength = parseInt(strengthEl.value, 10);
@@ -443,7 +491,7 @@
 
                 if (isNaN(newStrength) || isNaN(newYear)) {
                     _toast('Invalid input', 'error');
-                    return;
+                    return false;
                 }
 
                 var result = window.RelationshipCommands.update(rel.relationshipId, {
@@ -456,31 +504,15 @@
 
                 if (!result.success) {
                     _toast(result.message || 'Failed to update', 'error');
-                    return;
+                    return false;
                 }
 
                 _toast('Friendship updated', 'success');
                 if (typeof onSuccess === 'function') onSuccess(result);
                 _closeModal();
+                return true;
             }
         });
-
-        setTimeout(function() {
-            var slider = document.getElementById('fndEditStrength');
-            var display = document.getElementById('fndStrengthDisplay');
-            if (slider && display) {
-                slider.addEventListener('input', function() {
-                    display.textContent = slider.value + '%';
-                });
-            }
-            var endBtn = document.getElementById('fndEndBtn');
-            if (endBtn) {
-                endBtn.addEventListener('click', function() {
-                    _closeModal();
-                    openBreakupFriendshipModal(aId, bId, onSuccess);
-                });
-            }
-        }, 50);
     }
 
     // -------------------------------------------------------------------------
@@ -559,17 +591,17 @@
             '</div>';
 
         _openModal({
-            title: (crossIcon ? crossIcon + ' ' : '') + 'End Friendship',
-            content: html,
+            titleHtml: _escape((crossIcon ? crossIcon + ' ' : '') + 'End Friendship'),
+            contentHtml: html,
             confirmText: (crossIcon ? crossIcon + ' ' : '') + 'Confirm End',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var yearEl = document.getElementById('fndEndYear');
-                var reasonEl = document.getElementById('fndEndReason');
+            onConfirm: function(modalEl) {
+                var yearEl = modalEl.querySelector('#fndEndYear');
+                var reasonEl = modalEl.querySelector('#fndEndReason');
 
                 if (!yearEl || !reasonEl) {
                     _toast('Form missing', 'error');
-                    return;
+                    return false;
                 }
 
                 var year = parseInt(yearEl.value, 10);
@@ -577,7 +609,7 @@
 
                 if (isNaN(year)) {
                     _toast('Invalid end year', 'error');
-                    return;
+                    return false;
                 }
 
                 var result = window.FriendshipCommands.removeFriendship(aId, bId, {
@@ -587,12 +619,13 @@
 
                 if (!result.success) {
                     _toast(result.message || 'Failed to end friendship', 'error');
-                    return;
+                    return false;
                 }
 
                 _toast('Friendship ended', 'info');
                 if (typeof onSuccess === 'function') onSuccess(result);
                 _closeModal();
+                return true;
             }
         });
     }
