@@ -50,11 +50,51 @@
  *     Do NOT consume the simulation RNG stream from UI or presentation code.
  *   - No function here reads from masterData or any domain state.
  *
+ * CANONICAL ENTRY POINTS
+ *
+ *   The module exposes the core PRNG under three names, all pointing at
+ *   the same function so there is exactly one RNG stream:
+ *
+ *     window.random        — direct function form (used by names.js,
+ *                            simulation-generators.js, and most callers)
+ *     window.Random.next   — namespaced form, preferred by the social
+ *                            domain's _roll() wrappers in
+ *                            jealousy-commands.js, affair-commands.js,
+ *                            and relationship-integrations.js
+ *     window.randomNext    — deprecated legacy alias, honoured by those
+ *                            same _roll() implementations as a fallback
+ *
+ *   All three are the same PRNG. They consume the same _rngState. There
+ *   is no separate stream, no divergence, and no way to accidentally
+ *   fork the sequence by picking a different accessor.
+ *
+ *   Prior revisions exported only window.random and window.randomInt
+ *   /window.randomFloat/etc. The relationship domain's _roll() helpers
+ *   were written against a `window.Random.next` that did not exist and
+ *   a `window.randomNext` fallback that also did not exist. Both
+ *   aliases are now installed here. See REFACTOR HISTORY.
+ *
  * DEPENDENCIES:
  *   - localStorage (optional, for seed persistence only)
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - window.Random and window.randomNext aliases added. Both point
+ *       at the same `random` function the module already exported as
+ *       window.random, so no new RNG state, no divergence, and no
+ *       change to any existing caller.
+ *     - The relationship domain's _roll() helpers
+ *       (jealousy-commands.js, affair-commands.js,
+ *       relationship-integrations.js) and
+ *       relationship-bootstrap.js::REQUIRED_GLOBALS required one of
+ *       these names; neither was exported, so all three _roll()
+ *       helpers threw on first call and the bootstrap failed before
+ *       any module ran. Fixed.
+ *     - Header CANONICAL ENTRY POINTS section added.
+ *     - No behavioural change to any existing export.
  * =============================================================================
  */
 
@@ -784,6 +824,18 @@
     window.randomInt = randomInt;
     window.randomFloat = randomFloat;
     window.chance = chance;
+
+    // Canonical namespaced accessors. Both point at the same `random`
+    // function exported above. See CANONICAL ENTRY POINTS in the header.
+    //
+    //   window.Random.next   — namespaced form, preferred by the social
+    //                          domain's _roll() helpers
+    //   window.randomNext    — deprecated legacy alias, honoured by
+    //                          those same _roll() helpers as a fallback
+    //
+    // Neither introduces a second RNG stream. Both consume _rngState.
+    window.Random = Object.freeze({ next: random });
+    window.randomNext = random;
 
     // Dice
     window.rollDice = rollDice;
