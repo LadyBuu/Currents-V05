@@ -74,6 +74,24 @@
  *       isDeleted, deletedAt    -> CharacterDeletionCommands
  *       moves                   -> location domain (via CharacterCommands)
  *
+ * HOUSEHOLD REVERSE INDEX (CLARIFIED):
+ *   The character record carries TWO fields that name the character's
+ *   household: `household` and `householdId`. Both are the same fact
+ *   expressed under two field names; the household domain writes both.
+ *
+ *   Historically `household` was the "display" alias and `householdId`
+ *   was the "canonical" id. Today they are aliased — the household
+ *   domain writes both to the same household id. Readers that only
+ *   check one of them still resolve correctly.
+ *
+ *   BOTH fields are character-owned. HouseholdCommands (via
+ *   CharacterCommands.updateCharacterFields) writes them; no other
+ *   domain may. This mirrors how moves is character-owned but written
+ *   only through the location domain's command surface.
+ *
+ *   `householdHistory` is character-owned and carries the membership
+ *   timeline (join/leave entries, with the same householdId field name).
+ *
  * PROJECTION CONTRACT (IMPORTANT):
  *   Every public read returns a defensive projection — a fresh object
  *   whose nested arrays and objects are cloned. Mutating a projection
@@ -200,6 +218,21 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Added `householdId` to _CHARACTER_OWNED_FIELDS. The character
+ *       record carries `household` and `householdId` as parallel
+ *       reverse-index fields for the same household membership fact;
+ *       the household domain writes both (household-commands.js
+ *       _writeCharacterMembership / _clearCharacterMembership /
+ *       transferMember). Prior to this revision, `householdId` was
+ *       silently rejected by _validateCharacterOwnedPatch because it
+ *       was not in the allowlist, which caused every household
+ *       membership write to fail at CharacterState and roll back the
+ *       household-side mutation. Adding the field to the allowlist
+ *       restores the household reverse-index write path.
+ *     - Header HOUSEHOLD REVERSE INDEX section added explaining why
+ *       both household and householdId are character-owned.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - _project now includes `moves`, `householdHistory`, `religionHistory`,
  *       `surnameHistory`, and `apprentices` in the returned shape. These are
  *       character-owned or domain-owned fields the location, family, name,
@@ -308,7 +341,12 @@
         birthplaceId: true,
         currentLocationId: true,
         moves: true,
+
+        // Household reverse index. See HOUSEHOLD REVERSE INDEX in the
+        // module header. `household` and `householdId` are parallel
+        // fields for the same fact; the household domain writes both.
         household: true,
+        householdId: true,
         householdHistory: true,
 
         // Religion / culture
@@ -877,6 +915,7 @@
             birthplaceId: _isMissing(c.birthplaceId) ? null : c.birthplaceId,
             currentLocationId: _isMissing(c.currentLocationId) ? null : c.currentLocationId,
             household: _isMissing(c.household) ? null : c.household,
+            householdId: _isMissing(c.householdId) ? null : c.householdId,
             religionId: _isMissing(c.religionId) ? null : c.religionId,
             cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
 
