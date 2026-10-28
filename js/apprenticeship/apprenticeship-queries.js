@@ -28,6 +28,15 @@
  *   `character.professions` and it never reads a cached
  *   `metadata.skillLevel`.
  *
+ * ROLE READS
+ *
+ *   Role reads go through RoleState.getRole, which returns clones.
+ *   There is no fallback to accessors' window.getRoleById at call time —
+ *   RoleState is the canonical runtime owner of the role catalogue and
+ *   is required at load (see §1). Reading through a fallback would make
+ *   queries observe different role shapes than commands and the rest of
+ *   the codebase.
+ *
  * ROLEID CONTRACT
  *
  *   `getApprenticeship(masterId, apprenticeId, roleId)` requires
@@ -53,11 +62,11 @@
  *
  * DEPENDENCIES (required, checked at load):
  *   - RelationshipQueries       (edge reads)
- *   - CharacterCommands         (getProfession)
+ *   - CharacterCommands         (getProfession, getProfessions)
  *   - RoleState                 (getRole)
  *   - ApprenticeshipRules       (getStageForSkill)
  *   - accessors                 (getCharacterById)
- *   - time                      (getCurrentYearSafe)
+ *   - time                      (getCurrentYear)
  *   - relationship-types        (RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
  *
  * DEPENDENCIES (required for findPotentialMasters only):
@@ -117,10 +126,10 @@
             '(getCharacterById) first.'
         );
     }
-    if (typeof window.getCurrentYearSafe !== 'function') {
+    if (typeof window.getCurrentYear !== 'function') {
         throw new Error(
             'apprenticeship-queries.js requires time.js ' +
-            '(getCurrentYearSafe) first.'
+            '(getCurrentYear) first.'
         );
     }
 
@@ -140,8 +149,8 @@
         return window.getCharacterById(id);
     }
 
-    function _getCurrentYearSafe() {
-        return window.getCurrentYearSafe();
+    function _getCurrentYear() {
+        return window.getCurrentYear();
     }
 
     // =========================================================================
@@ -174,6 +183,12 @@
         return getProfessionRecord(characterId, roleId) !== null;
     }
 
+    /**
+     * Reads a role through RoleState. Returns a clone or null. There is
+     * no fallback to accessors' window.getRoleById — RoleState is the
+     * canonical runtime owner of the role catalogue and is required at
+     * load. See ROLE READS in the module header.
+     */
     function getRole(roleId) {
         return roleId ? RS.getRole(roleId) : null;
     }
@@ -330,7 +345,7 @@
 
         var stage = window.ApprenticeshipRules.getStageForSkill(skillLevel);
 
-        var currentYear = _getCurrentYearSafe();
+        var currentYear = _getCurrentYear();
         var startYear = rel.startYear != null ? rel.startYear : null;
         var endYear = rel.endYear != null ? rel.endYear : null;
         var durationYears = null;
