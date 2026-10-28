@@ -50,6 +50,35 @@
  *   termination — lives in ApprenticeshipCommands. This modal must not
  *   bypass that boundary.
  *
+ * MODAL LIFECYCLE
+ *
+ *   Every modal uses onMount (from modals-core.js) to attach handlers.
+ *   onMount runs synchronously during openModal, before the caller
+ *   regains control, so there is no setTimeout-based binding. Element
+ *   lookups inside onMount and onConfirm are scoped to the modal
+ *   element (modalEl.querySelector(...)), not to document. This
+ *   prevents cross-modal ID collisions when one modal opens over
+ *   another.
+ *
+ * PREVIOUS REVISION (FIXED IN THIS ONE)
+ *
+ *   Every call site used `title:` / `content:`. modals-core.js reads
+ *   ONLY `titleHtml:` / `contentHtml:`; it does not read `title` or
+ *   `content`. Result: the modal rendered with "Modal" as the title
+ *   and empty body — no archetype picker, no fields, nothing to click.
+ *   This is the same class of bug that modals-apprenticeship.js and
+ *   modals-role-select.js had; all three were fixed in the same pass.
+ *
+ *   Type-selector wiring used setTimeout(50) + document.getElementById,
+ *   which worked but contradicted the onMount convention used by
+ *   modals-roles.js and modals-education.js. Converted to onMount.
+ *
+ *   The attribute-checkbox collection used document.querySelectorAll,
+ *   which would collide with any other modal containing elements with
+ *   the same class. Scoped to the modal element.
+ *
+ *   getCurrentYearSafe (deprecated alias in time.js) → getCurrentYear.
+ *
  * DEPENDENCIES (must be loaded first):
  *   - relationship-types.js           (RELATIONSHIP_ARCHETYPES,
  *                                      RELATIONSHIP_ATTRIBUTES)
@@ -60,8 +89,7 @@
  *   - icons.js                        (Icons via _getIcon)
  *   - accessors.js                    (getCharacterById,
  *                                      getCurrentLocation)
- *   - time.js                         (getCurrentYearSafe,
- *                                      calculateAge)
+ *   - time.js                         (getCurrentYear, calculateAge)
  *   - romance-commands.js             (RomanceCommands)
  *   - friendship-commands.js          (FriendshipCommands)
  *   - rivalry-commands.js             (RivalryCommands)
@@ -91,7 +119,7 @@
         ['Icons',                    'icons.js'],
         ['getCharacterById',         'accessors.js'],
         ['getCurrentLocation',       'accessors.js'],
-        ['getCurrentYearSafe',       'time.js'],
+        ['getCurrentYear',           'time.js'],
         ['calculateAge',             'time.js'],
         ['RomanceCommands',          'romance-commands.js'],
         ['FriendshipCommands',       'friendship-commands.js'],
@@ -144,7 +172,7 @@
     }
 
     function _getCurrentYear() {
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _age(character) {
@@ -475,14 +503,45 @@
             '</div>';
 
         _openModal({
-            title: (heartIcon ? heartIcon + ' ' : '') + 'Create Relationship',
-            content: html,
+            titleHtml: _esc((heartIcon ? heartIcon + ' ' : '') + 'Create Relationship'),
+            contentHtml: html,
             confirmText: (checkIcon ? checkIcon + ' ' : '') + 'Create',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var typeEl = document.getElementById('relType');
-                var yearEl = document.getElementById('relStartYear');
-                var notesEl = document.getElementById('relNotes');
+            onMount: function(modalEl) {
+                // Scoped to the modal element — not document. See
+                // MODAL LIFECYCLE in the module header.
+                var select = modalEl.querySelector('#relType');
+                var attrsSection = modalEl.querySelector('#relAttributesSection');
+                var roleSection = modalEl.querySelector('#relRoleSection');
+                var empSection = modalEl.querySelector('#relEmploymentSection');
+                var guildSection = modalEl.querySelector('#relGuildSection');
+
+                if (!select) return;
+
+                function sync() {
+                    var t = select.value;
+                    if (attrsSection) {
+                        attrsSection.style.display = (t === A.COMMITTED) ? 'block' : 'none';
+                    }
+                    if (roleSection) {
+                        roleSection.style.display = _typeNeedsRoleField(t) ? 'block' : 'none';
+                    }
+                    if (empSection) {
+                        empSection.style.display = _typeNeedsEmploymentFields(t) ? 'block' : 'none';
+                    }
+                    if (guildSection) {
+                        guildSection.style.display = _typeNeedsGuildFields(t) ? 'block' : 'none';
+                    }
+                }
+
+                select.value = initialType;
+                select.addEventListener('change', sync);
+                sync();
+            },
+            onConfirm: function(modalEl) {
+                var typeEl = modalEl.querySelector('#relType');
+                var yearEl = modalEl.querySelector('#relStartYear');
+                var notesEl = modalEl.querySelector('#relNotes');
 
                 if (!typeEl || !yearEl) {
                     _toast('Form missing', 'error');
@@ -509,14 +568,14 @@
                 };
 
                 if (type === A.COMMITTED) {
-                    var boxes = document.querySelectorAll('.attr-checkbox:checked');
+                    var boxes = modalEl.querySelectorAll('.attr-checkbox:checked');
                     for (var i = 0; i < boxes.length; i++) {
                         form.attributes.push(boxes[i].value);
                     }
                 }
 
                 if (_typeNeedsRoleField(type)) {
-                    var roleEl = document.getElementById('relRoleId');
+                    var roleEl = modalEl.querySelector('#relRoleId');
                     var raw = roleEl ? (roleEl.value || '').trim() : '';
                     if (!raw) {
                         _toast('Role ID is required for this relationship type', 'error');
@@ -526,8 +585,8 @@
                 }
 
                 if (_typeNeedsEmploymentFields(type)) {
-                    var rEl = document.getElementById('relEmpRole');
-                    var wEl = document.getElementById('relEmpWages');
+                    var rEl = modalEl.querySelector('#relEmpRole');
+                    var wEl = modalEl.querySelector('#relEmpWages');
                     form.role = rEl ? (rEl.value || '').trim() : null;
                     if (wEl) {
                         var parsed = parseInt(wEl.value, 10);
@@ -536,7 +595,7 @@
                 }
 
                 if (_typeNeedsGuildFields(type)) {
-                    var gEl = document.getElementById('relGuildRank');
+                    var gEl = modalEl.querySelector('#relGuildRank');
                     form.rank = gEl ? (gEl.value || '').trim() : null;
                 }
 
@@ -555,37 +614,6 @@
                 return true;
             }
         });
-
-        // Wire up the type selector after the modal is in the DOM.
-        setTimeout(function() {
-            var select = document.getElementById('relType');
-            var attrsSection = document.getElementById('relAttributesSection');
-            var roleSection = document.getElementById('relRoleSection');
-            var empSection = document.getElementById('relEmploymentSection');
-            var guildSection = document.getElementById('relGuildSection');
-
-            if (!select) return;
-
-            function sync() {
-                var t = select.value;
-                if (attrsSection) {
-                    attrsSection.style.display = (t === A.COMMITTED) ? 'block' : 'none';
-                }
-                if (roleSection) {
-                    roleSection.style.display = _typeNeedsRoleField(t) ? 'block' : 'none';
-                }
-                if (empSection) {
-                    empSection.style.display = _typeNeedsEmploymentFields(t) ? 'block' : 'none';
-                }
-                if (guildSection) {
-                    guildSection.style.display = _typeNeedsGuildFields(t) ? 'block' : 'none';
-                }
-            }
-
-            select.value = initialType;
-            select.addEventListener('change', sync);
-            sync();
-        }, 50);
     }
 
     // =========================================================================
