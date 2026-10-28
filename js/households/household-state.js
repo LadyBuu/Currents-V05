@@ -40,28 +40,67 @@
  *     hydrateFromMasterData() throws by default. Callers that need to
  *     inspect without throwing can use _diagnostics.getIntegrityReport().
  *
- * REVERSE-INDEX INTEGRITY (added)
- * -------------------------------
- *   The household record carries a `residenceId` field that is a
- *   REVERSE INDEX into the residence system. The canonical occupancy is
- *   `unit.householdId` on the residence side. The reverse index is
- *   maintained by HouseholdCommands.associateWithResidence /
- *   disassociateFromResidence, which ResidenceSystem calls when
- *   occupancy changes.
+ * REVERSE-INDEX INTEGRITY
+ * -----------------------
+ *   The household record carries two reverse-index fields into other
+ *   domains:
  *
- *   If the residence side is deleted or demolished without the reverse
- *   index being cleared, `household.residenceId` points at a missing
- *   residence. `_diagnostics.getIntegrityReport()` now surfaces this as
- *   `householdsWithMissingResidence`.
+ *     household.residenceId       ← residence side: unit.householdId
+ *     household.enterprises[]     ← enterprise side: enterprise.ownerId
  *
- *   Conversely, if a residence unit still names a householdId that no
- *   longer exists in the canonical household collection, the residence
- *   holds orphan occupancy. That is surfaced as
- *   `residencesWithOrphanHouseholdOccupancy`.
+ *   Both are maintained by HouseholdCommands and both can drift if a
+ *   mutation fails to reconcile the other side. The diagnostics below
+ *   cross-check both directions of both associations.
  *
- *   Both checks are O(N) per diagnostics call and are NOT run on every
- *   hydrate — they run only when someone calls getIntegrityReport()
- *   (bootstrap, repair tooling, debug UI). The hydrate path stays fast.
+ *   RESIDENCE:
+ *     residenceId is maintained by
+ *     HouseholdCommands.associateWithResidence /
+ *     disassociateFromResidence, which ResidenceSystem calls when
+ *     occupancy changes. If the residence side is deleted or demolished
+ *     without the reverse index being cleared, household.residenceId
+ *     points at a missing residence.
+ *
+ *     Reports:
+ *       - householdsWithMissingResidence
+ *       - residencesWithOrphanHouseholdOccupancy
+ *
+ *   ENTERPRISE (secondary item #2):
+ *     enterprises[] is maintained by
+ *     HouseholdCommands.addEnterpriseToHousehold /
+ *     removeEnterpriseFromHousehold, which IndustryCommands calls on
+ *     create / delete / rebuild and on owner change (via the C2
+ *     reconciliation path). If either side is mutated without the other
+ *     being reconciled, the reverse index drifts.
+ *
+ *     Reports:
+ *       - householdsWithOrphanEnterpriseRef
+ *       - enterprisesOrphanedFromHousehold
+ *       - enterpriseReverseIndexAvailable
+ *
+ *     The household-side check walks household.enterprises[] and
+ *     verifies each entry resolves to an enterprise whose ownerType /
+ *     ownerId point back at the household. It catches:
+ *       - malformed entries (not a non-empty string)
+ *       - entries pointing at a deleted enterprise
+ *       - entries whose enterprise is owned by someone else
+ *       - entries whose enterprise is owned by a different household
+ *
+ *     The enterprise-side check walks masterData.data.enterprises and
+ *     verifies each household-owned enterprise's ownerId resolves to an
+ *     existing household. It catches:
+ *       - enterprises whose owner household was deleted without
+ *         reconciling the reverse index
+ *
+ *   The enterprise-side check reads masterData.data.enterprises directly,
+ *   NOT through IndustryState. It therefore works even when the industry
+ *   module has not been loaded (a household-only page, a reduced test
+ *   harness). IndustryState is not a dependency of this module.
+ *
+ *   The symmetric check on the industry side lives in
+ *   industry-state.js::validateIntegrity (see the M3 revision there). The
+ *   two checks are intentionally redundant: each domain's bootstrap
+ *   reports on the collection it owns, and neither waits for the other to
+ *   be loaded.
  *
  * PUBLIC API SURFACE (intentionally tiny)
  * ---------------------------------------
@@ -120,12 +159,53 @@
  *
  * DEPENDENCIES (OPTIONAL, checked at diagnostics time only):
  *   - residence-system.js   (window.ResidenceSystem) — if present, the
- *     diagnostics object cross-checks occupancy; if absent, the
- *     residence-related fields in the report are marked
- *     'residence_system_unavailable' and left empty.
+ *     residence diagnostics cross-check occupancy; if absent, the
+ *     residence-related fields in the report are marked unavailable and
+ *     left empty.
+ *
+ *   The enterprise diagnostics do not require any module. They read
+ *   masterData.data.enterprises and masterData.data.households directly.
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (secondary item #2):
+ *     - _diagnostics.getIntegrityReport() now cross-checks the household
+ *       <-> enterprise reverse index, symmetric to the existing household
+ *       <-> residence cross-check. New report fields:
+ *
+ *         householdsWithOrphanEnterpriseRef
+ *         enterprisesOrphanedFromHousehold
+ *         enterpriseReverseIndexAvailable
+ *
+ *       The household-side check walks household.enterprises[] and
+ *       verifies each entry resolves to an enterprise whose ownerType /
+ *       ownerId point back. The enterprise-side check walks
+ *       masterData.data.enterprises and verifies each household-owned
+ *       enterprise's ownerId resolves to an existing household.
+ *
+ *       Prior revisions relied on industry-state.validateIntegrity (M3)
+ *       to surface these desyncs, which required the industry domain to
+ *       be loaded and its bootstrap to run. The household bootstrap's
+ *       integrity log said nothing about enterprises. A household-only
+ *       page (or a test harness that omits the industry domain) had no
+ *       way to see a corrupted enterprise reverse index.
+ *
+ *     - Header REVERSE-INDEX INTEGRITY section expanded to cover both
+ *       associations (residence, enterprise) with their report field
+ *       names and the rationale for reading masterData.data.enterprises
+ *       directly rather than via IndustryState.
+ *
+ *     - No behavioural change to any public read, mutation primitive,
+ *       hydration path, subscription, or UI-state accessor. The
+ *       diagnostics pass is additive; existing report consumers that
+ *       read householdsWithMissingResidence / residencesWithOrphanHouseholdOccupancy /
+ *       residenceReverseIndexAvailable continue to work unchanged.
+ *   Previous revisions:
+ *     - Initial implementation with subscription, hydration, and
+ *       duplicate-id detection.
+ *     - Household <-> residence reverse-index cross-check added.
  * =============================================================================
  */
 
@@ -743,27 +823,50 @@
     // including during startup when the canonical arrays may still be
     // corrupted.
     //
-    // REVERSE-INDEX CROSS-CHECK
-    // -------------------------
-    // The household ↔ residence relationship is:
-    //   - household.residenceId (reverse index)
+    // REVERSE-INDEX CROSS-CHECKS
+    // --------------------------
+    // Two reverse-index associations are audited, each in both directions.
+    //
+    // RESIDENCE:
+    //   - household.residenceId       (reverse index)
     //   - residence.units[].householdId (canonical occupancy)
     //
-    // These two MUST agree. When they don't, the report surfaces:
-    //   - householdsWithMissingResidence:
+    //   householdsWithMissingResidence:
     //       household.residenceId points at a residence that no longer
     //       exists in masterData.data.residences.
-    //   - residencesWithOrphanHouseholdOccupancy:
-    //       a residence unit has householdId pointing at a household
-    //       that no longer exists in masterData.data.households.
+    //   residencesWithOrphanHouseholdOccupancy:
+    //       a residence unit has householdId pointing at a household that
+    //       no longer exists in masterData.data.households.
+    //   residenceReverseIndexAvailable:
+    //       false if the check couldn't run (neither ResidenceSystem nor
+    //       the canonical residences array was present).
     //
-    // Both checks require window.ResidenceSystem to be loaded (for the
-    // residence side). If ResidenceSystem is not available, both lists
-    // are empty and `residenceReverseIndexAvailable` is false.
+    // ENTERPRISE:
+    //   - household.enterprises[]     (reverse index)
+    //   - enterprise.ownerType / ownerId (canonical ownership)
     //
-    // Neither check throws. Missing residence records / missing units /
-    // malformed shapes are silently skipped (a shape problem is
-    // validation.js's concern, not the diagnostics').
+    //   householdsWithOrphanEnterpriseRef:
+    //       household.enterprises[] contains an entry that (a) is not a
+    //       non-empty string, (b) does not resolve to an enterprise in
+    //       masterData.data.enterprises, (c) resolves to an enterprise
+    //       whose ownerType is not 'household', or (d) resolves to an
+    //       enterprise whose ownerId is a different household.
+    //   enterprisesOrphanedFromHousehold:
+    //       an enterprise in masterData.data.enterprises has
+    //       ownerType === 'household' but its ownerId does not resolve
+    //       to any household in masterData.data.households.
+    //   enterpriseReverseIndexAvailable:
+    //       false if the check couldn't run (masterData.data.enterprises
+    //       or masterData.data.households was not an array).
+    //
+    //   The enterprise check reads masterData.data.enterprises directly,
+    //   not through IndustryState. It works even when the industry module
+    //   has not been loaded. The symmetric check on the industry side
+    //   lives in industry-state.js::validateIntegrity (M3).
+    //
+    // Neither check throws. Missing records / malformed shapes are
+    // silently skipped (a shape problem is validation.js's concern, not
+    // the diagnostics').
 
     function _checkResidenceReverseIndex() {
         var result = {
@@ -866,6 +969,151 @@
         return result;
     }
 
+    /**
+     * Cross-checks the household <-> enterprise reverse index.
+     *
+     * Reads masterData.data.enterprises and masterData.data.households
+     * directly. Does NOT go through IndustryState; works even when the
+     * industry module is not loaded.
+     *
+     * @private
+     * @returns {{
+     *   available: boolean,
+     *   householdsWithOrphanEnterpriseRef: Array,
+     *   enterprisesOrphanedFromHousehold: Array
+     * }}
+     */
+    function _checkEnterpriseReverseIndex() {
+        var result = {
+            available: false,
+            householdsWithOrphanEnterpriseRef: [],
+            enterprisesOrphanedFromHousehold: []
+        };
+
+        var master;
+        try {
+            master = _getMasterData();
+        } catch (e) {
+            return result;
+        }
+
+        var canonicalEnterprises = Array.isArray(master.data.enterprises)
+            ? master.data.enterprises
+            : null;
+        var canonicalHouseholds = Array.isArray(master.data.households)
+            ? master.data.households
+            : null;
+
+        if (!canonicalEnterprises || !canonicalHouseholds) {
+            return result;
+        }
+
+        result.available = true;
+
+        // Index both sides up front so both directions of the check are
+        // O(1) lookups per entry.
+        var enterpriseById = new Map();
+        for (var e = 0; e < canonicalEnterprises.length; e++) {
+            var ent = canonicalEnterprises[e];
+            if (!ent || typeof ent.id !== 'string' || ent.id.length === 0) {
+                continue;
+            }
+            enterpriseById.set(ent.id, ent);
+        }
+
+        var householdById = new Map();
+        for (var h = 0; h < canonicalHouseholds.length; h++) {
+            var hh = canonicalHouseholds[h];
+            if (!hh || typeof hh.id !== 'string' || hh.id.length === 0) {
+                continue;
+            }
+            householdById.set(hh.id, hh);
+        }
+
+        // Direction 1: household.enterprises[] → enterprise.
+        for (var hi = 0; hi < canonicalHouseholds.length; hi++) {
+            var household = canonicalHouseholds[hi];
+            if (!household || typeof household.id !== 'string') continue;
+            if (!Array.isArray(household.enterprises)) continue;
+
+            for (var ei = 0; ei < household.enterprises.length; ei++) {
+                var entryId = household.enterprises[ei];
+
+                if (typeof entryId !== 'string' || entryId.length === 0) {
+                    result.householdsWithOrphanEnterpriseRef.push({
+                        householdId: household.id,
+                        householdName: household.name || null,
+                        enterpriseId: null,
+                        index: ei,
+                        reason: 'malformed entry'
+                    });
+                    continue;
+                }
+
+                var enterprise = enterpriseById.get(entryId);
+                if (!enterprise) {
+                    result.householdsWithOrphanEnterpriseRef.push({
+                        householdId: household.id,
+                        householdName: household.name || null,
+                        enterpriseId: entryId,
+                        index: ei,
+                        reason: 'missing enterprise'
+                    });
+                    continue;
+                }
+
+                if (enterprise.ownerType !== 'household') {
+                    result.householdsWithOrphanEnterpriseRef.push({
+                        householdId: household.id,
+                        householdName: household.name || null,
+                        enterpriseId: entryId,
+                        index: ei,
+                        reason: 'not household-owned'
+                    });
+                    continue;
+                }
+
+                if (enterprise.ownerId !== household.id) {
+                    result.householdsWithOrphanEnterpriseRef.push({
+                        householdId: household.id,
+                        householdName: household.name || null,
+                        enterpriseId: entryId,
+                        index: ei,
+                        reason: 'owned by different household',
+                        actualOwnerId: enterprise.ownerId || null
+                    });
+                }
+            }
+        }
+
+        // Direction 2: enterprise.ownerId → household.
+        for (var ei2 = 0; ei2 < canonicalEnterprises.length; ei2++) {
+            var ent2 = canonicalEnterprises[ei2];
+            if (!ent2 || typeof ent2.id !== 'string') continue;
+            if (ent2.ownerType !== 'household') continue;
+
+            var ownerId = ent2.ownerId;
+            if (typeof ownerId !== 'string' || ownerId.length === 0) {
+                // A household-owned enterprise with no ownerId is a
+                // validation problem (industry-rules.validateEnterprise
+                // rejects it). We do not report it here; that is
+                // validation.js's concern, not the reverse-index
+                // diagnostics'.
+                continue;
+            }
+
+            if (!householdById.has(ownerId)) {
+                result.enterprisesOrphanedFromHousehold.push({
+                    enterpriseId: ent2.id,
+                    enterpriseName: ent2.name || null,
+                    ownerId: ownerId
+                });
+            }
+        }
+
+        return result;
+    }
+
     var _diagnostics = {
         getHouseholdCount: function() { return _state.households.length; },
         getPositionCount: function() { return _state.householdPositions.length; },
@@ -890,11 +1138,19 @@
          *   householdsWithMissingResidence: [],
          *   residencesWithOrphanHouseholdOccupancy: [],
          *   residenceReverseIndexAvailable: boolean,
+         *   householdsWithOrphanEnterpriseRef: [],
+         *   enterprisesOrphanedFromHousehold: [],
+         *   enterpriseReverseIndexAvailable: boolean,
          *   counts: {
          *     households, positions, assignments
          *   },
          *   reason?: string  (only on catastrophic failure)
          * }
+         *
+         * `ok` is true only if every list is empty AND both reverse-index
+         * checks ran (`available === true` on both). A caller that needs
+         * to distinguish "no issues" from "no issues I could check" must
+         * inspect the two `available` flags.
          */
         getIntegrityReport: function() {
             var households = [];
@@ -933,15 +1189,18 @@
                 }
             }
 
-            var reverseIndex = _checkResidenceReverseIndex();
+            var residenceIndex = _checkResidenceReverseIndex();
+            var enterpriseIndex = _checkEnterpriseReverseIndex();
 
             var ok =
                 hDup.length === 0 &&
                 pDup.length === 0 &&
                 aDup.length === 0 &&
                 duplicateHouseholdHeads.length === 0 &&
-                reverseIndex.householdsWithMissingResidence.length === 0 &&
-                reverseIndex.residencesWithOrphanHouseholdOccupancy.length === 0;
+                residenceIndex.householdsWithMissingResidence.length === 0 &&
+                residenceIndex.residencesWithOrphanHouseholdOccupancy.length === 0 &&
+                enterpriseIndex.householdsWithOrphanEnterpriseRef.length === 0 &&
+                enterpriseIndex.enterprisesOrphanedFromHousehold.length === 0;
 
             return {
                 ok: ok,
@@ -952,10 +1211,15 @@
                 },
                 duplicateHouseholdHeads: duplicateHouseholdHeads,
                 householdsWithMissingResidence:
-                    reverseIndex.householdsWithMissingResidence,
+                    residenceIndex.householdsWithMissingResidence,
                 residencesWithOrphanHouseholdOccupancy:
-                    reverseIndex.residencesWithOrphanHouseholdOccupancy,
-                residenceReverseIndexAvailable: reverseIndex.available,
+                    residenceIndex.residencesWithOrphanHouseholdOccupancy,
+                residenceReverseIndexAvailable: residenceIndex.available,
+                householdsWithOrphanEnterpriseRef:
+                    enterpriseIndex.householdsWithOrphanEnterpriseRef,
+                enterprisesOrphanedFromHousehold:
+                    enterpriseIndex.enterprisesOrphanedFromHousehold,
+                enterpriseReverseIndexAvailable: enterpriseIndex.available,
                 counts: {
                     households: households.length,
                     positions: positions.length,
