@@ -26,8 +26,6 @@
  *   - Every mutation invokes HouseholdCommands.* then a single
  *     HouseholdCommands.persist() at the end of the batch (via
  *     HouseholdModals.persistOrFail).
- *   - A persist failure after a successful command is reported as a
- *     partial failure (the mutation is in memory but not on disk).
  *   - No HouseholdState access.
  *   - No _saveMasterData call here.
  *   - No _processingModal guard.
@@ -35,6 +33,50 @@
  *     code, reason } — no raw boolean checks.
  *   - processAnnualEconomy reads .data.* (economy already returns
  *     structured results).
+ *
+ * PERSIST-FAILURE BEHAVIOR
+ * ------------------------
+ *   The create and edit modals apply a two-part contract to persist
+ *   failures:
+ *
+ *     1. The mutation command has ALREADY succeeded in memory when
+ *        _persistOrFail runs. The command layer's own commit has set
+ *        in-memory state; the only thing that can fail is the flush to
+ *        localStorage.
+ *
+ *     2. If the flush fails, onConfirm returns false so the modal stays
+ *        open. The user sees an error toast and can click the primary
+ *        button again to retry the persist.
+ *
+ *   RETRY IDEMPOTENCY:
+ *     The create and edit modals track whether the mutation phase has
+ *     already succeeded for the current modal session. On retry:
+ *
+ *       - If the mutation phase already succeeded, onConfirm skips the
+ *         command layer entirely and only re-runs _persistOrFail.
+ *         Retrying a create does NOT create a second household; the
+ *         id from the first attempt is retained in the modal closure.
+ *         Retrying an edit does NOT re-apply the updates to an already-
+ *         updated record.
+ *
+ *       - If the mutation phase did NOT succeed (e.g. the user edited a
+ *         field after a validation failure), onConfirm starts fresh.
+ *         The guard only protects the narrow window between "command
+ *         succeeded, persist failed" and "user retried".
+ *
+ *   Before this revision, both modals returned true from onConfirm even
+ *   when persist failed, which:
+ *     - showed a success toast AND an error toast in the same breath
+ *     - fired onSuccess as if the write had landed
+ *     - closed the modal, discarding the user's in-memory attempt
+ *     - allowed the caller's onSuccess handler to clear forms or
+ *       navigate away, losing the record on the next page load
+ *
+ *   The delete modal uses confirmDialog, which cannot keep itself open
+ *   after the confirm click. Its behavior on persist failure is
+ *   unchanged: the mutation succeeded in memory, the persist failure is
+ *   toasted, and onSuccess fires. This is documented as the known
+ *   limitation of the confirm-dialog shape.
  *
  * SHARED HELPERS
  * --------------
@@ -44,11 +86,6 @@
  *   keeps only its local aliases (var _esc = _Modals.esc; etc.) and its
  *   domain-specific builders (_buildLocationOptions, the details-content
  *   builders, and the wire functions for the details modal).
- *
- *   Prior revisions carried local copies of _persistOrFail,
- *   _confirmDialog, _currentYear, and _closeThen. Those are now
- *   HouseholdModals exports; the aliases at the top of this file
- *   delegate to those shared helpers.
  *
  * DOM-SCOPE
  * ---------
@@ -77,27 +114,39 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (secondary item #3):
+ *     - openCreateHouseholdModal and openEditHouseholdModal now return
+ *       false from onConfirm when _persistOrFail fails, keeping the
+ *       modal open so the user can retry the persist. Prior revisions
+ *       returned true unconditionally, which produced a success-toast
+ *       + error-toast pair, fired onSuccess as if the write had
+ *       landed, and closed the modal.
+ *     - Both modals now carry a mutation-succeeded flag in their
+ *       onConfirm closure. On retry, they skip the command layer and
+ *       only re-run _persistOrFail. This makes retry idempotent for the
+ *       create case (no duplicate household) and for the edit case (no
+ *       double-application of the same updates). See RETRY IDEMPOTENCY
+ *       in PERSIST-FAILURE BEHAVIOR.
+ *     - Header PERSIST-FAILURE BEHAVIOR section added.
+ *     - No public signatures changed. No rendered HTML changed. No
+ *       behavior change on the happy path.
+ *     - KNOWN LIMITATION (not addressed here): the delete modal uses
+ *       confirmDialog and cannot apply the same pattern. Its
+ *       persist-failure behavior is unchanged.
+ *     - KNOWN LIMITATION (not addressed here, in
+ *       modals-household-snapshot.js): openDeleteNamePeriodModal's
+ *       onConfirm re-runs deleteNamePeriod on retry after a persist
+ *       failure. The second call deletes a different period (whatever
+ *       lands at the same index after the first splice). That is a
+ *       separate file and a separate fix.
+ *   Previous revisions:
  *     - Removed the local copies of _persistOrFail, _confirmDialog,
  *       _currentYear, and _closeThen. All four were structurally
  *       identical to the shared versions exported by HouseholdModals.
- *       The aliases at the top of this file delegate to those shared
- *       helpers.
- *     - _confirmDialog in the delete flow now goes through
- *       HouseholdModals.confirmDialog (which itself prefers
- *       window.confirmDialog, falls back to window.confirm). Same
- *       semantics as before.
- *     - No behavioural change to any modal entry point.
- *   Previous revisions:
  *     - Every DOM lookup is scoped to handle.element via
  *       HouseholdModals.rootFrom(modal).
  *     - _buildLocationOptions falls back to getPlaces when
- *       buildLocationDropdown is unavailable, matching the residence
- *       modal file's behaviour.
- *     - openDeleteHouseholdModal now routes through _confirmDialog,
- *       which itself routes through modals-core's confirmDialog when
- *       present (the previous implementation called _confirmDialog as a
- *       local helper with the same behaviour).
+ *       buildLocationDropdown is unavailable.
  * =============================================================================
  */
 
@@ -205,6 +254,17 @@
     // =========================================================================
     // 2. CREATE HOUSEHOLD MODAL
     // =========================================================================
+    //
+    // RETRY IDEMPOTENCY:
+    //   `createdHouseholdId` tracks whether the createHousehold command
+    //   has already succeeded in this modal session. On the first
+    //   successful command, the id is captured. On any subsequent
+    //   onConfirm invocation (which can only happen if the previous
+    //   invocation returned false, i.e. persist failed), the command is
+    //   skipped and only the persist is retried. This prevents the
+    //   duplicate-household hazard that would otherwise exist: the user
+    //   clicks Create a second time after a persist failure, and
+    //   createHousehold would otherwise create a second record.
 
     function openCreateHouseholdModal(onSuccess, options) {
         options = options || {};
@@ -256,6 +316,11 @@
                 '</div>' +
             '</div>';
 
+        // Retry idempotency: the id of the household created on the first
+        // successful command invocation, or null.
+        var createdHouseholdId = null;
+        var createdHouseholdData = null;
+
         var modal = _openModal({
             title: 'Create Household',
             content: content,
@@ -268,6 +333,23 @@
                     return false;
                 }
 
+                // RETRY PATH: the command already succeeded on a prior
+                // onConfirm invocation. Skip the command layer entirely
+                // and only retry the persist.
+                if (createdHouseholdId !== null) {
+                    var retryPersist = _persistOrFail('Household created');
+                    if (!retryPersist.ok) {
+                        return false;
+                    }
+                    _showSuccess('Household created: ' +
+                        (createdHouseholdData ? createdHouseholdData.name : ''));
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(createdHouseholdData);
+                    }
+                    return true;
+                }
+
+                // FIRST PATH: validate, run the command, then persist.
                 var name = _Modals.readValue(root, '[data-field="name"]');
                 if (!name || name.trim() === '') {
                     _showError('Household name is required');
@@ -298,10 +380,20 @@
                     return false;
                 }
 
+                // Capture the created id before persisting. If persist
+                // fails, the retry path above uses this id to skip the
+                // command layer.
+                createdHouseholdId = result.data.householdId;
+                createdHouseholdData = result.data;
+
                 var persisted = _persistOrFail('Household created');
-                // Whether or not the persist succeeded, the mutation is in
-                // memory. Report success to the caller (the persist failure
-                // was toasted) so the modal closes.
+                if (!persisted.ok) {
+                    // Keep the modal open so the user can retry the
+                    // persist. The created id is retained; the retry path
+                    // skips createHousehold and only retries the flush.
+                    return false;
+                }
+
                 _showSuccess('Household created: ' + data.name);
 
                 if (typeof onSuccess === 'function') {
@@ -352,6 +444,12 @@
     // =========================================================================
     // 3. EDIT HOUSEHOLD MODAL
     // =========================================================================
+    //
+    // RETRY IDEMPOTENCY:
+    //   Same pattern as the create modal. `mutationSucceeded` tracks
+    //   whether updateHousehold + setStatus have already been applied in
+    //   memory. On retry after a persist failure, the command layer is
+    //   skipped and only _persistOrFail runs.
 
     function openEditHouseholdModal(householdId, onSuccess) {
         var household = _queries.getHousehold(householdId);
@@ -408,6 +506,11 @@
                 '</div>' +
             '</div>';
 
+        // Retry idempotency: same pattern as the create modal.
+        var mutationSucceeded = false;
+        var mutationData = null;
+        var statusChangeFailedReason = null;
+
         var modal = _openModal({
             title: 'Edit Household: ' + household.name,
             content: content,
@@ -420,6 +523,28 @@
                     return false;
                 }
 
+                // RETRY PATH: the command phase already succeeded on a
+                // prior onConfirm invocation. Skip the command layer and
+                // only retry the persist.
+                if (mutationSucceeded) {
+                    var retryPersist = _persistOrFail('Household updated');
+                    if (!retryPersist.ok) {
+                        return false;
+                    }
+                    if (statusChangeFailedReason) {
+                        _showWarning(
+                            'Household updated but status change failed: ' +
+                            statusChangeFailedReason);
+                    } else {
+                        _showSuccess('Household updated');
+                    }
+                    if (typeof onSuccess === 'function') {
+                        onSuccess(mutationData);
+                    }
+                    return true;
+                }
+
+                // FIRST PATH: validate, run the commands, then persist.
                 var name = _Modals.readValue(root, '[data-field="name"]');
                 if (!name || name.trim() === '') {
                     _showError('Household name is required');
@@ -462,8 +587,21 @@
                     }
                 }
 
+                // Capture the mutation-succeeded state before persisting.
+                // If persist fails, the retry path above uses this flag
+                // to skip the command layer.
+                mutationSucceeded = true;
+                mutationData = result.data;
+                statusChangeFailedReason = statusChangeFailed;
+
                 // Persist once for the batch.
-                _Modals.persistOrFail('Household updated');
+                var persisted = _persistOrFail('Household updated');
+                if (!persisted.ok) {
+                    // Keep the modal open so the user can retry the
+                    // persist. The command mutations already succeeded
+                    // in memory; only the flush failed.
+                    return false;
+                }
 
                 if (statusChangeFailed) {
                     _showWarning(
