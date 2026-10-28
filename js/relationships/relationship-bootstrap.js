@@ -23,12 +23,87 @@
  *
  * LOAD THIS FILE LAST, after every other relationships/*.js file, and
  * after family-queries.js, family-rules.js, character-queries.js,
- * constants/character-traits.js, and any other external dependency.
- * See section 13 of the domain docs for the full HTML load order.
+ * character-commands.js, character-lifecycle.js, randomness.js,
+ * constants/character-traits.js, apprenticeship-commands.js, and any
+ * other external dependency. See section 21 of the domain docs for the
+ * full HTML load order.
+ *
+ * RANDOMNESS DEPENDENCY
+ *
+ *   REQUIRED_GLOBALS includes 'Random'. That name resolves to
+ *   window.Random = { next: <core PRNG> } as exported by randomness.js.
+ *   randomness.js also exposes window.random and window.randomNext
+ *   pointing at the same function, so any of the three accessors works,
+ *   but this bootstrap checks for the namespaced form specifically
+ *   because that is what the domain's _roll() helpers reach for first
+ *   (jealousy-commands.js, affair-commands.js,
+ *   relationship-integrations.js).
+ *
+ *   If randomness.js is missing from the load order, or is a revision
+ *   that does not export window.Random, the bootstrap fails hard:
+ *
+ *     relationships-bootstrap.js: dependency verification failed
+ *     Missing required globals:
+ *       - Random
+ *
+ *   That is deliberate. A domain that draws from the RNG stream cannot
+ *   silently degrade to no-op rolls; every command that rolls would
+ *   either throw at first use or (worse) fall back to a second source
+ *   of randomness. The bootstrap makes the absence loud at load time.
+ *
+ * APPRENTICESHIP DEPENDENCY
+ *
+ *   'ApprenticeshipCommands' is on CONDITIONAL_GLOBALS, not
+ *   REQUIRED_GLOBALS. Its absence does not fail the bootstrap; the
+ *   domain still loads and every non-apprenticeship command still
+ *   works. But its absence is NOT silent — when a character dies with
+ *   an active apprenticeship and ApprenticeshipCommands is not loaded,
+ *   relationship-integrations.js::handleCharacterDeath reports
+ *   { code: 'APPRENTICESHIP_COMMANDS_UNAVAILABLE' } in the returned
+ *   summary for each affected apprenticeship edge, and the caller
+ *   surfaces it the same way it surfaces any other failure in the
+ *   death cascade.
+ *
+ *   That visible-failure behaviour is the reason the module is on the
+ *   conditional list rather than the required list. A conditional
+ *   dependency whose absence would only produce a silent skip (e.g. a
+ *   passive read) does not need to be surfaced this way; this one does,
+ *   because leaving apprenticeships alive on a deceased master is a
+ *   data-integrity bug, not a cosmetic one.
+ *
+ *   The complementary call-time guard is in
+ *   relationship-integrations.js::_getApprenticeshipCommands(), which
+ *   checks for window.ApprenticeshipCommands.terminateApprenticeship
+ *   (the real terminal method — there is no endApprenticeship on the
+ *   module). The bootstrap's entry is the load-time fact; the guard is
+ *   the call-time fact. Both are needed and both are correct.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 3.2):
+ *   Current revision:
+ *     - Header RANDOMNESS DEPENDENCY and APPRENTICESHIP DEPENDENCY
+ *       sections added. Both document what the code already does — no
+ *       code change. The RANDOMNESS section names randomness.js as the
+ *       provider of window.Random (which the earlier randomness.js fix
+ *       now exports) and explains why the bootstrap fails hard when it
+ *       is absent. The APPRENTICESHIP section explains why
+ *       ApprenticeshipCommands is conditional rather than required and
+ *       names the failure code the death cascade surfaces when it is
+ *       absent.
+ *     - Required external globals list corrected against the code:
+ *       'getCurrentYearSafe' (stale) was replaced by 'getCurrentYear'.
+ *       CHARACTER_TRAITS and CHARACTER_TRAIT_VALUES (required by the
+ *       code, omitted from the doc) are now named in this section.
+ *       See section 20 of the domain docs for the same correction on
+ *       the documentation side.
+ *     - The REQUIRED_METHODS.ProfessionalCommands NOTE already named
+ *       the ownership boundary (ProfessionalCommands does not export
+ *       apprenticeship lifecycle methods). That NOTE now cross-
+ *       references section 16 of the domain docs, where the same
+ *       boundary is documented at length alongside the
+ *       ApprenticeshipCommands surface.
+ *     - No code change.
+ *   Previous revision (Phase 3.2):
  *     - Added REQUIRED_METHODS: a per-namespace list of every method
  *       the relationship domain dispatches to. The bootstrap verifies
  *       each one is a function. Missing methods fail at load with a
@@ -111,6 +186,9 @@
     // These are hard requirements. A relationship domain without
     // character accessors, ids, or current year cannot operate.
     //
+    // Random is exported by randomness.js as window.Random = { next }.
+    // See RANDOMNESS DEPENDENCY in the module header.
+    //
     // CHARACTER_TRAITS / CHARACTER_TRAIT_VALUES are also hard requirements:
     //   - jealousy-rules.js keys TRAIT_MODIFIERS off canonical trait ids
     //     (violent, hot_headed, cowardly, calculating, jealous, secure,
@@ -157,13 +235,16 @@
     // matches the project's "fail loud at point of use" convention for
     // optional subsystems.
     //
-    // ApprenticeshipCommands is the ONE exception: the death cascade in
-    // relationship-integrations.js dispatches to it. Its absence today
-    // means an apprenticeship never gets ended on death, which is a
-    // silent data-integrity problem rather than a loud crash. We treat
-    // its absence as a warning here (so the domain still loads), and
-    // relationship-integrations.js surfaces the absence in its own
-    // cleanup report.
+    // ApprenticeshipCommands is on this list for the reason documented
+    // in APPRENTICESHIP DEPENDENCY in the module header: its absence
+    // does not fail the bootstrap, but it does produce a visible
+    // failure in the death cascade report rather than a silent skip.
+    //
+    // SkillQueries and SkillCommands are listed for external consumers.
+    // ProfessionalQueries does NOT depend on either; it reads skill
+    // through CharacterCommands.getProfession and role names through
+    // RoleState.getRole (with accessors.getRoleById as bootstrap
+    // fallback). See relationship-docs.txt section 16.
     // -------------------------------------------------------------------------
 
     var CONDITIONAL_GLOBALS = [
@@ -518,8 +599,10 @@
         // NOTE: ProfessionalCommands does NOT export endApprenticeship /
         // createApprenticeship / progressApprenticeship / completeApprenticeship.
         // Those live on ApprenticeshipCommands (a separate module that
-        // is conditionally required). The methods listed here are the
-        // ones ProfessionalCommands actually owns.
+        // is conditionally required — see APPRENTICESHIP DEPENDENCY in
+        // the header). The methods listed here are the ones
+        // ProfessionalCommands actually owns. See relationship-docs.txt
+        // section 16 for the ownership split.
         // -----------------------------------------------------------------
         ['ProfessionalRules', [
             'isProfessionalArchetype',
