@@ -1,3 +1,4 @@
+// js/location/location-commands.js
 /**
  * =============================================================================
  * LOCATION COMMANDS
@@ -100,9 +101,43 @@
  *   CharacterCommands, which is a load-time dependency of this module
  *   and cannot be missing.
  *
+ * RESULT ENVELOPE `success` FIELD:
+ *   _ok() always returns { success: true, ...payload }, and it REFUSES
+ *   to let the payload shadow the `success` guard. This is not
+ *   cosmetic: prior revisions of bulkRecordMoves returned
+ *   { success: succeeded } where `succeeded` is an ARRAY of successful
+ *   move records. The _ok copy loop let the array overwrite the
+ *   boolean, so every downstream `result.success === true` check
+ *   failed. Every successful bulk move was reported as a failure.
+ *
+ *   The guard is now structural: _ok skips any payload key named
+ *   "success". Callers who want to convey "the list of successful
+ *   items" must use a non-colliding name (succeededList, succeededItems,
+ *   okList). See bulkRecordMoves below, which uses `succeededList`.
+ *
+ *   If you are adding a new command and reaching for `_ok({ success: ... })`,
+ *   stop. Use a distinct key. The whole reason _ok has a guard is to
+ *   make that mistake impossible to ship.
+ *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (P0-1 + P1-5):
+ *     - _ok() now skips any payload key named 'success'. Prior revision
+ *       copied the payload verbatim, so a payload key 'success' would
+ *       silently overwrite the { success: true } guard. This was the
+ *       actual bug in bulkRecordMoves (below).
+ *     - bulkRecordMoves payload key renamed from `success` to
+ *       `succeededList`. The previous shape returned
+ *       { success: <array>, ... } which the _runCommand guard in
+ *       modals-moves.js treated as a failure. Every successful bulk
+ *       move reported an error toast, did not close the modal, and
+ *       invited duplicate submissions. The move records themselves
+ *       were written correctly; the failure was in the result
+ *       envelope, not the mutation.
+ *     - Header RESULT ENVELOPE `success` FIELD section added explaining
+ *       the guard and the historical bug it prevents.
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - deletePlace now dispatches HouseholdCommands.clearLocationReferences
  *       after character cleanup. Prior revisions returned
  *       householdReconciliation: 'deferred' and left every
@@ -115,19 +150,12 @@
  *       'unavailable' (HouseholdCommands not loaded),
  *       'failed' (cleanup ran but reported failure),
  *       or 'skipped' (nothing to clean up).
- *       Prior revisions returned the bare string 'deferred' with no
- *       counts. Callers that inspected the old value are the only
- *       consumers of the shape; no in-tree caller reads
- *       householdReconciliation. The new shape is strictly more
- *       informative.
- *     - persist() unchanged: already reads getLastSaveError() on failure
+ *     - persist() unchanged: reads getLastSaveError() on failure
  *       (Pattern A from storage.js DOMAIN PERSIST CONTRACT).
- *     - No other behavioural change.
- *   Previous revision:
+ *   Prior revisions:
  *     - persist() now reads getLastSaveError() when saveMasterData()
  *       returns false.
  *     - Header PERSIST CONTRACT section added.
- *   Prior revisions:
  *     - Initial implementation.
  * =============================================================================
  */
@@ -219,10 +247,13 @@
     // HouseholdCommands is OPTIONAL. If loaded, deletePlace dispatches
     // clearLocationReferences. If not, the household cleanup step is
     // skipped and reported as 'unavailable' in the result envelope.
-    // HouseholdCommands is loaded before this module in the canonical
-    // HTML order (households load early so that rank/settlement/etc.
-    // can read from them), so this is a defensive presence check rather
-    // than a load-order requirement.
+    //
+    // Resolved at CALL time, not load time. Under the documented HTML
+    // order household-commands.js loads before this file, so the
+    // dependency is available. But call-time resolution means this
+    // module is loadable in a reduced environment (e.g. a location-only
+    // test harness) where HouseholdCommands is absent, without
+    // precluding the character cleanup path (which does not need it).
     function _householdCommands() {
         return (typeof window.HouseholdCommands !== 'undefined'
                 && window.HouseholdCommands !== null)
@@ -234,13 +265,37 @@
     // 2. RESULT HELPERS
     // =========================================================================
 
+    /**
+     * Builds a success envelope.
+     *
+     * The `success: true` guard is ALWAYS present and ALWAYS a boolean.
+     * Payload keys are copied onto the result except the key `success`,
+     * which is skipped to prevent shadowing.
+     *
+     * Why the skip:
+     *   Prior revisions let payload keys overwrite the guard. bulkRecordMoves
+     *   returned { success: <array of moved records> }, the copy loop
+     *   overwrote the boolean true, and every downstream
+     *   `result.success === true` check failed. The bulk-move modal
+     *   therefore reported every successful batch as a failure, left the
+     *   modal open, and invited duplicate submissions.
+     *
+     *   This guard makes that class of bug structurally impossible: any
+     *   caller passing { success: ... } gets its key silently dropped,
+     *   keeping the guard intact. Callers that need a "list of successful
+     *   items" key must name it something else (succeededList,
+     *   succeededItems, okList, etc.).
+     *
+     * @param {Object} [data] - optional payload; keys spread onto result
+     * @returns {{success: true, [key: string]: *}}
+     */
     function _ok(data) {
         var result = { success: true };
         if (data) {
             for (var key in data) {
-                if (Object.prototype.hasOwnProperty.call(data, key)) {
-                    result[key] = data[key];
-                }
+                if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+                if (key === 'success') continue;   // guard: never shadow
+                result[key] = data[key];
             }
         }
         return result;
@@ -777,6 +832,8 @@
                 continue;
             }
 
+            // clearLocationReferences returns { success: true, data: { clearedCount, households } }
+            // per household-commands.js's _ok shape. Read from data.
             var data = result.data || {};
             var cleared = typeof data.clearedCount === 'number'
                 ? data.clearedCount
@@ -1004,12 +1061,39 @@
         });
     }
 
+    /**
+     * Records multiple moves in one batch.
+     *
+     * Each move is applied via CharacterCommands.updateCharacterFields.
+     * The final result envelope contains:
+     *
+     *   succeededList: Array<{ characterId, locationId, year }>
+     *                  Successfully written move records, in input order.
+     *                  (Previously named `success`, which collided with
+     *                  the _ok guard and broke every downstream check.)
+     *   failed:        Array<{ index, error }>
+     *                  Failed entries, with the input index and reason.
+     *   total:         number
+     *                  Total input entries.
+     *   succeeded:     number
+     *                  Count of succeededList (kept for callers that only
+     *                  need the count).
+     *   failedCount:   number
+     *                  Count of failed.
+     *
+     * Calls _commit once if at least one move succeeded. Persistence is
+     * the caller's responsibility via LocationCommands.persist() — this
+     * function does NOT call saveMasterData.
+     *
+     * @param {Array<{characterId, locationId, year?, note?, fromLocationId?, isBirthMove?}>} moves
+     * @returns {Object} result envelope
+     */
     function bulkRecordMoves(moves) {
         if (!Array.isArray(moves)) {
             return _fail('bulkRecordMoves: moves must be an array');
         }
 
-        var succeeded = [];
+        var succeededList = [];
         var failed = [];
         var touchedCharacters = {};
 
@@ -1045,27 +1129,30 @@
             }
 
             touchedCharacters[prep.data.characterId] = true;
-            succeeded.push({
+            succeededList.push({
                 characterId: prep.data.characterId,
                 locationId: prep.data.locationId,
                 year: prep.data.year
             });
         }
 
-        if (succeeded.length > 0) {
+        if (succeededList.length > 0) {
             window.markDataDirty();
             _commit('movesRecordedBulk', {
-                count: succeeded.length,
+                count: succeededList.length,
                 failedCount: failed.length,
                 characterCount: Object.keys(touchedCharacters).length
             });
         }
 
+        // Guard: _ok skips a payload key named 'success', but use a
+        // non-colliding key anyway. `succeededList` is the array; the
+        // result's `success` stays true.
         return _ok({
-            success: succeeded,
+            succeededList: succeededList,
             failed: failed,
             total: moves.length,
-            succeeded: succeeded.length,
+            succeeded: succeededList.length,
             failedCount: failed.length
         });
     }
