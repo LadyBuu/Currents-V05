@@ -24,19 +24,34 @@
  *       - required-years lookup per stage
  *
  *   ApprenticeshipRules does NOT own:
- *       - specialization membership      → RoleRules.validateSpecialization
+ *       - specialization membership      → apprenticeship-commands.js
+ *                                          (_validateSpecialization)
  *       - skill taxonomy / thresholds    → SkillUtils
  *       - the profession record          → CharacterCommands
  *       - the relationship edge          → ProfessionalCommands
  *       - the apprenticeship lifecycle   → ApprenticeshipCommands
  *
- * REMOVED IN THIS VERSION
+ * SPECIALIZATION VALIDATION
  *
- *   validateSpecialization() has moved to RoleRules. The role catalogue
- *   (role.specializations) is the authority on which specializations
- *   exist for a role; that is a role-domain question, not an
- *   apprenticeship question. ApprenticeshipCommands now calls
- *   RoleRules.validateSpecialization().
+ *   validateSpecialization() is NOT exported by this module. Membership
+ *   validation for role.specializations lives inline in
+ *   apprenticeship-commands.js as _validateSpecialization, which is the
+ *   sole validator for the apprenticeship domain's use of
+ *   role.specializations.
+ *
+ *   History: an earlier revision of this file owned a
+ *   validateSpecialization() helper, and a still earlier revision
+ *   documented that helper as having "moved to RoleRules". role-rules.js
+ *   was subsequently deleted as dead code — it was never called by
+ *   role-commands.js, which validated inline. The helper now lives in
+ *   apprenticeship-commands.js, which is where it is called. There is
+ *   no RoleRules module in this tree, and this file must not refer to
+ *   one.
+ *
+ *   The check is narrow: it verifies that `specialization` appears in
+ *   `role.specializations`. It does NOT validate that the role exists
+ *   (the caller checks that first), and it does NOT consult any other
+ *   domain's rules.
  *
  * STAGE DERIVATION
  *
@@ -333,7 +348,9 @@
     // 6. EXPORTS
     // =========================================================================
     //
-    // validateSpecialization is NOT exported. It lives in RoleRules.
+    // validateSpecialization is NOT exported. It lives inline in
+    // apprenticeship-commands.js as _validateSpecialization. See
+    // SPECIALIZATION VALIDATION in the module header.
 
     window.ApprenticeshipRules = {
         getStageForSkill: getStageForSkill,
