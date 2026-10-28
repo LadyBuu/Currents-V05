@@ -48,6 +48,63 @@
  *   openModal. It does NOT read `title` / `content`; those options are
  *   silently ignored by the core and must not be used here.
  *
+ * REASON-CODES IN RENDERED OUTPUT:
+ *   buildSettlementSummary exposes reason codes alongside value fields
+ *   for the two derived religion facts:
+ *
+ *     religiousUnity        number|null
+ *     religiousUnityReason  'available' | 'no_population' |
+ *                           'no_breakdown' | 'settlement_not_found'
+ *
+ *     dominantReligion          Object|null
+ *     dominantReligionReason    'available' | 'no_population' |
+ *                               'no_breakdown' | 'unaffiliated_majority' |
+ *                               'no_religions' | 'settlement_not_found'
+ *
+ *   This modal reads the reasons and renders honest copy for each:
+ *
+ *     'available'               → the value
+ *     'no_population'           → 'No population'
+ *     'no_breakdown'            → 'Unavailable'
+ *     'unaffiliated_majority'   → 'Unaffiliated majority'
+ *     'no_religions'            → 'No religions'
+ *     'settlement_not_found'    → 'Unknown'
+ *
+ *   Prior revisions rendered every unavailable case as a generic 'Unknown'
+ *   because the summary only exposed the value fields. After the query-
+ *   layer fixes (Fix #6, Fix #8) the summary carries the reason, and this
+ *   modal surfaces it.
+ *
+ * NUMERIC RENDERING:
+ *   Every numeric field that reaches the DOM is formatted via _fmtNumber,
+ *   which returns `<span class="value-unknown">—</span>` for
+ *   null/undefined/non-finite values. Numeric fields rendered without
+ *   _fmtNumber would print "null" or "undefined" as text; the prior
+ *   revision had three such fields in openManageFeaturesModal (maintenance
+ *   and cost on both feature lists). Fixed.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - openSettlementDetailsModal now renders the reason codes for
+ *       religiousUnity and dominantReligion. Each reason has a distinct
+ *       human label; a settlement with zero population, a missing
+ *       breakdown, an unaffiliated majority, and no religions all
+ *       render differently instead of collapsing into 'Unknown'.
+ *     - openManageFeaturesModal now formats feature maintenance and
+ *       cost through _fmtNumber. The prior revision concatenated the
+ *       raw values as strings, so a feature with null maintenance
+ *       would render "maintenance null" instead of "maintenance —".
+ *     - openBudgetModal now guards the income/expenses object reads.
+ *       A malformed buildBudgetView result (income or expenses being
+ *       null) falls through to an explicit 'Budget data unavailable'
+ *       message instead of throwing a TypeError on property access.
+ *     - Header REASON-CODES IN RENDERED OUTPUT and NUMERIC RENDERING
+ *       sections added.
+ *     - No signature change to any public function. Internal rendering
+ *       helpers are unchanged.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -96,6 +153,67 @@
     function _fmtNumber(value) {
         if (typeof value !== 'number' || !isFinite(value)) return _unknown();
         return _escapeHtml(value.toLocaleString());
+    }
+
+    /**
+     * Renders a labeled text value or the unknown placeholder when the
+     * value is missing.
+     *
+     * @param {string|number|null} value
+     * @returns {string}
+     */
+    function _fmtText(value) {
+        if (value === null || value === undefined) return _unknown();
+        return _escapeHtml(value);
+    }
+
+    /**
+     * Human label for a religiousUnityReason code. See REASON-CODES IN
+     * RENDERED OUTPUT in the module header.
+     *
+     * @param {string} reason
+     * @param {number|null} value - used when reason is 'available' to
+     *   render the actual number.
+     * @returns {string}
+     */
+    function _religiousUnityLabel(reason, value) {
+        if (reason === 'available') {
+            return _fmtNumber(value);
+        }
+        if (reason === 'no_population') {
+            return _escapeHtml('No population');
+        }
+        if (reason === 'no_breakdown') {
+            return _escapeHtml('Unavailable');
+        }
+        return _unknown();
+    }
+
+    /**
+     * Human label for a dominantReligionReason code. See
+     * REASON-CODES IN RENDERED OUTPUT in the module header.
+     *
+     * @param {string} reason
+     * @param {Object|null} religion
+     * @returns {string}
+     */
+    function _dominantReligionLabel(reason, religion) {
+        if (reason === 'available' && religion) {
+            return _escapeHtml(religion.name || religion.id || 'Unknown');
+        }
+        if (reason === 'no_population') {
+            return _escapeHtml('No population');
+        }
+        if (reason === 'no_breakdown') {
+            return _escapeHtml('Unavailable');
+        }
+        if (reason === 'unaffiliated_majority') {
+            return _escapeHtml('Unaffiliated majority');
+        }
+        if (reason === 'no_religions') {
+            return _escapeHtml('No religions');
+        }
+        return _unknown();
     }
 
     /**
@@ -178,6 +296,29 @@
         content += '</div>';
         content += '</div>';
 
+        // Religion row: reasons and values, both rendered.
+        //
+        // The prior revision rendered summary.religiousUnity via _fmtNumber
+        // and summary.dominantReligion as a religion name or 'Unknown'.
+        // After the query-layer fixes, unity may be null for four reasons
+        // and dominantReligion may be null for four reasons. Both fields
+        // now carry a reason code alongside the value, and this row reads
+        // both.
+        content += '<div class="settlement-details__row">';
+        content += '<div class="settlement-details__field">';
+        content += '<div class="settlement-details__label">Religious Unity</div>';
+        content += '<div class="settlement-details__value">' +
+            _religiousUnityLabel(summary.religiousUnityReason, summary.religiousUnity) +
+            '</div>';
+        content += '</div>';
+        content += '<div class="settlement-details__field">';
+        content += '<div class="settlement-details__label">Dominant Religion</div>';
+        content += '<div class="settlement-details__value">' +
+            _dominantReligionLabel(summary.dominantReligionReason, summary.dominantReligion) +
+            '</div>';
+        content += '</div>';
+        content += '</div>';
+
         content += '<div class="settlement-details__actions">';
         content += '<button type="button" data-action="manage-features">Manage Features</button>';
         content += '<button type="button" data-action="upgrade">Upgrade</button>';
@@ -255,7 +396,7 @@
                 content += '<li class="feature-manager__item" data-feature-id="' + _escapeHtml(f.id) + '">';
                 content += '<span class="feature-manager__name">' + _escapeHtml(f.name) + '</span>';
                 content += '<span class="feature-manager__meta">' +
-                    'maintenance ' + _escapeHtml(f.maintenance) + '</span>';
+                    'maintenance ' + _fmtNumber(f.maintenance) + '</span>';
                 content += '<span class="feature-manager__actions">';
                 content += '<button type="button" data-action="remove-feature" data-feature-id="' + _escapeHtml(f.id) + '">Remove (refund)</button>';
                 content += '<button type="button" data-action="demolish-feature" data-feature-id="' + _escapeHtml(f.id) + '">Demolish</button>';
@@ -277,8 +418,8 @@
                 content += '<li class="feature-manager__item">';
                 content += '<span class="feature-manager__name">' + _escapeHtml(a.name) + '</span>';
                 content += '<span class="feature-manager__meta">' +
-                    'cost ' + _escapeHtml(a.cost) +
-                    ' · maintenance ' + _escapeHtml(a.maintenance) +
+                    'cost ' + _fmtNumber(a.cost) +
+                    ' · maintenance ' + _fmtNumber(a.maintenance) +
                     '</span>';
                 content += '<span class="feature-manager__actions">';
                 content += '<button type="button" data-action="build-feature" data-feature-id="' + _escapeHtml(a.id) + '">Build</button>';
@@ -600,8 +741,8 @@
                 content += '<li class="state-enterprises__item">';
                 content += '<span class="state-enterprises__name">' + _escapeHtml(e.name) + '</span>';
                 content += '<span class="state-enterprises__meta">' +
-                    'profit ' + _escapeHtml(e.annualProfit) +
-                    ' · workers ' + _escapeHtml(e.workerCount) +
+                    'profit ' + _fmtNumber(e.annualProfit) +
+                    ' · workers ' + _fmtNumber(e.workerCount) +
                     '</span>';
                 content += '</li>';
             }
@@ -662,6 +803,18 @@
         var view = _getViewModels().buildBudgetView(locationId);
         if (!view) {
             _toast('Budget data not available.', 'error');
+            return;
+        }
+
+        // Guard against a malformed view. buildBudgetView returns a
+        // structurally complete object when the settlement exists and
+        // the budget summary is available; if either is not, it returns
+        // null and we already bailed above. But if the view model ever
+        // adds a "partial" mode where income/expenses are null while the
+        // outer object is present, this guard prevents a TypeError on
+        // the sub-field reads below.
+        if (!view.income || !view.expenses) {
+            _toast('Budget data incomplete.', 'error');
             return;
         }
 
