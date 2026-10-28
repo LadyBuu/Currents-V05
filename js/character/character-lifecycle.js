@@ -21,6 +21,8 @@
  *         RelationshipIntegrations.handleCharacterDeath
  *       - rank consequences via RankIssues.handleCharacterDeath
  *       - any registered death handler (see DEATH HANDLER HOOK)
+ *   - Orchestrate the settlement annual processing step (see
+ *     SETTLEMENT ANNUAL PROCESSING below)
  *   - Life stage classification
  *   - Age group classification
  *   - Elderly check
@@ -37,6 +39,7 @@
  *   - Succession / inheritance         -> future succession domain
  *   - Relationship termination logic   -> relationship-integration.js
  *   - Rank deprecation logic           -> rank-issues.js
+ *   - Settlement financial effects     -> settlement-annual-processor.js
  *   - CURRENT YEAR OWNERSHIP           -> time.js (getCurrentYear)
  *   - CLOCK ADVANCEMENT                -> the caller (see CLOCK below)
  *
@@ -62,11 +65,42 @@
  *   masterData.data.currentYear = result.finalYear and persists. This
  *   module deliberately does not touch masterData.data.currentYear —
  *   time progression is the caller's concern (a UI "Advance Time"
- *   button, a simulation driver, or a bootstrap). The prior version
- *   silently simulated mortality against future years without moving
- *   the clock, so economy processing in the same advance ticked against
- *   the old year for every iteration. That is fixed by making the
- *   clock-explicit contract visible here.
+ *   button, a simulation driver, or a bootstrap).
+ *
+ * SETTLEMENT ANNUAL PROCESSING
+ * ----------------------------
+ *   advanceMortality ALSO advances the settlement domain's annual
+ *   financial effects, once per simulated year. The step is:
+ *
+ *     window.SettlementAnnualProcessor.processAllSettlementsAnnual({
+ *         year: year
+ *     })
+ *
+ *   It runs INSIDE the existing per-year loop, after the character
+ *   mortality pass for that year. The year passed to the settlement
+ *   processor is the SAME year used for character mortality — the loop
+ *   is the clock, and both subsystems see the same year.
+ *
+ *   Settlement failures do NOT abort the character-mortality loop.
+ *   Each settlement is its own transaction (see
+ *   settlement-annual-processor.js's PER-SETTLEMENT FAILURE ISOLATION).
+ *   A failure on one settlement is collected into
+ *   result.settlementFailures, logged with console.warn, and the loop
+ *   proceeds to the next year and the next character.
+ *
+ *   The settlement step is OPTIONAL. When SettlementAnnualProcessor is
+ *   not loaded, the step is silently skipped. This preserves the
+ *   character domain's ability to run in a reduced harness where the
+ *   settlement domain is absent. A missing settlement module is a
+ *   legitimate configuration, not a load-order bug; the character
+ *   domain does not own the settlement domain.
+ *
+ *   The step is AREA-GUARDED as well: if the processor exists but its
+ *   internal query layer throws (e.g. masterData.data.settlementData
+ *   was corrupted mid-run), the exception is caught, logged, and
+ *   recorded as a single settlement failure covering all settlements —
+ *   without aborting the character loop. A settlement-domain explosion
+ *   is not a reason to stop killing characters.
  *
  * RANDOMNESS
  * ----------
@@ -133,8 +167,7 @@
  *   domain that registers via the hook AND is present in the named
  *   dispatch (e.g. a hypothetical future state where the load order
  *   changes) will be called twice. That is safe because the command
- *   layer is idempotent per character id — end() refuses non-ongoing
- *   records; remove() refuses missing ids.
+ *   layer is idempotent per character id.
  *
  *   Registration returns an unregister function. Callers who need to
  *   tear down (test harnesses, hot reload) should call it. In a
@@ -156,9 +189,9 @@
  *
  *   The throw contract is preserved for the failure modes that ARE
  *   load-order bugs: missing CharacterLifecycle dependency, missing
- *   randomness.js, and — via the dependency guards — anything else
- *   the module cannot proceed without. Only per-character death
- *   validation failures are absorbed into the result.
+ *   randomness.js, and — via the dependency guards — anything else the
+ *   module cannot proceed without. Only per-character death validation
+ *   failures are absorbed into the result.
  *
  *   killCharacter retains the throw-through contract: it is a single
  *   explicit death command, and a caller asking it to kill one
@@ -193,49 +226,50 @@
  *                                       RelationshipIntegrations.handleCharacterDeath
  *   - ranks/rank-issues.js:            RankIssues.handleCharacterDeath
  *   - event-log.js:                    logEvent
+ *   - settlement-annual-processor.js:  processAllSettlementsAnnual
+ *                                      (see SETTLEMENT ANNUAL PROCESSING)
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - advanceMortality now runs the settlement domain's annual
+ *       financial effects once per simulated year, via
+ *       SettlementAnnualProcessor.processAllSettlementsAnnual({ year }).
+ *       The step runs after the character mortality pass for each year,
+ *       using the same year that character mortality used. Settlement
+ *       failures are collected into result.settlementFailures, logged,
+ *       and do NOT abort the character mortality loop.
+ *     - result.settlementFailures added to advanceMortality's return
+ *       shape. Empty array when no failures occurred, or when the
+ *       settlement processor is not loaded.
+ *     - The settlement step is optional and area-guarded. When
+ *       SettlementAnnualProcessor is absent, the step is skipped. When
+ *       it is present but throws, the exception is caught, logged, and
+ *       recorded as a single settlement failure.
+ *     - Header SETTLEMENT ANNUAL PROCESSING section added, and CLOCK
+ *       CONTRACT updated to document the settlement step's year
+ *       semantics.
+ *     - DEPENDENCIES updated: settlement-annual-processor.js listed
+ *       under OPTIONAL.
+ *     - No behavioural change to the character-mortality portion of the
+ *       loop. Every existing field of the return shape is unchanged
+ *       and keeps its existing semantics. `result.deaths`,
+ *       `result.skipped`, and `result.finalYear` are unaffected by the
+ *       new settlement step.
+ *   Previous revision:
  *     - advanceMortality now catches per-character death failures
  *       (markDeceased returning { success: false }) and records them
  *       in result.skipped instead of throwing and aborting the loop.
- *       The previous behaviour aborted the entire multi-year
- *       simulation on the first per-character failure (e.g. a corrupt
- *       birthYear, a race with another caller marking the character
- *       dead, or a stale cause id). That is a per-character data
- *       problem, not a load-order bug, and it should not stop the
- *       simulation. See PER-CHARACTER DEATH FAILURES in the header.
  *     - _die now returns a structured { ok, reason?, deathResult? }
- *       result instead of throwing. Callers check `ok` and decide what
- *       to do. killCharacter wraps the same primitive and converts a
- *       non-ok result into a thrown Error, preserving its existing
- *       throw-through contract for explicit commands.
- *     - result.skipped added to advanceMortality's return shape. Empty
- *       array when no deaths were skipped.
- *     - killCharacter's behaviour is unchanged: it throws on a
- *       per-character failure. The internal primitive _die no longer
- *       throws; killCharacter converts a { ok: false } result back to
- *       a thrown Error.
- *     - Header PER-CHARACTER DEATH FAILURES section added.
- *     - No other behavioural change.
- *   Previous revision (Phase 3.13):
- *     - Added registerDeathHandler(fn). A module that loads after this
- *       file can register a death handler; every successful death
- *       invokes every registered handler, after the named cross-domain
- *       dispatch. This closes the load-order gap that made the
- *       RelationshipIntegrations branch of _notifyCrossDomainDeath a
- *       no-op under the documented load order.
- *     - _dispatchDeathEffects now invokes registered handlers after
- *       _notifyCrossDomainDeath. Handler exceptions are caught and
- *       logged; they do not stop subsequent handlers or propagate.
- *   Previous revision (Phase 1.6):
+ *       result instead of throwing. killCharacter wraps the same
+ *       primitive and converts a non-ok result into a thrown Error.
+ *     - result.skipped added to advanceMortality's return shape.
+ *   Earlier revisions:
+ *     - registerDeathHandler(fn) added (Phase 3.13).
  *     - randomness.js (window.random) is now a HARD load-time
  *       dependency.
- *     - _getRandomFn's docstring updated to clarify that
- *       options.random is an override, not a substitute.
  * =============================================================================
  */
 
@@ -847,7 +881,65 @@
     }
 
     // =========================================================================
-    // 9. TIME PROGRESSION (MORTALITY EVALUATION)
+    // 9. SETTLEMENT ANNUAL PROCESSING
+    // =========================================================================
+    //
+    // Runs the settlement domain's annual financial effects for a given
+    // year. Called once per simulated year by advanceMortality, after
+    // the character mortality pass for that year.
+    //
+    // The step is optional: when SettlementAnnualProcessor is absent,
+    // it is skipped. The character domain does not own the settlement
+    // domain; a missing settlement module is a legitimate configuration.
+    //
+    // The step is area-guarded: if the processor exists but throws, the
+    // exception is caught and recorded as a single settlement failure
+    // covering all settlements, without aborting the character loop.
+    // See SETTLEMENT ANNUAL PROCESSING in the module header.
+
+    function _processSettlementsForYear(year) {
+        if (typeof window.SettlementAnnualProcessor === 'undefined'
+            || window.SettlementAnnualProcessor === null) {
+            return null;
+        }
+
+        var processor = window.SettlementAnnualProcessor;
+        if (typeof processor.processAllSettlementsAnnual !== 'function') {
+            return null;
+        }
+
+        var settlementResult;
+        try {
+            settlementResult = processor.processAllSettlementsAnnual({
+                year: year
+            });
+        } catch (e) {
+            // The whole settlement step exploded. Record a single
+            // failure covering all settlements and let the character
+            // loop continue. A settlement-domain explosion is not a
+            // reason to stop killing characters.
+            var reason = (e && e.message) ? e.message : String(e);
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'character-lifecycle.js: settlement annual processing ' +
+                    'threw for year ' + year + ':', e
+                );
+            }
+            return {
+                year: year,
+                failures: [{
+                    locationId: null,
+                    code: 'SETTLEMENT_STEP_THREW',
+                    message: reason
+                }]
+            };
+        }
+
+        return settlementResult;
+    }
+
+    // =========================================================================
+    // 10. TIME PROGRESSION (MORTALITY EVALUATION)
     // =========================================================================
     //
     // This is a MORTALITY evaluator, not a clock. It does not mutate
@@ -864,6 +956,14 @@
     //   multi-year simulation on the first such failure.
     //
     //   See PER-CHARACTER DEATH FAILURES in the module header.
+    //
+    // SETTLEMENT ANNUAL PROCESSING:
+    //   Once per year, after the character mortality pass, the settlement
+    //   domain's annual processor runs with the same year. See
+    //   SETTLEMENT ANNUAL PROCESSING in the module header.
+    //
+    //   Settlement failures are collected into result.settlementFailures
+    //   and logged, but do not abort the character loop.
 
     /**
      * Evaluates mortality for N years ahead of startYear.
@@ -876,6 +976,11 @@
      *   chooseDeathCause(character, age, year)  ->  { deathCause, deathCauseDetail? }
      *   random()                                ->  number in [0,1)
      *   maxDeaths                               ->  number | undefined
+     *   skipSettlements                         ->  boolean | undefined
+     *                    When true, the settlement annual step is
+     *                    skipped. Useful for callers that want to drive
+     *                    settlements separately (e.g. a batch run, a
+     *                    test harness). Default false.
      * }
      *
      * @returns {{
@@ -886,7 +991,9 @@
      *   yearsAdvanced?: number,
      *   deaths?: Array,
      *   deathCount?: number,
-     *   skipped?: Array<{ characterId, name, year, reason }>
+     *   skipped?: Array<{ characterId, name, year, reason }>,
+     *   settlementFailures?: Array<{ locationId: string|null, code: string, message: string }>,
+     *   settlementsSkipped?: boolean
      * }}
      */
     function advanceMortality(yearsAdvanced, options) {
@@ -920,6 +1027,8 @@
 
         var deaths = [];
         var skipped = [];
+        var settlementFailures = [];
+        var settlementsSkipped = options.skipSettlements === true;
         var maxDeaths = typeof options.maxDeaths === 'number'
             ? options.maxDeaths
             : Infinity;
@@ -966,6 +1075,41 @@
                     ageAtDeath: evaluation.ageAtDeath
                 });
             }
+
+            // Settlement annual step. Runs once per simulated year, after
+            // the character mortality pass for that year, using the same
+            // year. See SETTLEMENT ANNUAL PROCESSING in the module header.
+            //
+            // The step is optional (skipped when the processor is absent
+            // or options.skipSettlements is true) and area-guarded (a
+            // thrown exception becomes a single failure entry, not an
+            // aborted loop).
+            if (!settlementsSkipped) {
+                var settlementResult = _processSettlementsForYear(year);
+                if (settlementResult && Array.isArray(settlementResult.failures)
+                    && settlementResult.failures.length > 0) {
+                    for (var sf = 0; sf < settlementResult.failures.length; sf++) {
+                        var failure = settlementResult.failures[sf];
+                        settlementFailures.push({
+                            locationId: failure.locationId === undefined
+                                ? null
+                                : failure.locationId,
+                            code: failure.code || 'SETTLEMENT_PROCESS_FAILED',
+                            message: failure.message || 'unknown',
+                            year: year
+                        });
+                        if (typeof console !== 'undefined' && console.warn) {
+                            console.warn(
+                                'character-lifecycle.js: settlement annual ' +
+                                'processing failed for ' +
+                                (failure.locationId || '(batch)') +
+                                ' in year ' + year + ': ' +
+                                (failure.message || 'unknown')
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         return {
@@ -975,12 +1119,14 @@
             yearsAdvanced: yearsAdvanced,
             deaths: deaths,
             deathCount: deaths.length,
-            skipped: skipped
+            skipped: skipped,
+            settlementFailures: settlementFailures,
+            settlementsSkipped: settlementsSkipped
         };
     }
 
     // =========================================================================
-    // 10. PUBLIC DEATH COMMANDS
+    // 11. PUBLIC DEATH COMMANDS
     // =========================================================================
 
     /**
@@ -1001,12 +1147,6 @@
      *   explicit "kill this one character" command; a caller asking
      *   it wants to know the outcome. advanceMortality is a simulation
      *   driver; a single bad character should not stop it.
-     *
-     *   The previous internal _die threw on per-character failures,
-     *   which made this contract work by accident but also made
-     *   advanceMortality abort. The two behaviours are now decoupled:
-     *   _die returns a structured result; each caller decides what to
-     *   do with a non-ok result.
      */
     function killCharacter(characterId, deathData) {
         if (!_hasId(characterId)) {
@@ -1164,7 +1304,7 @@
     }
 
     // =========================================================================
-    // 11. LIFESPAN ESTIMATION (DETERMINISTIC)
+    // 12. LIFESPAN ESTIMATION (DETERMINISTIC)
     // =========================================================================
 
     function predictLifespan(character) {
@@ -1205,7 +1345,7 @@
     }
 
     // =========================================================================
-    // 12. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.CharacterLifecycle = {
