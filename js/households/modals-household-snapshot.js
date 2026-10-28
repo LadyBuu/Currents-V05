@@ -34,32 +34,36 @@
  *   - No mutation of nameHistory records during reads.
  *   - Historical references use explicit referenceYear.
  *
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom, persistOrFail,
+ *   reportFailure, esc, readValue, readIntOrNull, onOpen, currentYear,
+ *   closeThen, confirmDialog — lives in HouseholdModals. This file keeps
+ *   only its local aliases (var _esc = _Modals.esc; etc.) and its
+ *   domain-specific builders (the period row, history content, snapshot
+ *   content, and the wiring for each modal).
+ *
+ *   Prior revisions carried local copies of _persistOrFail,
+ *   _currentYear, _closeThen, and _confirmDialog. Those are now
+ *   HouseholdModals exports; the aliases at the top of this file
+ *   delegate to those shared helpers.
+ *
  * DOM-SCOPE
  * ---------
  *   Every DOM lookup is scoped to the modal's own `handle.element` via
  *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
- *   rationale on why the prior _resolveModalRoot() fallback (which ended
- *   at document.body) was wrong.
+ *   rationale on why the prior _resolveModalRoot() fallback (which
+ *   ended at document.body) was wrong.
  *
- * PERSIST FAILURE CONTRACT (REVISED)
- * ----------------------------------
- *   The prior edit-name-period and delete-name-period modals returned
- *   `true` from onConfirm even when persist failed, closing the modal
- *   and leaving the user with an in-memory mutation and an error toast.
- *   That behaviour was inconsistent with the modals-core close contract
- *   and left the user without a way to retry.
- *
- *   This version keeps the modal OPEN when persist fails, so the user
- *   sees the error toast, can retry the persist by clicking Save again,
- *   or can cancel. This is the only correct behaviour when the mutation
- *   is destructive (a deleted name period cannot be un-deleted).
- *
- *   For the create/edit household modals (modals-household.js), which
- *   close on persist failure with a success toast, the reasoning is
- *   documented there: those flows treat "create succeeded in memory"
- *   as a valid outcome for the caller. Name periods are different —
- *   they're a list the user is actively editing, and a partial save is
- *   a state the user should see.
+ * PERSIST FAILURE CONTRACT
+ * ------------------------
+ *   The edit-name-period and delete-name-period modals return `false`
+ *   from onConfirm when persist fails, keeping the modal open so the
+ *   user can retry. This is documented in the previous revision and is
+ *   the only correct behaviour when the mutation is destructive (a
+ *   deleted name period cannot be un-deleted). For the create/edit
+ *   household modals (modals-household.js), which close on persist
+ *   failure with a success toast, the reasoning is documented there.
  *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - modals-core.js (openModal, closeTopModal, confirmDialog)
@@ -71,6 +75,27 @@
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _confirmDialog, _persistOrFail,
+ *       _currentYear, and _closeThen. All four were structurally
+ *       identical to the shared versions exported by HouseholdModals.
+ *       The aliases at the top of this file delegate to those shared
+ *       helpers.
+ *     - The name-period modals still keep the modal OPEN on persist
+ *       failure (return false from onConfirm), matching the previous
+ *       revision's documented contract.
+ *     - No behavioural change to any modal entry point.
+ *   Previous revisions:
+ *     - Every DOM lookup is scoped to handle.element via
+ *       HouseholdModals.rootFrom(modal).
+ *     - The edit-name-period and delete-name-period modals return false
+ *       from onConfirm when persist fails, keeping the modal open for
+ *       retry (destructive-mutation semantics).
+ *     - _buildPeriodRow now reads `period.year` (which the queries
+ *       module always returns) rather than the older
+ *       `period.startYear` fallback shape.
  * =============================================================================
  */
 
@@ -130,41 +155,28 @@
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
+    _requireFunction('HouseholdModals.confirmDialog', _Modals.confirmDialog);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    function _currentYear() {
-        return (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    var _persistOrFail = _Modals.persistOrFail;
+    var _confirmDialog = _Modals.confirmDialog;
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
-    // 1. CONFIRM DIALOG
-    // =========================================================================
-
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (window.confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else if (onCancel) {
-            onCancel();
-        }
-    }
-
-    // =========================================================================
-    // 2. VIEW HOUSEHOLD HISTORY MODAL
+    // 1. VIEW HOUSEHOLD HISTORY MODAL
     // =========================================================================
 
     function openViewHouseholdHistoryModal(householdId) {
@@ -291,20 +303,11 @@
     }
 
     function _wireHistoryActions(root, householdId, periods) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         var editBtns = root.querySelectorAll('[data-action="edit-period"]');
         for (var i = 0; i < editBtns.length; i++) {
             (function(btn) {
                 btn.onclick = function(event) {
                     event.stopPropagation();
-                    var index = _Modals.readIntOrNull(btn, '') !== null
-                        ? parseInt(btn.dataset.periodIndex, 10)
-                        : null;
-                    // Simpler read: parse dataset directly.
                     var parsed = parseInt(btn.dataset.periodIndex, 10);
                     if (!Number.isInteger(parsed)) return;
                     _closeThen(function() {
@@ -349,7 +352,7 @@
                                 return;
                             }
 
-                            var persisted = _Modals.persistOrFail('Name period deleted');
+                            var persisted = _persistOrFail('Name period deleted');
                             if (!persisted.ok) {
                                 // Modal already closed by confirmDialog.
                                 // Show toast; the caller can retry via the
@@ -371,7 +374,7 @@
     }
 
     // =========================================================================
-    // 3. EDIT NAME PERIOD MODAL
+    // 2. EDIT NAME PERIOD MODAL
     // =========================================================================
 
     function openEditNamePeriodModal(householdId, periodIndex, onSuccess) {
@@ -482,7 +485,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Name period updated');
+                var persisted = _persistOrFail('Name period updated');
                 if (!persisted.ok) {
                     // Keep the modal open so the user can retry. The
                     // mutation is in memory; clicking Save again persists.
@@ -499,7 +502,7 @@
     }
 
     // =========================================================================
-    // 4. DELETE NAME PERIOD MODAL
+    // 3. DELETE NAME PERIOD MODAL
     // =========================================================================
 
     function openDeleteNamePeriodModal(householdId, periodIndex, onSuccess) {
@@ -584,7 +587,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Name period deleted');
+                var persisted = _persistOrFail('Name period deleted');
                 if (!persisted.ok) {
                     // Keep the modal open so the user can retry.
                     return false;
@@ -600,7 +603,7 @@
     }
 
     // =========================================================================
-    // 5. HOUSEHOLD SNAPSHOT MODAL
+    // 4. HOUSEHOLD SNAPSHOT MODAL
     // =========================================================================
 
     function openHouseholdSnapshotModal(householdId, year, viewMode) {
@@ -645,7 +648,7 @@
     }
 
     // =========================================================================
-    // 6. CHARACTER HOUSEHOLD SNAPSHOT MODAL
+    // 5. CHARACTER HOUSEHOLD SNAPSHOT MODAL
     // =========================================================================
 
     function openCharacterHouseholdSnapshotModal(characterId, viewMode) {
@@ -687,7 +690,7 @@
     }
 
     // =========================================================================
-    // 7. SNAPSHOT CONTENT BUILDER
+    // 6. SNAPSHOT CONTENT BUILDER
     // =========================================================================
 
     function _buildSnapshotContent(snapshot, targetCharacterId) {
@@ -842,7 +845,7 @@
     }
 
     // =========================================================================
-    // 8. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
     window.openViewHouseholdHistoryModal = openViewHouseholdHistoryModal;
