@@ -45,6 +45,29 @@
  *     throws by default; _diagnostics.getIntegrityReport inspects
  *     without throwing.
  *
+ * CONSTANTS OWNERSHIP
+ * -------------------
+ *   Every catalog this module uses — RESIDENCE_TYPES, RESIDENCE_STATUS,
+ *   RENTAL_STATUS, RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER — and every
+ *   history-cap threshold lives in household-constants.js. This module
+ *   reads them at load; it does NOT redefine them.
+ *
+ *   This file previously carried inline copies of the residence catalogs
+ *   and thresholds. Those copies were byte-identical to the constants
+ *   module at every revision they existed. The duplication was documented
+ *   as deferred technical debt in household-doc.txt §REMAINING
+ *   ARCHITECTURAL DEBT #2 and #7, and the risk was concrete: a policy
+ *   change in household-constants.js (say, increasing ESTATE.capacity
+ *   from 20 to 25) would silently diverge from the runtime behaviour of
+ *   this module, which would still use 20. Any consumer reading
+ *   HouseholdConstants.RESIDENCE_TYPES.estate.capacity would show the
+ *   UI "25" while residence-system.js created estates at 20.
+ *
+ *   The inline copies are now gone. household-constants.js is a HARD
+ *   load-time dependency. A missing constant is a load-order bug, not a
+ *   runtime condition; this module throws at load if any required
+ *   catalog is absent.
+ *
  * REVERSE-INDEX FAILURE POLICY (REVISED)
  * --------------------------------------
  *   The prior version returned reverse-index failures as
@@ -103,6 +126,7 @@
  *   - getPlaceById
  *   - generateId
  *   - saveMasterData
+ *   - HouseholdConstants   (catalogs and thresholds)
  *
  * DEPENDENCIES (optional, checked at call time):
  *   - HouseholdCommands   (unit assignment, vacancy, demolition)
@@ -110,6 +134,45 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Replaced the inline RESIDENCE_TYPES / RESIDENCE_STATUS /
+ *       RENTAL_STATUS / RESIDENCE_CONDITIONS / CONDITION_MULTIPLIER
+ *       catalogs and MAX_TIMELINE_ENTRIES / MAX_HISTORY_ENTRIES /
+ *       MAX_RENTAL_HISTORY / MAX_RENT_PAYMENTS thresholds with reads
+ *       from HouseholdConstants. HouseholdConstants is now a HARD
+ *       load-time dependency; a missing catalog throws at load.
+ *       See CONSTANTS OWNERSHIP in the header.
+ *     - Exports re-reference the same frozen objects as
+ *       HouseholdConstants, so a consumer that reads
+ *       window.ResidenceSystem.RESIDENCE_TYPES and a consumer that
+ *       reads window.HouseholdConstants.RESIDENCE_TYPES see the SAME
+ *       frozen catalog. No divergence surface.
+ *     - getResidenceTypes() and getResidenceConditions() now return
+ *       copies derived from HouseholdConstants; the previous inline
+ *       shapes are byte-identical.
+ *     - No behavioural change.
+ *   Previous revision:
+ *     - reverseIndexFailed is now a HARD field on the result of every
+ *       command that touches the household reverse index
+ *       (assignHouseholdToUnit, markUnitVacant, markResidenceVacant,
+ *       demolishResidence, deleteResidence).
+ *     - Reverse-index failures are recorded in the residence's
+ *       damageHistory as reverse_index_failure entries (persistent
+ *       audit trail).
+ *     - HouseholdState._diagnostics.getIntegrityReport() now
+ *       cross-checks both directions of the household↔residence
+ *       association.
+ *     - Unified vacancy accounting: deleteResidence, markResidenceVacant,
+ *       and demolishResidence all write vacancyHistory entries.
+ *   Previous revisions:
+ *     - Duplicate-id detection on hydrate throws by default;
+ *       _diagnostics.getIntegrityReport inspects without throwing.
+ *     - Unit history, name history, timeline, staff, rental, and
+ *       ownership history all live on the residence record.
+ *     - destroyResidence was renamed demolishResidence for
+ *       consistency with demolishUnit.
  * =============================================================================
  */
 
@@ -127,6 +190,13 @@
         return fn;
     }
 
+    function _requireObject(name, obj) {
+        if (typeof obj === 'undefined' || obj === null) {
+            throw new Error('ResidenceSystem: ' + name + ' is required');
+        }
+        return obj;
+    }
+
     var _getCurrentYearSafe = _requireFunction('getCurrentYearSafe',
         window.getCurrentYearSafe);
     var _getCharacterById = _requireFunction('getCharacterById',
@@ -137,6 +207,63 @@
     var _saveMasterData = _requireFunction('saveMasterData',
         window.saveMasterData);
 
+    // Constants — required. Every catalog and threshold this module
+    // uses lives in household-constants.js. A missing catalog is a
+    // load-order bug, not a runtime condition.
+    var C = _requireObject('HouseholdConstants', window.HouseholdConstants);
+
+    // Sanity-check the specific sub-catalogs we consume. A missing
+    // catalog means constants.js is stale (older version loaded). Fail
+    // loudly rather than fall back to inline copies.
+    var _REQUIRED_CONSTANTS = [
+        'RESIDENCE_TYPES',
+        'RESIDENCE_STATUS',
+        'RENTAL_STATUS',
+        'RESIDENCE_CONDITIONS',
+        'CONDITION_MULTIPLIER',
+        'THRESHOLDS'
+    ];
+    for (var _ci = 0; _ci < _REQUIRED_CONSTANTS.length; _ci++) {
+        if (typeof C[_REQUIRED_CONSTANTS[_ci]] === 'undefined'
+            || C[_REQUIRED_CONSTANTS[_ci]] === null) {
+            throw new Error(
+                'ResidenceSystem: HouseholdConstants.' +
+                _REQUIRED_CONSTANTS[_ci] + ' is missing. ' +
+                'The loaded household-constants.js is too old.'
+            );
+        }
+    }
+
+    // Aliased references. These point at the SAME frozen objects as
+    // HouseholdConstants, so a consumer reading
+    // window.ResidenceSystem.RESIDENCE_TYPES and a consumer reading
+    // window.HouseholdConstants.RESIDENCE_TYPES see the SAME catalog.
+    var RESIDENCE_TYPES = C.RESIDENCE_TYPES;
+    var RESIDENCE_STATUS = C.RESIDENCE_STATUS;
+    var RENTAL_STATUS = C.RENTAL_STATUS;
+    var RESIDENCE_CONDITIONS = C.RESIDENCE_CONDITIONS;
+    var CONDITION_MULTIPLIER = C.CONDITION_MULTIPLIER;
+
+    // Thresholds. Same sourcing discipline: the canonical numbers live
+    // in HouseholdConstants.THRESHOLDS. Missing values would silently
+    // break the caps in _pushTimeline / _pushHistory / rent payment
+    // tracking — so require them here.
+    if (typeof C.THRESHOLDS.MAX_TIMELINE_ENTRIES !== 'number'
+        || typeof C.THRESHOLDS.MAX_HISTORY_ENTRIES !== 'number'
+        || typeof C.THRESHOLDS.MAX_RENTAL_HISTORY !== 'number'
+        || typeof C.THRESHOLDS.MAX_RENT_PAYMENTS !== 'number') {
+        throw new Error(
+            'ResidenceSystem: HouseholdConstants.THRESHOLDS is missing ' +
+            'one or more required caps ' +
+            '(MAX_TIMELINE_ENTRIES, MAX_HISTORY_ENTRIES, ' +
+            'MAX_RENTAL_HISTORY, MAX_RENT_PAYMENTS).'
+        );
+    }
+    var MAX_TIMELINE_ENTRIES = C.THRESHOLDS.MAX_TIMELINE_ENTRIES;
+    var MAX_HISTORY_ENTRIES = C.THRESHOLDS.MAX_HISTORY_ENTRIES;
+    var MAX_RENTAL_HISTORY = C.THRESHOLDS.MAX_RENTAL_HISTORY;
+    var MAX_RENT_PAYMENTS = C.THRESHOLDS.MAX_RENT_PAYMENTS;
+
     // Optional deps — recorded at load
     var _householdCommandsPresent = typeof window.HouseholdCommands !== 'undefined' &&
         window.HouseholdCommands !== null;
@@ -144,72 +271,7 @@
         window.HouseholdQueries !== null;
 
     // =========================================================================
-    // 2. CONSTANTS (delegated to household-constants.js where possible)
-    // =========================================================================
-    //
-    // The canonical catalogs live in household-constants.js. This module
-    // re-imports them for its own use but does NOT redefine them.
-    //
-    // NOTE: This file was on disk before the constants consolidation and
-    // its inlined catalogs are still here. That is being deferred to
-    // Prompt 43 (household-view-models). For now, this file uses the
-    // inlined copies — but they match household-constants.js EXACTLY.
-    // When Prompt 43 lands, this block is deleted and replaced with
-    // `var C = window.HouseholdConstants; var RESIDENCE_TYPES = C.RESIDENCE_TYPES;` etc.
-    //
-    // The values below are identical to household-constants.js. They are
-    // NOT divergent.
-
-    var RESIDENCE_TYPES = {
-        estate:    { id: 'estate',    name: 'Estate',             capacity: 20, isMultiUnit: false },
-        manor:     { id: 'manor',     name: 'Manor House',        capacity: 15, isMultiUnit: false },
-        house:     { id: 'house',     name: 'House',              capacity: 8,  isMultiUnit: false },
-        cottage:   { id: 'cottage',   name: 'Cottage',            capacity: 4,  isMultiUnit: false },
-        apartment: { id: 'apartment', name: 'Apartment Building', capacity: 30, isMultiUnit: true  },
-        tenement:  { id: 'tenement',  name: 'Tenement',           capacity: 25, isMultiUnit: true  },
-        suite:     { id: 'suite',     name: 'Suite',              capacity: 6,  isMultiUnit: false },
-        room:      { id: 'room',      name: 'Room',               capacity: 2,  isMultiUnit: false },
-        tower:     { id: 'tower',     name: 'Tower',              capacity: 10, isMultiUnit: false },
-        palace:    { id: 'palace',    name: 'Palace',             capacity: 50, isMultiUnit: false },
-        castle:    { id: 'castle',    name: 'Castle',             capacity: 40, isMultiUnit: false },
-        barracks:  { id: 'barracks',  name: 'Barracks',           capacity: 30, isMultiUnit: true  }
-    };
-
-    var RESIDENCE_STATUS = {
-        ACTIVE:             'active',
-        ABANDONED:          'abandoned',
-        DEMOLISHED:         'demolished',
-        UNDER_CONSTRUCTION: 'under_construction',
-        RENOVATING:         'renovating'
-    };
-
-    var RENTAL_STATUS = {
-        OWNER_OCCUPIED: 'owner_occupied',
-        RENTED:         'rented',
-        VACANT:         'vacant'
-    };
-
-    var RESIDENCE_CONDITIONS = [
-        { id: 'pristine', name: 'Pristine', modifier: 1.2 },
-        { id: 'good',     name: 'Good',     modifier: 1.0 },
-        { id: 'fair',     name: 'Fair',     modifier: 0.8 },
-        { id: 'poor',     name: 'Poor',     modifier: 0.6 },
-        { id: 'ruined',   name: 'Ruined',   modifier: 0.3 }
-    ];
-
-    var CONDITION_MULTIPLIER = {};
-    for (var _ci = 0; _ci < RESIDENCE_CONDITIONS.length; _ci++) {
-        CONDITION_MULTIPLIER[RESIDENCE_CONDITIONS[_ci].id] =
-            RESIDENCE_CONDITIONS[_ci].modifier;
-    }
-
-    var MAX_TIMELINE_ENTRIES = 200;
-    var MAX_HISTORY_ENTRIES = 100;
-    var MAX_RENTAL_HISTORY = 100;
-    var MAX_RENT_PAYMENTS = 200;
-
-    // =========================================================================
-    // 3. RESULT HELPERS
+    // 2. RESULT HELPERS
     // =========================================================================
 
     function _ok(data) {
@@ -238,7 +300,7 @@
     }
 
     // =========================================================================
-    // 4. CANONICAL STORAGE
+    // 3. CANONICAL STORAGE
     // =========================================================================
 
     function _getResidencesArray() {
@@ -305,7 +367,7 @@
     }
 
     // =========================================================================
-    // 5. COMMIT TAIL + PERSIST BOUNDARY
+    // 4. COMMIT TAIL + PERSIST BOUNDARY
     // =========================================================================
 
     function _hydrateState() {
@@ -368,7 +430,7 @@
     }
 
     // =========================================================================
-    // 6. INTERNAL RECORD ACCESS
+    // 5. INTERNAL RECORD ACCESS
     // =========================================================================
 
     function _getResidenceRecord(residenceId) {
@@ -396,7 +458,7 @@
     }
 
     // =========================================================================
-    // 7. PROJECTIONS
+    // 6. PROJECTIONS
     // =========================================================================
 
     function _snapshotResidence(r) {
@@ -461,7 +523,7 @@
     }
 
     // =========================================================================
-    // 8. DERIVED HELPERS (pure)
+    // 7. DERIVED HELPERS (pure)
     // =========================================================================
 
     function _countOccupiedUnits(r) {
@@ -506,7 +568,7 @@
     }
 
     // =========================================================================
-    // 9. TIMELINE / HISTORY HELPERS
+    // 8. TIMELINE / HISTORY HELPERS
     // =========================================================================
 
     function _pushTimeline(r, event) {
@@ -582,7 +644,7 @@
     }
 
     // =========================================================================
-    // 10. HOUSEHOLD REVERSE INDEX (via HouseholdCommands)
+    // 9. HOUSEHOLD REVERSE INDEX (via HouseholdCommands)
     // =========================================================================
 
     function _associateHouseholdReverseIndex(householdId, r, unitNumber, year, notes) {
@@ -618,7 +680,7 @@
     }
 
     // =========================================================================
-    // 11. RESIDENCE CRUD
+    // 10. RESIDENCE CRUD
     // =========================================================================
 
     function createResidence(name, locationId, typeId, options) {
@@ -935,7 +997,7 @@
     }
 
     // =========================================================================
-    // 12. UNIT OPERATIONS
+    // 11. UNIT OPERATIONS
     // =========================================================================
 
     function addUnit(residenceId, options) {
@@ -1339,7 +1401,7 @@
     }
 
     // =========================================================================
-    // 13. RESIDENCE-LEVEL VACANCY
+    // 12. RESIDENCE-LEVEL VACANCY
     // =========================================================================
 
     function markResidenceVacant(residenceId, reason, year) {
@@ -1439,7 +1501,7 @@
     }
 
     // =========================================================================
-    // 14. NAME HISTORY
+    // 13. NAME HISTORY
     // =========================================================================
 
     function updateResidenceName(residenceId, newName, options) {
@@ -1498,7 +1560,7 @@
     }
 
     // =========================================================================
-    // 15. RENTAL (OWNERSHIP, RENTER, RENT, PAYMENTS)
+    // 14. RENTAL (OWNERSHIP, RENTER, RENT, PAYMENTS)
     // =========================================================================
 
     function _lookupOwnerName(type, id) {
@@ -1856,7 +1918,7 @@
     }
 
     // =========================================================================
-    // 16. STAFF POSITIONS
+    // 15. STAFF POSITIONS
     // =========================================================================
 
     function addStaffPosition(residenceId, data) {
@@ -2127,7 +2189,7 @@
     }
 
     // =========================================================================
-    // 17. REHABILITATION & DEMOLITION
+    // 16. REHABILITATION & DEMOLITION
     // =========================================================================
 
     function calculateRepairCost(residenceId, targetCondition) {
@@ -2309,7 +2371,7 @@
     }
 
     // =========================================================================
-    // 18. QUERIES (defensive snapshots)
+    // 17. QUERIES (defensive snapshots)
     // =========================================================================
 
     function getResidence(residenceId) {
@@ -2668,25 +2730,34 @@
 
     function getResidenceTypes() {
         var result = {};
-        for (var k in RESIDENCE_TYPES) {
-            if (Object.prototype.hasOwnProperty.call(RESIDENCE_TYPES, k)) {
-                result[k] = {
-                    id: RESIDENCE_TYPES[k].id,
-                    name: RESIDENCE_TYPES[k].name,
-                    capacity: RESIDENCE_TYPES[k].capacity,
-                    isMultiUnit: RESIDENCE_TYPES[k].isMultiUnit
-                };
-            }
+        var keys = Object.keys(RESIDENCE_TYPES);
+        for (var k = 0; k < keys.length; k++) {
+            var t = RESIDENCE_TYPES[keys[k]];
+            result[keys[k]] = {
+                id: t.id,
+                name: t.name,
+                capacity: t.capacity,
+                isMultiUnit: t.isMultiUnit
+            };
         }
         return result;
     }
 
     function getResidenceConditions() {
-        return RESIDENCE_CONDITIONS.slice();
+        var out = [];
+        for (var i = 0; i < RESIDENCE_CONDITIONS.length; i++) {
+            var c = RESIDENCE_CONDITIONS[i];
+            out.push({
+                id: c.id,
+                name: c.name,
+                modifier: c.modifier
+            });
+        }
+        return out;
     }
 
     // =========================================================================
-    // 19. INTEGRATION
+    // 18. INTEGRATION
     // =========================================================================
 
     function getHouseholdUnits(householdId) {
@@ -2713,7 +2784,7 @@
     }
 
     // =========================================================================
-    // 20. DIAGNOSTICS
+    // 19. DIAGNOSTICS
     // =========================================================================
 
     var _diagnostics = {
@@ -2733,15 +2804,18 @@
                 return { ok: false, reason: e.message };
             }
         },
-        getVersion: function() { return 7; }
+        getVersion: function() { return 8; }
     };
 
     // =========================================================================
-    // 21. EXPORTS
+    // 20. EXPORTS
     // =========================================================================
 
     var api = {
-        // Constants
+        // Constants — aliased to the SAME frozen objects as
+        // HouseholdConstants. Consumers reading window.ResidenceSystem.*
+        // and consumers reading window.HouseholdConstants.* see the same
+        // catalog.
         RESIDENCE_TYPES: RESIDENCE_TYPES,
         RESIDENCE_STATUS: RESIDENCE_STATUS,
         RENTAL_STATUS: RENTAL_STATUS,
@@ -2833,7 +2907,7 @@
     }
 
     // =========================================================================
-    // 22. AUTO-HYDRATE
+    // 21. AUTO-HYDRATE
     // =========================================================================
 
     (function _autoHydrate() {
