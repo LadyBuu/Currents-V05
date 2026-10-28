@@ -72,7 +72,8 @@
  *   persist() returns { success, reason }. On saveMasterData() returning
  *   false, it reads window.getLastSaveError() for the underlying error
  *   so the caller can surface the actual cause (quota, serialization,
- *   disabled storage) rather than the generic "returned false".
+ *   disabled storage) rather than the generic "returned false". This
+ *   matches RoleCommands.persist() and EducationCommands.persist().
  *
  * RANDOMNESS
  *
@@ -149,6 +150,38 @@
         throw new Error(
             'apprenticeship-commands.js requires relationship-types.js first.'
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // CharacterCommands method requirements.
+    //
+    // Every CharacterCommands method this module calls must be present at
+    // load time. A missing method would otherwise surface as a runtime
+    // TypeError inside a user action (e.g. teachSpecialization) instead of
+    // as an actionable load-order error. This matches role-commands.js's
+    // requiredCharacterMethods check.
+    //
+    //   getProfession              createApprenticeship, progressApprenticeship,
+    //                              teachSkill, teachSpecialization
+    //   updateProfession           createApprenticeship, progressApprenticeship,
+    //                              teachSkill
+    //   addProfession              createApprenticeship
+    //   addProfessionSpecialization  teachSpecialization
+    // -------------------------------------------------------------------------
+    var _REQUIRED_CHARACTER_METHODS = [
+        'getProfession',
+        'updateProfession',
+        'addProfession',
+        'addProfessionSpecialization'
+    ];
+    for (var _cm = 0; _cm < _REQUIRED_CHARACTER_METHODS.length; _cm++) {
+        var _methodName = _REQUIRED_CHARACTER_METHODS[_cm];
+        if (typeof window.CharacterCommands[_methodName] !== 'function') {
+            throw new Error(
+                'apprenticeship-commands.js requires ' +
+                'CharacterCommands.' + _methodName + ' (load character-commands.js first).'
+            );
+        }
     }
 
     var A = window.RELATIONSHIP_ARCHETYPES;
@@ -357,7 +390,8 @@
         };
     }
 
-    function _ensureProfession(characterId, roleId, roleName, skillLevel, startYear, notes) {
+    function _ensureProfession(characterId, roleId, roleName, roleBaseSalary,
+                                skillLevel, startYear, notes) {
         var CC = _characterCommands();
         var existing = CC.getProfession(characterId, roleId);
 
@@ -382,6 +416,15 @@
             return { success: true, updated: true, profession: updateResult.profession };
         }
 
+        // Use the role's canonical base salary when the caller supplies
+        // one; this matches role-commands.js::_assignRoleInternal, which
+        // also uses role.baseSalary. A prior revision hardcoded 0 here,
+        // which meant an apprenticeship-created profession record started
+        // at salary 0 while a role-assigned one started at the role's base.
+        var baseSalary = (typeof roleBaseSalary === 'number' && isFinite(roleBaseSalary))
+            ? roleBaseSalary
+            : 0;
+
         var addResult = CC.addProfession(characterId, {
             id: roleId,
             name: roleName,
@@ -390,7 +433,7 @@
             primary: false,
             notes: notes || '',
             specs: [],
-            baseSalary: 0,
+            baseSalary: baseSalary,
             customSalary: null,
             salaryHistory: [],
             salaryLastCalculated: null,
@@ -421,6 +464,18 @@
         if (!master) return fail('MASTER_NOT_FOUND', 'Master not found');
         if (!apprentice) return fail('APPRENTICE_NOT_FOUND', 'Apprentice not found');
         if (!role) return fail('ROLE_NOT_FOUND', 'Role not found: ' + args.roleId);
+
+        // Validate startYear BEFORE passing it down to
+        // CharacterCommands.addProfession. updateApprenticeship already
+        // validates it; this command must be consistent, otherwise an
+        // invalid startYear surfaces as PROFESSION_WRITE_FAILED from the
+        // character layer instead of INVALID_START_YEAR from this one.
+        var startYear = (args.startYear !== undefined && args.startYear !== null)
+            ? args.startYear
+            : _getCurrentYear();
+        if (typeof startYear !== 'number' || !isFinite(startYear)) {
+            return fail('INVALID_START_YEAR', 'startYear must be a finite number');
+        }
 
         var masterSkill = _getSkill(master.id, role.id);
         if (masterSkill === null) masterSkill = 0;
@@ -457,13 +512,13 @@
         if (!validation.valid) return fail(validation.code, validation.reason);
 
         var resolvedInitialSkill = validation.resolvedInitialSkill;
-        var startYear = args.startYear != null ? args.startYear : _getCurrentYear();
         var initialStage = _rules().getStageForSkill(resolvedInitialSkill);
 
         var ensure = _ensureProfession(
             apprentice.id,
             role.id,
             role.name,
+            role.baseSalary,
             resolvedInitialSkill,
             startYear,
             'Apprenticeship under ' + master.name +
