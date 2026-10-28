@@ -34,14 +34,21 @@ João."
 | File | Purpose |
 |------|---------|
 | `role-constants.js` | Categories, salary policy, literacy vocabulary, teaching thresholds (mirrored from `SkillUtils`). Pure constants. |
-| `role-rules.js` | Pure policy: specialization membership validation, and future role-domain validity rules. No state access. |
 | `role-state.js` | The authoritative in-memory role collection. Derived indexes, subscriptions, persistence sync, cross-tab reload, clone-on-read. |
-| `role-queries.js` | Read-only projections: role collections, categories, character-role joins, statistics. |
+| `role-queries.js` | Read-only projections: role collections, categories, character-role joins, statistics. Clone-on-read on both the `RoleState` path and the bootstrap accessor fallback path. |
 | `role-commands.js` | Write operations: role CRUD, category management, specialization catalogue, character assignment, salary, literacy. |
 | `role-system.js` | Compatibility shim. One-way aliases onto the canonical modules for legacy callers. |
 | `role-ui-list.js` | UI: role list, role card, role detail panel, master-filter toggle. |
 | `modals-roles.js` | UI: create/edit/delete role, assign role to character(s), edit skill, list roles, category manager. |
-| `modals-role-select.js` | UI: reusable role picker for cross-system use. Read-only. |
+| `modals-role-select.js` | UI: reusable role picker for cross-system use. Read-only. Lives under `js/core/modals/`. |
+
+Note: `role-rules.js` is listed in no revision of this documentation
+prior to the deletion described here. It was deleted as dead code — it
+was never called by `role-commands.js`, which validated inline.
+Specialization membership validation now lives in
+`apprenticeship-commands.js::_validateSpecialization`, which is the sole
+validator for the apprenticeship domain's use of
+`role.specializations`. There is no `RoleRules` module in this tree.
 
 ---
 
@@ -66,7 +73,6 @@ João."
 
 <!-- Roles -->
 <script src="js/systems/roles/role-constants.js"></script>
-<script src="js/systems/roles/role-rules.js"></script>
 <script src="js/systems/roles/role-state.js"></script>
 <script src="js/systems/roles/role-queries.js"></script>
 <script src="js/systems/roles/role-commands.js"></script>
