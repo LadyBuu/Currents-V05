@@ -1,7 +1,7 @@
 # HOUSEHOLD & RESIDENCE SYSTEM - ARCHITECTURE DOCUMENTATION
 
-Version: 6.0 (post-consolidation)
-Supersedes: v5.0 (post-refactor) and v4.0
+Version: 6.1 (post-consolidation)
+Supersedes: v6.0 (post-consolidation), v5.0 (post-refactor), v4.0
 
 ================================================================================
 SYSTEM OVERVIEW
@@ -16,7 +16,7 @@ The v5.0 refactor established clear ownership boundaries, removed
 global processing mutexes, eliminated fabricated domain defaults, and
 routed all mutations through explicit command layers.
 
-This v6.0 revision consolidates three latent bugs the v5.0 refactor
+The v6.0 revision consolidated three latent bugs the v5.0 refactor
 left behind:
 
   1. Constant and rule duplication. The economy and servant modules
@@ -38,6 +38,44 @@ left behind:
      for year-tagged accounting, so a 5-year advance produced 5 ledger
      entries all tagged with the same year. Both now accept an explicit
      year and propagate it through every calculation.
+
+This v6.1 revision closes three latent bugs the v6.0 consolidation
+left behind:
+
+  4. Residence inline catalog duplication. residence-system.js still
+     carried inline copies of RESIDENCE_TYPES, RESIDENCE_STATUS,
+     RENTAL_STATUS, RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER, and the
+     history-cap thresholds, even though the same values lived in
+     household-constants.js. Those inline copies were removed;
+     HouseholdConstants is now a HARD load-time dependency of
+     residence-system.js, and every residence catalog read goes through
+     it. A divergence between the two copies (e.g. increasing
+     ESTATE.capacity in constants.js while residence-system.js still
+     used the old value) is now structurally impossible.
+
+  5. Storage schema household collections. household-bootstrap.js's
+     canonical verification requires masterData.data.households,
+     masterData.data.householdPositions, and
+     masterData.data.householdAssignments to all be arrays at load
+     time. Prior revisions of storage-schema.js declared only
+     `households`. Every fresh install and every save that predated
+     the household subdomain therefore threw at household bootstrap
+     with "householdPositions must be an array". Both auxiliary
+     collections are now declared in the factory and in the
+     normalization pass. The fix is additive and defaults safely for
+     old saves.
+
+  6. household-commands.js load-time optional dependency flags.
+     `_residenceSystemPresent` and `_industryCommandsPresent` were
+     frozen at load. The documented HTML load order places
+     residence-system.js AFTER household-commands.js, so the flag
+     froze to false. Every deleteHousehold call that touched a
+     residence returned RESIDENCE_SYSTEM_UNAVAILABLE — even though
+     ResidenceSystem was loaded by the time the command ran. The flags
+     are now call-time helpers (_residenceSystemAvailable,
+     _industryCommandsAvailable) that resolve the optional dependency
+     at command time. Load-order changes in either direction no longer
+     affect behaviour.
 
 ================================================================================
 KEY DESIGN PRINCIPLES
@@ -72,10 +110,21 @@ KEY DESIGN PRINCIPLES
      - household-economy.js and household-servant.js (private copies)
      - household-rules.js (inline fallbacks)
 
-   Now there is exactly one copy of each catalog, in
-   household-constants.js. household-rules.js consumes it; household-
-   economy.js and household-servant.js import it. The private copies
-   are gone.
+   After v6.0 there is exactly one copy of each economic/service
+   catalog, in household-constants.js. household-rules.js consumes
+   it; household-economy.js and household-servant.js import it.
+
+   Before v6.1, the residence catalogs (RESIDENCE_TYPES /
+   RESIDENCE_STATUS / RENTAL_STATUS / RESIDENCE_CONDITIONS /
+   CONDITION_MULTIPLIER) and the history-cap thresholds were
+   duplicated between household-constants.js and residence-system.js.
+   After v6.1, residence-system.js reads them from HouseholdConstants;
+   the inline copies are gone.
+
+   The rule: every catalog has exactly one canonical home. Domain
+   modules that need a catalog either consume HouseholdConstants
+   directly or a domain-specific Rules module that consumes
+   HouseholdConstants. No module carries a private copy.
 
 3. NO GLOBAL PROCESSING MUTEXES
 
@@ -152,6 +201,20 @@ KEY DESIGN PRINCIPLES
      - residenceReverseIndexAvailable: false if the check couldn't run
        (ResidenceSystem not loaded and canonical residences not yet
        populated)
+
+9. CALL-TIME OPTIONAL DEPENDENCIES
+
+   Optional cross-domain dependencies (ResidenceSystem, IndustryCommands,
+   RelationshipCommands) are resolved at CALL time, not load time.
+   A load-time presence flag freezes to whatever the state was when
+   household-commands.js parsed. Under the documented HTML load order,
+   that is BEFORE ResidenceSystem loads, so the flag freezes to false
+   and every residence-touching command fails even though the module
+   is loaded by the time the command runs.
+
+   Call-time resolution (via _residenceSystemAvailable() and friends)
+   makes the flag's answer depend on the state at command time, which
+   is the only semantic that makes sense for an optional dependency.
 
 ================================================================================
 LAYER ARCHITECTURE
@@ -392,6 +455,15 @@ CONTRACT:
   • No cross-domain canonical mutation (delegates to CharacterCommands,
     IndustryCommands, ResidenceSystem)
 
+OPTIONAL DEPENDENCY RESOLUTION (v6.1):
+  ResidenceSystem and IndustryCommands are resolved at CALL time via
+  _residenceSystemAvailable() and _industryCommandsAvailable(), not
+  at load time. Load-time flags freeze to whatever the state was when
+  household-commands.js parsed, which is BEFORE ResidenceSystem loads
+  under the documented HTML order. Prior revisions therefore failed
+  every deleteHousehold call that touched a residence with
+  RESIDENCE_SYSTEM_UNAVAILABLE. See KEY DESIGN PRINCIPLES #9.
+
 KEY FUNCTIONS:
   createHousehold(data) / deleteHousehold(id, opts) /
   updateHousehold(id, updates) / setStatus(id, status, opts) /
@@ -438,6 +510,31 @@ ADD-ROLE-IF-MISSING CONTRACT (Prompt 33):
   When addRoleIfMissing is false/absent, the assignment proceeds. The
   result carries roleWarning when a required role is missing but the
   caller opted out of auto-adding.
+
+CROSS-DOMAIN CLEANUP CONTRACT:
+
+  removeCharacterReferences(characterId) and
+  clearLocationReferences(locationId) are cross-domain sweep hooks
+  dispatched by character-deletion-commands.js and
+  location-commands.js respectively. Both:
+
+    • Return { success: true, data: { ... } } with counts and the
+      affected-records list nested under `data`, matching the _ok
+      convention used elsewhere in this module.
+    • Emit exactly ONE commit for the whole sweep (event
+      'householdReferencesRemoved' or 'householdsLocationCleared'),
+      not one per affected household.
+    • Do NOT persist. The calling orchestration owns the batch
+      persistence boundary.
+    • Are idempotent. Re-running against an already-cleaned target
+      returns success with count: 0 and does not commit.
+
+  The `data` nesting matters: location-commands.js reads
+  result.data.clearedCount when it reports household reconciliation
+  status. Prior revisions of this module returned the count at the
+  top level, so deletePlace's cleanup report silently reported
+  clearedCount: 0 for every cascade. The nesting is now explicit at
+  both ends of the contract.
 
 household-economy.js
 ────────────────────
@@ -625,6 +722,18 @@ FROZEN DOMAIN CONTRACT:
     household.residenceUnitNumber  ← maintained by HouseholdCommands
     (ResidenceSystem calls HouseholdCommands when occupancy changes)
 
+  CONSTANTS SOURCING (v6.1):
+    RESIDENCE_TYPES, RESIDENCE_STATUS, RENTAL_STATUS,
+    RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER, and the history-cap
+    thresholds (MAX_TIMELINE_ENTRIES, MAX_HISTORY_ENTRIES,
+    MAX_RENTAL_HISTORY, MAX_RENT_PAYMENTS) all come from
+    HouseholdConstants. HouseholdConstants is a HARD load-time
+    dependency of this module. The inline copies that lived here
+    through v6.0 are gone. A consumer reading
+    window.ResidenceSystem.RESIDENCE_TYPES and a consumer reading
+    window.HouseholdConstants.RESIDENCE_TYPES see the SAME frozen
+    catalog. See KEY DESIGN PRINCIPLES #2.
+
 REVERSE-INDEX FAILURE POLICY (REVISED v6.0):
   • When _disassociateHouseholdFromUnit's reverse-index call fails,
     the result carries reverseIndexFailed:true (hard field, not
@@ -728,6 +837,15 @@ VERIFIED MODULE SURFACE:
   • ResidenceSystem (28 functions)
   • HouseholdModals (OPTIONAL — verified if present)
 
+CANONICAL DATA VERIFICATION (v6.1):
+  _verifyCanonical() requires masterData.data.households,
+  masterData.data.householdPositions, and
+  masterData.data.householdAssignments to all be arrays. Prior
+  revisions of storage-schema.js declared only `households`, which
+  made this verification fail on every fresh install and every save
+  that predated the household subdomain. The schema now declares all
+  three; see STORAGE SCHEMA in §[PERSISTENCE].
+
 INTEGRITY REPORT (v6.0):
   init() returns integritySummary with:
     householdsWithMissingResidence (count),
@@ -816,10 +934,56 @@ Common codes:
   INDUSTRY_COMMANDS_UNAVAILABLE, ROLE_ADD_FAILED,
   RELATIONSHIP_PERSIST_FAILED, PERSIST_FAILED, SAVE_FAILED
 
+CROSS-DOMAIN CLEANUP RESULT SHAPE:
+
+  Commands that emit a cross-domain sweep (removeCharacterReferences,
+  clearLocationReferences, and any future sweep hook) nest their
+  counts and affected-records list under `data`:
+
+    {
+      success: true,
+      data: {
+        clearedCount: number,
+        households: Array<{ householdId, householdName, ... }>,
+        // or
+        removedCount: number,
+        households: Array<{ householdId, householdName, ... }>
+      }
+    }
+
+  This matches the _ok convention used by the rest of the module.
+  Callers that need the count read `result.data.clearedCount` (not
+  `result.clearedCount`). Prior revisions returned the count at the
+  top level; location-commands.js's deletePlace cleanup report
+  silently reported 0 for every successful sweep as a result.
+
 Bulk operations:
   { success: true, data: { succeeded: [...], failed: [...],
                            warnings: [...] } }
   with explicit per-item failure reasons.
+
+================================================================================
+STORAGE SCHEMA (cross-reference)
+================================================================================
+
+The household domain's canonical collections live in masterData.data:
+
+  households              array   (household records)
+  householdPositions      array   (staff position records)
+  householdAssignments    array   (staff assignment records)
+
+All three are declared in storage-schema.js's factory
+(createDefaultMasterDataOverride) and in the normalization pass
+(normalizeMasterData's arrayKeys list). Prior to v6.1, only
+`households` was declared. See STORAGE SCHEMA in storage-schema.js
+and the character-doc.txt §4.3 for the full envelope shape.
+
+Per-record sub-fields (enterprises, eventLog, nameHistory, units,
+history, timeline, etc.) are normalized by the respective state
+modules at hydrate time (household-state.js::_ensureHouseholdShape,
+residence-system.js::_ensureResidenceShape), not by storage-schema.js.
+This is consistent with how the character domain handles embedded
+domain containers.
 
 ================================================================================
 LOAD ORDER (index.html)
@@ -863,7 +1027,9 @@ The following order MUST be respected:
   children-state.js, children-queries.js, children-commands.js,
   children-generator.js, children-statistics.js,
   modals-children-adoption.js, modals-children-birth.js,
-  modals-children-surrogacy.js  <!-- Mortality -->
+  modals-children-surrogacy.js
+
+  <!-- Mortality -->
   mortality-rules.js, mortality-queries.js, mortality-statistics.js
 
   <!-- Character compatibility shim -->
@@ -920,8 +1086,26 @@ The following order MUST be respected:
        Apprenticeship, Education, Disaster, Tabs -->
   ... (unchanged)
 
+LOAD-ORDER NOTES FOR OPTIONAL DEPENDENCIES:
+
+  household-commands.js loads BEFORE residence-system.js and BEFORE
+  industry-commands.js. Its optional-dependency checks therefore MUST
+  be call-time, not load-time. A load-time check freezes to false and
+  every optional-dependency-using command fails with a "not loaded"
+  error even though the module is loaded by command time. See
+  household-commands.js's CROSS-DOMAIN PRESENCE CHECKS section and
+  KEY DESIGN PRINCIPLES #9.
+
+  residence-system.js loads BEFORE household-bootstrap.js.
+  household-bootstrap.js::_verifyHouseholdModules therefore verifies
+  ResidenceSystem's surface successfully. No issue.
+
+  household-commands.js loads BEFORE household-bootstrap.js.
+  household-bootstrap.js's _verifyCommandsSurface verifies the full
+  command surface. No issue.
+
 ================================================================================
-FILES REMOVED OR CONSOLIDATED (v5.0 → v6.0)
+FILES REMOVED OR CONSOLIDATED (v5.0 → v6.1)
 ================================================================================
 
 DELETED:
@@ -954,7 +1138,7 @@ RECLASSIFIED:
                                              own duplicated helpers)
 
 ================================================================================
-KEY BUGS FIXED (v5.0 → v6.0)
+KEY BUGS FIXED (v5.0 → v6.1)
 ================================================================================
 
 1. Triple economic catalog
@@ -1043,6 +1227,46 @@ KEY BUGS FIXED (v5.0 → v6.0)
     string. Now: walks LIFE_STAGES for a matching group when the map
     is absent.
 
+16. Residence inline catalog duplication (v6.1)
+    residence-system.js carried inline copies of RESIDENCE_TYPES,
+    RESIDENCE_STATUS, RENTAL_STATUS, RESIDENCE_CONDITIONS,
+    CONDITION_MULTIPLIER, and the history-cap thresholds. The copies
+    were byte-identical to household-constants.js at every revision
+    they existed, but the divergence risk was real: a policy change
+    in constants.js would silently not take effect in
+    residence-system.js, so a consumer reading the constants catalog
+    and a consumer reading ResidenceSystem's copies would see different
+    values. Now: household-constants.js is a HARD load-time dependency
+    of residence-system.js, every catalog read goes through it, and
+    the inline copies are gone.
+
+17. Storage schema household collections (v6.1)
+    storage-schema.js declared `households` but not
+    `householdPositions` or `householdAssignments`. household-bootstrap.js
+    requires all three to be arrays. Every fresh install and every
+    save that predated the household subdomain failed bootstrap with
+    "householdPositions must be an array". Now: all three declared in
+    the factory and in the normalization pass.
+
+18. Load-time optional dependency flags (v6.1)
+    household-commands.js froze _residenceSystemPresent and
+    _industryCommandsPresent at load time. Under the documented HTML
+    order, residence-system.js loads AFTER household-commands.js, so
+    the flag froze to false. Every deleteHousehold call that touched a
+    residence returned RESIDENCE_SYSTEM_UNAVAILABLE. Now: both are
+    call-time helpers (_residenceSystemAvailable,
+    _industryCommandsAvailable). See KEY DESIGN PRINCIPLES #9.
+
+19. Cross-domain cleanup result shape divergence (v6.1)
+    location-commands.js::_cleanupHouseholdsAtPlaces read
+    result.clearedCount from HouseholdCommands.clearLocationReferences.
+    But clearLocationReferences returns { success: true, data:
+    { clearedCount, households } } — the count is nested under `data`,
+    not at the top level. So every successful household cleanup
+    reported clearedCount: 0 in the deletePlace result. Now: the
+    nesting is documented at both ends of the contract. See COMMAND
+    RESULT CONTRACT.
+
 ================================================================================
 REMAINING ARCHITECTURAL DEBT
 ================================================================================
@@ -1052,53 +1276,53 @@ REMAINING ARCHITECTURAL DEBT
    ResidenceCommands / ResidenceRules. That split is deferred until
    either the file exceeds ~1500 lines or a second consumer forces it.
 
-2. ResidenceSystem inlines the residence catalogs
-   RESIDENCE_TYPES, RESIDENCE_STATUS, RENTAL_STATUS,
-   RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER, and the history caps
-   are still local to residence-system.js even though the same
-   values live in household-constants.js. The two are byte-identical
-   today; unifying them is a mechanical pass (delete the local
-   block, `var RESIDENCE_TYPES = window.HouseholdConstants.RESIDENCE_TYPES;`
-   etc.). No behavior change; the header comment on residence-system.js
-   flags the defer.
-
-3. household-view-models.js uses inline defaults for some catalogs
+2. household-view-models.js uses inline defaults for some catalogs
    getResidenceConditionOptions and getResidenceTypeOptions fall back
    to inline defaults when HouseholdConstants isn't loaded. The values
    match the current catalog exactly. This is intentional so the file
    can be tested in isolation; the fallbacks will be removed once the
    constants are guaranteed to load.
 
-4. HouseholdRules does not model economic policy beyond what
+3. HouseholdRules does not model economic policy beyond what
    HouseholdEconomy delegates. Complex policy (bracket rates, tier
    progression over time, tax structures) is still inline in
    HouseholdEconomy. Extraction is deferred until a second consumer
    appears.
 
-5. Cross-domain atomicity in HouseholdAssignment and HouseholdServant
+4. Cross-domain atomicity in HouseholdAssignment and HouseholdServant
    is not transactional. Failure in one subsystem can leave partial
    state. Both modules report partial:true and their results carry
    enough information for a caller to resume or report the failure.
    A proper transaction framework is out of scope.
 
-6. The modals-*.js files still share some inline HTML helpers.
+5. The modals-*.js files still share some inline HTML helpers.
    _buildOwnerDetailsContent, _buildSnapshotContent, etc. could be
    extracted to a shared HTML-builder module. Currently they live
    where they're used, which is a reasonable trade-off (the HTML is
    tightly coupled to each modal's data shape).
 
+6. ResidenceSystem's _householdCommandsPresent and
+   _householdQueriesPresent flags are still load-time.
+   ResidenceSystem loads AFTER household-commands.js and
+   household-queries.js in the documented order, so the flags freeze
+   to true and no command fails. But the same fragility exists here as
+   in household-commands.js: a load-order change in either direction
+   would freeze the flags incorrectly. Converting them to call-time
+   helpers (matching the v6.1 fix in household-commands.js) is a
+   mechanical pass with no behavioural change today.
+
 7. History array caps (MAX_TIMELINE_ENTRIES, MAX_HISTORY_ENTRIES,
    MAX_RENTAL_HISTORY, MAX_RENT_PAYMENTS, MAX_TRANSACTION_HISTORY,
    MAX_RESOURCE_HISTORY, MAX_SALARY_HISTORY, MAX_TUITION_HISTORY,
-   MAX_SCHOOL_PROFIT_HISTORY, MAX_EVENT_LOG) are duplicated in
-   household-constants.js THRESHOLDS and in residence-system.js and
-   household-economy.js. The constants values match; unifying them
-   is part of the same mechanical pass as #2.
+   MAX_SCHOOL_PROFIT_HISTORY, MAX_EVENT_LOG) are now sourced from
+   household-constants.js THRESHOLDS in both household-economy.js and
+   residence-system.js. The prior duplication is closed. Item #7 from
+   v6.0 is retired.
 
 ================================================================================
 END OF DOCUMENTATION
 
-Version: 6.0 (post-consolidation)
-Date: 2026-10-26
-Supersedes: v5.0 (post-refactor) and v4.0
+Version: 6.1 (post-consolidation)
+Date: 2026-10-28
+Supersedes: v6.0 (post-consolidation), v5.0 (post-refactor), v4.0
 ================================================================================
