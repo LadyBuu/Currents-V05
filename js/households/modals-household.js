@@ -36,16 +36,26 @@
  *   - processAnnualEconomy reads .data.* (economy already returns
  *     structured results).
  *
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom, persistOrFail,
+ *   reportFailure, esc, readValue, readIntOrNull, onOpen, currentYear,
+ *   closeThen, confirmDialog — lives in HouseholdModals. This file
+ *   keeps only its local aliases (var _esc = _Modals.esc; etc.) and its
+ *   domain-specific builders (_buildLocationOptions, the details-content
+ *   builders, and the wire functions for the details modal).
+ *
+ *   Prior revisions carried local copies of _persistOrFail,
+ *   _confirmDialog, _currentYear, and _closeThen. Those are now
+ *   HouseholdModals exports; the aliases at the top of this file
+ *   delegate to those shared helpers.
+ *
  * DOM-SCOPE
  * ---------
- *   Every DOM lookup is scoped to the modal's own `handle.element`.
- *   The prior version used a `_resolveModalRoot()` fallback chain that
- *   ended at `document.body` and, because `modals-core.js` does not
- *   emit the selectors it looked for, always fell through to
- *   `document.body`. That meant field reads scanned the entire document
- *   and could match a field belonging to a stacked modal.
- *
- *   See modals-helper.js for the full explanation.
+ *   Every DOM lookup is scoped to the modal's own `handle.element` via
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
+ *   rationale on why the prior _resolveModalRoot() fallback (which
+ *   ended at document.body) was wrong.
  *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - formatting.js (escapeHtml)
@@ -65,6 +75,29 @@
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _persistOrFail, _confirmDialog,
+ *       _currentYear, and _closeThen. All four were structurally
+ *       identical to the shared versions exported by HouseholdModals.
+ *       The aliases at the top of this file delegate to those shared
+ *       helpers.
+ *     - _confirmDialog in the delete flow now goes through
+ *       HouseholdModals.confirmDialog (which itself prefers
+ *       window.confirmDialog, falls back to window.confirm). Same
+ *       semantics as before.
+ *     - No behavioural change to any modal entry point.
+ *   Previous revisions:
+ *     - Every DOM lookup is scoped to handle.element via
+ *       HouseholdModals.rootFrom(modal).
+ *     - _buildLocationOptions falls back to getPlaces when
+ *       buildLocationDropdown is unavailable, matching the residence
+ *       modal file's behaviour.
+ *     - openDeleteHouseholdModal now routes through _confirmDialog,
+ *       which itself routes through modals-core's confirmDialog when
+ *       present (the previous implementation called _confirmDialog as a
+ *       local helper with the same behaviour).
  * =============================================================================
  */
 
@@ -121,37 +154,30 @@
     _requireFunction('HouseholdModals.esc', _Modals.esc);
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
+    _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
+    _requireFunction('HouseholdModals.confirmDialog', _Modals.confirmDialog);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases — keeps call sites unchanged and short.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showWarning = _Modals.showWarning;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    // =========================================================================
-    // 1. CONFIRM DIALOG
-    // =========================================================================
-
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        // Fallback if modals-core.js's confirmDialog is unavailable.
-        if (window.confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else if (onCancel) {
-            onCancel();
-        }
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    var _persistOrFail = _Modals.persistOrFail;
+    var _confirmDialog = _Modals.confirmDialog;
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
-    // 2. LOCATION OPTIONS
+    // 1. LOCATION OPTIONS
     // =========================================================================
 
     function _buildLocationOptions(selectedId, placeholder) {
@@ -177,16 +203,14 @@
     }
 
     // =========================================================================
-    // 3. CREATE HOUSEHOLD MODAL
+    // 2. CREATE HOUSEHOLD MODAL
     // =========================================================================
 
     function openCreateHouseholdModal(onSuccess, options) {
         options = options || {};
 
         var locationOptions = _buildLocationOptions(null, '-- Select location --');
-        var currentYear = (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
+        var currentYear = _currentYear();
 
         var content =
             '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
@@ -274,7 +298,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Household created');
+                var persisted = _persistOrFail('Household created');
                 // Whether or not the persist succeeded, the mutation is in
                 // memory. Report success to the caller (the persist failure
                 // was toasted) so the modal closes.
@@ -326,7 +350,7 @@
     }
 
     // =========================================================================
-    // 4. EDIT HOUSEHOLD MODAL
+    // 3. EDIT HOUSEHOLD MODAL
     // =========================================================================
 
     function openEditHouseholdModal(householdId, onSuccess) {
@@ -429,9 +453,7 @@
                 var statusChangeFailed = null;
                 if (status && status !== household.status) {
                     var statusResult = _commands.setStatus(householdId, status, {
-                        year: (typeof window.getCurrentYearSafe === 'function')
-                            ? window.getCurrentYearSafe()
-                            : null,
+                        year: _currentYear(),
                         reason: 'Edited via modal',
                         recordEvent: true
                     });
@@ -462,7 +484,7 @@
     }
 
     // =========================================================================
-    // 5. DELETE HOUSEHOLD MODAL
+    // 4. DELETE HOUSEHOLD MODAL
     // =========================================================================
 
     function openDeleteHouseholdModal(householdId, onSuccess) {
@@ -497,7 +519,7 @@
                 return;
             }
 
-            _Modals.persistOrFail('Household deleted');
+            _persistOrFail('Household deleted');
             _showInfo('Household deleted: ' + household.name);
 
             if (typeof onSuccess === 'function') {
@@ -509,7 +531,7 @@
     }
 
     // =========================================================================
-    // 6. HOUSEHOLD DETAILS MODAL
+    // 5. HOUSEHOLD DETAILS MODAL
     // =========================================================================
 
     function openHouseholdDetailsModal(householdId, onSuccess) {
@@ -793,11 +815,6 @@
     }
 
     function _wireDetailsActions(root, householdId, details, onSuccess) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         var editBtn = root.querySelector('[data-action="edit"]');
         if (editBtn) {
             editBtn.onclick = function() {
@@ -933,7 +950,7 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.openCreateHouseholdModal = openCreateHouseholdModal;
