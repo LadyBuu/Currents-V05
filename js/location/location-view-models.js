@@ -24,6 +24,60 @@
  *
  *   The deprecated window.getCurrentYearSafe alias is NOT used here.
  *
+ * CURRENT-LOCATION RESOLUTION (REVISED):
+ *   This module used to read the current location via
+ *   CharacterQueries.getCurrentLocationId in two places:
+ *
+ *     buildMoveCharacterModel   — to exclude the current location from
+ *                                 the destination options
+ *     buildBulkMoveModel        — via CharacterQueries.getCharactersAtLocation
+ *                                 to enumerate living characters at the
+ *                                 source place
+ *
+ *   CharacterQueries.getCurrentLocationId returns the raw
+ *   currentLocationId FIELD, not the resolved location. A character
+ *   placed only by a move record (nothing set currentLocationId) was
+ *   treated as having no current location, so:
+ *
+ *     - their current location was not excluded from destination
+ *       options in the single-move modal, and
+ *     - they were absent from the bulk-move modal's character list.
+ *
+ *   LocationQueries.getCurrentLocationId resolves the location
+ *   semantically (explicit field, then latest move, then birthplace)
+ *   via World.getCurrentLocationId when loaded. This module now uses
+ *   LocationQueries for both callers.
+ *
+ *   For the character list at the source place, this module no longer
+ *   delegates to CharacterQueries.getCharactersAtLocation (which filters
+ *   on the raw field). It enumerates characters via
+ *   CharacterQueries.getAllCharacters and filters them through
+ *   LocationQueries.getCurrentLocationId, which yields the same
+ *   consistent resolution as the rest of the module.
+ *
+ *   This makes the two modals correct for characters placed via moves
+ *   or via the explicit field, matching the resolution used by
+ *   LocationQueries.getPopulationCount and
+ *   LocationQueries.getOwnPopulation.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - buildMoveCharacterModel: current-location resolution switched
+ *       from CharacterQueries.getCurrentLocationId to
+ *       LocationQueries.getCurrentLocationId. See CURRENT-LOCATION
+ *       RESOLUTION in the module header.
+ *     - buildBulkMoveModel: character enumeration switched from
+ *       CharacterQueries.getCharactersAtLocation (raw-field filter) to
+ *       a fresh filter over CharacterQueries.getAllCharacters using
+ *       LocationQueries.getCurrentLocationId. Same reasoning.
+ *     - Header CURRENT-LOCATION RESOLUTION section added.
+ *     - CharacterQueries.getCharactersAtLocation is no longer required
+ *       at load time; the enumeration now uses getAllCharacters plus
+ *       LocationQueries.getCurrentLocationId.
+ *     - No public signature change, no public return-shape change.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -63,8 +117,7 @@
 
     var _requiredCharacterQueryMethods = [
         'getCharacterById',
-        'getCurrentLocationId',
-        'getCharactersAtLocation'
+        'getAllCharacters'
     ];
     for (var _i = 0; _i < _requiredCharacterQueryMethods.length; _i++) {
         var _m = _requiredCharacterQueryMethods[_i];
@@ -343,12 +396,20 @@
      * Returns null when the character does not exist.
      *
      * destinationOptions excludes the character's current location.
+     *
+     * Current-location resolution is delegated to
+     * LocationQueries.getCurrentLocationId, which honours the explicit
+     * currentLocationId field, the moves-based fallback, and the
+     * birthplace fallback. The prior revision used
+     * CharacterQueries.getCurrentLocationId, which only reads the raw
+     * field, so characters placed via moves did not have their current
+     * location excluded from the destination options.
      */
     function buildMoveCharacterModel(characterId) {
         var character = CQ.getCharacterById(characterId);
         if (!character) return null;
 
-        var currentLocationId = CQ.getCurrentLocationId(characterId);
+        var currentLocationId = LQ.getCurrentLocationId(characterId);
         var currentLocation = currentLocationId
             ? LQ.getPlace(currentLocationId)
             : null;
@@ -404,16 +465,34 @@
      * Model for the bulk-move modal.
      * Returns null when the source place does not exist.
      *
-     * Only living characters at the source place are listed.
+     * Only living characters at the source place are listed, where
+     * "at the source place" is defined by
+     * LocationQueries.getCurrentLocationId — the resolved location,
+     * not the raw currentLocationId field.
+     *
+     * The prior revision used CharacterQueries.getCharactersAtLocation,
+     * which filters on c.currentLocationId === locationId. That missed
+     * characters placed via moves and included characters whose raw
+     * field pointed at the source place but whose latest move pointed
+     * elsewhere. This module now enumerates all characters and filters
+     * through the resolved location, matching the resolution used by
+     * LocationQueries.getPopulationCount.
      */
     function buildBulkMoveModel(fromPlaceId) {
         var fromPlace = LQ.getPlace(fromPlaceId);
         if (!fromPlace) return null;
 
-        var candidates = CQ.getCharactersAtLocation(fromPlaceId, { aliveOnly: true });
+        var allCharacters = CQ.getAllCharacters();
         var characterRows = [];
-        for (var i = 0; i < candidates.length; i++) {
-            var c = candidates[i];
+
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || !c.id) continue;
+            if (c.isDeceased === true) continue;
+
+            var resolvedLocId = LQ.getCurrentLocationId(c.id);
+            if (resolvedLocId !== fromPlaceId) continue;
+
             var label = displayName(c.name, '(unnamed)');
             if (c.surname) label = label + ' ' + c.surname;
             characterRows.push({
