@@ -38,6 +38,27 @@
  *   If CharacterCommands is missing, the commands fail loudly. There is
  *   no degraded mode.
  *
+ * PERSISTENCE
+ *
+ *   EducationState owns the sync from in-memory state into
+ *   masterData.data.educationalInstitutions. Every state mutation
+ *   primitive calls _syncToMasterData, which writes masterData and
+ *   marks the data dirty. That is the memory-write boundary.
+ *
+ *   EducationCommands.persist() is the FLUSH boundary. It calls
+ *   saveMasterData(), which writes the current masterData to
+ *   localStorage. It does NOT copy state into masterData because
+ *   state already did that.
+ *
+ *   Callers (modals, annual pipeline) call persist() once per batch,
+ *   after every mutation in the batch has succeeded. Failing to call
+ *   persist() means the debounced save will eventually run on its own
+ *   schedule; calling it makes the save happen synchronously.
+ *
+ *   There is no aliasing between _institutions and
+ *   masterData.data.educationalInstitutions. The two are kept in sync
+ *   by assignment.
+ *
  * ROLE SKILL PROGRESSION
  *
  *   Education owns educational progress (subjectProgress). The canonical
@@ -68,7 +89,7 @@
  *
  *   Required at load:
  *     - getCharacterById, getCharacters, getPlaceById (accessors)
- *     - getCurrentYearSafe (time)
+ *     - getCurrentYear (time)
  *     - generateId (ids)
  *     - saveMasterData (storage)
  *
@@ -83,6 +104,7 @@
  *     - HouseholdEconomy     (tuition payment, hard requirement when a
  *                             household is present)
  *     - SettlementCommands   (public funding, hard requirement)
+ * =============================================================================
  */
 
 (function() {
@@ -144,8 +166,8 @@
     }
 
     function _getCurrentYear() {
-        return _requireFn('getCurrentYearSafe',
-            function() { return window.getCurrentYearSafe; })();
+        return _requireFn('getCurrentYear',
+            function() { return window.getCurrentYear; })();
     }
 
     function _generateId(prefix) {
@@ -153,11 +175,41 @@
             function() { return window.generateId; })(prefix);
     }
 
+    // =========================================================================
+    // 2. PERSISTENCE BOUNDARY
+    // =========================================================================
+    //
+    // EducationState already wrote the canonical institutions into
+    // masterData on every mutation and marked the data dirty. persist()
+    // is the FLUSH: it drives the debounced save to run immediately and
+    // synchronously.
+    //
+    // persist() does NOT copy state into masterData. If it did, the
+    // previous revision's silent-data-loss bug would reappear in a
+    // different form: state would be serialized fresh each time even
+    // though the state-to-masterData sync had failed.
+
     function _persist() {
         if (typeof window.saveMasterData !== 'function') {
             throw new Error('education-commands.js requires saveMasterData');
         }
-        window.saveMasterData();
+        var ok = window.saveMasterData();
+        if (ok === true) return true;
+        // saveMasterData returns boolean; false means the write failed.
+        // We surface the failure through the current error mechanism
+        // (getLastSaveError) so callers can read it, matching the
+        // DOMAIN PERSIST CONTRACT in storage.js.
+        if (typeof window.getLastSaveError === 'function') {
+            var err = window.getLastSaveError();
+            if (err) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'education-commands.js: persist failed:', err
+                    );
+                }
+            }
+        }
+        return false;
     }
 
     // ---- CharacterCommands — the only sanctioned writer for character fields.
@@ -302,7 +354,7 @@
     }
 
     // =========================================================================
-    // 2. RESULT HELPERS
+    // 3. RESULT HELPERS
     // =========================================================================
 
     function _ok(extra) {
@@ -314,7 +366,7 @@
     }
 
     // =========================================================================
-    // 3. TUITION CALCULATION
+    // 4. TUITION CALCULATION
     // =========================================================================
 
     function _calculateTuition(institution, year) {
@@ -428,7 +480,7 @@
     }
 
     // =========================================================================
-    // 4. INSTITUTION CRUD
+    // 5. INSTITUTION CRUD
     // =========================================================================
 
     function createInstitution(arg1, arg2, arg3, arg4) {
@@ -782,7 +834,7 @@
     }
 
     // =========================================================================
-    // 5. TEACHER MANAGEMENT
+    // 6. TEACHER MANAGEMENT
     // =========================================================================
 
     function hireTeacher(institutionId, teacherId, subjectId) {
@@ -814,9 +866,6 @@
         }
         if (!curriculumItem) return _fail('Subject not found in curriculum: ' + subjectId);
 
-        // Role-type subject requires the teacher to hold the role.
-        // RoleQueries is a hard requirement — a missing module is a load-order
-        // failure, not a "silently skip the check" case.
         if (curriculumItem.type === 'role') {
             var roleDetails = _roleQueries().getCharactersWithRoleDetails(subjectId);
             var hasRole = false;
@@ -885,7 +934,7 @@
     }
 
     // =========================================================================
-    // 6. STUDENT MANAGEMENT
+    // 7. STUDENT MANAGEMENT
     // =========================================================================
 
     function enrollStudent(institutionId, studentId, startYear) {
@@ -911,7 +960,6 @@
 
         var year = startYear !== undefined ? startYear : _getCurrentYear();
 
-        // Tuition.
         var tuitionResult = _calculateTuition(inst, year);
         var tuitionPaid = 0;
         if (tuitionResult.success && tuitionResult.tuition > 0) {
@@ -931,7 +979,6 @@
             }
         }
 
-        // Institution-side roster.
         var students = (inst.students || []).slice();
         students.push({
             studentId: studentId,
@@ -949,7 +996,6 @@
         });
         _state()._updateInstitution(institutionId, { students: students });
 
-        // Character-side record. Owned by CharacterCommands.
         var recordResult = _cc('recordEducationEnrollment')(studentId, institutionId, {
             institutionName: inst.name,
             institutionType: inst.type,
@@ -988,7 +1034,6 @@
 
         var year = graduationYear !== undefined ? graduationYear : _getCurrentYear();
 
-        // Role selection.
         var taughtRoles = inst.taughtRoles || [];
         var roleToGrant = null;
 
@@ -1008,11 +1053,6 @@
             roleToGrant = selectedRoleId;
         }
 
-        // Role grant. Failures do not abort graduation. The error is
-        // recorded on the result envelope as `roleGrantError`.
-        //
-        // NOTE: The skillLevel of 100 is a deliberate placeholder pending
-        // the qualification model. See the education doc's Known Deferrals.
         var roleGrantError = null;
         if (roleToGrant) {
             try {
@@ -1047,7 +1087,6 @@
             }
         }
 
-        // Institution-side update.
         var students = inst.students.slice();
         var record = Object.assign({}, students[idx], {
             graduated: true,
@@ -1069,7 +1108,6 @@
             graduates: graduates
         });
 
-        // Character-side record. Owned by CharacterCommands.
         var gradResult = _cc('recordEducationGraduation')(studentId, institutionId, {
             graduationYear: year,
             grantedRole: roleToGrant
@@ -1099,7 +1137,6 @@
                     : 'unknown error'));
         }
 
-        // Cap curriculum proficiencies at 100. Character-owned write.
         if (inst.curriculum) {
             for (var k = 0; k < inst.curriculum.length; k++) {
                 var key = _rules().progressKeyFor(inst.curriculum[k]);
@@ -1140,7 +1177,6 @@
         students.splice(idx, 1);
         _state()._updateInstitution(institutionId, { students: students });
 
-        // Character-side record. Owned by CharacterCommands.
         var wdResult = _cc('recordEducationWithdrawal')(studentId, institutionId, {
             reason: reason || 'Withdrew',
             year: _getCurrentYear()
@@ -1160,7 +1196,7 @@
     }
 
     // =========================================================================
-    // 7. LEARNING
+    // 8. LEARNING
     // =========================================================================
 
     function advanceLearning(characterId, curriculumItem, progress) {
@@ -1175,7 +1211,6 @@
 
         var key = _rules().progressKeyFor(curriculumItem);
 
-        // Ensure the subject progress entry exists. Character-owned write.
         var ensureResult = _cc('ensureSubjectProgress')(characterId, key, {
             level: 0,
             lastStudied: _getCurrentYear(),
@@ -1201,7 +1236,6 @@
             return _fail(e.message || 'Invalid learning calculation');
         }
 
-        // Character-owned write.
         var updResult = _cc('updateSubjectProgress')(characterId, key, {
             level: result.newLevel,
             lastStudied: _getCurrentYear()
@@ -1213,23 +1247,6 @@
                     : 'unknown error'));
         }
 
-        // Role skill progression. Education owns educational progress; the
-        // canonical role skill is character.professions[].skillLevel, written
-        // only through RoleCommands.recordCharacterSkillProgress, which
-        // enforces the no-downgrade invariant for process paths.
-        //
-        // RoleCommands.recordCharacterSkillProgress is required for role-type
-        // curriculum items. A missing module or a missing method is a
-        // load-order failure, not a silent skip: without it, the write would
-        // be dropped and the character would have educational progress with
-        // no matching role skill.
-        //
-        // If the character does not hold the role, the call fails and the
-        // failure is recorded on the return envelope as `roleSkillError`.
-        // Education does not assign the role. Assignment is a Role or
-        // Character decision, taken at graduation (via
-        // RoleCommands.assignRoleToCharacter) or through the role assignment
-        // UI.
         if (curriculumItem.type === 'role' && result.increased > 0) {
             var RC = _roleCommandsOrNull();
             if (!RC || typeof RC.recordCharacterSkillProgress !== 'function') {
@@ -1243,9 +1260,6 @@
                 characterId, curriculumItem.id, result.newLevel
             );
             if (!progressResult || progressResult.success !== true) {
-                // Non-fatal: subject progress is already written. Record the
-                // failure on the return envelope so the caller can see that
-                // role skill did not advance.
                 return _ok({
                     characterId: characterId,
                     subjectId: key,
@@ -1260,13 +1274,11 @@
             }
         }
 
-        // Literacy milestone.
         if (curriculumItem.id === _rules().LITERACY_SUBJECT_ID) {
             var wasLiterate = _cc('isLiterate')(characterId);
             var nowLiterate = _rules().isLiterateAtLevel(result.newLevel);
             if (nowLiterate && !wasLiterate) {
                 _cc('setLiterate')(characterId, true);
-                // Emit a history event only if we know a current institution.
                 var institutions = _state()._getAllInstitutionsCanonical();
                 for (var i = 0; i < institutions.length; i++) {
                     var inst = institutions[i];
@@ -1274,7 +1286,7 @@
                     for (var j = 0; j < inst.students.length; j++) {
                         if (inst.students[j].studentId === characterId &&
                             !inst.students[j].graduated) {
-                            _history().addEvent(inst, {
+                            _history().addEvent(inst.id, {
                                 type: window.HISTORY_EVENT_TYPES.STUDENT_BECAME_LITERATE,
                                 year: _getCurrentYear(),
                                 entityId: characterId,
@@ -1300,7 +1312,7 @@
     }
 
     // =========================================================================
-    // 8. HEADMASTER MANAGEMENT
+    // 9. HEADMASTER MANAGEMENT
     // =========================================================================
 
     function setHeadmaster(institutionId, characterId, title, startYear) {
@@ -1360,7 +1372,7 @@
     }
 
     // =========================================================================
-    // 9. TUITION
+    // 10. TUITION
     // =========================================================================
 
     function calculateTuition(institutionId, year) {
@@ -1440,7 +1452,7 @@
     }
 
     // =========================================================================
-    // 10. OWNERSHIP
+    // 11. OWNERSHIP
     // =========================================================================
 
     function setSchoolOwnership(institutionId, ownershipType, ownerId, ownerType) {
@@ -1542,7 +1554,7 @@
     }
 
     // =========================================================================
-    // 11. FINANCE
+    // 12. FINANCE
     // =========================================================================
 
     function calculatePublicSchoolFunding(institutionId, year) {
@@ -1775,7 +1787,7 @@
     }
 
     // =========================================================================
-    // 12. SETTLEMENT BUDGET
+    // 13. SETTLEMENT BUDGET
     // =========================================================================
 
     function receiveSettlementBudget(locationId, amount, year) {
@@ -1846,7 +1858,7 @@
     }
 
     // =========================================================================
-    // 13. DEMOLISH / REBUILD
+    // 14. DEMOLISH / REBUILD
     // =========================================================================
 
     function demolishInstitution(institutionId, reason, year, options) {
@@ -1931,9 +1943,7 @@
             maxStudents: 0
         });
 
-        _state()._indexesRebuild();
-
-        _history().addEvent(_state()._getInstitutionCanonical(institutionId), {
+        _history().addEvent(institutionId, {
             type: window.HISTORY_EVENT_TYPES.INSTITUTION_DEMOLISHED,
             year: demolishYear,
             details: 'Demolished: ' + demolishReason,
@@ -1992,9 +2002,7 @@
             headmaster: null
         });
 
-        _state()._indexesRebuild();
-
-        _history().addEvent(_state()._getInstitutionCanonical(institutionId), {
+        _history().addEvent(institutionId, {
             type: window.HISTORY_EVENT_TYPES.INSTITUTION_REBUILT,
             year: y,
             details: 'Rebuilt',
@@ -2076,16 +2084,23 @@
     }
 
     // =========================================================================
-    // 14. PERSISTENCE BOUNDARY
+    // 15. PERSISTENCE BOUNDARY
     // =========================================================================
+    //
+    // EducationState has already written the institutions into
+    // masterData on every mutation and marked the data dirty. persist()
+    // is the FLUSH that forces the debounced save to run synchronously.
+    //
+    // It does NOT copy state into masterData. That would re-introduce the
+    // silent-data-loss pattern from earlier revisions (state and
+    // masterData drifting apart because the copy step was skipped).
 
     function persist() {
-        _persist();
-        return true;
+        return _persist();
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 16. EXPORTS
     // =========================================================================
 
     window.EducationCommands = {
