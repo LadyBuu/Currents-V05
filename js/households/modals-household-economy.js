@@ -37,25 +37,45 @@
  *   - No 1250 fallback.
  *   - Command result shapes fully honored.
  *
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom, reportFailure,
+ *   esc, readValue, readIntOrNull, onOpen, currentYear, closeThen —
+ *   lives in HouseholdModals. This file keeps only its local aliases
+ *   (var _esc = _Modals.esc; etc.) and its domain-specific builders
+ *   (_metricCell, _incomeRow, _expenseRow, and the summary/wealth/
+ *   resources/income/expenses/annual/events/trade modal contents).
+ *
+ *   The previous revision carried local copies of _currentYear and
+ *   _closeThen. Those are now HouseholdModals exports; the aliases at
+ *   the top of this file delegate to those shared helpers.
+ *
+ *   Note: this file does NOT carry _persistOrFail or _confirmDialog
+ *   locally because HouseholdEconomy mutations persist themselves via
+ *   HouseholdCommands.persist, and this modal never needs a confirm
+ *   dialog. The shared persistOrFail / confirmDialog are still
+ *   available via HouseholdModals for any future need but are not
+ *   imported here.
+ *
  * DOM-SCOPE
  * ---------
  *   Every DOM lookup is scoped to the modal's own `handle.element` via
- *   HouseholdModals.rootFrom(modal). See modals-helper.js for why the
- *   prior _resolveModalRoot() fallback (which ended at document.body)
- *   was wrong.
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
+ *   rationale on why the prior _resolveModalRoot() fallback (which
+ *   ended at document.body) was wrong.
  *
  * PERSIST CONTRACT
  * ----------------
- * Unlike the CRUD modals (modals-household.js), economy mutations persist
- * themselves via HouseholdEconomy → HouseholdCommands.persist(). The
- * modal just displays the result. Calling persist() again here would be
- * redundant.
+ *   Unlike the CRUD modals (modals-household.js), economy mutations
+ *   persist themselves via HouseholdEconomy → HouseholdCommands.persist().
+ *   The modal just displays the result. Calling persist() again here
+ *   would be redundant.
  *
- * EXCEPTION: batch operations that call MULTIPLE economy mutations in
- * one user action (e.g. "Add to All" in resources) still persist per
- * mutation because economy owns its save boundary. If a caller needs
- * batch semantics, they must call HouseholdEconomy once with a bulk
- * shape — which economy does not currently support. That's deferred.
+ *   EXCEPTION: batch operations that call MULTIPLE economy mutations in
+ *   one user action (e.g. "Add to All" in resources) still persist per
+ *   mutation because economy owns its save boundary. If a caller needs
+ *   batch semantics, they must call HouseholdEconomy once with a bulk
+ *   shape — which economy does not currently support. That's deferred.
  *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - modals-core.js (openModal, closeTopModal)
@@ -66,10 +86,26 @@
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
  *   - HouseholdCommands (for the shared persistOrFail helper — not used
- *     directly by this modal but required by HouseholdModals)
+ *     directly by this modal)
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _currentYear and _closeThen. Both
+ *       were structurally identical to the shared versions exported by
+ *       HouseholdModals. The aliases at the top of this file delegate
+ *       to those shared helpers.
+ *     - No behavioural change to any modal entry point.
+ *   Previous revisions:
+ *     - Every DOM lookup is scoped to handle.element via
+ *       HouseholdModals.rootFrom(modal).
+ *     - HouseholdEconomy mutation results are read via .data.* on
+ *       success; the previous revision assumed the wrong shape and
+ *       silently ignored the returned old/new values in the toast.
+ *     - The "Add to All" resources batch operation reports per-mutation
+ *       outcomes; it does not pretend to be a single atomic mutation.
  * =============================================================================
  */
 
@@ -157,21 +193,23 @@
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showWarning = _Modals.showWarning;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    function _currentYear() {
-        return (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
     // 1. ECONOMIC SUMMARY MODAL (pure projection)
