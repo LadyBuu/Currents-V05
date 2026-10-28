@@ -33,6 +33,32 @@
  *   zero side effects. On a contaminated save it strips and derives,
  *   validates, and saves once.
  *
+ * CANONICAL ENTERPRISES COLLECTION:
+ *   masterData.data.enterprises must be an array or absent. Two cases are
+ *   distinguished:
+ *
+ *     absent (undefined / null) → treated as [] and the migration
+ *       proceeds normally. This is the legitimate "fresh install" case
+ *       where the industry domain has never populated the collection.
+ *
+ *     present-but-non-array (a string, number, object, or any other
+ *       non-array value) → REFUSED. The migration returns
+ *       { ok: false, migrated: 0, changed: 0, errors: [...] } without
+ *       touching masterData, without saving, and without calling
+ *       saveMasterData. Nothing is coerced to [] and nothing is
+ *       discarded. The caller must investigate the corruption (or
+ *       install a fresh save).
+ *
+ *   Rationale: prior revisions coerced any non-array value to [] here.
+ *   When called through industry-bootstrap.js::init() this was
+ *   unreachable — the bootstrap runs _verifyCanonicalShape() before
+ *   migration and throws on any non-array value. But a direct caller of
+ *   migrateEnterprisesToCanonicalShape() (a repair tool, a test harness,
+ *   a future bootstrap refactor) would silently discard the corrupted
+ *   array. The refusal closes that hazard at the migration boundary, not
+ *   at the bootstrap boundary, so every caller is protected regardless of
+ *   load order or call path.
+ *
  * DEPENDENCIES (REQUIRED at load):
  *   - industry-constants.js (IndustryConstants)
  *   - industry-rules.js     (IndustryRules)
@@ -48,6 +74,32 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (secondary item #1):
+ *     - _requireEnterprisesArray no longer coerces a present-but-non-array
+ *       masterData.data.enterprises to []. It now distinguishes:
+ *         absent (undefined/null)          → []   (fresh install)
+ *         array                            → returned as-is
+ *         present-but-non-array            → REFUSED (returns null)
+ *       When refused, migrateEnterprisesToCanonicalShape returns
+ *       { ok: false, migrated: 0, changed: 0, errors: [{ index: -1, ... }] }
+ *       without touching masterData, without saving, and without calling
+ *       saveMasterData. A direct caller can no longer silently lose a
+ *       corrupted enterprises array.
+ *     - The bootstrap path was already safe (industry-bootstrap.js runs
+ *       _verifyCanonicalShape before migration and throws on non-array).
+ *       This fix closes the hazard for direct callers so the guarantee
+ *       does not depend on the bootstrap being the only caller.
+ *     - Header CANONICAL ENTERPRISES COLLECTION section added explaining
+ *       the refusal semantics and the three cases.
+ *     - No behavioural change for any input that was previously accepted:
+ *       absent → still []; array → still returned as-is; per-record
+ *       passes (ownershipType derivation, derived-field stripping,
+ *       validation) are unchanged. The save-failure path is unchanged
+ *       (still appends a synthetic index -1 error and returns ok: false).
+ *     - Return shape unchanged (ok, migrated, changed, errors). The
+ *       refusal case produces the same fields as a save failure.
  * =============================================================================
  */
 
@@ -99,12 +151,43 @@
         return window.masterData;
     }
 
+    /**
+     * Resolves masterData.data.enterprises, distinguishing three cases:
+     *
+     *   absent (undefined / null)      → returns { ok: true, array: [] }
+     *                                    and writes [] into masterData so
+     *                                    subsequent code paths see the
+     *                                    initialized collection.
+     *                                    This is the legitimate "fresh
+     *                                    install" case.
+     *
+     *   present as an array            → returns { ok: true, array } with
+     *                                    the array unchanged.
+     *
+     *   present-but-non-array          → returns { ok: false } WITHOUT
+     *                                    touching masterData. The caller
+     *                                    decides whether to refuse the
+     *                                    migration or repair the collection
+     *                                    first.
+     *
+     * @private
+     * @returns {{ ok: boolean, array?: Array }}
+     */
     function _requireEnterprisesArray() {
         var md = _requireMasterData();
-        if (!Array.isArray(md.data.enterprises)) {
+
+        if (md.data.enterprises === undefined
+            || md.data.enterprises === null) {
             md.data.enterprises = [];
+            return { ok: true, array: md.data.enterprises };
         }
-        return md.data.enterprises;
+
+        if (Array.isArray(md.data.enterprises)) {
+            return { ok: true, array: md.data.enterprises };
+        }
+
+        // Present but not an array. Refuse rather than coerce.
+        return { ok: false };
     }
 
     // =========================================================================
@@ -197,12 +280,19 @@
      * the bootstrap integrity diagnostic and any future repair tool can
      * see them. Migration does NOT delete failed records.
      *
+     * A collection-level failure (the enterprises field is present but is
+     * not an array) is REFUSED: no records are touched, nothing is saved,
+     * and a single synthetic index -1 error is returned. See CANONICAL
+     * ENTERPRISES COLLECTION in the module header for the three cases.
+     *
      * Returns:
      *   { ok: true,  migrated: N, changed: C, errors: [] }
      *   { ok: false, migrated: N, changed: C, errors: [...] }
      *
      * ok is true when every record migrated cleanly (including zero
-     * records). ok is false when at least one record failed validation.
+     * records) and the collection shape was valid. ok is false when the
+     * collection shape was invalid, at least one record failed validation,
+     * or the post-migration save failed.
      *
      * Side effects:
      *   - markDataDirty() is called when changed > 0
@@ -214,7 +304,28 @@
      */
     function migrateEnterprisesToCanonicalShape() {
         var md = _requireMasterData();
-        var enterprises = _requireEnterprisesArray();
+        var collectionResult = _requireEnterprisesArray();
+
+        if (!collectionResult.ok) {
+            return {
+                ok: false,
+                migrated: 0,
+                changed: 0,
+                errors: [{
+                    index: -1,
+                    id: '(collection)',
+                    name: '(collection)',
+                    errors: [
+                        'masterData.data.enterprises is present but is not ' +
+                        'an array; migration refused to coerce it. ' +
+                        'Investigate the corruption (or install a fresh save) ' +
+                        'before calling migrateEnterprisesToCanonicalShape again.'
+                    ]
+                }]
+            };
+        }
+
+        var enterprises = collectionResult.array;
 
         var migrated = 0;
         var changed = 0;
