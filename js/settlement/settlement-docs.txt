@@ -1,16 +1,16 @@
 # SETTLEMENT SYSTEM — ARCHITECTURE AND REFERENCE
 
-Version 5.1
+Version 5.2
 Status: current
 Scope: settlement domain and its direct integrations
 Purpose: reference for the settlement system as it is implemented
-Supersedes: settlement-docs.txt v5.0
+Supersedes: settlement-docs.txt v5.1
 
 This document describes the settlement system after the architectural
-refactor defined by the Settlement Architecture Contracts. It documents
-the modules that actually exist, their responsibilities, and the
-contracts they honor. Where legacy files have been replaced, the
-replacement is named.
+refactor defined by the Settlement Architecture Contracts, and after the
+v5.2 year-transition hardening pass. It documents the modules that
+actually exist, their responsibilities, and the contracts they honor.
+Where legacy files have been replaced, the replacement is named.
 
 The six frozen domain decisions described in the contracts are:
 
@@ -176,10 +176,22 @@ Canonical settlement data lives at:
 
 The object keyed by locationId is the authoritative settlement record.
 
-The default record is constructed by SettlementFactory.getDefaultSettlement.
-Every canonical field is present, even when its value is null, 0, false,
-or an empty array. This removes the ambiguity of "field missing" versus
-"field has a legitimate zero/empty value".
+**Schema declaration.**
+The `settlementData` object is declared in `storage-schema.js`:
+it is created by `createDefaultMasterDataOverride()` and normalized by
+`normalizeMasterData()` (missing → `{}`, malformed → `{}` + warning).
+Prior revisions relied on `SettlementCommandCommit._getCanonicalStore()`
+to lazily create the object on first commit; that path still works but
+is no longer the load-bearing creation mechanism. Every fresh install
+and every old save now gets the object up front, matching the shape
+`SettlementCommandCommit` expects.
+
+**Default record shape.**
+The default record is constructed by
+`SettlementFactory.getDefaultSettlement`. Every canonical field is
+present, even when its value is null, 0, false, or an empty array.
+This removes the ambiguity of "field missing" versus "field has a
+legitimate zero/empty value".
 
 Fields, classified per the contracts:
 
@@ -231,6 +243,35 @@ Foreign entities (owned elsewhere, referenced only through queries):
     places of worship (Religion)
     characters (Character / Education)
 
+**Data access contract (live vs. copy).**
+Canonical reads expose different reference semantics depending on the
+call site's trust level. `SettlementQueries` documents three tiers:
+
+    LIVE RECORD (getSettlementData)
+        The exact object stored in masterData. Every command reads
+        through this method to build a candidate, clones it, mutates
+        the clone, and calls SettlementCommandCommit.commit. Because
+        commit REPLACES the record with the candidate, the live
+        reference a command reads is never mutated in place.
+        Non-command callers must not mutate it.
+
+    SHALLOW COPY (getAllSettlements)
+        [{ locationId, data }, ...] where each data is a fresh object
+        whose scalars are copied by value and whose nested arrays /
+        objects are shared with the canonical record. The annual
+        processor and the ViewModels both build their own candidates
+        before committing; the shallow copy is exactly the boundary
+        those callers need without a per-settlement deep clone.
+
+    PRIMITIVE / CLONE (all other reads)
+        getFeatureIds returns a defensive slice. Scalar reads return
+        the raw primitive. getBudgetAllocation constructs a fresh
+        object. getCurrentRank delegates to SettlementRankQueries.
+
+The rule: mutate nothing. Live and shallow-copy reads are
+optimizations for trusted callers, not licenses to write. If a
+mutation is needed, go through a command.
+
 ---
 
 # 4. MISSING-VALUE SEMANTICS
@@ -259,6 +300,71 @@ Missing required dependencies are not the same as empty results:
     missing IndustryQueries   ≠ no enterprises
 
 Required dependencies must fail explicitly.
+
+**Derived-value semantics.**
+The v5.2 hardening pass eliminated three places where a derived value
+was fabricated or silently zeroed:
+
+  - **Religious unity.** Prior revisions returned 50 when the
+    settlement had zero population or the religion breakdown was
+    unavailable. Both are now null, and the two states are
+    distinguished via `getReligiousUnityStatus`, which returns
+    `{ unity, reason }` with reason in `{ 'available',
+    'no_population', 'no_breakdown', 'settlement_not_found' }`. The
+    fabricated 50 flowed into `SettlementProsperityQueries.
+    modifiers.religiousUnity` as a neutral reading that looked
+    correct but was meaningless.
+
+  - **Dominant religion.** Prior revisions returned null for both
+    "no religions" and "unaffiliated majority." Both are now
+    distinguished via `getDominantReligionStatus`, with reason in
+    `{ 'available', 'no_population', 'no_breakdown',
+    'unaffiliated_majority', 'no_religions', 'settlement_not_found' }`.
+
+  - **Government leader modifier.** Prior revisions read
+    `leader.character.traits` from `LocationQueries.getCurrentLeader`,
+    which returns an ASSIGNMENT projection without a `character`
+    field. The trait read was always undefined, so the modifier was
+    silently 0 for every settlement. `SettlementProsperityQueries`
+    now resolves the character via
+    `CharacterQueries.getCharacterById(leader.characterId)` and reads
+    traits from that projection.
+
+**Character enumeration.**
+Three settlement query modules computed settlement-level facts over
+the settlement's character population:
+
+  - settlement-education-queries.js (literacy rate, education levels)
+  - settlement-prosperity-queries.js (role diversity, master
+    concentration, average skill)
+  - (settlement-employment-queries.js and settlement-economy-queries.js
+    read through IndustryQueries and getLocationPopulationCount, and
+    were never affected.)
+
+Prior revisions called `CharacterQueries.getCharactersInLocations`,
+which filters on `character.currentLocationId === locationId`. That
+missed characters placed only via move records (their
+`currentLocationId` is null but their latest move points into the
+settlement) and included characters whose raw field pointed into the
+settlement but whose latest move pointed elsewhere. The under/over-
+count silently propagated into literacy rate, prosperity modifiers,
+and everything that composed them.
+
+The current revision enumerates via
+`CharacterQueries.getAllCharacters()` and filters through
+`LocationQueries.getCurrentLocationId`, matching the pattern
+established in `location-view-models.js::buildBulkMoveModel`. A
+character placed only by a move record now counts; a character whose
+latest move points outside the settlement does not.
+
+**Education level derivation.**
+`SettlementEducationQueries.getLiteracyStats` previously called
+`CharacterQueries.getEducationLevelId`, which is not present on the
+character-queries.js surface in the current build. The query now
+derives the level locally from `character.isLiterate` and
+`character.subjectProgress`. The returned ids match the education-
+definitions ids, so the derivation is drop-in compatible with a
+future canonical accessor if one is introduced.
 
 ---
 
@@ -337,6 +443,19 @@ Examples of commands:
     SettlementDebtCommands.repayDebt
     SettlementRankCommands.upgradeSettlementRank
 
+**Persistence failure.**
+`SettlementCommandCommit._saveMasterData` inspects the boolean return
+of `saveMasterData()` per Pattern A in `storage.js`'s
+DOMAIN PERSIST CONTRACT. On `false`, it reads `getLastSaveError()` and
+throws an `Error` carrying the underlying reason. The published event
+is NOT dispatched after a failed persist; subscribers must not be told
+the world changed when it was not durably written.
+
+Commands do not catch the throw. A caller that wants structured failure
+handling wraps its command call in its own try/catch and converts the
+exception into a `{ success: false, code: 'SAVE_FAILED', ... }` result.
+The annual processor is one such caller (see §26).
+
 ---
 
 # 7. QUERY CONTRACT
@@ -357,9 +476,18 @@ Missing versus empty:
     - settlement exists, no items → return [] or 0
     - dependency missing          → throw (required)
 
-Query results must not mutate canonical data. If a query returns a
-canonical object (for example through SettlementQueries.getSettlementData),
-callers must not mutate it. Commands operate on candidate copies.
+Query results must not mutate canonical data. See §3 for the live /
+shallow-copy / clone reference contract.
+
+Two-tier status queries:
+    Some derived facts are exposed as both a value query and a status
+    query. The value query returns `T | null`; the status query
+    returns `{ value: T | null, reason: string }`. Callers that only
+    need the value use the value query; callers that want to render
+    honest copy for the unavailable states use the status query.
+    Current pairs:
+        getReligiousUnity        / getReligiousUnityStatus
+        getDominantReligion      / getDominantReligionStatus
 
 ---
 
@@ -419,6 +547,17 @@ the neutral value (1.0 for multipliers, 0 for addends). A feature with
 no trade bonus declares tradeBonus: 1.0. Missing fields are not used to
 imply defaults.
 
+**Definition-shape guards.**
+View models that consume a definition (e.g.
+`SettlementViewModels.buildDebtView` reading
+`DEBT_INTEREST_RATE.annualFraction`, or
+`buildEfficiencyView` iterating `EFFICIENCY_BANDS`) return null for the
+affected field when the definition is missing or malformed. The
+alternative — `Math.floor(undefined)` producing `NaN` — silently
+poisoned the downstream calculation. The settlement-docs §4 rule
+("missing is not the same as zero") applies to definitions as well as
+to canonical data.
+
 ---
 
 # 10. VIEWMODEL AND UI CONTRACT
@@ -430,6 +569,9 @@ They:
     - format numbers for presentation
     - may mark values as unavailable (null fields, or an explicit
       availability marker)
+    - may expose reason codes alongside nullable values (e.g.
+      `dominantReligionReason`) so a consumer can distinguish "no
+      population" from "no religions" from "unaffiliated majority"
 
 They do not:
     - invent domain values
@@ -450,10 +592,37 @@ UI modules do not:
     - contain domain validation
     - fabricate missing domain values
     - mutate canonical state directly
+    - render a raw null/undefined value as the string "null" or
+      "undefined" (see NUMERIC RENDERING below)
 
 Opening a tab is observational. Rendering does not change the world.
 
-Modal infrastructure:
+**Numeric rendering.**
+Every numeric field that reaches the DOM is formatted through a helper
+that returns a presentation placeholder (typically an em-dash inside a
+`value-unknown` span) for null / undefined / non-finite values. The
+prior revision of `modals-settlement-core.js` concatenated three feature
+maintenance and cost values as raw strings, so a feature with a null
+maintenance rendered "maintenance null". The current revision routes
+every numeric through `_fmtNumber`.
+
+**Reason-code rendering.**
+Nullable derived fields rendered by a modal (e.g. `religiousUnity`,
+`dominantReligion`) read both the value and the reason code, and render
+honest text for each reason:
+
+    'available'               → the value
+    'no_population'           → 'No population'
+    'no_breakdown'            → 'Unavailable'
+    'unaffiliated_majority'   → 'Unaffiliated majority'
+    'no_religions'            → 'No religions'
+    'settlement_not_found'    → 'Unknown'
+
+A settlement with zero population and a settlement with an unaffiliated
+majority render differently. Prior revisions collapsed all unavailable
+cases into a generic 'Unknown'.
+
+**Modal infrastructure.**
 
     Settlement UI modules call the CORE modal shell directly:
 
@@ -571,6 +740,13 @@ breakdown:
     getDominantReligion(locationId)
     getReligiousUnity(locationId)
 
+Both are exposed alongside status queries that carry a reason code:
+
+    getDominantReligionStatus(locationId) → { religion, religionId, reason }
+    getReligiousUnityStatus(locationId)   → { unity, reason }
+
+See §4 (MISSING-VALUE SEMANTICS) for the reason vocabulary.
+
 If a settlement-authored override is ever introduced (for example an
 official religion distinct from the mathematically dominant one), it is
 a distinct canonical field with its own commands and queries. It is not
@@ -639,6 +815,23 @@ it is applied by SettlementAnnualProcessor as an explicit step.
 Persisted values named prosperity on old settlement records are ignored
 by the new architecture.
 
+**Character input.**
+Role-density, master-concentration, underserved-roles, and average-
+skill modifiers are computed over every living character whose
+RESOLVED current location is in the settlement. "Resolved current
+location" is the semantic notion (explicit field, then latest move,
+then birthplace), not the raw `currentLocationId` field. See §4
+(Character enumeration).
+
+**Leader input.**
+The government-leader modifier composes the leader's traits and
+tenure. Traits are read from the character projection resolved via
+`CharacterQueries.getCharacterById(leader.characterId)`. Tenure is
+`getCurrentYear() - leader.startYear`. The prior revision read
+`leader.character.traits` from an assignment projection that never
+carried a `character` field; the modifier was silently 0 for every
+settlement. Fixed in v5.2. See §4 (MISSING-VALUE SEMANTICS).
+
 ---
 
 # 17. HISTORICAL DATA CONTRACT
@@ -671,6 +864,19 @@ report modal explicitly labels its view as a current snapshot. No
 fabricated historical data is produced by calculating current numbers
 five times and labeling them with different years.
 
+**Financial report year.**
+`SettlementViewModels.buildFinancialReportView(locationId, options)`
+accepts an optional `options.year`. When supplied and valid, the report
+describes that year and `isHistorical` is computed as
+`reportYear !== getCurrentYear()`. When omitted, the report describes
+the current year and `isHistorical` is false. The result carries
+`reportYear`, `isHistorical`, and `currentYear` so callers don't have
+to infer the year from the surrounding context.
+
+Prior revisions hardcoded `isHistorical: false` and read the clock
+directly. A caller rendering a past year's report would have shown a
+"current" label over historical numbers. Fixed in v5.2.
+
 ---
 
 # 18. TIME CONTRACT
@@ -701,6 +907,47 @@ does not exist either, because year 0 is a legitimate value.
 A required time dependency that is unavailable is an application
 failure. It is not converted into a fabricated year.
 
+**Query layer year reads.**
+SettlementQueries does not read the clock directly. The two facts that
+depend on the clock are:
+
+  - `settlement.budgetAllocationYear` (a stored canonical field; read
+    verbatim by `getBudgetAllocation`; the caller compares it against
+    `getCurrentYear` as needed)
+
+  - the upgrade eligibility computation (delegated to
+    SettlementRankQueries.getUpgradeStatus, which composes prosperity
+    via SettlementProsperityQueries.getProsperityValue, and thus
+    indirectly reads the clock)
+
+When the year transition lands, the only query-layer file in this
+module's transitive dependency graph that needs an explicit year is
+SettlementProsperityQueries.getProsperity (via the leader tenure
+bonus). If that query gains an options.year parameter,
+SettlementQueries.getCurrentRank and getUpgradeStatus get it for free
+because they delegate. SettlementQueries itself does not need a year
+parameter, because every fact it exposes is either year-agnostic
+(wealth, taxRate, featureIds) or a stored year (budgetAllocationYear)
+that the caller interprets against its own clock.
+
+**Year transition integration.**
+The annual processor (see §26) accepts an explicit `options.year`.
+`CharacterLifecycle.advanceMortality` (see the character domain's
+CLOCK CONTRACT) invokes the annual processor once per simulated year
+with the same year the character mortality loop uses. The loop is the
+clock; settlement annual processing and character mortality see the
+same simulated year.
+
+The caller that invoked `advanceMortality` still owns the clock
+advance:
+
+    var result = CharacterLifecycle.advanceMortality(5, { startYear: 1250 });
+    // ...
+    window.masterData.data.currentYear = result.finalYear;
+    window.markDataDirty();
+
+No settlement module touches `masterData.data.currentYear`.
+
 ---
 
 # 19. ERROR CONTRACT
@@ -723,6 +970,13 @@ An error is either:
 Subscriber exceptions in SettlementState.publish and
 SettlementUIState.subscribe are logged with console.error and do not
 silently disappear. Other subscribers still receive the event.
+
+**Persistence failures.**
+`saveMasterData()` returns a boolean and does not throw on write
+failure. The boolean must be inspected. `SettlementCommandCommit.
+_saveMasterData` inspects it and throws an `Error` on false, reading
+`getLastSaveError()` for the underlying reason. The published event is
+NOT dispatched after a failed persist.
 
 ---
 
@@ -786,9 +1040,11 @@ The settlement module's required dependencies across its parts are:
     Time
     masterData (window.masterData.data.settlementData)
     saveMasterData
+    getLastSaveError
 
     PlaceQueries
     LocationState
+    LocationQueries
     CharacterQueries
     RoleQueries
     ReligionQueries
@@ -846,12 +1102,19 @@ Creation
     SettlementFactory.getDefaultSettlement(locationId, overrides)
 
 Annual
-    SettlementAnnualProcessor.processSettlementAnnual(locationId)
-    SettlementAnnualProcessor.processAllSettlementsAnnual()
+    SettlementAnnualProcessor.processSettlementAnnual(locationId, options)
+    SettlementAnnualProcessor.processAllSettlementsAnnual(options)
+
+    options.year accepts an explicit world year. When omitted, the
+    current year is used. See §26.
 
 Every command returns a structured result. Success results have
 `success: true`. Failure results have `success: false` and a `code`.
 Commands never display UI and never show toasts.
+
+Commands that mutate canonical data may throw on persistence failure.
+The throw propagates from SettlementCommandCommit. See §6
+(COMMAND TRANSACTION CONTRACT, Persistence failure).
 
 ---
 
@@ -925,7 +1188,9 @@ Religion
     SettlementReligionQueries.getActivePlaceOfWorshipCount(locationId)
     SettlementReligionQueries.getReligiousBreakdown(locationId)
     SettlementReligionQueries.getDominantReligion(locationId)
+    SettlementReligionQueries.getDominantReligionStatus(locationId)
     SettlementReligionQueries.getReligiousUnity(locationId)
+    SettlementReligionQueries.getReligiousUnityStatus(locationId)
 
 Employment
     SettlementEmploymentQueries.getEmployment(locationId)
@@ -972,7 +1237,8 @@ SettlementViewModels.buildSettlementDetails(locationId)
 SettlementViewModels.buildBudgetView(locationId)
 SettlementViewModels.buildEfficiencyView(locationId)
 SettlementViewModels.buildDebtView(locationId)
-SettlementViewModels.buildFinancialReportView(locationId)
+SettlementViewModels.buildFinancialReportView(locationId, options)
+    options.year    the year the report describes; defaults to current
 SettlementViewModels.buildProsperityView(locationId)
 SettlementViewModels.buildCrimeView(locationId)
 SettlementViewModels.buildEmploymentView(locationId)
@@ -980,6 +1246,24 @@ SettlementViewModels.buildRankView(locationId)
 
 ViewModels never fabricate domain values. A missing value is null, not
 a default. A missing settlement returns null from every ViewModel.
+
+`buildSettlementSummary` exposes the following reason codes alongside
+the nullable derived values:
+
+    dominantReligionReason    'available' | 'no_population' |
+                              'no_breakdown' | 'unaffiliated_majority' |
+                              'no_religions' | 'settlement_not_found'
+
+    religiousUnityReason      'available' | 'no_population' |
+                              'no_breakdown' | 'settlement_not_found'
+
+`buildFinancialReportView` exposes:
+
+    reportYear     the year the report describes
+    isHistorical   reportYear !== getCurrentYear() at call time
+    currentYear    the current year at call time
+
+See §4 (MISSING-VALUE SEMANTICS) and §17 (HISTORICAL DATA CONTRACT).
 
 ---
 
@@ -1051,6 +1335,64 @@ by user interaction.
 Each settlement is processed as its own transaction. A failure on one
 settlement does not prevent others from being processed.
 
+**Explicit year.**
+Both entry points accept an explicit `options.year`:
+
+    processSettlementAnnual(locationId, options)
+        options.year    the world year to process. Defaults to
+                        window.getCurrentYear().
+
+    processAllSettlementsAnnual(options)
+        options.year    the world year to process. Defaults to
+                        window.getCurrentYear(). Forwarded to every
+                        per-settlement call.
+
+When `options.year` is supplied and invalid, the call throws. The
+processor does not silently fall back to the current year for an
+invalid explicit year; that is a caller bug.
+
+**Per-settlement failure isolation.**
+`processSettlementAnnual` throws on failure (settlement-not-found,
+invalid interest rate, or commit failure — including the persistence
+throw added in v5.2). A single-settlement caller wants to know if that
+settlement could not be processed.
+
+`processAllSettlementsAnnual` catches per-settlement failures and
+records them in `result.failures[]`, then CONTINUES to the next
+settlement. The result shape is:
+
+    {
+        success: boolean,
+        year: number,
+        processed: number,
+        failed: number,
+        results: Array<Object>,
+        failures: Array<{ locationId, code, message }>
+    }
+
+`success` is true only when no settlement failed. This matches the
+per-character death failure isolation in
+`CharacterLifecycle.advanceMortality` (`result.skipped`).
+
+**Character-lifecycle integration.**
+`CharacterLifecycle.advanceMortality(yearsAdvanced, options)` runs the
+annual processor once per simulated year, after the character
+mortality pass for that year, using the SAME year:
+
+    window.SettlementAnnualProcessor.processAllSettlementsAnnual({
+        year: year
+    })
+
+Settlement failures are collected into `result.settlementFailures`
+(logged with console.warn) and do not abort the character loop. The
+step is optional (skipped when the processor is absent or when
+`options.skipSettlements === true`) and area-guarded (a thrown
+exception from the processor becomes a single failure entry covering
+all settlements, not an aborted loop).
+
+See §18 (TIME CONTRACT, Year transition integration) for the caller-
+owns-the-clock contract that this integration preserves.
+
 ---
 
 # 27. COMPLETION STANDARD
@@ -1095,6 +1437,59 @@ Additional mechanical requirements introduced in v5.1:
       inventory in §2 is authoritative.
     - No `trash/` directory exists under `js/` or `js/settlement/`.
 
+Additional mechanical requirements introduced in v5.2:
+
+    - `settlementData` is declared in storage-schema.js's factory and
+      normalization. No settlement module relies on lazy creation of
+      the object.
+    - SettlementCommandCommit inspects the boolean return of
+      saveMasterData() and throws on false, using
+      getLastSaveError() to surface the underlying reason. The
+      published event is NOT dispatched after a failed persist.
+    - SettlementAnnualProcessor.processSettlementAnnual and
+      processAllSettlementsAnnual accept an explicit options.year and
+      throw when it is invalid. The processor does not silently
+      fall back to the current year for an invalid explicit year.
+    - processAllSettlementsAnnual catches per-settlement failures and
+      records them in result.failures, continuing to the next
+      settlement. CharacterLifecycle.advanceMortality invokes
+      processAllSettlementsAnnual once per simulated year and collects
+      its failures into result.settlementFailures without aborting the
+      character loop.
+    - SettlementEducationQueries and SettlementProsperityQueries
+      enumerate characters via CharacterQueries.getAllCharacters()
+      plus LocationQueries.getCurrentLocationId, not via
+      CharacterQueries.getCharactersInLocations (the raw-field
+      filter). Characters placed only by move records are counted.
+    - SettlementProsperityQueries resolves the leader's traits via
+      CharacterQueries.getCharacterById(leader.characterId), not by
+      reading leader.character (which is never populated by
+      LocationQueries.getCurrentLeader).
+    - SettlementReligionQueries returns null (never a fabricated 50)
+      for religious unity when the settlement has zero counted
+      population or the breakdown is unavailable. Both states are
+      distinguished via getReligiousUnityStatus. getDominantReligion
+      distinguishes "no religions" from "unaffiliated majority" via
+      getDominantReligionStatus.
+    - SettlementQueries.getAllSettlements returns shallow copies of
+      canonical records; getFeatureIds returns a defensive slice. The
+      live canonical accessor is getSettlementData, documented as
+      such. See §3 (Data access contract).
+    - SettlementViewModels.buildFinancialReportView accepts an
+      optional options.year and computes isHistorical from
+      reportYear !== getCurrentYear(). SettlementViewModels.
+      buildSettlementSummary exposes religiousUnityReason and
+      dominantReligionReason alongside the nullable values.
+      Definition reads that feed view models (DEBT_INTEREST_RATE,
+      EFFICIENCY_BANDS, DEBT_RATIO_BANDS) return null for the
+      affected field when the definition is missing or malformed,
+      instead of producing NaN.
+    - Settlement modals render honest copy for every reason code.
+      Nullable numeric fields route through _fmtNumber, which renders
+      a presentation placeholder instead of the string "null" or
+      "undefined". openBudgetModal guards against sub-object
+      nullability that would throw a TypeError on property access.
+
 ---
 
 # 28. AMENDMENT RULE
@@ -1136,23 +1531,105 @@ The settlement system has had enough of those.
 |---------|------------|----------------------------------------------------------------------------------------------------------|
 | 5.0     | 2026-10-16 | Post-refactor baseline. Hydrate-from-masterData. Clone returns. Command-commit helper. Definitions split. |
 | 5.1     | 2026-10-27 | Modal infrastructure fix. getCurrentYearSafe removal. Legacy file inventory reconciliation.              |
+| 5.2     | 2026-10-28 | Year-transition hardening. Persistence truth. Character-enumeration fixes. Reason codes.                 |
 
-v5.1 changes:
-    - modals-settlement-core.js, modals-settlement-economy.js, and
-      modals-settlement-roles.js no longer reference window.ModalsCore.
-      All openModal calls now use titleHtml / contentHtml, and event
-      wiring reads result.element.
-    - All settlement modules that used window.getCurrentYearSafe now
-      use window.getCurrentYear. The `return 1250;` fallbacks that
-      existed in three legacy files are gone with those files.
-    - §2 file inventory updated: the six pre-refactor legacy files are
-      confirmed deleted. The pre-refactor files under trash/ are also
-      gone.
-    - §18 time contract updated to name window.getCurrentYear as the
-      canonical accessor.
-    - §27 completion standard extended with mechanical requirements.
-    - §10 ViewModel/UI contract extended with an explicit modal
-      infrastructure subsection.
+v5.2 changes:
+
+  **Persistence truth.**
+    - SettlementCommandCommit inspects the boolean return of
+      saveMasterData() and throws on false, using getLastSaveError().
+      The prior revision called saveMasterData() and ignored the
+      result, reintroducing the Pattern C bug documented in
+      storage.js's DOMAIN PERSIST CONTRACT. Every settlement command
+      silently reported success on every failed save; the annual
+      processor's per-settlement history records were lost on quota
+      failure with no signal.
+
+  **Schema declaration.**
+    - settlementData is now declared in storage-schema.js's factory
+      and normalization pass. Every fresh install and every old save
+      gets the object up front, matching the shape
+      SettlementCommandCommit expects. Prior revisions relied on lazy
+      creation on first commit.
+
+  **Annual processor year contract.**
+    - processSettlementAnnual and processAllSettlementsAnnual accept
+      an explicit options.year. When supplied and valid, that year
+      drives the history record. When supplied and invalid, the call
+      throws. When omitted, the current year is used. Prior revisions
+      read the clock directly inside the processor, which meant an
+      N-year advance produced N history entries tagged with the same
+      wall-clock year.
+
+  **Per-settlement failure isolation.**
+    - processAllSettlementsAnnual catches per-settlement failures and
+      records them in result.failures, continuing to the next
+      settlement. The prior revision threw and aborted the entire
+      batch on the first failure. With the new throw-on-persist
+      contract, that would have been catastrophic for a
+      multi-settlement advance.
+
+  **Character-lifecycle integration.**
+    - CharacterLifecycle.advanceMortality now runs the settlement
+      annual processor once per simulated year, after the character
+      mortality pass for that year, using the same year. Settlement
+      failures are collected into result.settlementFailures and
+      logged, but do not abort the character loop. The step is
+      optional (skipped when the processor is absent or when
+      options.skipSettlements === true) and area-guarded (a thrown
+      exception from the processor becomes a single failure entry
+      covering all settlements).
+
+  **Character enumeration.**
+    - SettlementEducationQueries and SettlementProsperityQueries
+      enumerate characters via CharacterQueries.getAllCharacters()
+      plus LocationQueries.getCurrentLocationId, not via
+      CharacterQueries.getCharactersInLocations (the raw-field
+      filter). Characters placed only by move records were not
+      counted before; the under-count silently shifted literacy
+      rate, role diversity, master concentration, and average skill.
+      The under-count propagated into prosperity modifiers.
+
+  **Leader traits.**
+    - SettlementProsperityQueries resolves the leader's traits via
+      CharacterQueries.getCharacterById(leader.characterId). The
+      prior revision read leader.character.traits from an assignment
+      projection that never carried a `character` field. The
+      government-leader modifier was silently 0 for every settlement.
+
+  **Religion reason codes.**
+    - SettlementReligionQueries returns null (never a fabricated 50)
+      for religious unity when the settlement has zero counted
+      population or the breakdown is unavailable. Both states are
+      distinguished via getReligiousUnityStatus.
+      getDominantReligion distinguishes "no religions" from
+      "unaffiliated majority" via getDominantReligionStatus. The
+      fabricated 50 flowed into SettlementProsperityQueries.
+      modifiers.religiousUnity as a neutral reading that looked
+      correct but was meaningless.
+
+  **Data access contract.**
+    - SettlementQueries.getAllSettlements returns shallow copies of
+      canonical records. getFeatureIds returns a defensive slice. The
+      live canonical accessor is getSettlementData, documented as
+      such. See §3 (Data access contract).
+
+  **View model hardening.**
+    - SettlementViewModels.buildFinancialReportView accepts an
+      optional options.year and computes isHistorical from
+      reportYear !== getCurrentYear(). buildSettlementSummary exposes
+      religiousUnityReason and dominantReligionReason alongside the
+      nullable values. Definition reads that feed view models return
+      null for the affected field when the definition is missing or
+      malformed, instead of producing NaN.
+
+  **Modal reason rendering.**
+    - Settlement modals render honest copy for every religion reason
+      code. openSettlementDetailsModal distinguishes "No population"
+      from "Unavailable" from "Unaffiliated majority" from "No
+      religions". openManageFeaturesModal routes feature maintenance
+      and cost through _fmtNumber. openBudgetModal guards against
+      sub-object nullability.
 
 ---
 
