@@ -18,9 +18,10 @@
  *   - LocationState       (hydrate, primitives, canonical accessors, publish)
  *   - LocationHierarchy   (hierarchy validation only)
  *   - CharacterCommands   (updateCharacterFields, for deletePlace cleanup)
- *   - CharacterQueries    (getAllCharacters, getCurrentLocationId, getCharacterById)
+ *   - CharacterQueries    (getAllCharacters, getCurrentLocationId,
+ *                          getCharacterById)
  *   - CultureQueries      (getCulture, lazy — only required when cultureId used)
- *   - Storage             (markDataDirty, saveMasterData)
+ *   - Storage             (markDataDirty, saveMasterData, getLastSaveError)
  *   - ids                 (generateId)
  *   - time                (getCurrentYear)
  *
@@ -42,6 +43,47 @@
  *   (modal, batch, annual pipeline) calls LocationCommands.persist() exactly
  *   once per batch, after every command in the batch has succeeded.
  *
+ * PERSIST CONTRACT (Pattern A from storage.js):
+ *   LocationCommands.persist() uses the boolean-inspection pattern documented
+ *   in storage.js's DOMAIN PERSIST CONTRACT section:
+ *
+ *     var ok = window.saveMasterData();
+ *     if (ok === true) return { success: true };
+ *     var lastError = window.getLastSaveError();
+ *     return {
+ *         success: false,
+ *         reason: lastError && lastError.message
+ *             ? lastError.message
+ *             : 'saveMasterData returned false'
+ *     };
+ *
+ *   saveMasterData() returns a boolean and does NOT throw on write
+ *   failure. The boolean must be inspected. On false, getLastSaveError()
+ *   provides the underlying Error so the caller can surface the actual
+ *   failure reason (quota exceeded, JSON serialization failure, storage
+ *   disabled) rather than a generic message.
+ *
+ *   Pattern C (the historical broken pattern that silently reported
+ *   success on every failed save) must not be reintroduced.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - persist() now reads getLastSaveError() when saveMasterData()
+ *       returns false. The actual failure reason (quota exceeded,
+ *       serialization failure, storage disabled) is surfaced in the
+ *       returned reason field instead of the generic
+ *       'saveMasterData returned false'. Matches the implementation in
+ *       rank-commands.js and name-commands.js, and matches
+ *       storage.js's DOMAIN PERSIST CONTRACT Pattern A.
+ *     - getLastSaveError added to the load-time dependency check.
+ *       If storage.js does not export it, that is a load-order bug
+ *       (storage.js must always export it per its module header).
+ *     - Header PERSIST CONTRACT section added, documenting the
+ *       Pattern A form with the getLastSaveError() branch.
+ *     - No public signature change, no public return-shape change.
+ *       Callers of persist() already inspect { success, reason? }.
+ *       The reason string becomes more informative on failure.
  * =============================================================================
  */
 
@@ -86,6 +128,13 @@
     if (typeof window.saveMasterData !== 'function') {
         throw new Error(
             'location-commands.js requires storage.js (saveMasterData).'
+        );
+    }
+    if (typeof window.getLastSaveError !== 'function') {
+        throw new Error(
+            'location-commands.js requires storage.js (getLastSaveError). ' +
+            'This is the canonical failure-reason accessor documented in ' +
+            'storage.js\'s DOMAIN PERSIST CONTRACT.'
         );
     }
 
@@ -177,11 +226,34 @@
     // 5. PERSISTENCE BOUNDARY
     // =========================================================================
 
+    /**
+     * Persists the current canonical state.
+     *
+     * The ONLY place in this module that calls saveMasterData. Every
+     * command leaves canonical data dirty; the caller decides when to
+     * save.
+     *
+     * Uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
+     * saveMasterData() returns a boolean and does NOT throw on write
+     * failure. The previous revision used Pattern A but did not read
+     * getLastSaveError(), so a failed save surfaced as a generic
+     * 'saveMasterData returned false'. This revision reads
+     * getLastSaveError() and surfaces the underlying failure message
+     * (quota exceeded, serialization failure, storage disabled).
+     *
+     * Returns { success, reason? }. Does not throw.
+     */
     function persist() {
         try {
             var ok = window.saveMasterData();
             if (ok === true) return _ok();
-            return _fail('saveMasterData returned false');
+
+            var lastError = window.getLastSaveError();
+            return _fail(
+                (lastError && lastError.message)
+                    ? lastError.message
+                    : 'saveMasterData returned false'
+            );
         } catch (e) {
             return _fail(e && e.message ? e.message : 'saveMasterData threw');
         }
