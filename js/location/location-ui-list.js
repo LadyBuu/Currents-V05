@@ -12,15 +12,54 @@
  *   - LocationViewModels    (data preparation)
  *   - LocationUIState       (transient UI state)
  *   - window.getIcon        (icons.js)
+ *   - window.Icons          (icons.js) — read directly so unknown names
+ *                           throw rather than silently falling back to
+ *                           Icons.CIRCLE
  *
  * Optional, used when present:
  *   - window.escapeHtml     (formatting.js)
  *
  * Icon policy:
  *   Every glyph routes through _icon(name). Names map to the icons.js
- *   vocabulary. If icons.js is not loaded, _icon throws — this is a load
- *   order failure, not a soft fallback.
+ *   vocabulary. _icon throws on unknown names — a wrong icon name is a
+ *   programming error, not a UI state to silently paper over. The prior
+ *   revision used window.getIcon(name), which falls back to
+ *   Icons.CIRCLE when the name is unknown; that masked the fact that
+ *   the toggle icon names (CHEVRON_DOWN, CHEVRON_RIGHT) did not exist
+ *   in icons.js. This revision uses the existing TRIANGLE_DOWN and
+ *   ARROW_RIGHT icons, which do exist, and reads window.Icons directly
+ *   so future drift is caught immediately.
  *
+ * ICON CHOICES:
+ *   EXPANDED   : TRIANGLE_DOWN   (▾)  — standard "expanded" affordance
+ *   COLLAPSED  : ARROW_RIGHT     (▶)  — standard "collapsed" affordance
+ *
+ *   Both are already defined in icons.js. No new SVG assets needed.
+ *   The prior CHEVRON_* names did not exist in icons.js; the previous
+ *   revision fell through to Icons.CIRCLE for both, so every toggle
+ *   rendered as a circle. This revision uses the correct existing names.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - ICONS.EXPANDED changed from 'CHEVRON_DOWN' to 'TRIANGLE_DOWN'.
+ *       ICONS.COLLAPSED changed from 'CHEVRON_RIGHT' to 'ARROW_RIGHT'.
+ *       Neither CHEVRON_* name existed in icons.js; the prior revision
+ *       fell through to Icons.CIRCLE, so every toggle rendered as a
+ *       circle regardless of state.
+ *     - _icon(name) now reads window.Icons[name] directly and throws on
+ *       unknown names, matching the module's documented contract
+ *       ("Missing icon throws — do not silently render a blank glyph").
+ *       The prior implementation called window.getIcon(name), which
+ *       silently falls back to Icons.CIRCLE.
+ *     - window.Icons added to load-time dependency check. If icons.js
+ *       is not loaded, the module fails at load, not at render.
+ *     - Header ICON CHOICES section added, documenting the mapping and
+ *       why CHEVRON_* was dropped.
+ *     - No public signature change, no public return-shape change.
+ *   Prior revision:
+ *     - Initial implementation, using CHEVRON_DOWN / CHEVRON_RIGHT
+ *       (which did not exist in icons.js).
  * =============================================================================
  */
 
@@ -39,6 +78,11 @@
     if (!window.LocationUIState) {
         throw new Error(
             'location-ui-list.js requires location-ui-state.js first.'
+        );
+    }
+    if (!window.Icons || typeof window.Icons !== 'object') {
+        throw new Error(
+            'location-ui-list.js requires icons.js (window.Icons) to load first.'
         );
     }
     if (typeof window.getIcon !== 'function') {
@@ -67,16 +111,42 @@
             .replace(/'/g, '&#39;');
     }
 
+    /**
+     * Returns the SVG markup for a named icon.
+     *
+     * Reads window.Icons[name] directly and throws on unknown names.
+     * The prior implementation called window.getIcon(name), which
+     * silently falls back to Icons.CIRCLE. That fallback masked a
+     * wrong-icon-name bug for an entire release cycle: every toggle
+     * rendered as a circle because CHEVRON_DOWN and CHEVRON_RIGHT did
+     * not exist in icons.js. Reading Icons directly and throwing
+     * surfaces the same class of bug at the first render, not a month
+     * later when someone notices the toggles look wrong.
+     *
+     * A wrong icon name is a programming error, not a UI state. The
+     * module's own docstring already said this; the code now enforces it.
+     */
     function _icon(name) {
-        // icons.js lookup via getIcon. Missing icon throws — do not
-        // silently render a blank glyph.
-        return window.getIcon(name);
+        var svg = window.Icons[name];
+        if (typeof svg !== 'string' || svg.length === 0) {
+            throw new Error(
+                'location-ui-list.js: unknown icon "' + name +
+                '". icons.js does not define this name. Add the SVG to ' +
+                'icons.js or use an existing icon name.'
+            );
+        }
+        return svg;
     }
 
     // Icon vocabulary used by this view. Maps domain meaning to icons.js names.
+    //
+    // EXPANDED / COLLAPSED: standard triangle/arrow affordances for a
+    // tree view. Both are defined in icons.js (TRIANGLE_DOWN, ARROW_RIGHT).
+    // The prior CHEVRON_* names did not exist in icons.js and silently
+    // fell back to CIRCLE.
     var ICONS = {
-        EXPANDED: 'CHEVRON_DOWN',
-        COLLAPSED: 'CHEVRON_RIGHT',
+        EXPANDED: 'TRIANGLE_DOWN',
+        COLLAPSED: 'ARROW_RIGHT',
         LEAF: 'CIRCLE_DOT',
         CAPITAL: 'CROWN',
         DISPUTED: 'WARNING',
