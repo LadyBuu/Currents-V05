@@ -91,6 +91,30 @@
  *   fresh install and every pre-household-subdomain save failed
  *   household bootstrap. This revision closes that gap.
  *
+ * SETTLEMENT DATA:
+ *   The settlement domain owns one top-level object that lives in
+ *   masterData.data:
+ *
+ *     settlementData          object  (keyed by locationId)
+ *
+ *   It is declared here (factory + normalization) so that:
+ *     - fresh installs get the empty object up front;
+ *     - old saves without the field get {} on load, matching what
+ *       SettlementCommandCommit expects;
+ *     - a malformed value (array, string, null) is replaced with {}
+ *       and warned about, rather than being allowed to reach the
+ *       settlement commit path where it would be silently overwritten
+ *       on first write.
+ *
+ *   Prior revisions relied on SettlementCommandCommit._getCanonicalStore
+ *   to lazily create settlementData: {} on first commit. That worked for
+ *   the first write of a session, but left the persisted envelope in a
+ *   shape normalizeMasterData did not produce. Every subsequent load had
+ *   to rely on the lazy-init path again, and the annual processor's
+ *   rebuildIndexes had to discover settlementData mid-run. Declaring the
+ *   field here is the schema-layer fix: the factory creates it, the
+ *   normalizer enforces its shape, and no domain command has to guess.
+ *
  * RANK RECORD FIELDS:
  *   Rank records carry NO location pointer. The current rank shape
  *   (rank-constants.js::DEFAULT_RANK, rank-rules.js::applyDefaults,
@@ -119,6 +143,20 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Added settlementData to createDefaultMasterDataOverride().data
+ *       and to the objectKeys list in normalizeMasterData. Prior
+ *       revisions relied on SettlementCommandCommit._getCanonicalStore
+ *       to lazily create the object on first commit, which meant
+ *       normalizeMasterData did not produce the shape the settlement
+ *       commit path expected. Every fresh install and every save
+ *       written by an older build now normalizes to the shape the
+ *       settlement domain requires.
+ *     - Header SETTLEMENT DATA section added, explaining the
+ *       declaration and the lazy-init path it replaces.
+ *     - No behavioural change to any other field. Existing saves
+ *       normalize identically except that they now carry the
+ *       settlementData object.
+ *   Previous revisions:
  *     - Added householdPositions and householdAssignments to
  *       createDefaultMasterDataOverride().data and to the arrayKeys
  *       list in normalizeMasterData. Prior revisions only declared
@@ -128,10 +166,6 @@
  *     - Header HOUSEHOLD COLLECTIONS section added, explaining the
  *       three-collection requirement and why the two auxiliary arrays
  *       must be declared at the schema layer.
- *     - No behavioural change to any other field. Existing saves
- *       normalize identically except that they now carry the two
- *       household auxiliary arrays.
- *   Previous revisions:
  *     - Removed `rank.locationId` normalization. The current rank shape
  *       has no `locationId` field. Older revisions added a phantom
  *       `locationId: null` to every rank on load. Removed; the field is
@@ -326,6 +360,13 @@
                 educationalSubjects: {},
                 subjectProgress: {},
 
+                // ─── Settlement domain collection ─────────────────────────
+                // Owned by SettlementState / SettlementCommandCommit;
+                // keyed by locationId. Declared here so every fresh
+                // install and every old save gets the object up front.
+                // See SETTLEMENT DATA in the module header.
+                settlementData: {},
+
                 // ─── Scalars ──────────────────────────────────────────────
                 currentYear: window.TIME_CONSTANTS.DEFAULT_YEAR
             }
@@ -381,9 +422,14 @@
         }
 
         // ─── Top-level object fields ──────────────────────────────────────
+        //
+        // settlementData is the settlement domain's canonical store, keyed
+        // by locationId. Declared here so every fresh install and every old
+        // save gets the object up front. See SETTLEMENT DATA in the module
+        // header.
         var objectKeys = [
             'nameLists', 'cityNameParts', 'rankInheritanceRules',
-            'educationalSubjects', 'subjectProgress'
+            'educationalSubjects', 'subjectProgress', 'settlementData'
         ];
         for (var j = 0; j < objectKeys.length; j++) {
             var ok = objectKeys[j];
