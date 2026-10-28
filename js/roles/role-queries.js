@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * STILL WATERS - ROLE QUERIES (js/roles/role-queries.js)
+ * STILL WATERS - ROLE QUERIES (role-queries.js)
  * =============================================================================
  *
  * LOCATION: js/roles/role-queries.js
@@ -25,11 +25,30 @@
  *
  * OUT OF SCOPE:
  *   - Role CRUD            -> role-commands.js
- *   - Role validation      -> role-rules.js (or validation.js)
+ *   - Role validation      -> role-commands.js (inline validators)
  *   - Skill taxonomy       -> skill-utils.js
  *   - Presentation strings -> role-ui-list.js, formatting.js
  *   - Rank data            -> ranks/rank-queries.js
  *   - Rank assignment      -> character-commands.js (rank API)
+ *
+ * CANONICAL ROLE SOURCE
+ *
+ *   Reads go through _readCanonicalRoles(), which prefers
+ *   RoleState.getAllRoles() (returns CLONES) and falls back to a
+ *   captured accessors.getRoles() reference only when RoleState is not
+ *   yet initialised.
+ *
+ *   Every public read returns copies. Callers may mutate the returned
+ *   array or its role objects without affecting canonical state. This
+ *   matches RoleState.getRole / RoleState.getAllRoles and the
+ *   character / family / children / education query layers.
+ *
+ *   The captured accessors reference exists for one reason: if
+ *   role-system.js aliases window.getRoles = RQ.getRoles (which it once
+ *   did, and which caused a stack-overflow), then calling
+ *   window.getRoles() from inside RQ.getRoles would recurse. Reading
+ *   through the captured reference — and preferring RoleState when
+ *   available — breaks the cycle.
  *
  * CONTRACT:
  *   - Reads are pure. No mutation. No caching. Reentrant.
@@ -56,7 +75,7 @@
  *   This module does NOT hardcode skill thresholds. The thresholds are
  *   policy owned by SkillUtils, and role-queries is a consumer.
  *
- * ROLE DATA SHAPE (from accessors.getRoles()):
+ * ROLE DATA SHAPE (from RoleState.getAllRoles):
  *   {
  *     id,          string
  *     name,        string
@@ -85,17 +104,16 @@
  *   }
  *
  * DEPENDENCIES (REQUIRED at load):
- *   - accessors.js:          getRoles
+ *   - accessors.js:          getRoles (captured once at module load)
  *   - character-state.js:    CharacterState
  *   - character-commands.js: CharacterCommands
  *   - character-queries.js:  CharacterQueries
- *   - role-state.js:         RoleState (for category listing)
+ *   - role-state.js:         RoleState (for category listing and role reads)
  *
  * DEPENDENCIES (OPTIONAL, called only if loaded):
  *   - skill-utils.js:        SkillUtils (getSkillLevelName, getTier,
  *                            getTeachingThreshold, getThresholds)
- *   - ranks/rank-queries.js: RankQueries (fallback for getRankSummary)
- *   - accessors.js:          getRankById (fallback for getRankSummary)
+ *   - accessors.js:          getRankById (used by getRankSummary)
  *
  * ICON POLICY: No emojis. No icons.
  *
@@ -132,6 +150,43 @@
     }
 
     _requireDependencies();
+
+    // =========================================================================
+    // 0b. CANONICAL ROLE SOURCE
+    // =========================================================================
+    //
+    // _canonicalGetRoles is the accessors.js reference, captured once at
+    // module load, before any shim can re-alias window.getRoles. It is
+    // the FALLBACK source used only when RoleState is not initialised.
+    //
+    // The primary source is RoleState.getAllRoles(), which returns
+    // clones and is the canonical runtime representation.
+
+    var _canonicalGetRoles = window.getRoles;
+
+    /**
+     * Reads the canonical role array.
+     *
+     * Prefers RoleState (returns clones). Falls back to the captured
+     * accessors reference only when RoleState is unavailable or not yet
+     * initialised. Every public read in this module goes through here.
+     *
+     * Returns a copy in all paths.
+     */
+    function _readCanonicalRoles() {
+        if (window.RoleState && typeof window.RoleState.getAllRoles === 'function') {
+            try {
+                var fromState = window.RoleState.getAllRoles();
+                if (Array.isArray(fromState)) return fromState;
+            } catch (e) {
+                // RoleState.getAllRoles throws if init() hasn't been called.
+                // Fall through to the accessor reference. This only happens
+                // during bootstrap, before any UI reads the query layer.
+            }
+        }
+        var fromAccessor = _canonicalGetRoles();
+        return Array.isArray(fromAccessor) ? fromAccessor.slice() : [];
+    }
 
     // =========================================================================
     // 1. HELPERS
@@ -177,11 +232,6 @@
         return null;
     }
 
-    /**
-     * Returns all canonical tier keys in ascending order, or an empty
-     * array if SkillUtils is unavailable. Used to build the tier-count
-     * accumulator in getRoleStatistics without hardcoding the keys.
-     */
     function _allTierKeys() {
         if (!_skillUtilsLoaded()) return [];
         if (typeof window.SkillUtils.getThresholds !== 'function') return [];
@@ -205,8 +255,6 @@
             expert: 0,
             master: 0
         };
-        // Add any additional canonical keys that SkillUtils knows about
-        // but the default set does not name explicitly.
         for (var i = 0; i < keys.length; i++) {
             if (!Object.prototype.hasOwnProperty.call(counts, keys[i])) {
                 counts[keys[i]] = 0;
@@ -215,11 +263,6 @@
         return counts;
     }
 
-    /**
-     * Best-effort full name for a character projection. Used only for
-     * substring search. Does not fabricate; missing fields fall through
-     * to whatever the projection carries.
-     */
     function _fullName(character) {
         if (!character) return '';
         var name = typeof character.name === 'string' ? character.name : '';
@@ -231,14 +274,9 @@
     // 2. ROLE LOOKUPS
     // =========================================================================
 
-    /**
-     * Case-insensitive role lookup by name.
-     * Returns the role record or null.
-     */
     function findRoleByName(name) {
         if (!name || typeof name !== 'string') return null;
-        var roles = window.getRoles();
-        if (!Array.isArray(roles)) return null;
+        var roles = _readCanonicalRoles();
         var lower = name.toLowerCase();
         for (var i = 0; i < roles.length; i++) {
             if (roles[i] && typeof roles[i].name === 'string'
@@ -251,8 +289,7 @@
 
     function findRoleById(roleId) {
         if (!_hasId(roleId)) return null;
-        var roles = window.getRoles();
-        if (!Array.isArray(roles)) return null;
+        var roles = _readCanonicalRoles();
         for (var i = 0; i < roles.length; i++) {
             if (roles[i] && roles[i].id === roleId) return roles[i];
         }
@@ -260,20 +297,22 @@
     }
 
     /**
-     * Returns the full canonical role list. Accepts an optional filter
-     * object with the same shape as the on-disk call:
-     *   getRoles({})                      -> all roles
-     *   getRoles({ category: 'combat' })  -> roles in that category
+     * Returns the full canonical role list, filtered. Every element is
+     * a defensive copy.
      *
-     * Unknown filter keys are ignored. This keeps the call site stable
-     * as role-ui-list.js and future callers evolve.
+     * Filters:
+     *   category             string (category id)
+     *   genderRestriction    'both' | 'male' | 'female'
+     *   requiresLiteracy     boolean
+     *   excludeIds           array of role ids to omit
+     *
+     * Unknown filter keys are ignored.
      */
     function getRoles(filters) {
-        var all = window.getRoles();
-        if (!Array.isArray(all)) return [];
+        var all = _readCanonicalRoles();
         if (_isMissing(filters) || (typeof filters === 'object'
             && Object.keys(filters).length === 0)) {
-            return all.slice();
+            return all;
         }
 
         var out = [];
@@ -312,14 +351,6 @@
         return getRoles({ category: categoryId });
     }
 
-    /**
-     * Search roles by name or notes substring (case-insensitive).
-     * Optional filters narrow the result further.
-     *
-     * @param {string} query
-     * @param {Object} [filters] - same shape as getRoles' filter object
-     * @returns {Array<Object>}
-     */
     function searchRoles(query, filters) {
         if (typeof query !== 'string' || query.trim() === '') {
             return getRoles(filters);
@@ -337,12 +368,6 @@
         return out;
     }
 
-    /**
-     * Returns the list of category records with role counts.
-     * Categories with zero roles are still listed.
-     *
-     * @returns {Array<{ id: string, name: string, roleCount: number }>}
-     */
     function getRoleCategoriesWithCounts() {
         var categories = window.RoleState.getCategories();
         var roles = getRoles({});
@@ -375,10 +400,6 @@
     // 3. SPECIALIZATION CATALOGUE
     // =========================================================================
 
-    /**
-     * Returns the specializations array of a single role, as a copy.
-     * Returns [] for a missing role or a role with no specializations.
-     */
     function getRoleSpecializations(roleId) {
         if (!_hasId(roleId)) return [];
         var role = findRoleById(roleId);
@@ -387,11 +408,6 @@
         return role.specializations.slice();
     }
 
-    /**
-     * Returns the union of every specialization across every role in the
-     * catalogue, as a sorted array of strings. Case-insensitive uniqueness
-     * is applied; the first casing encountered wins.
-     */
     function getAllRoleSpecializations() {
         var roles = getRoles({});
         var seen = {};
@@ -420,14 +436,6 @@
     // 4. CHARACTERS HOLDING A ROLE
     // =========================================================================
 
-    /**
-     * Returns the character ids of every character who holds the given
-     * role (i.e. whose professions array contains an entry with id ===
-     * roleId). Uses CharacterState's index, which is O(1) per role id.
-     *
-     * @param {string} roleId
-     * @returns {string[]}
-     */
     function getCharactersWithRoleIds(roleId) {
         if (!_hasId(roleId)) return [];
         var projections = window.CharacterState.getCharactersByProfession(roleId);
@@ -441,19 +449,10 @@
         return out;
     }
 
-    /**
-     * Returns the character projections of every character who holds
-     * the given role.
-     *
-     * @param {string} roleId
-     * @returns {Array<Object>}
-     */
     function getCharactersWithRole(roleId) {
         if (!_hasId(roleId)) return [];
         var projections = window.CharacterState.getCharactersByProfession(roleId);
         if (!Array.isArray(projections)) return [];
-        // Defensive copy: CharacterState returns projections, but a
-        // caller mutating the array should not corrupt subsequent calls.
         return projections.slice();
     }
 
@@ -473,14 +472,6 @@
      *     isPrimary,      // boolean
      *     startYear       // number | null
      *   }
-     *
-     * @param {string} roleId
-     * @param {Object} [options]
-     * @param {boolean} [options.mastersOnly]
-     *   When true, only characters whose skill reaches the master tier
-     *   are returned. "Master tier" is defined by SkillUtils; if
-     *   SkillUtils is unavailable, this filter returns [] rather than
-     *   guessing.
      */
     function getCharactersWithRoleDetails(roleId, options) {
         if (!_hasId(roleId)) return [];
@@ -538,7 +529,6 @@
             });
         }
 
-        // Sort by skill level descending, then by name ascending.
         out.sort(function (a, b) {
             if (b.skillLevel !== a.skillLevel) return b.skillLevel - a.skillLevel;
             var an = _fullName(a.character).toLowerCase();
@@ -553,19 +543,6 @@
     // 5. SKILL LEVEL READS
     // =========================================================================
 
-    /**
-     * Returns the character's skill level for a given role, or null if
-     * the character does not hold that role. Returns 0 when the
-     * profession entry exists but carries a non-numeric skillLevel.
-     *
-     * Thin wrapper over CharacterCommands.getProfession. The canonical
-     * skill write path is RoleCommands.updateCharacterSkill /
-     * recordCharacterSkillProgress; this is the read side.
-     *
-     * @param {string} characterId
-     * @param {string} roleId
-     * @returns {number|null}
-     */
     function getSkillLevel(characterId, roleId) {
         if (!_hasId(characterId) || !_hasId(roleId)) return null;
         var profession = window.CharacterCommands.getProfession(characterId, roleId);
@@ -577,26 +554,9 @@
     // 6. ASSIGN-MODAL CANDIDATE ENUMERATION
     // =========================================================================
     //
-    // These two functions exist to support modals-roles.js's assign-role
-    // modal. They are read-only and take all their inputs explicitly:
-    //
-    //   - getLocation(character) is a caller-supplied resolver. This
-    //     module does not know how location is resolved. The resolver
-    //     returns a location id, or null/undefined for "unknown".
-    //
-    //   - The candidate list is built from CharacterState (defensive
-    //     projections), filtered in-memory. There is no character index
-    //     for "location + gender + name" combinations, and role
-    //     assignment is a rare operation, so an O(n) scan is fine.
+    // These two functions support modals-roles.js's assign-role modal.
+    // They are read-only and take all their inputs explicitly.
 
-    /**
-     * Returns the distinct location ids currently occupied by at least
-     * one non-deceased character, as resolved by the caller's
-     * getLocation function.
-     *
-     * @param {Function} getLocation - (characterProjection) => locationId | null
-     * @returns {string[]} sorted, deduplicated location ids
-     */
     function getOccupiedLocationIds(getLocation) {
         var characters = window.CharacterState.getAllCharacters();
         if (!Array.isArray(characters)) return [];
@@ -616,38 +576,6 @@
         return out;
     }
 
-    /**
-     * Returns character projections eligible for assignment to the given
-     * role, filtered by the supplied options. Used by the assign-role
-     * modal to render the candidate list.
-     *
-     * Eligibility:
-     *   - character is not deceased
-     *   - matches the role's genderRestriction (if restricted)
-     *   - matches the search substring against name + surname
-     *   - matches the caller-supplied location filter
-     *
-     * The role's literacy requirement is NOT checked here. That is
-     * enforced by RoleCommands.assignRoleToCharacter at write time, so
-     * the modal can show all gender-compatible candidates and let the
-     * command reject the assignment with a clear error if literacy is
-     * insufficient. Filtering on literacy here would hide candidates
-     * that could become eligible after a future education event, and
-     * would require the modal to know about literacy — which it should
-     * not.
-     *
-     * Options:
-     *   {
-     *     search?:      string       // substring against name+surname
-     *     gender?:      'all' | 'male' | 'female'
-     *     locationId?:  string | 'all'
-     *     getLocation?: Function     // required when locationId !== 'all'
-     *   }
-     *
-     * @param {string} roleId
-     * @param {Object} [options]
-     * @returns {Array<Object>} character projections, sorted by name
-     */
     function getEligibleCharactersForRole(roleId, options) {
         if (!_hasId(roleId)) return [];
         var role = findRoleById(roleId);
@@ -681,20 +609,16 @@
             if (!c || !_hasId(c.id)) continue;
             if (c.isDeceased === true) continue;
 
-            // Gender restriction from the role.
             if (roleGender === 'male' && c.gender !== 'male') continue;
             if (roleGender === 'female' && c.gender !== 'female') continue;
 
-            // Gender filter from the caller.
             if (genderFilter !== 'all' && c.gender !== genderFilter) continue;
 
-            // Search substring against name + surname.
             if (search.length > 0) {
                 var haystack = _fullName(c).toLowerCase();
                 if (haystack.indexOf(search) === -1) continue;
             }
 
-            // Location filter.
             if (locationFilter !== null) {
                 if (getLocation === null) continue;
                 var loc = getLocation(c);
@@ -714,32 +638,6 @@
     // 7. ROLE STATISTICS
     // =========================================================================
 
-    /**
-     * Aggregate statistics for a single role across the population.
-     *
-     * Returns:
-     *   {
-     *     roleId,
-     *     totalCharacters,        // number of holders
-     *     totalSpecializations,   // union size across holders
-     *     averageSkill,           // integer 0-100, rounded; 0 when empty
-     *     countsByTier,           // { untrained, novice, ... }
-     *     canTeachCount,          // holders with skill >= teaching threshold
-     *     primaryCount            // holders who list this as primary
-     *   }
-     *
-     * When SkillUtils is unavailable:
-     *   - countsByTier is all zeros,
-     *   - canTeachCount is 0,
-     *   - averageSkill is still computed from raw skill levels.
-     *
-     * This is the ONE aggregation function callers should use. It is
-     * O(n) in the number of holders of this role (usually small), not
-     * O(n) in the total population.
-     *
-     * @param {string} roleId
-     * @returns {Object}
-     */
     function getRoleStatistics(roleId) {
         if (!_hasId(roleId)) {
             return _emptyStats(roleId);
@@ -831,28 +729,8 @@
     }
 
     // =========================================================================
-    // 8. RANK SUMMARY (for character summaries)
+    // 8. RANK SUMMARY
     // =========================================================================
-    //
-    // The character summary projection wants a human-readable rank
-    // display. The canonical source for that is the rank assignment
-    // (which carries customTitle / number.display) and the rank record
-    // itself (which carries name). This function returns a small object
-    // with both fields so a caller can choose.
-    //
-    // character-queries.js no longer calls this (it resolves rank
-    // display via CharacterCommands.getRankAssignment, which is the
-    // correct source), but other UI code may still expect it. It is
-    // retained as a documented convenience.
-    //
-    // Returns:
-    //   {
-    //     id,            // rankId
-    //     name,          // rank.name, or the rankId if unavailable
-    //     priority,      // rank.priority or 3
-    //     symbol         // rank.symbol or ''
-    //   }
-    // or null.
 
     function getRankSummary(rankId) {
         if (!_hasId(rankId)) return null;
@@ -869,7 +747,6 @@
             }
         }
 
-        // Rank record not found. Do not fabricate a name.
         return null;
     }
 
@@ -878,38 +755,29 @@
     // =========================================================================
 
     window.RoleQueries = {
-        // Lookups
         findRoleById: findRoleById,
         findRoleByName: findRoleByName,
 
-        // Lists
         getRoles: getRoles,
         getRolesByCategory: getRolesByCategory,
         searchRoles: searchRoles,
 
-        // Categories
         getRoleCategoriesWithCounts: getRoleCategoriesWithCounts,
 
-        // Specializations
         getRoleSpecializations: getRoleSpecializations,
         getAllRoleSpecializations: getAllRoleSpecializations,
 
-        // Characters holding a role
         getCharactersWithRoleIds: getCharactersWithRoleIds,
         getCharactersWithRole: getCharactersWithRole,
         getCharactersWithRoleDetails: getCharactersWithRoleDetails,
 
-        // Assign-modal candidate enumeration
         getOccupiedLocationIds: getOccupiedLocationIds,
         getEligibleCharactersForRole: getEligibleCharactersForRole,
 
-        // Skill reads
         getSkillLevel: getSkillLevel,
 
-        // Aggregation
         getRoleStatistics: getRoleStatistics,
 
-        // Rank convenience (used by character summary legacy callers)
         getRankSummary: getRankSummary
     };
 
