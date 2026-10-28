@@ -1,3 +1,4 @@
+// js/households/household-orchestration.js
 /**
  * =============================================================================
  * STILL WATERS - HOUSEHOLD ORCHESTRATION (household-orchestration.js)
@@ -82,8 +83,40 @@
  *   This module is for ORCHESTRATORS that call multiple commands and
  *   then close the batch.
  *
+ * YEAR RESOLUTION (P3-1)
+ * ----------------------
+ *   resolveYear() resolves a caller-supplied year argument to a
+ *   concrete number. The canonical helper it uses for "now" is
+ *   window.getCurrentYearSafe (a deprecated alias of getCurrentYear
+ *   in time.js). This module is the ONLY household file that calls
+ *   getCurrentYearSafe directly. Every other household module either
+ *   receives a resolved year from a caller, uses
+ *   HouseholdOrchestration.resolveYear directly, or (in the case of
+ *   household-economy.js / household-commands.js / residence-system.js
+ *   / modals-helper.js) goes through its own thin _currentYear()
+ *   wrapper.
+ *
+ *   The point: the eventual removal of getCurrentYearSafe from
+ *   time.js is a one-line change HERE, not a search-and-replace
+ *   across the household subsystem. If that removal happens,
+ *   _resolveNowYear() below falls back to window.getCurrentYear (the
+ *   canonical alias target) so the transition is seamless.
+ *
+ *   Note on time.js's intended deprecation path: time.js declares
+ *   getCurrentYearSafe as `@deprecated Use getCurrentYear instead`.
+ *   The household subsystem is the last major consumer of the
+ *   deprecated alias. When the migration completes, delete the alias
+ *   from time.js; this module's _resolveNowYear() will silently
+ *   switch to getCurrentYear without a load-time error.
+ *
  * DEPENDENCIES (REQUIRED at load):
- *   - time.js   (getCurrentYearSafe)
+ *   - time.js   (getCurrentYearSafe OR getCurrentYear — at least one
+ *                must be a function)
+ *
+ *   The load-time guard accepts either. If both are missing, the
+ *   module throws. If only one is present, the module uses that one.
+ *   This is the mechanism that makes getCurrentYearSafe's eventual
+ *   deletion survivable without a code change.
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
  *   - HouseholdCommands   (persist) — required for `finish`. If absent,
@@ -91,6 +124,35 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P3-1):
+ *     - Introduced _resolveNowYear() as the single internal entry point
+ *       for "what is the current year right now". It prefers
+ *       window.getCurrentYearSafe (the deprecated alias), falls back
+ *       to window.getCurrentYear (its canonical target in time.js),
+ *       and throws a clear error if neither is available.
+ *     - The load-time dependency check now accepts EITHER
+ *       getCurrentYearSafe OR getCurrentYear. Prior revisions required
+ *       getCurrentYearSafe specifically, which would have thrown if
+ *       time.js ever dropped the deprecated alias while keeping the
+ *       canonical function.
+ *     - resolveYear uses _resolveNowYear() for the missing-argument
+ *       case. All other household modules that call
+ *       getCurrentYearSafe directly remain unchanged in this revision;
+ *       migrating them to go through this module is a follow-on.
+ *     - Header YEAR RESOLUTION (P3-1) section added explaining the
+ *       deprecation migration strategy and the exact steps for
+ *       completing it.
+ *     - No behavioural change to any export. resolveYear, ok, fail,
+ *       dispatch, finish, hasId, isPlainObject, isFiniteNumber all
+ *       behave identically in every call path. The only observable
+ *       difference is the internal fallback when getCurrentYearSafe
+ *       is absent.
+ *   Previous revisions:
+ *     - Initial extraction. Consolidated ok, fail, resolveYear,
+ *       dispatch, finish, hasId, isPlainObject, isFiniteNumber from
+ *       household-assignment.js and household-servant.js.
  * =============================================================================
  */
 
@@ -101,18 +163,50 @@
     // 0. DEPENDENCY GUARD
     // =========================================================================
 
-    function _requireFunction(name, fn) {
-        if (typeof fn !== 'function') {
-            throw new Error(
-                'household-orchestration.js: ' + name + ' is required'
-            );
+    /**
+     * Resolves "the current year" for this module.
+     *
+     * Precedence:
+     *   1. window.getCurrentYearSafe (deprecated alias in time.js; the
+     *      household subsystem's historical provider)
+     *   2. window.getCurrentYear (canonical function in time.js; the
+     *      alias's target. Present in every build.)
+     *
+     * Both are functions with identical behavior in the current
+     * time.js. The fallback exists so that deleting the deprecated
+     * alias from time.js does not break this module. See YEAR
+     * RESOLUTION (P3-1) in the header for the migration plan.
+     *
+     * @private
+     * @throws {Error} if neither function is present
+     * @returns {number}
+     */
+    function _resolveNowYear() {
+        if (typeof window.getCurrentYearSafe === 'function') {
+            return window.getCurrentYearSafe();
         }
-        return fn;
+        if (typeof window.getCurrentYear === 'function') {
+            return window.getCurrentYear();
+        }
+        // Both missing. This is the load-order bug the guard at the
+        // bottom of this function is meant to prevent. Throw loudly.
+        throw new Error(
+            'household-orchestration.js: time.js must expose ' +
+            'getCurrentYearSafe or getCurrentYear.'
+        );
     }
 
-    var _getCurrentYearSafe = _requireFunction(
-        'getCurrentYearSafe (time.js)', window.getCurrentYearSafe
-    );
+    function _requireTime() {
+        if (typeof window.getCurrentYearSafe !== 'function'
+            && typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'household-orchestration.js: time.js must load first ' +
+                '(getCurrentYearSafe or getCurrentYear missing).'
+            );
+        }
+    }
+
+    _requireTime();
 
     // =========================================================================
     // 1. RESULT HELPERS
@@ -158,9 +252,10 @@
     /**
      * Resolves a year argument.
      *
-     *   - undefined / null:     returns getCurrentYearSafe().
-     *   - finite number:        returned as-is.
-     *   - anything else:        returns null (caller must abort).
+     *   - undefined / null:     returns the current simulation year
+     *                           (see _resolveNowYear)
+     *   - finite number:        returned as-is
+     *   - anything else:        returns null (caller must abort)
      *
      * The prior copies returned null for non-number input but did not
      * distinguish "caller forgot to pass" from "caller passed garbage".
@@ -171,7 +266,7 @@
      * @returns {number|null}
      */
     function resolveYear(value) {
-        if (value === undefined || value === null) return _getCurrentYearSafe();
+        if (value === undefined || value === null) return _resolveNowYear();
         if (typeof value !== 'number' || !isFinite(value)) return null;
         return value;
     }
@@ -324,7 +419,7 @@
         isFiniteNumber: isFiniteNumber,
 
         // Diagnostics
-        version: 1
+        version: 2
     };
 
     if (typeof module !== 'undefined' && module.exports) {
