@@ -1,3 +1,4 @@
+// js/character/character-ui-list.js
 /**
  * =============================================================================
  * STILL WATERS - CHARACTER UI LIST (js/character/character-ui-list.js)
@@ -37,6 +38,40 @@
  *   - Optional lookups (culture badge, location display) are gated on
  *     the caller's options BEFORE they run. A disabled feature does not
  *     execute its resolver.
+ *
+ * CALLBACK CONTRACT — PROJECTIONS, NOT LIVE ENTITIES:
+ *   The `onSelect` callback passed to `renderCharacterList` receives a
+ *   PROJECTION (the return value of `window.getCharacterById(id)`),
+ *   NOT a live canonical entity. Under the documented load order, that
+ *   is `character-queries.js`'s projection-returning version (via
+ *   `CharacterState.getCharacter`), not `accessors.js`'s live-entity
+ *   cache.
+ *
+ *   What this means for callers:
+ *     - READ freely. Every field on the projection reflects canonical
+ *       state at the moment of the call.
+ *     - DO NOT MUTATE the object. Mutating a projection does not affect
+ *       canonical state. Silent data loss.
+ *     - If you need to MUTATE, use `CharacterCommands.*` (the mutation
+ *       boundary for character-owned fields). If you are authorized
+ *       mutation code (a command or a sanctioned lifecycle module),
+ *       use `CharacterState.getLiveCharacterForMutation(id)` for a
+ *       live reference.
+ *
+ *   Prior revisions of this file did not document the callback shape.
+ *   Callers reasonably assumed `onSelect(character)` handed them the
+ *   live record (the pre-refactor behavior). They do not. This is a
+ *   compatibility trap that must be documented at the caller's end.
+ *
+ *   The same contract applies to `CharacterState.getCharacter(id)` and
+ *   `CharacterQueries.getCharacter(id)`: both return projections.
+ *   `CharacterState.getLiveCharacterForMutation(id)` is the ONE
+ *   sanctioned live-reference accessor, and its name says so.
+ *
+ *   If you find yourself reaching for a mutation on the callback's
+ *   argument, STOP. You need CharacterCommands or
+ *   getLiveCharacterForMutation, and probably a domain-specific
+ *   command, not a character-list row handler.
  *
  * LOCATION RESOLUTION:
  *   `CharacterQueries.getCharacterSummary().location` is a STABLE SHAPE
@@ -120,7 +155,20 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (P2-2):
+ *     - Added CALLBACK CONTRACT — PROJECTIONS, NOT LIVE ENTITIES section
+ *       to the header. The onSelect callback receives a projection, not
+ *       a live canonical entity; mutating it does not affect canonical
+ *       state. Prior revisions omitted this contract, and callers
+ *       reasonably assumed they received the live record (the
+ *       pre-refactor behavior). Same-named getters in CharacterState,
+ *       CharacterQueries, and accessors.js return different things
+ *       depending on which module last set window.getCharacterById;
+ *       this is a documentation-level fix so callers know what to
+ *       expect and where to go if they need to mutate.
+ *     - No behavioural change. The callback still receives exactly what
+ *       it always received; the header now says so.
+ *   Previous revision:
  *     - Location display resolution added. The card grid's Location
  *       field previously rendered 'Unknown' unconditionally because
  *       summary.location was always null (it is a stable shape
@@ -373,12 +421,17 @@
     /**
      * Renders a character list into the given container.
      *
+     * The `onSelect` callback receives a PROJECTION, not a live canonical
+     * entity. See CALLBACK CONTRACT — PROJECTIONS, NOT LIVE ENTITIES in
+     * the module header. Mutating the callback's argument does not affect
+     * canonical state.
+     *
      * @param {string|HTMLElement} containerOrId
      * @param {Object} [options]
      * @param {Array} [options.filteredCharacters] - supply a pre-filtered
      *   list. When omitted, all characters are rendered.
      * @param {Function} [options.onSelect] - called with the character
-     *   object on click.
+     *   projection on click. See CALLBACK CONTRACT in the header.
      * @param {string} [options.emptyMessage] - default 'No characters found'
      * @param {boolean} [options.showStatus] - default true
      * @param {boolean} [options.showLocation] - default true
@@ -484,6 +537,10 @@
             var id = row.getAttribute('data-character-id');
             if (!_hasId(id)) return;
 
+            // Get the character projection. Under the documented load
+            // order, window.getCharacterById is character-queries.js's
+            // projection-returning version. This is a projection, not a
+            // live canonical entity. See CALLBACK CONTRACT in the header.
             var character = window.getCharacterById(id);
             if (character) {
                 onSelect(character);
