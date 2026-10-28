@@ -12,17 +12,54 @@
  *   4. School finances (public funding, private profit)
  *   5. Persist
  *
- * Stage names:
- *   The pipeline records stage-of-progress per student based on the canonical
- *   SkillUtils taxonomy (untrained, novice, apprentice, journeyman, expert,
- *   master). No local stage definitions. If a downstream consumer displays
- *   "Master" they are reading SkillUtils' Master (91+), not some other
- *   authority's Master (76+).
+ * RESULT SHAPE
+ *
+ *   The result envelope exposes TWO orthogonal fields for "did the
+ *   pipeline succeed":
+ *
+ *     success: boolean
+ *         True iff the pipeline ran to completion with no fatal errors.
+ *         Fatal errors are: persistence failure, per-student learning
+ *         failure due to invalid configuration. Non-fatal errors
+ *         (individual graduation failures, individual settlement
+ *         allocations, individual finance failures) do not flip
+ *         success to false; they are recorded in errors[] with a
+ *         `scope` tag and, where relevant, in dedicated per-step
+ *         arrays.
+ *
+ *     status: string
+ *         One of 'completed', 'completed_with_errors', 'partial',
+ *         'failed'. Kept for backward compatibility with prior callers.
+ *         New code should prefer `success` (see above) plus the
+ *         individual step result fields.
+ *
+ *   This matches character-lifecycle.js::advanceMortality, which
+ *   returns { success, ... } and records per-item failures in
+ *   dedicated arrays (deaths, skipped, settlementFailures) rather than
+ *   folding them into a single status string.
+ *
+ * STAGE NAMES
+ *
+ *   The pipeline records stage-of-progress per student based on the
+ *   canonical SkillUtils taxonomy (untrained, novice, apprentice,
+ *   journeyman, expert, master). No local stage definitions. If a
+ *   downstream consumer displays "Master" they are reading SkillUtils'
+ *   Master (91+), not some other authority's Master (76+).
+ *
+ * PERSISTENCE
+ *
+ *   EducationState writes masterData.data.educationalInstitutions and
+ *   marks the data dirty on every mutation. EducationCommands.persist()
+ *   is the FLUSH. This pipeline calls persist() exactly once at the end
+ *   and inspects the boolean return. A false return is recorded in
+ *   errors[] with scope 'persist' and (after step 5) contributes to
+ *   status = 'partial'. It does NOT roll back the in-memory work; the
+ *   debounced save will retry on the next mutation or manual flush.
  *
  * DEPENDENCIES (required, no fallbacks):
  *   - EducationCommands, EducationQueries, EducationState, EducationRules
  *   - SkillUtils
- *   - getCharacterById, getCurrentYearSafe, getPlaces
+ *   - getCharacterById, getCurrentYear, getPlaces
  *   - SettlementState (required; the budget step is meaningless without it)
  * =============================================================================
  */
@@ -77,10 +114,10 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('education-annual.js requires getCurrentYearSafe');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('education-annual.js requires getCurrentYear');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _getPlaces() {
@@ -169,11 +206,8 @@
                     newLevel: advance.newLevel
                 });
             }
-            // advanceLearning failures are recorded but do not halt the year.
-            // Silent advance failures indicate invalid curriculum or config.
         }
 
-        // Readiness via EducationRules. Build the proficiency map from the student.
         var proficiencyByKey = {};
         if (student.subjectProgress) {
             for (var key in student.subjectProgress) {
@@ -190,10 +224,6 @@
             proficiencyByKey: proficiencyByKey
         });
 
-        // Stage label from the canonical taxonomy.
-        // For a student, "stage" reflects the literacy level, because that is
-        // the education system's classification axis. The label comes from
-        // SkillUtils so it agrees with every other tier display in the game.
         var literacyLevel = 0;
         if (student.subjectProgress &&
             student.subjectProgress.literacy &&
@@ -373,6 +403,7 @@
 
         var results = {
             year: currentYear,
+            success: true,
             status: 'completed',
             processedStudentCount: 0,
             skillGains: [],
@@ -430,10 +461,20 @@
             _stepSchoolFinances(currentYear, results);
         }
 
-        // Step 5: persist once.
+        // Step 5: persist once. Inspect the boolean return; a failed flush
+        // is recorded as a persist-scope error but does NOT roll back the
+        // in-memory work. The debounced save will retry.
         if (shouldPersist) {
             try {
-                _commands().persist();
+                var persistOk = _commands().persist();
+                if (persistOk === false) {
+                    var reason = 'EducationCommands.persist() returned false';
+                    if (typeof window.getLastSaveError === 'function') {
+                        var lastErr = window.getLastSaveError();
+                        if (lastErr && lastErr.message) reason = lastErr.message;
+                    }
+                    results.errors.push({ scope: 'persist', error: reason });
+                }
             } catch (e) {
                 results.errors.push({
                     scope: 'persist',
@@ -442,11 +483,22 @@
             }
         }
 
-        // Determine overall status.
+        // Fatal vs non-fatal error classification.
+        //
+        // Fatal: a learning-configuration failure or a persistence failure.
+        // These mean the pipeline could not produce trustworthy results.
+        //
+        // Non-fatal: individual graduation, budget, or finance failures.
+        // These are recorded in errors[] but the pipeline completed its
+        // sequence; the caller sees them and can decide whether to retry
+        // specific operations.
+        var fatalErrors = results.errors.filter(function (e) {
+            return e.scope === 'persist' || e.scope === 'learning';
+        });
+
+        results.success = fatalErrors.length === 0;
+
         if (results.errors.length > 0) {
-            var fatalErrors = results.errors.filter(function(e) {
-                return e.scope === 'persist' || e.scope === 'learning';
-            });
             results.status = fatalErrors.length > 0 ? 'partial' : 'completed_with_errors';
         }
 
@@ -464,6 +516,9 @@
      * Uses the same per-student primitive as processAnnualEducation. Does not
      * persist or allocate budget (budget allocation is a settlement-level
      * concern). School finance for the institution runs unless disabled.
+     *
+     * Returns the same envelope shape as processAnnualEducation, minus
+     * budgetProcessing and settlements (which are settlement-level).
      */
     function processAnnualInstitution(institutionId, year, options) {
         options = options || {};
@@ -475,6 +530,7 @@
             return {
                 institutionId: institutionId,
                 status: 'failed',
+                success: false,
                 error: 'institution_not_found',
                 skillGains: [],
                 withdrawals: [],
@@ -489,6 +545,7 @@
             institutionId: inst.id,
             institutionName: inst.name,
             year: currentYear,
+            success: true,
             status: 'completed',
             processedStudentCount: 0,
             skillGains: [],
@@ -501,6 +558,7 @@
 
         if (inst.status === 'demolished') {
             results.status = 'skipped';
+            results.success = true;
             results.errors.push({ scope: 'status', error: 'institution_demolished' });
             return results;
         }
@@ -575,8 +633,13 @@
             }
         }
 
+        var fatalErrors = results.errors.filter(function (e) {
+            return e.scope === 'learning';
+        });
+        results.success = fatalErrors.length === 0;
+
         if (results.errors.length > 0) {
-            results.status = 'completed_with_errors';
+            results.status = fatalErrors.length > 0 ? 'partial' : 'completed_with_errors';
         }
 
         return results;
@@ -594,11 +657,6 @@
     // 5. INTERNAL HELPERS
     // =========================================================================
 
-    /**
-     * Unique students the pipeline touched this year. A student is touched if
-     * they gained skill, were evaluated for readiness, or were withdrawn by
-     * the pipeline. Deceased students who withdrew are included.
-     */
     function _uniqueTouchedStudents(results) {
         var ids = {};
         for (var i = 0; i < results.skillGains.length; i++) {
