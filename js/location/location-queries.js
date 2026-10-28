@@ -32,10 +32,67 @@
  *   LocationQueries may compose other domains' Queries.
  *   LocationQueries may not reproduce another domain's rules.
  *
+ * CURRENT-LOCATION RESOLUTION (REVISED):
+ *   There are two distinct notions of "current location" in this
+ *   codebase, and they are NOT the same function:
+ *
+ *     CharacterQueries.getCurrentLocationId(id)
+ *       Returns the character's EXPLICIT currentLocationId field.
+ *       Null when the field is missing. Does NOT fall back to the
+ *       latest move or to birthplace. This is the domain-literal
+ *       "what is the character's currentLocationId field set to".
+ *
+ *     World.getCurrentLocationId(character)
+ *       RESOLVES a location from a character projection. Precedence:
+ *         1. character.currentLocationId (explicit override)
+ *         2. latest valid move in character.moves (highest year)
+ *         3. character.birthplaceId
+ *       Returns null only when no location can be resolved.
+ *       This is the SEMANTIC "where is this character located,
+ *       considering their whole history".
+ *
+ *   The location domain's population and current-location reads
+ *   consume the SECOND notion. A character created before the moves
+ *   system existed has currentLocationId set; a character whose only
+ *   location signal is a move (the moves system records it, nothing
+ *   set currentLocationId) is correctly placed by World resolution
+ *   and missing under CharacterQueries.
+ *
+ *   Prior revisions of this module used CharacterQueries.getCurrentLocationId
+ *   exclusively. That under-counted populations for characters placed
+ *   via moves, and returned null for the current location of anyone
+ *   whose explicit field was empty even when a move placed them.
+ *
+ *   This revision composes with World when available, and falls back
+ *   to CharacterQueries.getCurrentLocationId otherwise. The fallback
+ *   preserves the module's behavior in a bare test harness that loads
+ *   only LocationState + CharacterQueries, at the cost of the semantic
+ *   resolution described above. In production, world.js is loaded
+ *   before this module, so the correct resolution is always used.
+ *
  * Load order note:
  *   This file loads AFTER location-commands.js in the HTML. It must not be
  *   required by commands.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getPopulationCount, getOwnPopulation, getCurrentLocation,
+ *       getCurrentLocationId, getCurrentLocationName, getMoveStatistics
+ *       now resolve the character's location through
+ *       _resolveCurrentLocationId(character), which prefers
+ *       World.getCurrentLocationId when loaded and falls back to
+ *       CharacterQueries.getCurrentLocationId otherwise. This fixes the
+ *       semantic divergence between the two resolution models (see
+ *       CURRENT-LOCATION RESOLUTION in the module header).
+ *     - The public function getCurrentLocationId(characterId) still
+ *       returns the resolved location id (not the field) — same
+ *       contract as before, but now with correct resolution. Callers
+ *       that want the raw field should use CharacterQueries directly.
+ *     - No public signature change, no public return-shape change.
+ *       The fix is internal to the resolution path.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -76,7 +133,52 @@
     var CQ = window.CharacterQueries;
 
     // =========================================================================
-    // 2. BASIC PLACE QUERIES
+    // 2. CURRENT-LOCATION RESOLUTION
+    // =========================================================================
+    //
+    // See CURRENT-LOCATION RESOLUTION in the module header. This helper
+    // is the single place in this module where the resolution model is
+    // chosen. Every function that needs a character's current location
+    // calls it, so a future change to the resolution rules is a one-line
+    // edit here.
+
+    function _resolveCurrentLocationId(character) {
+        if (!character) return null;
+
+        // Prefer the canonical resolver. It honours the explicit
+        // currentLocationId override, the moves-based fallback, and the
+        // birthplace fallback.
+        if (typeof window.getCurrentLocationId === 'function') {
+            try {
+                var resolved = window.getCurrentLocationId(character);
+                // World.getCurrentLocationId returns string|null. A null
+                // result is a legitimate "no location resolved" — do
+                // not fall through to the weaker resolver.
+                if (resolved === null) return null;
+                if (typeof resolved === 'string' && resolved.length > 0) {
+                    return resolved;
+                }
+                // Malformed return; fall through to the fallback.
+            } catch (e) {
+                // World resolver threw; fall through to the fallback.
+            }
+        }
+
+        // Fallback: the domain-literal currentLocationId field.
+        // CharacterQueries.getCurrentLocationId accepts an id, so call
+        // it with character.id.
+        if (typeof CQ.getCurrentLocationId === 'function' && character.id) {
+            try {
+                return CQ.getCurrentLocationId(character.id);
+            } catch (e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    // =========================================================================
+    // 3. BASIC PLACE QUERIES
     // =========================================================================
 
     function getPlace(placeId) {
@@ -127,7 +229,7 @@
     }
 
     // =========================================================================
-    // 3. LOCATION TYPES
+    // 4. LOCATION TYPES
     // =========================================================================
 
     function getLocationTypes() {
@@ -155,7 +257,7 @@
     }
 
     // =========================================================================
-    // 4. HIERARCHY WALKS
+    // 5. HIERARCHY WALKS
     // =========================================================================
 
     function getPlaceHierarchy(placeId) {
@@ -273,7 +375,7 @@
     }
 
     // =========================================================================
-    // 5. PLACE PROJECTIONS
+    // 6. PLACE PROJECTIONS
     // =========================================================================
 
     function getPlaceSummary(placeId) {
@@ -324,7 +426,7 @@
     }
 
     // =========================================================================
-    // 6. LEADERSHIP PROJECTIONS
+    // 7. LEADERSHIP PROJECTIONS
     // =========================================================================
 
     function _projectLeaderAssignment(a) {
@@ -430,7 +532,7 @@
     }
 
     // =========================================================================
-    // 7. POPULATION
+    // 8. POPULATION
     // =========================================================================
 
     function getPopulationCount(locationId, includeDeceased) {
@@ -447,7 +549,7 @@
             var c = chars[j];
             if (!c || !c.id) continue;
             if (!includeDeceased && c.isDeceased) continue;
-            var locId = CQ.getCurrentLocationId(c.id);
+            var locId = _resolveCurrentLocationId(c);
             if (locId && idSet[locId]) count++;
         }
         return count;
@@ -462,14 +564,14 @@
             var c = chars[i];
             if (!c || !c.id) continue;
             if (!includeDeceased && c.isDeceased) continue;
-            var locId = CQ.getCurrentLocationId(c.id);
+            var locId = _resolveCurrentLocationId(c);
             if (locId === locationId) count++;
         }
         return count;
     }
 
     // =========================================================================
-    // 8. MOVEMENT
+    // 9. MOVEMENT
     // =========================================================================
 
     function getMoveHistory(characterId) {
@@ -482,7 +584,10 @@
     }
 
     function getCurrentLocation(characterId) {
-        var locId = CQ.getCurrentLocationId(characterId);
+        var character = CQ.getCharacterById(characterId);
+        if (!character) return null;
+
+        var locId = _resolveCurrentLocationId(character);
         if (!locId) return null;
         var place = LS.getPlaceById(locId);
         return place
@@ -491,7 +596,9 @@
     }
 
     function getCurrentLocationId(characterId) {
-        return CQ.getCurrentLocationId(characterId);
+        var character = CQ.getCharacterById(characterId);
+        if (!character) return null;
+        return _resolveCurrentLocationId(character);
     }
 
     function getCurrentLocationName(characterId) {
@@ -512,7 +619,7 @@
     }
 
     // =========================================================================
-    // 9. SEARCH
+    // 10. SEARCH
     // =========================================================================
 
     function searchLocations(options) {
@@ -587,7 +694,7 @@
     }
 
     // =========================================================================
-    // 10. STATISTICS
+    // 11. STATISTICS
     // =========================================================================
 
     function getLocationStatistics(locationId) {
@@ -661,7 +768,7 @@
     }
 
     // =========================================================================
-    // 11. COMPARISON
+    // 12. COMPARISON
     // =========================================================================
 
     function _cmp(a, b) {
@@ -690,7 +797,7 @@
     }
 
     // =========================================================================
-    // 12. RANKINGS
+    // 13. RANKINGS
     // =========================================================================
 
     function getLargestLocations(limit) {
@@ -731,7 +838,7 @@
     }
 
     // =========================================================================
-    // 13. MOVEMENT ANALYTICS
+    // 14. MOVEMENT ANALYTICS
     // =========================================================================
 
     function getMoveStatistics(characterId) {
@@ -781,7 +888,7 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 15. EXPORTS
     // =========================================================================
 
     window.LocationQueries = {
