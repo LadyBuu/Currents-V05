@@ -27,6 +27,70 @@
  *     its own changes; nothing else here writes)
  *   - toast or render
  *
+ * CROSS-DOMAIN CONTRACT (INDUSTRY -> HOUSEHOLD):
+ *   Industry never writes household records directly. Every household-owned
+ *   field industry mutates goes through HouseholdCommands:
+ *
+ *     - household.enterprises[]  (reverse index)
+ *         addEnterpriseToHousehold / removeEnterpriseFromHousehold.
+ *         Called from IndustryCommands.createEnterprise, deleteEnterprise,
+ *         rebuildEnterprise, and updateEnterprise (on owner change, via the
+ *         C2 reconciliation path). The source and target household are both
+ *         updated so the reverse index stays in sync with the canonical
+ *         enterprise.ownerType / ownerId.
+ *
+ *     - household.wealth  (annual processing transfer)
+ *         HouseholdCommands.updateHousehold({ wealth }).
+ *         Called from IndustryCommands.applyAnnualProcessing when the
+ *         enterprise is household-owned. Wealth is the only household field
+ *         this path writes; notes / name / location / status / members are
+ *         left untouched.
+ *
+ *   Industry does NOT write:
+ *     - household.notes          (prior revisions wrote this on transfer;
+ *                                 removed because it clobbered concurrent
+ *                                 household note edits based on a stale read)
+ *     - household.name / locationId / locationName / status / members /
+ *       departments / residence fields
+ *     - any character-record field
+ *     - any place-record field
+ *
+ *   Reads (cross-domain):
+ *     - getCharacterById  (owner / worker resolution)
+ *     - getHouseholdById  (household owner name, wealth transfer base)
+ *     - getPlaceById      (location / settlement / state owner resolution)
+ *
+ *   The bootstrap verifies HouseholdCommands.addEnterpriseToHousehold,
+ *   HouseholdCommands.removeEnterpriseFromHousehold,
+ *   HouseholdCommands.updateHousehold, and getHouseholdById as required
+ *   cross-domain prerequisites. A load-order or module-set error there is a
+ *   hard failure at init, not a runtime surprise.
+ *
+ * VERIFICATION-BEFORE-MIGRATION ORDERING:
+ *   init() runs _runVerification() (which includes _verifyCanonicalShape)
+ *   and then _throwOnFatal() BEFORE migration runs. This ordering is the
+ *   reason industry-migration.js's internal coercion of a non-array
+ *   masterData.data.enterprises to [] cannot discard corrupted data at
+ *   bootstrap time:
+ *
+ *     - If masterData.data.enterprises is non-array, _verifyCanonicalShape
+ *       reports it, _throwOnFatal throws, and migration never runs.
+ *     - If migration runs, masterData.data.enterprises is guaranteed to be
+ *       an array (or undefined, which migration's _requireEnterprisesArray
+ *       coerces to [] — the legitimate "fresh install" case).
+ *
+ *   The coercion in industry-migration.js::_requireEnterprisesArray is
+ *   therefore a LEGITIMATE default for the "absent" case, but would be a
+ *   silent-data-loss hazard for the "present-but-non-array" case if
+ *   migration were called directly (bypassing the bootstrap). A future
+ *   revision of industry-migration.js should distinguish the two — reject
+ *   present-but-non-array rather than coerce — so that a repair tool that
+ *   calls migrateEnterprisesToCanonicalShape() without going through
+ *   init() cannot silently discard corrupted data.
+ *
+ *   This file does not enforce that distinction. It relies on the
+ *   ordering above.
+ *
  * LOAD ORDER:
  *   Load this file LAST among the industry scripts, after everything below.
  *   See the load-order block at the bottom of this file.
@@ -63,6 +127,39 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (D1 + secondary item #1 documentation):
+ *     - Header CROSS-DOMAIN CONTRACT (INDUSTRY -> HOUSEHOLD) section
+ *       added. The prior header claimed that household.enterprises[] was
+ *       "the only household-owned field industry mutates, and it is done
+ *       via HouseholdCommands". That was false in two ways:
+ *         (a) industry also writes household.wealth via
+ *             HouseholdCommands.updateHousehold during annual processing
+ *             household transfer, and
+ *         (b) prior revisions of industry-commands.js also wrote
+ *             household.notes on that path, which was removed (M5) because
+ *             it clobbered concurrent household note edits based on a
+ *             stale read of the household record.
+ *       The new section names every household-owned field industry writes,
+ *       the exact HouseholdCommands method used for each, and an explicit
+ *       "does NOT write" list so a future maintainer cannot accidentally
+ *       reintroduce the notes write or add a new household field without
+ *       updating the contract.
+ *     - Header VERIFICATION-BEFORE-MIGRATION ORDERING section added. It
+ *       documents why the coercion in industry-migration.js's
+ *       _requireEnterprisesArray cannot silently discard corrupted data at
+ *       bootstrap time (verification runs first and throws before migration
+ *       executes), and flags the remaining hazard for direct callers of
+ *       IndustryMigration.migrateEnterprisesToCanonicalShape() as a
+ *       follow-up rather than a bootstrap concern.
+ *     - `_lastResult.integrity.checksSkipped` carries through from
+ *       IndustryState.validateIntegrity() (see industry-state.js M3 + D4).
+ *       Existing callers that read `.integrity.valid` and
+ *       `.integrity.errorCount` are unchanged; the new field is additive.
+ *     - No behavioral change. No verification change. No module manifest
+ *       change. No load-order change. Only the header is rewritten and
+ *       the integrity pass-through is broadened.
  * =============================================================================
  */
 
@@ -235,6 +332,12 @@
      *   5. run integrity diagnostics (warn only, do not throw)
      *   6. expose window.Industry
      *
+     * ORDERING GUARANTEE:
+     *   Step 1 runs _verifyCanonicalShape() and _throwOnFatal() BEFORE
+     *   step 2. A non-array masterData.data.enterprises (or
+     *   enterpriseTypes) is rejected before migration can reach it. See
+     *   VERIFICATION-BEFORE-MIGRATION ORDERING in the header.
+     *
      * @returns {Object}
      *   { success: true, alreadyInitialized?: true, ... }
      *   { success: false, ... }   — only when integrity diagnostics report
@@ -296,14 +399,15 @@
         window.IndustryState.hydrateFromMasterData(enterprises, types);
 
         // 5. Integrity. Warn only.
-        var integrity = { valid: true, errors: [] };
+        var integrity = { valid: true, errors: [], checksSkipped: [] };
         try {
             integrity = window.IndustryState.validateIntegrity();
         } catch (e) {
             integrity = {
                 valid: false,
                 errors: ['validateIntegrity threw: ' +
-                    (e && e.message ? e.message : String(e))]
+                    (e && e.message ? e.message : String(e))],
+                checksSkipped: []
             };
         }
 
@@ -375,7 +479,10 @@
             },
             integrity: {
                 valid: integrity.valid,
-                errorCount: integrity.errors.length
+                errorCount: integrity.errors.length,
+                checksSkipped: Array.isArray(integrity.checksSkipped)
+                    ? integrity.checksSkipped.slice()
+                    : []
             }
         };
 
