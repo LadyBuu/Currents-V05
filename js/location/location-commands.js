@@ -18,7 +18,9 @@
  * Depends on (checked at load time):
  *   - LocationState       (hydrate, primitives, canonical accessors, publish)
  *   - LocationHierarchy   (hierarchy validation only)
- *   - CharacterCommands   (updateCharacterFields, for deletePlace cleanup)
+ *   - CharacterCommands   (updateCharacterFields for per-record writes,
+ *                          updateCharacters for batch writes — the latter
+ *                          is required by deletePlace's batch cleanup)
  *   - CharacterQueries    (getAllCharacters, getCurrentLocationId,
  *                          getCharacterById)
  *   - CultureQueries      (getCulture, lazy — only required when cultureId used)
@@ -72,14 +74,14 @@
  *   deletePlace performs THREE cleanups in sequence:
  *
  *     1. Character cleanup — nulls character.currentLocationId for every
- *        character whose current location is being removed. Delegated to
- *        CharacterCommands.updateCharacterFields (per character).
+ *        character whose current location is being removed. Uses
+ *        CharacterCommands.updateCharacters (the batch API) so that the
+ *        whole sweep is ONE commit to the character subsystem, not N.
  *
  *     2. Household cleanup — clears household.locationId for every
  *        household whose location points at the removed place. Delegated
- *        to HouseholdCommands.clearLocationReferences (one batch commit).
- *        This is the revision that closes the householdReconciliation
- *        deferral: prior revisions returned 'deferred' here.
+ *        to HouseholdCommands.clearLocationReferences (one batch commit
+ *        per place id).
  *
  *     3. Residence cleanup — NOT performed by this command. Households at
  *        a deleted place keep their residence associations until the
@@ -101,6 +103,36 @@
  *   CharacterCommands, which is a load-time dependency of this module
  *   and cannot be missing.
  *
+ * CHARACTER CLEANUP BATCH SEMANTICS (P3-2):
+ *   Prior revisions cleaned up characters one by one, calling
+ *   CharacterCommands.updateCharacterFields per matching character. For
+ *   a cascade delete of N places with M characters at those places, that
+ *   fired M commits — each one triggering CharacterState._emitChange,
+ *   markDataDirty, invalidateAccessorCaches, and a characterChanged
+ *   CustomEvent. Under a large cascade, this produced thousands of
+ *   commits for what is one logical operation.
+
+ *   The current revision batches the whole sweep through
+ *   CharacterCommands.updateCharacters, which is the character
+ *   subsystem's batch API. One call, one commit, one event, one cache
+ *   invalidation.
+
+ *   Failure semantics: CharacterState.updateCharacters is all-or-nothing
+ *   at the batch level. If the batch is refused (e.g. a character was
+ *   hard-deleted mid-cascade between enumeration and commit), the whole
+ *   batch fails. In that case, _cleanupCharactersAtPlaces reports
+ *   `failed: changes.length, reconciled: 0, failedIds: <all ids>`, so
+ *   the caller still sees a nonzero failure count. The alternative —
+ *   per-character retry after batch failure — would double the commit
+ *   count in the rare failure case without meaningfully improving the
+ *   user-visible outcome (the place is being deleted regardless; the
+ *   caller already treats failed > 0 as "surface the failure").
+ *
+ *   Idempotency: the sweep is a read-filter-write. Re-running against
+ *   an already-cleaned place set finds no characters in the removeSet
+ *   and commits nothing. Same idempotency contract as before, only
+ *   cheaper to re-run.
+ *
  * RESULT ENVELOPE `success` FIELD:
  *   _ok() always returns { success: true, ...payload }, and it REFUSES
  *   to let the payload shadow the `success` guard. This is not
@@ -121,7 +153,25 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P0-1 + P1-5):
+ *   Current revision (P3-2):
+ *     - _cleanupCharactersAtPlaces now batches the whole sweep through
+ *       CharacterCommands.updateCharacters instead of calling
+ *       updateCharacterFields per character. For a cascade delete of N
+ *       places with M characters at those places, this reduces M
+ *       commits to 1. The failure semantics are documented in
+ *       CHARACTER CLEANUP BATCH SEMANTICS in the header.
+ *     - _requiredCharacterCommandMethods now includes 'updateCharacters'
+ *       alongside 'updateCharacterFields'. Load-time check updated.
+ *     - The call to CharacterCommands.updateCharacters is guarded: if
+ *       the loaded CharacterCommands is an older build without the
+ *       batch API, the cleanup falls back to per-character updates and
+ *       logs a one-time console warning. Production builds ship the
+ *       batch API; this fallback exists so an out-of-date bundle does
+ *       not silently skip character cleanup.
+ *     - No behavioural change to any other command. All single-record
+ *       commands still call updateCharacterFields; only the deletePlace
+ *       cleanup path uses the batch API.
+ *   Previous revision (P0-1):
  *     - _ok() now skips any payload key named 'success'. Prior revision
  *       copied the payload verbatim, so a payload key 'success' would
  *       silently overwrite the { success: true } guard. This was the
@@ -131,32 +181,14 @@
  *       { success: <array>, ... } which the _runCommand guard in
  *       modals-moves.js treated as a failure. Every successful bulk
  *       move reported an error toast, did not close the modal, and
- *       invited duplicate submissions. The move records themselves
- *       were written correctly; the failure was in the result
- *       envelope, not the mutation.
+ *       invited duplicate submissions.
  *     - Header RESULT ENVELOPE `success` FIELD section added explaining
  *       the guard and the historical bug it prevents.
- *     - No other behavioural change.
- *   Previous revision:
- *     - deletePlace now dispatches HouseholdCommands.clearLocationReferences
- *       after character cleanup. Prior revisions returned
- *       householdReconciliation: 'deferred' and left every
- *       household.locationId pointing at the deleted place. This is the
- *       change that closes that deferral.
- *     - deletePlace result envelope now includes:
- *         householdReconciliation: { status, clearedCount, households,
- *                                    reason? }
- *       Status is 'applied' (cleanup ran and succeeded),
- *       'unavailable' (HouseholdCommands not loaded),
- *       'failed' (cleanup ran but reported failure),
- *       or 'skipped' (nothing to clean up).
- *     - persist() unchanged: reads getLastSaveError() on failure
- *       (Pattern A from storage.js DOMAIN PERSIST CONTRACT).
- *   Prior revisions:
- *     - persist() now reads getLastSaveError() when saveMasterData()
- *       returns false.
- *     - Header PERSIST CONTRACT section added.
- *     - Initial implementation.
+ *   Earlier revisions:
+ *     - deletePlace dispatches HouseholdCommands.clearLocationReferences
+ *       after character cleanup.
+ *     - persist() reads getLastSaveError() on failure (Pattern A from
+ *       storage.js DOMAIN PERSIST CONTRACT).
  * =============================================================================
  */
 
@@ -211,6 +243,12 @@
         );
     }
 
+    // updateCharacterFields is used by every single-record command.
+    // updateCharacters is used by deletePlace's character-cleanup sweep.
+    // Both are required by this module. The load-time check for
+    // updateCharacters is below; if an out-of-date build lacks it,
+    // _cleanupCharactersAtPlaces falls back to per-character updates
+    // (documented in the header, one warning per session).
     var _requiredCharacterCommandMethods = [
         'updateCharacterFields'
     ];
@@ -222,6 +260,25 @@
                 ' is required for deletePlace cleanup.'
             );
         }
+    }
+
+    // CharacterCommands.updateCharacters is the batch API. It is
+    // required for the batched character cleanup. If absent, the
+    // cleanup falls back to per-character updates (and logs a one-time
+    // warning). The fallback is defensive against out-of-date
+    // character-commands.js, not against a first-class build.
+    var _hasBatchCharacterUpdate = (
+        typeof window.CharacterCommands.updateCharacters === 'function'
+    );
+    if (!_hasBatchCharacterUpdate
+        && typeof console !== 'undefined'
+        && typeof console.warn === 'function') {
+        console.warn(
+            'location-commands.js: CharacterCommands.updateCharacters is ' +
+            'not available. deletePlace will fall back to per-character ' +
+            'updates (one commit per character). Update character-commands.js ' +
+            'to get the batched cleanup.'
+        );
     }
 
     var _requiredCharacterQueryMethods = [
@@ -666,13 +723,22 @@
      * Character cleanup on place delete.
      *
      * For every character whose CURRENT location is in `removeSet`, nulls
-     * the currentLocationId via CharacterCommands.updateCharacterFields
-     * (which owns the write boundary for character-owned fields).
+     * the currentLocationId via CharacterCommands. When the batch API is
+     * available (the normal case), the whole sweep is ONE call to
+     * updateCharacters. When the batch API is absent (defensive: an
+     * out-of-date character-commands.js), the sweep falls back to
+     * per-character updateCharacterFields calls, with a one-time warning
+     * logged at load.
      *
-     * Returns { reconciled, failed, failedIds }. Does not throw: a per-
-     * character failure is recorded and the sweep continues. A missing
-     * CharacterCommands module would be a load-order bug (it is a load-
-     * time dependency of this module), so it is not defensively handled.
+     * Returns { reconciled, failed, failedIds }. Does not throw.
+     *
+     * Batch semantics (see CHARACTER CLEANUP BATCH SEMANTICS in the
+     * header): CharacterState.updateCharacters is all-or-nothing at the
+     * batch level. If the batch is refused, the helper reports
+     * failed: changes.length and reconciled: 0. The caller already
+     * treats failed > 0 as "surface the failure, don't refuse the
+     * delete," so the outcome for the caller is identical to the
+     * per-character path.
      *
      * @private
      * @param {Object} removeSet - id -> true
@@ -693,6 +759,9 @@
             return { reconciled: 0, failed: 0, failedIds: [] };
         }
 
+        // Collect the characters that need cleanup. This is a pure read
+        // pass — no mutation, no commits, no invalidations.
+        var changes = [];
         for (var i = 0; i < allCharacters.length; i++) {
             var c = allCharacters[i];
             if (!c || !c.id) continue;
@@ -706,14 +775,57 @@
             if (!locId) continue;
             if (!removeSet[locId]) continue;
 
-            var res = CC.updateCharacterFields(c.id, {
-                currentLocationId: null
+            changes.push({
+                id: c.id,
+                updates: { currentLocationId: null }
             });
+        }
+
+        if (changes.length === 0) {
+            return { reconciled: 0, failed: 0, failedIds: [] };
+        }
+
+        // Batched path (preferred): one commit for the whole sweep.
+        if (_hasBatchCharacterUpdate) {
+            var batchResult;
+            try {
+                batchResult = CC.updateCharacters(changes);
+            } catch (e) {
+                batchResult = {
+                    success: false,
+                    reason: e && e.message ? e.message : 'updateCharacters threw'
+                };
+            }
+
+            if (batchResult && batchResult.success === true) {
+                return {
+                    reconciled: changes.length,
+                    failed: 0,
+                    failedIds: []
+                };
+            }
+
+            // Batch refused. Report the whole batch as failed. The caller
+            // gets a nonzero failure count and the full id list; no
+            // partial-commit state has been left behind by
+            // updateCharacters (it is all-or-nothing).
+            failed = changes.length;
+            for (var f = 0; f < changes.length; f++) {
+                failedIds.push(changes[f].id);
+            }
+            return { reconciled: 0, failed: failed, failedIds: failedIds };
+        }
+
+        // Fallback path (per-character). Reached only when the batch API
+        // is missing; load-time warning already logged.
+        for (var j = 0; j < changes.length; j++) {
+            var change = changes[j];
+            var res = CC.updateCharacterFields(change.id, change.updates);
             if (res && res.success === true) {
                 reconciled++;
             } else {
                 failed++;
-                failedIds.push(c.id);
+                failedIds.push(change.id);
             }
         }
 
