@@ -53,7 +53,7 @@
  *   addAttribute               one commit (delegates to update)
  *   removeAttribute            one commit (delegates to update)
  *   endAllActiveForCharacter   one commit (one State.applyUpdates for
- *                              the whole batch)
+ *                              the accepted subset of the batch)
  *   removeAllReferencesTo      one commit (one State.applyRemovals for
  *                              the whole batch)
  *
@@ -75,7 +75,23 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 3.4):
+ *   Current revision:
+ *     - endAllActiveForCharacter now applies the same _isEndBeforeStart
+ *       check that create / createBatch / update / end / setWidowed
+ *       already enforce. A record whose startYear is later than the
+ *       supplied endYear is excluded from the batch and reported in a
+ *       new `rejected` array; it is NOT silently ended into an
+ *       impossible (startYear > endYear) state. Prior revisions sent
+ *       every target to State.applyUpdates regardless of chronology,
+ *       so the batch path could write records that the single-record
+ *       paths refused.
+ *     - Result envelope extended: { ended, rejected, count,
+ *       rejectedCount, failed, failedCount }. Every field the prior
+ *       callers read (ended, failed, count, failedCount) retains its
+ *       meaning. Callers that only look at ended/count see the same
+ *       values they saw before for valid inputs; the new `rejected`
+ *       array surfaces the case that used to be silently corrupt.
+ *   Previous revision (Phase 3.4):
  *     - _validateCreateInput now rejects endYear < startYear.
  *       Previously a relationship with startYear: 100, endYear: 50 was
  *       considered structurally valid (only the types were checked,
@@ -85,6 +101,9 @@
  *       accepted impossible records directly.
  *     - createBatch's per-record loop applies the same check so
  *       create and createBatch reject the inversion consistently.
+ *     - update / end / setWidowed also apply the check, using the
+ *       current record's other year field when the patch supplies only
+ *       one.
  *     - No other behavioural change.
  * =============================================================================
  */
@@ -455,9 +474,7 @@
         // endYear < startYear should be refused too, using the
         // current record's other field when the patch only supplies
         // one. This closes the same inconsistency on the update path
-        // that the create path closes above. It is included in this
-        // commit for consistency even though the action plan scoped
-        // Phase 3.4 to the create paths.
+        // that the create path closes above.
         var nextStartYear = patch.startYear !== undefined
             ? patch.startYear
             : current.startYear;
@@ -709,7 +726,16 @@
     //   options.endYear (required)
     //   options.reason
     //
+    // Phase 3.4-consistent: any target record whose startYear is later
+    // than the supplied endYear is excluded from the batch and reported
+    // in the `rejected` array, instead of being silently ended into an
+    // impossible (startYear > endYear) state. This is the same
+    // structural check that create, createBatch, update, end, and
+    // setWidowed enforce on the single-record paths.
+    //
     // One State batch, one markDataDirty, one subscriber notification.
+    // The batch operates on the ACCEPTED subset only; rejected records
+    // are untouched and remain in their current status.
     // =========================================================================
 
     function endAllActiveForCharacter(characterId, options) {
@@ -740,7 +766,43 @@
         }
 
         if (targets.length === 0) {
-            return _ok({ ended: [], count: 0 });
+            return _ok({
+                ended: [],
+                rejected: [],
+                failed: [],
+                count: 0,
+                rejectedCount: 0,
+                failedCount: 0
+            });
+        }
+
+        // Split into applicable (startYear <= endYear) and rejected
+        // (startYear > endYear). Same check the single-record paths
+        // enforce. Rejected records are NOT sent to State.applyUpdates.
+        var applicable = [];
+        var rejected = [];
+        for (var t = 0; t < targets.length; t++) {
+            var target = targets[t];
+            if (_isEndBeforeStart(target.startYear, options.endYear)) {
+                rejected.push({
+                    id: target.id,
+                    code: 'INVALID_YEARS',
+                    message: 'endYear cannot be before startYear'
+                });
+                continue;
+            }
+            applicable.push(target);
+        }
+
+        if (applicable.length === 0) {
+            return _ok({
+                ended: [],
+                rejected: rejected,
+                failed: [],
+                count: 0,
+                rejectedCount: rejected.length,
+                failedCount: 0
+            });
         }
 
         var now = _now();
@@ -750,7 +812,7 @@
             ? { metadata: { endReason: options.reason } }
             : {};
 
-        var updates = targets.map(function(r) {
+        var updates = applicable.map(function(r) {
             return {
                 id: r.id,
                 patch: Object.assign({
@@ -766,7 +828,14 @@
             return _fail('STATE_REJECTED', result.reason);
         }
 
-        return _ok({ ended: result.updated.slice(), count: result.updated.length });
+        return _ok({
+            ended: result.updated.slice(),
+            rejected: rejected,
+            failed: [],
+            count: result.updated.length,
+            rejectedCount: rejected.length,
+            failedCount: 0
+        });
     }
 
     // =========================================================================
