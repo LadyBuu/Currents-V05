@@ -28,8 +28,9 @@
  *       - apprenticeship lifecycle policy (see ApprenticeshipRules)
  *       - skill storage  (see CharacterCommands.getProfession — the
  *         character domain owns `character.professions`)
- *       - role catalogue (see accessors.js getRoleById — the character
- *         subsystem's canonical role accessor)
+ *       - role catalogue (see RoleState.getRole — the canonical
+ *         runtime owner of the role collection; accessors.getRoleById
+ *         is only a bootstrap fallback)
  *
  * SKILL READS
  *
@@ -44,12 +45,24 @@
  *
  * ROLE NAME RESOLUTION
  *
- *   Role names are resolved via `getRoleById(roleId)` from
- *   accessors.js. That is the canonical ID-based lookup for the role
- *   collection, matching the pattern used by world.js for places and
- *   character-queries.js for characters. There is no separate
- *   RoleState.getRole dependency; RoleState is a UI-state module and
- *   does not expose a role catalogue.
+ *   Role names are resolved by preferring RoleState.getRole, which
+ *   returns clones. This is the same reader every other consumer of
+ *   the role catalogue uses (apprenticeship-commands.js,
+ *   education-commands.js, professional-knowledge-commands.js,
+ *   role-queries.js). It is also the reader that sees the same role
+ *   data the rest of the domain sees, because RoleState is the
+ *   canonical runtime owner.
+ *
+ *   accessors.getRoleById is used only as a bootstrap fallback (when
+ *   RoleState is not yet initialised). It returns the live cached
+ *   record — fine for a name read during bootstrap, but not the
+ *   correct primary surface once RoleState is available.
+ *
+ *   If neither reader resolves the role (role deleted from the
+ *   catalogue, or accessors not loaded), this module returns the
+ *   raw roleId as the display name. This preserves the pre-fix
+ *   fallback behaviour: the projection never fabricates a name, but
+ *   it also never blanks out the field.
  *
  * RETURN CONTRACT
  *
@@ -62,7 +75,10 @@
  *   - relationship-queries.js (RelationshipQueries)
  *   - professional-rules.js   (ProfessionalRules)
  *   - character-commands.js   (CharacterCommands)
- *   - accessors.js            (getRoleById — used for role name display,
+ *   - role-state.js           (RoleState.getRole — preferred role reader;
+ *                              optional at load, hard requirement at call
+ *                              time when a role name is actually needed)
+ *   - accessors.js            (getRoleById — bootstrap fallback;
  *                              optional at call time)
  *
  * =============================================================================
@@ -137,22 +153,40 @@
     }
 
     /**
-     * Resolves a role name via accessors.getRoleById. The dependency
-     * is optional at call time: if it is absent (accessors.js not
-     * loaded, or role collection unavailable), the role id is
-     * returned as-is. This keeps professional queries functional in
-     * contexts that do not have the role catalogue loaded, while
-     * preferring the canonical display name when it is available.
+     * Resolves a role name.
+     *
+     * Prefers RoleState.getRole (clones) — the same reader every other
+     * role-catalogue consumer in the tree uses. Falls back to
+     * accessors.getRoleById (live cached record) when RoleState is not
+     * available. Falls back to returning roleId when neither reader
+     * resolves the role. See ROLE NAME RESOLUTION in the module header.
+     *
+     * The two readers are consulted in this order because:
+     *   - RoleState is the canonical runtime owner and returns clones,
+     *     so the reader cannot be accidentally corrupted by a caller.
+     *   - accessors.getRoleById returns the live record, which is fine
+     *     for a name read during bootstrap but not the primary surface
+     *     once RoleState is available.
+     *   - Returning the raw roleId is the last resort; the projection
+     *     never fabricates a name, but it also never blanks the field.
      */
     function _roleName(roleId) {
         if (!roleId) return null;
-        if (typeof window.getRoleById !== 'function') {
-            return roleId;
+
+        if (window.RoleState && typeof window.RoleState.getRole === 'function') {
+            var clone = window.RoleState.getRole(roleId);
+            if (clone && typeof clone.name === 'string' && clone.name.length > 0) {
+                return clone.name;
+            }
         }
-        var role = window.getRoleById(roleId);
-        if (role && typeof role.name === 'string' && role.name.length > 0) {
-            return role.name;
+
+        if (typeof window.getRoleById === 'function') {
+            var live = window.getRoleById(roleId);
+            if (live && typeof live.name === 'string' && live.name.length > 0) {
+                return live.name;
+            }
         }
+
         return roleId;
     }
 
