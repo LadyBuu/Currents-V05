@@ -6,14 +6,16 @@
  *
  * CANONICAL VS CLONE
  *
- *   addEvent writes to the CANONICAL institution record. It reaches the
- *   record via EducationState._getInstitutionCanonical(id) when given an id,
- *   or uses the object directly when given one. Passing a cloned record (the
- *   kind EducationState.getInstitution returns) will write to the clone and
- *   silently lose the event.
+ *   addEvent takes ONLY an institution id. It reaches the canonical record
+ *   via EducationState._getInstitutionCanonical(id). There is no object
+ *   overload — passing an object used to write to a clone and silently
+ *   lose the event. The overload has been removed.
  *
- *   Read paths (getInstitutionHistory, the recorders) use the cloned record
- *   because they only read.
+ *   Read paths (getInstitutionHistory, the recorders) use the cloned
+ *   record (EducationState.getInstitution) because they only read.
+ *
+ *   All recorders in this file pass an id to addEvent. Any new caller
+ *   must do the same.
  *
  * EVENT SHAPE
  *
@@ -22,6 +24,28 @@
  *
  *   type must be a value of HISTORY_EVENT_TYPES. Unknown types throw.
  *   metadata is a flat object. Nested mutation of metadata is not protected.
+ *
+ * PERSISTENCE
+ *
+ *   addEvent mutates the canonical institution record in memory. It does
+ *   NOT persist. The caller (EducationCommands, EducationAnnual) persists
+ *   once per batch via EducationCommands.persist().
+ *
+ *   EducationState._updateInstitution is NOT called by addEvent; the
+ *   history array is mutated in place on the canonical record. Commands
+ *   that also call _updateInstitution within the same transaction will
+ *   trigger _syncToMasterData, which is what persists the new history
+ *   entry.
+ *
+ *   Recorders called from Commands are always followed by at least one
+ *   _updateInstitution in the same function (e.g. hireTeacher calls
+ *   _updateInstitution for the teachers array before calling
+ *   recordTeacherHired). No recorder runs after the last _updateInstitution
+ *   in a command. If a future command adds a recorder after its last
+ *   _updateInstitution, it must follow the recorder with an explicit
+ *   _updateInstitution({}) to force a sync — or (better) run the recorder
+ *   before the last update.
+ * =============================================================================
  */
 
 (function() {
@@ -67,10 +91,10 @@
     }
 
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('education-history.js requires getCurrentYearSafe');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('education-history.js requires getCurrentYear');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _generateId(prefix) {
@@ -124,13 +148,12 @@
     /**
      * Append an event to an institution's history.
      *
-     * Writes to the canonical institution record. Caller owns persistence.
+     * Writes to the CANONICAL institution record. Caller owns persistence.
      *
-     * @param {Object|string} institutionOrId
-     *        A canonical institution object, or its id. Passing a cloned
-     *        record (the kind EducationState.getInstitution returns) writes
-     *        to the clone and loses the event. Passing a string id routes
-     *        through EducationState._getInstitutionCanonical.
+     * @param {string} institutionId
+     *        The institution id. Required. The canonical record is fetched
+     *        via EducationState._getInstitutionCanonical. Passing a cloned
+     *        record is a programming error; there is no overload for it.
      *
      * @param {Object} event
      * @param {string} event.type         Must be in HISTORY_EVENT_TYPES.
@@ -145,25 +168,28 @@
      *
      * @returns {Object} The stored event (frozen copy).
      */
-    function addEvent(institutionOrId, event) {
+    function addEvent(institutionId, event) {
+        if (typeof institutionId !== 'string' || institutionId.length === 0) {
+            throw new Error(
+                'addEvent: institutionId (non-empty string) is required. ' +
+                'Passing an institution object is not supported; pass its id.'
+            );
+        }
+
         if (!event || typeof event !== 'object') {
             throw new Error('addEvent: event object is required');
         }
 
         _validateEventType(event.type);
 
-        var institution;
-        if (typeof institutionOrId === 'string') {
-            institution = _getInstitutionCanonical(institutionOrId);
-        } else {
-            institution = institutionOrId;
-        }
-
+        var institution = _getInstitutionCanonical(institutionId);
         if (!institution) {
-            throw new Error('addEvent: institution not found');
+            throw new Error('addEvent: institution not found: ' + institutionId);
         }
 
-        if (!institution.history) institution.history = [];
+        if (!Array.isArray(institution.history)) {
+            institution.history = [];
+        }
 
         var record = {
             id: _generateId('edu_evt'),
@@ -255,8 +281,6 @@
 
         return collected.map(function(item) {
             var copy = _copyEvent(item.event);
-            // Institution fields added on top of the frozen event for context.
-            // Object.assign produces a new object; freeze it too.
             return Object.freeze(Object.assign({}, copy, {
                 institutionId: item.institutionId,
                 institutionName: item.institutionName
@@ -302,8 +326,9 @@
 
     // --- Event recorders ---
     // Commands call these during their mutation. They do not persist.
-    // They use the cloned institution record because they only read from it
-    // and then hand it to addEvent, which resolves the canonical record.
+    // They use the cloned institution record (getInstitution) because they
+    // only read from it, and pass the id to addEvent, which resolves the
+    // canonical record internally.
 
     function recordTeacherHired(institutionId, teacherId, subjectId, year, skill, notes) {
         var institution = _getInstitution(institutionId);
