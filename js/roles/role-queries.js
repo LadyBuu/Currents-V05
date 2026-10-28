@@ -43,12 +43,24 @@
  *   matches RoleState.getRole / RoleState.getAllRoles and the
  *   character / family / children / education query layers.
  *
- *   The captured accessors reference exists for one reason: if
- *   role-system.js aliases window.getRoles = RQ.getRoles (which it once
- *   did, and which caused a stack-overflow), then calling
- *   window.getRoles() from inside RQ.getRoles would recurse. Reading
- *   through the captured reference — and preferring RoleState when
- *   available — breaks the cycle.
+ * BOOTSTRAP PATH
+ *
+ *   RoleState.getAllRoles() throws if RoleState.init() has not been
+ *   called. During app bootstrap (before the role state has been
+ *   initialised) the accessor fallback is used. accessors.getRoles()
+ *   returns the LIVE canonical array; a bare .slice() would produce a
+ *   new array whose elements are still the live role records. Any
+ *   caller mutating those records would corrupt canonical state.
+ *
+ *   The fallback therefore clones each record via _cloneRoleRecord(),
+ *   matching the shape RoleState._cloneRoleForRead() produces. Callers
+ *   cannot tell the difference between the two paths — both return
+ *   detached records.
+ *
+ *   The fallback is never entered in the steady state: it only fires
+ *   before RoleState.init(). Any code that reads the role catalogue
+ *   before RoleState has initialised still gets correct, detached
+ *   data; there is no silent live-record leak.
  *
  * CONTRACT:
  *   - Reads are pure. No mutation. No caching. Reentrant.
@@ -161,15 +173,46 @@
     //
     // The primary source is RoleState.getAllRoles(), which returns
     // clones and is the canonical runtime representation.
+    //
+    // See BOOTSTRAP PATH in the module header for why the fallback
+    // clones each record rather than returning the live accessor output.
 
     var _canonicalGetRoles = window.getRoles;
+
+    /**
+     * Shallow clone of a role record, matching the shape produced by
+     * RoleState._cloneRoleForRead. Used by the bootstrap fallback path so
+     * that callers receive detached records regardless of which source
+     * answered the read.
+     *
+     * Keep this field list in sync with RoleState._cloneRoleForRead.
+     */
+    function _cloneRoleRecord(role) {
+        if (!role) return null;
+        return {
+            id: role.id,
+            name: role.name,
+            category: role.category,
+            icon: role.icon,
+            specializations: Array.isArray(role.specializations)
+                ? role.specializations.slice()
+                : [],
+            notes: role.notes,
+            genderRestriction: role.genderRestriction,
+            baseSalary: role.baseSalary,
+            requiresLiteracy: role.requiresLiteracy,
+            literacyLevel: role.literacyLevel
+        };
+    }
 
     /**
      * Reads the canonical role array.
      *
      * Prefers RoleState (returns clones). Falls back to the captured
      * accessors reference only when RoleState is unavailable or not yet
-     * initialised. Every public read in this module goes through here.
+     * initialised, and clones each record on that path so callers cannot
+     * corrupt canonical state. Every public read in this module goes
+     * through here.
      *
      * Returns a copy in all paths.
      */
@@ -185,7 +228,13 @@
             }
         }
         var fromAccessor = _canonicalGetRoles();
-        return Array.isArray(fromAccessor) ? fromAccessor.slice() : [];
+        if (!Array.isArray(fromAccessor)) return [];
+        var out = [];
+        for (var i = 0; i < fromAccessor.length; i++) {
+            var clone = _cloneRoleRecord(fromAccessor[i]);
+            if (clone) out.push(clone);
+        }
+        return out;
     }
 
     // =========================================================================
