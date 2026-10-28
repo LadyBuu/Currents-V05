@@ -53,11 +53,76 @@
  *     reloading a ViewModel reads the same canonical data that was just
  *     persisted.
  *
- *   - The function does not swallow errors. If persist throws, the error
- *     propagates to the caller. A command that wants to handle persistence
- *     failure does so explicitly at its call site, not by hiding the
- *     failure inside the commit helper.
+ *   - The function does not swallow errors. If persist throws, or if
+ *     persist returns false, the error propagates to the caller. A
+ *     command that wants to handle persistence failure does so explicitly
+ *     at its call site, not by hiding the failure inside the commit
+ *     helper.
  *
+ * PERSIST FAILURE CONTRACT:
+ *
+ *   saveMasterData() returns a boolean. It does NOT throw on write
+ *   failure. The boolean MUST be inspected. On false, getLastSaveError()
+ *   provides the underlying Error so the caller can surface the actual
+ *   failure reason (quota exceeded, JSON serialization failure, storage
+ *   disabled) rather than a generic message.
+ *
+ *   This matches Pattern A in storage.js's DOMAIN PERSIST CONTRACT:
+ *
+ *     var ok = window.saveMasterData();
+ *     if (ok === true) { ... }
+ *     var lastError = window.getLastSaveError();
+ *     ...
+ *
+ *   Pattern C (the historical broken pattern that silently reported
+ *   success on every failed save) MUST NOT be reintroduced. The current
+ *   implementation of this module previously called saveMasterData()
+ *   without inspecting the return — every settlement command reported
+ *   success even when persistence failed. That is now fixed.
+ *
+ *   The failure is propagated as a thrown Error, not as a structured
+ *   return value. Rationale:
+ *
+ *     - commit() is a low-level primitive. Its callers are commands, and
+ *       every command already wraps its commit call in the command's own
+ *       try/catch when it needs to convert an exception into a structured
+ *       failure. Commands that do not wrap will propagate the exception
+ *       to their own callers, which is the correct behavior for a
+ *       persistence failure.
+ *
+ *     - Returning a structured result from commit() would tempt commands
+ *       to treat "commit returned an object" as "commit succeeded."
+ *       Throwing makes the failure impossible to miss.
+ *
+ *     - The published event is NOT dispatched when persistence fails.
+ *       Subscribers must not be told the world changed when it was not
+ *       durably written. The candidate was already written to the
+ *       in-memory canonical store, so the in-memory state is
+ *       inconsistent with storage until the next successful commit. The
+ *       caller is responsible for reloading or retrying.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _saveMasterData() now inspects the boolean return from
+ *       window.saveMasterData() and throws on false, using
+ *       getLastSaveError() to surface the underlying failure reason.
+ *       Prior revisions called saveMasterData() and ignored the return,
+ *       which reintroduced the Pattern C bug documented in storage.js's
+ *       DOMAIN PERSIST CONTRACT. Every settlement command silently
+ *       reported success on every failed save; the annual processor's
+ *       per-settlement history records were lost on quota failure with
+ *       no signal.
+ *     - Header PERSIST FAILURE CONTRACT section added, documenting the
+ *       boolean-inspection pattern, the throw-on-failure decision, and
+ *       the reason the published event is NOT dispatched after a failed
+ *       persist.
+ *     - The commit() function itself is unchanged in signature and
+ *       return shape. The only observable difference is that it now
+ *       throws when persist fails, instead of returning the published
+ *       event as if everything succeeded.
+ *   Prior revision:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -85,6 +150,19 @@
         return window.masterData.data.settlementData;
     }
 
+    /**
+     * Persists the current canonical state via window.saveMasterData().
+     *
+     * Inspects the boolean return value per Pattern A in storage.js's
+     * DOMAIN PERSIST CONTRACT. On failure, reads getLastSaveError() to
+     * surface the underlying reason and throws an Error.
+     *
+     * Does NOT return a boolean. Either the save succeeded (returns
+     * normally) or it failed (throws).
+     *
+     * @private
+     * @throws {Error} if saveMasterData is missing or returns false
+     */
     function _saveMasterData() {
         if (typeof window.saveMasterData !== 'function') {
             throw new Error(
@@ -92,7 +170,21 @@
                 'Cannot persist settlement state.'
             );
         }
-        window.saveMasterData();
+
+        var ok = window.saveMasterData();
+        if (ok === true) return;
+
+        var lastError = (typeof window.getLastSaveError === 'function')
+            ? window.getLastSaveError()
+            : null;
+
+        var reason = (lastError && lastError.message)
+            ? lastError.message
+            : 'saveMasterData returned false';
+
+        throw new Error(
+            'SettlementCommandCommit: persist failed: ' + reason
+        );
     }
 
     // =========================================================================
@@ -112,12 +204,16 @@
     // Returns the event that was published, so callers can use the same
     // object shape for their own return value if they want.
     //
+    // Throws if persistence fails. See PERSIST FAILURE CONTRACT in the
+    // module header.
+    //
 
     /**
      * @param {string} locationId
      * @param {Object} candidate
      * @param {Object} event
      * @returns {Object} the published event
+     * @throws {Error} if saveMasterData is missing or returns false
      */
     function commit(locationId, candidate, event) {
         if (typeof locationId !== 'string' || locationId.length === 0) {
@@ -144,6 +240,12 @@
         _getState().rebuildIndexes();
 
         // --- 3. Persist once ---
+        // Throws on failure. The published event is NOT dispatched after a
+        // failed persist; subscribers must not see a change that was not
+        // durably written. The candidate has already been written to the
+        // in-memory canonical store at this point, so the caller is
+        // responsible for reloading or retrying after a thrown persist
+        // error.
         _saveMasterData();
 
         // --- 4. Publish once ---
