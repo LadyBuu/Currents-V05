@@ -9,8 +9,8 @@
  * -------
  * Modal entry points for household staff position management.
  *
- * Reads:  HouseholdQueries, RoleQueries (via window.getRoleById /
- *         window.getAllRoles — RoleQueries not a hard dependency)
+ * Reads:  HouseholdQueries, RoleQueries (via HouseholdModals.getRoleById /
+ *         getAllRoles — RoleQueries not a hard dependency)
  * Writes: HouseholdCommands + one persist() per batch
  * UI:     modals-core, selectors, icons, HouseholdModals, HouseholdViewModels
  *
@@ -27,14 +27,14 @@
  *   - No HouseholdState access.
  *   - No _processingStaffModal guard.
  *
- * ADD-ROLE-IF-MISSING (WIRED)
- * ---------------------------
+ * ADD-ROLE-IF-MISSING
+ * -------------------
  *   The single-assignment modal exposes an "Add role if missing"
  *   checkbox. When checked, it passes `options.addRoleIfMissing: true`
  *   and `options.defaultSkillLevel` to
- *   HouseholdCommands.assignCharacterToPosition, which now honors the
- *   flag (Prompt 33). If the role-add fails, the command returns
- *   ROLE_ADD_FAILED and the modal reports the failure and keeps open.
+ *   HouseholdCommands.assignCharacterToPosition, which honors the flag.
+ *   If the role-add fails, the command returns ROLE_ADD_FAILED and the
+ *   modal reports the failure and keeps open.
  *
  *   When unchecked, the assignment proceeds and the result carries
  *   `roleWarning` (if applicable). The modal surfaces that warning as
@@ -51,18 +51,36 @@
  *   reported in result.data.failed with code ROLE_ADD_FAILED, and the
  *   rest of the batch continues.
  *
- * DOM-SCOPE
- * ---------
- *   Every DOM lookup is scoped to the modal's own `handle.element` via
- *   HouseholdModals.rootFrom(modal). See modals-helper.js for why the
- *   prior _resolveModalRoot() fallback (which ended at document.body)
- *   was wrong.
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom, persistOrFail,
+ *   reportFailure, esc, readValue, readIntOrNull, readChecked, onOpen,
+ *   currentYear, closeThen, confirmDialog, getRoleById, getAllRoles,
+ *   buildRoleOptions, renderStaffCandidates, wireStaffCandidateSelection,
+ *   buildRecentAssignmentHistory — lives in HouseholdModals. This file
+ *   keeps only its local aliases (var _esc = _Modals.esc; etc.) and its
+ *   domain-specific builders (_buildDepartmentOptions, the wire functions
+ *   for the management modal, and the small presentation helpers).
+ *
+ *   Prior revisions carried local copies of getRoleById, getAllRoles,
+ *   buildRoleOptions, _buildCandidateList, _wireCandidateSelection, and
+ *   _buildRecentHistory. Those are now HouseholdModals exports;
+ *   modals-residence-staff.js and this file both call the same
+ *   implementation, so the two staff modals stay in lockstep.
  *
  * DEFAULT_SKILL_LEVEL
  * -------------------
  *   The prior version defined `var DEFAULT_SKILL_LEVEL = 10;` locally.
  *   That value now lives in HouseholdViewModels.DEFAULT_SKILL_LEVEL.
  *   This module reads from there so there's one canonical number.
+ *   (Mirrors the same consolidation in modals-residence-staff.js.)
+ *
+ * DOM-SCOPE
+ * ---------
+ *   Every DOM lookup is scoped to the modal's own `handle.element` via
+ *   HouseholdModals.rootFrom(modal). See modals-helper.js for the full
+ *   rationale on why the prior _resolveModalRoot() fallback (which
+ *   ended at document.body) was wrong.
  *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - modals-core.js (openModal, closeTopModal, confirmDialog)
@@ -73,12 +91,38 @@
  *   - household-view-models.js (HouseholdViewModels)
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
- *   - RoleQueries / RoleState (for role lookup — falls back to
- *     window.getRoleById / window.getAllRoles if not present)
+ *   - RoleQueries / RoleState — via HouseholdModals.getRoleById /
+ *     getAllRoles
  *   - selectors/modals-char-selector.js (openCharacterSelector)
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _persistOrFail, _currentYear,
+ *       _confirmDialog, and _closeThen. All four were structurally
+ *       identical to the shared versions exported by HouseholdModals.
+ *     - Removed the local copies of _getRoleById, _getAllRoles,
+ *       _buildRoleOptions, _buildCandidateList, _wireCandidateSelection,
+ *       and _buildRecentHistory. Those are now HouseholdModals exports;
+ *       modals-residence-staff.js and this file both call the same
+ *       implementation.
+ *     - The assign-staff modal now delegates candidate-list rendering to
+ *       HouseholdModals.renderStaffCandidates (projecting the household
+ *       member shape to the shared normalized candidate shape) and DOM
+ *       wiring to HouseholdModals.wireStaffCandidateSelection.
+ *     - The recent-history block now delegates to
+ *       HouseholdModals.buildRecentAssignmentHistory with a household-
+ *       specific label resolver (household assignment entries carry
+ *       characterName/title, not the residence-side shape).
+ *     - No behavioural change to any modal entry point.
+ *   Previous revisions:
+ *     - assignStaff modal wired addRoleIfMissing through to
+ *       HouseholdCommands.assignCharacterToPosition.
+ *     - bulkAssign modal passed addRoleIfMissing: true through to
+ *       HouseholdCommands.bulkAssign.
+ *     - Every DOM lookup scoped to handle.element via rootFrom.
  * =============================================================================
  */
 
@@ -155,90 +199,56 @@
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
     _requireFunction('HouseholdModals.readChecked', _Modals.readChecked);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
+    _requireFunction('HouseholdModals.confirmDialog', _Modals.confirmDialog);
+    _requireFunction('HouseholdModals.getRoleById', _Modals.getRoleById);
+    _requireFunction('HouseholdModals.getAllRoles', _Modals.getAllRoles);
+    _requireFunction('HouseholdModals.buildRoleOptions',
+        _Modals.buildRoleOptions);
+    _requireFunction('HouseholdModals.renderStaffCandidates',
+        _Modals.renderStaffCandidates);
+    _requireFunction('HouseholdModals.wireStaffCandidateSelection',
+        _Modals.wireStaffCandidateSelection);
+    _requireFunction('HouseholdModals.buildRecentAssignmentHistory',
+        _Modals.buildRecentAssignmentHistory);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showWarning = _Modals.showWarning;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    function _currentYear() {
-        return (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    var _persistOrFail = _Modals.persistOrFail;
+    var _confirmDialog = _Modals.confirmDialog;
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
-    // 1. CONFIRM DIALOG
+    // 1. LOCAL HELPERS
     // =========================================================================
+    //
+    // The role lookups, role-option builder, candidate renderer, and
+    // candidate-selection wiring now live in HouseholdModals. The two
+    // helpers below are household-specific:
+    //
+    //   _openCharacterSelector  — fail-loud wrapper on openCharacterSelector
+    //   _buildDepartmentOptions — household-specific department dropdown
+    //
+    // Everything else is a thin adapter over HouseholdModals.
 
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
+    function _openCharacterSelector(options) {
+        if (typeof window.openCharacterSelector === 'function') {
+            return window.openCharacterSelector(options);
         }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (window.confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else if (onCancel) {
-            onCancel();
-        }
-    }
-
-    // =========================================================================
-    // 2. ROLE / DEPARTMENT / ICON LOOKUPS
-    // =========================================================================
-
-    function _getRoleById(id) {
-        if (!id) return null;
-        if (typeof window.getRoleById === 'function') {
-            return window.getRoleById(id);
-        }
-        if (typeof window.RoleQueries !== 'undefined'
-            && typeof window.RoleQueries.getRoleById === 'function') {
-            return window.RoleQueries.getRoleById(id);
-        }
+        _showError('Character selector not available');
         return null;
-    }
-
-    function _getAllRoles() {
-        if (typeof window.RoleState !== 'undefined'
-            && typeof window.RoleState.getAllRoles === 'function') {
-            return window.RoleState.getAllRoles();
-        }
-        if (typeof window.RoleQueries !== 'undefined'
-            && typeof window.RoleQueries.getAllRoles === 'function') {
-            return window.RoleQueries.getAllRoles();
-        }
-        return [];
-    }
-
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        return '';
-    }
-
-    function _buildRoleOptions(selectedId, emptyLabel) {
-        emptyLabel = emptyLabel || 'No role required';
-        var html = '<option value="">' + _esc(emptyLabel) + '</option>';
-        var roles = _getAllRoles();
-        if (!Array.isArray(roles)) return html;
-
-        for (var i = 0; i < roles.length; i++) {
-            var r = roles[i];
-            var selected = (r.id === selectedId) ? ' selected' : '';
-            var icon = _getIcon(r.iconKey || r.icon) || '';
-            var category = r.category || 'Uncategorized';
-            var label = (icon ? icon + ' ' : '') + (r.name || 'Unnamed') +
-                ' (' + category + ')';
-            html += '<option value="' + _esc(r.id) + '"' + selected + '>' +
-                _esc(label) + '</option>';
-        }
-        return html;
     }
 
     function _buildDepartmentOptions(householdId, selectedId) {
@@ -256,7 +266,7 @@
     }
 
     // =========================================================================
-    // 3. CREATE POSITION MODAL
+    // 2. CREATE POSITION MODAL
     // =========================================================================
 
     function openCreateHouseholdPositionModal(householdId, onSuccess) {
@@ -267,7 +277,7 @@
         }
 
         var departmentOptionsHtml = _buildDepartmentOptions(householdId, null);
-        var roleOptionsHtml = _buildRoleOptions(null, 'No role required');
+        var roleOptionsHtml = _Modals.buildRoleOptions(null, 'No role required');
 
         var content =
             '<div style="margin-bottom:16px;">' +
@@ -370,7 +380,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Position created');
+                var persisted = _persistOrFail('Position created');
                 if (!persisted.ok) {
                     // Keep the modal open so the user can retry.
                     return false;
@@ -386,7 +396,7 @@
     }
 
     // =========================================================================
-    // 4. EDIT POSITION MODAL
+    // 3. EDIT POSITION MODAL
     // =========================================================================
 
     function openEditHouseholdPositionModal(householdId, positionId, onSuccess) {
@@ -402,7 +412,7 @@
             return null;
         }
 
-        var roleOptionsHtml = _buildRoleOptions(
+        var roleOptionsHtml = _Modals.buildRoleOptions(
             position.requiredRoleId, 'No role required');
         var departmentOptionsHtml = _buildDepartmentOptions(
             householdId, position.departmentId);
@@ -504,7 +514,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Position updated');
+                var persisted = _persistOrFail('Position updated');
                 if (!persisted.ok) {
                     return false;
                 }
@@ -519,7 +529,7 @@
     }
 
     // =========================================================================
-    // 5. DELETE POSITION MODAL
+    // 4. DELETE POSITION MODAL
     // =========================================================================
 
     function openDeleteHouseholdPositionModal(householdId, positionId, onSuccess) {
@@ -532,7 +542,7 @@
 
         var activeAssignments = _queries.getAssignmentsForPosition(positionId, true);
         var roleName = position.requiredRoleId
-            ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+            ? (_Modals.getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
             : null;
 
         var content =
@@ -604,7 +614,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Position deleted');
+                var persisted = _persistOrFail('Position deleted');
                 if (!persisted.ok) {
                     return false;
                 }
@@ -619,8 +629,25 @@
     }
 
     // =========================================================================
-    // 6. ASSIGN STAFF MODAL
+    // 5. ASSIGN STAFF MODAL
     // =========================================================================
+    //
+    // Candidates come from the household member list (via
+    // getHouseholdDetails). The shared candidate renderer
+    // (HouseholdModals.renderStaffCandidates) consumes a normalized
+    // array with { characterId, displayName, age, hasRole, skillLevel }.
+    // The assign modal projects household member entries into that shape
+    // and passes the position (for the requiredRoleId indicator) through.
+    //
+    // The candidate DOM wiring is delegated to
+    // HouseholdModals.wireStaffCandidateSelection via
+    // _wireCandidateSelection, which adds the "Select Other Character"
+    // flow that is household-specific.
+    //
+    // addRoleIfMissing is wired through to
+    // HouseholdCommands.assignCharacterToPosition: when the checkbox is
+    // checked the command adds the missing role; when unchecked the
+    // command succeeds with a roleWarning that this modal surfaces.
 
     function openAssignStaffToHouseholdPositionModal(householdId, positionId, onSuccess) {
         var household = _queries.getHousehold(householdId);
@@ -662,21 +689,18 @@
 
             candidates.push({
                 characterId: mem.characterId,
-                characterName: mem.characterName,
+                displayName: mem.characterName,
                 age: mem.age,
-                gender: mem.character ? mem.character.gender : null,
-                currentRole: mem.role,
-                currentType: mem.type,
                 hasRole: hasRole,
                 skillLevel: skillLevel
             });
         }
 
         var roleDisplay = position.requiredRoleId
-            ? (_getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
+            ? (_Modals.getRoleById(position.requiredRoleId) || {}).name || 'Unknown'
             : 'None';
 
-        var candidatesHtml = _buildCandidateList(candidates, position);
+        var candidatesHtml = _Modals.renderStaffCandidates(candidates, position);
         var history = _queries.getAssignmentsForPosition(positionId, false);
         var historyHtml = _buildRecentHistory(history, 5);
 
@@ -796,7 +820,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Staff assigned');
+                var persisted = _persistOrFail('Staff assigned');
                 if (!persisted.ok) {
                     return false;
                 }
@@ -819,132 +843,39 @@
         });
 
         _Modals.onOpen(modal, function(root) {
-            _wireCandidateSelection(root, householdId, positionId, position, onSuccess);
+            _wireCandidateSelection(root, householdId, positionId, onSuccess);
         });
 
         return modal;
     }
 
-    function _buildCandidateList(candidates, position) {
-        if (candidates.length === 0) {
-            return '<div style="color:var(--dim);text-align:center;padding:20px;font-size:0.6rem;">' +
-                'No available staff members' +
-            '</div>';
-        }
+    // =========================================================================
+    // 6. CANDIDATE WIRING ADAPTERS
+    // =========================================================================
+    //
+    // The shared helpers live in HouseholdModals. These two adapters
+    // exist because the household staff modal adds the "Select Other
+    // Character" flow (openCharacterSelector then reopen this modal),
+    // which is household-specific. The candidate-list wiring itself is
+    // delegated.
 
-        var html = '<div style="max-height:250px;overflow-y:auto;">';
-        for (var i = 0; i < candidates.length; i++) {
-            var c = candidates[i];
-            var skillText = position.requiredRoleId
-                ? (c.hasRole
-                    ? '<span style="font-size:0.45rem;color:var(--success);">✓ has role</span>'
-                    : '<span style="font-size:0.45rem;color:var(--warn);">missing role</span>')
-                : '';
-            var skillLevelText = c.skillLevel > 0
-                ? '<span style="font-size:0.45rem;color:var(--accent);">(Skill: ' +
-                    c.skillLevel + ')</span>'
-                : '';
-            var ageText = (c.age !== null && c.age !== undefined)
-                ? c.age + 'y' : '—';
-
-            html += '<div class="staff-candidate" data-character-id="' +
-                _esc(c.characterId) +
-                '" style="padding:8px 10px;margin-bottom:4px;background:var(--bg2);border:1px solid var(--border);' +
-                'border-left:3px solid ' +
-                    (position.requiredRoleId && !c.hasRole ? 'var(--warn)' : 'var(--success)') +
-                ';border-radius:4px;cursor:pointer;transition:background 0.1s;">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;">' +
-                    '<div>' +
-                        '<strong>' + _esc(c.characterName) + '</strong>' +
-                        ' <span style="font-size:0.5rem;color:var(--dim);">' +
-                            ageText +
-                            (c.currentRole
-                                ? ' · ' + _esc(c.currentRole) : '') +
-                        '</span>' +
-                        ' ' + skillText + ' ' + skillLevelText +
-                    '</div>' +
-                '</div>' +
-                '</div>';
-        }
-        html += '</div>';
-        return html;
-    }
-
-    function _buildRecentHistory(history, limit) {
-        if (!history || history.length === 0) return '';
-
-        var sorted = history.slice().sort(function(a, b) {
-            return (b.startYear || 0) - (a.startYear || 0);
-        });
-        var recent = sorted.slice(0, limit);
-
-        var html = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">';
-        html += '<div style="font-size:0.65rem;color:var(--accent);margin-bottom:8px;">Recent History</div>';
-        html += '<div style="max-height:120px;overflow-y:auto;background:var(--bg3);border-radius:6px;padding:8px;">';
-
-        for (var i = 0; i < recent.length; i++) {
-            var h = recent[i];
-            var endDisplay = h.endYear !== null ? h.endYear : 'Present';
-            var color = h.isActive ? 'var(--success)' : 'var(--dim)';
-            var roleName = h.roleIdAtAssignment
-                ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
-                : null;
-
-            html += '<div style="display:flex;justify-content:space-between;padding:4px 0;' +
-                'border-bottom:1px solid var(--border-light);font-size:0.6rem;">' +
-                '<span>' + _esc(h.title || 'Unknown') +
-                    (roleName
-                        ? ' <span style="color:var(--accent);">(' +
-                            _esc(roleName) + ')</span>'
-                        : '') +
-                '</span>' +
-                '<span style="color:' + color + ';">' +
-                    h.startYear + ' - ' + endDisplay +
-                '</span>' +
-            '</div>';
-        }
-        html += '</div></div>';
-        return html;
-    }
-
-    function _wireCandidateSelection(root, householdId, positionId, position, onSuccess) {
-        var candidates = root.querySelectorAll('.staff-candidate');
-        for (var i = 0; i < candidates.length; i++) {
-            (function(el) {
-                el.onclick = function() {
-                    var all = root.querySelectorAll('.staff-candidate');
-                    for (var j = 0; j < all.length; j++) {
-                        all[j].classList.remove('selected');
-                        all[j].style.background = 'var(--bg2)';
-                        all[j].style.borderColor = 'var(--border)';
-                    }
-                    el.classList.add('selected');
-                    el.style.background = 'rgba(var(--accent-rgb), 0.15)';
-                    el.style.borderColor = 'var(--accent)';
-                };
-                el.onmouseenter = function() {
-                    if (!el.classList.contains('selected')) {
-                        el.style.background = 'var(--bg3)';
-                    }
-                };
-                el.onmouseleave = function() {
-                    if (!el.classList.contains('selected')) {
-                        el.style.background = 'var(--bg2)';
-                    }
-                };
-            })(candidates[i]);
-        }
-
-        var otherBtn = root.querySelector('[data-action="select-other-character"]');
-        if (otherBtn) {
-            otherBtn.onclick = function() {
-                if (typeof window.openCharacterSelector !== 'function') {
-                    _showWarning('Character selector not available');
-                    return;
-                }
-                window.openCharacterSelector({
+    /**
+     * Wires the candidate list plus the "Select Other Character" flow.
+     * Delegates the candidate-list wiring to
+     * HouseholdModals.wireStaffCandidateSelection.
+     *
+     * @param {HTMLElement} root
+     * @param {string} householdId
+     * @param {string} positionId
+     * @param {Function} onSuccess
+     */
+    function _wireCandidateSelection(root, householdId, positionId, onSuccess) {
+        _Modals.wireStaffCandidateSelection(root, {
+            onSelectOther: function() {
+                _openCharacterSelector({
                     title: 'Select Character for ' +
-                        (position ? position.name : 'position'),
+                        (_queries.getHouseholdPosition(positionId) || {}).name ||
+                        'position',
                     onSelect: function(character) {
                         if (!character) return;
                         _closeTopModal();
@@ -954,8 +885,32 @@
                         }, 0);
                     }
                 });
-            };
-        }
+            }
+        });
+    }
+
+    /**
+     * Wraps HouseholdModals.buildRecentAssignmentHistory with a
+     * household-specific label resolver. Household staff assignments
+     * carry `characterName` and `title` (the custom position title),
+     * not the residence-side shape.
+     */
+    function _buildRecentHistory(history, limit) {
+        return _Modals.buildRecentAssignmentHistory(
+            history,
+            limit,
+            function resolveRoleName(roleId) {
+                var role = _Modals.getRoleById(roleId);
+                return role ? role.name : null;
+            },
+            function resolveName(entry) {
+                var base = entry.characterName || 'Unknown';
+                if (entry.title && entry.title !== entry.characterName) {
+                    return base + ' (' + entry.title + ')';
+                }
+                return base;
+            }
+        );
     }
 
     // =========================================================================
@@ -977,7 +932,7 @@
 
         var position = _queries.getHouseholdPosition(assignment.positionId);
         var roleName = assignment.roleIdAtAssignment
-            ? (_getRoleById(assignment.roleIdAtAssignment) || {}).name || 'Unknown'
+            ? (_Modals.getRoleById(assignment.roleIdAtAssignment) || {}).name || 'Unknown'
             : 'None';
 
         var isAlreadyEnded = assignment.endYear !== null &&
@@ -1062,7 +1017,7 @@
                         return false;
                     }
 
-                    var delPersisted = _Modals.persistOrFail('Assignment deleted');
+                    var delPersisted = _persistOrFail('Assignment deleted');
                     if (!delPersisted.ok) {
                         return false;
                     }
@@ -1088,7 +1043,7 @@
                     return false;
                 }
 
-                var endPersisted = _Modals.persistOrFail('Assignment ended');
+                var endPersisted = _persistOrFail('Assignment ended');
                 if (!endPersisted.ok) {
                     return false;
                 }
@@ -1187,7 +1142,7 @@
             var h = sorted[j];
             var endDisplay = h.endYear !== null ? h.endYear : 'Present';
             var roleName = h.roleIdAtAssignment
-                ? (_getRoleById(h.roleIdAtAssignment) || {}).name || null
+                ? (_Modals.getRoleById(h.roleIdAtAssignment) || {}).name || null
                 : null;
             var color = h.isActive ? 'var(--success)' : 'var(--dim)';
 
@@ -1258,7 +1213,7 @@
 
             candidates.push({
                 characterId: mem.characterId,
-                characterName: mem.characterName,
+                displayName: mem.characterName,
                 age: mem.age,
                 hasRole: hasRole,
                 skillLevel: skillLevel
@@ -1291,7 +1246,7 @@
                     '<input type="checkbox" data-role="bulk-checkbox" data-character-id="' +
                         _esc(c.characterId) + '" style="cursor:pointer;">' +
                     '<span style="font-size:0.65rem;">' +
-                        _esc(c.characterName) + ' (' + ageText + ')' +
+                        _esc(c.displayName) + ' (' + ageText + ')' +
                     '</span>' +
                     roleIcon +
                     (c.skillLevel > 0
@@ -1308,7 +1263,7 @@
                 '<strong>Position:</strong> ' + _esc(position.name) +
                 (position.requiredRoleId
                     ? '<br><strong>Required Role:</strong> ' +
-                        _esc((_getRoleById(position.requiredRoleId) || {}).name || 'Unknown')
+                        _esc((_Modals.getRoleById(position.requiredRoleId) || {}).name || 'Unknown')
                     : '') +
             '</div>' +
 
@@ -1384,7 +1339,7 @@
                     return false;
                 }
 
-                var persisted = _Modals.persistOrFail('Bulk assignment saved');
+                var persisted = _persistOrFail('Bulk assignment saved');
 
                 var succeeded = (result.data.succeeded || []).length;
                 var failed = (result.data.failed || []).length;
@@ -1508,7 +1463,7 @@
                     if (posAssignments[q].isActive) activeCount++;
                 }
                 var roleName = pos.requiredRoleId
-                    ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+                    ? (_Modals.getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
                     : 'None';
 
                 rows += '<div class="position-item" data-position-id="' +
@@ -1612,7 +1567,7 @@
                 var asg = assignments[a];
                 var pos = positionMap[asg.positionId];
                 var roleName = asg.roleIdAtAssignment
-                    ? (_getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
+                    ? (_Modals.getRoleById(asg.roleIdAtAssignment) || {}).name || 'Unknown'
                     : 'None';
 
                 rows += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg2);border-radius:4px;border-left:3px solid var(--accent);">' +
@@ -1680,7 +1635,7 @@
                                     return;
                                 }
 
-                                var persisted = _Modals.persistOrFail('Assignment ended');
+                                var persisted = _persistOrFail('Assignment ended');
                                 if (!persisted.ok) {
                                     return;
                                 }
@@ -1736,7 +1691,7 @@
                     if (posAssignments[q].isActive) activeCount++;
                 }
                 var roleName = pos.requiredRoleId
-                    ? (_getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
+                    ? (_Modals.getRoleById(pos.requiredRoleId) || {}).name || 'Unknown'
                     : 'None';
 
                 rows += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;background:var(--bg2);border-radius:4px;border-left:3px solid ' +
@@ -1810,11 +1765,6 @@
     }
 
     function _wireStaffManagement(root, householdId, onSuccess) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         function _reopen() {
             setTimeout(function() {
                 openStaffManagementModal(householdId, onSuccess);
