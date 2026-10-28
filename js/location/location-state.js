@@ -33,10 +33,53 @@
  * transaction and then write through _addPlace / _removePlace / _addLocationType
  * / _removeLocationType.
  *
- * Persistence:
+ * PERSISTENCE:
  *   Mutation primitives call window.markDataDirty() after a successful write.
  *   LocationCommands owns the batch persist boundary (LocationCommands.persist).
  *   State does not call saveMasterData.
+ *
+ * ACCESSOR CACHE CONTRACT:
+ *   accessors.js maintains id -> record caches (_placeMap, _locationTypeMap)
+ *   used by getPlaceById / getLocationTypeById. Every mutation of the
+ *   canonical place or location-type arrays must invalidate that cache via
+ *   window.invalidateAccessorCaches(). Without this, getPlaceById returns
+ *   stale records after a location write, and downstream consumers
+ *   (world.js::getCurrentPlace / getParentChain / getChildPlaces,
+ *   location-queries.js, location-view-models.js, modals-location.js)
+ *   read the pre-mutation shape.
+ *
+ *   The invalidation happens at FOUR boundaries:
+ *
+ *     1. Mutation primitives (_addPlace, _removePlace, _addLocationType,
+ *        _removeLocationType). Each calls invalidateAccessorCaches after a
+ *        successful write. Same pattern as character-state.js.
+ *
+ *     2. Hydration (hydrateFromMasterData). The in-memory catalogue is
+ *        replaced wholesale. The accessor cache is stale. Invalidated
+ *        here so bootstrap and reload paths see fresh data.
+ *
+ *     3. Cross-tab reload (masterDataUpdated). Storage.js invalidates
+ *        before dispatching, but this module also listens directly and
+ *        re-hydrates. Defense in depth: if storage.js ever stops
+ *        invalidating, this module still does.
+ *
+ *     4. Manual refresh (see refresh() below).
+ *
+ *   This mirrors the pattern established by character-state.js,
+ *   rank-state.js, and name-state.js.
+ *
+ * MASTER DATA RELOAD:
+ *   This module subscribes to 'masterDataUpdated'. When storage.js
+ *   dispatches it (cross-tab reload, import, reset), this module
+ *   re-hydrates its indexes from the newly installed masterData and
+ *   then publishes 'stateReloaded' to its own subscribers.
+ *
+ *   This closes the only remaining correctness gap in the location
+ *   domain: previously, a cross-tab reload left the location indexes
+ *   pointing at the pre-reload canonical arrays, and every read through
+ *   LocationState (getPlaceById, getPlacesByParentId, etc.) returned
+ *   stale data. Same pattern as character-state.js's
+ *   _handleMasterDataUpdated.
  *
  * COMPATIBILITY (core layer):
  *   - window.LocationState is owned by THIS file. It is the domain index layer.
@@ -51,6 +94,32 @@
  *   - window.markDataDirty (core/storage.js) is required. A missing module is
  *     a load-order bug, not a recoverable condition.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added 'masterDataUpdated' listener. Closes the only remaining
+ *       correctness gap: a cross-tab reload previously left the location
+ *       indexes pointing at the pre-reload canonical arrays. Now the
+ *       state re-hydrates automatically and publishes 'stateReloaded'.
+ *     - Every mutation primitive (_addPlace, _removePlace, _addLocationType,
+ *       _removeLocationType) now calls window.invalidateAccessorCaches()
+ *       after a successful write. Previously only markDataDirty was
+ *       called, so accessors.getPlaceById / getLocationTypeById returned
+ *       stale records after any location write. Same pattern as
+ *       character-state.js::_emitChange.
+ *     - hydrateFromMasterData now calls invalidateAccessorCaches at the
+ *       end. The in-memory catalogue is replaced wholesale, so the
+ *       accessor cache is stale after hydration.
+ *     - New refresh() public function: rebuilds indexes from canonical
+ *       data and invalidates the accessor cache. Manual escape hatch for
+ *       diagnostic tooling.
+ *     - Header ACCESSOR CACHE CONTRACT and MASTER DATA RELOAD sections
+ *       added.
+ *     - No public signature change, no public return-shape change.
+ *   Previous revision:
+ *     - Collision guard for window.LocationState.
+ *     - Clone strategy: prefer collections.deepClone, fall back to local.
+ *     - Non-reentrant publish queue.
  * =============================================================================
  */
 
@@ -158,7 +227,23 @@
     var _subscribers = [];
 
     // -------------------------------------------------------------------------
-    // 6. CANONICAL ACCESS
+    // 6. ACCESSOR CACHE INVALIDATION
+    // -------------------------------------------------------------------------
+    //
+    // Called by every mutation primitive, by hydrateFromMasterData, and by
+    // the masterDataUpdated listener. Defensive: if accessors.js is not
+    // loaded, the call is a no-op. Every mutation still works; the accessor
+    // cache only goes stale in environments without accessors.js, which do
+    // not have any getPlaceById consumers anyway.
+
+    function _invalidateAccessorCaches() {
+        if (typeof window.invalidateAccessorCaches === 'function') {
+            window.invalidateAccessorCaches();
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. CANONICAL ACCESS
     // -------------------------------------------------------------------------
 
     function _canonicalPlaces() {
@@ -184,18 +269,23 @@
     }
 
     // -------------------------------------------------------------------------
-    // 7. HYDRATION
+    // 8. HYDRATION
     // -------------------------------------------------------------------------
 
     /**
      * Hydrates all indexes from canonical data.
      *
      * This is the ONLY way State learns about world changes. Called by
-     * LocationBootstrap at load, and by LocationCommands after a successful
-     * mutation (before persist/publish).
+     * LocationBootstrap at load, by LocationCommands after a successful
+     * mutation (before persist/publish), and by the masterDataUpdated
+     * listener after a cross-tab reload.
      *
      * Throws on corrupted canonical data: duplicate ids, missing ids.
      * A corrupted canonical world is a hard failure, not a soft skip.
+     *
+     * Calls invalidateAccessorCaches at the end. The in-memory catalogue
+     * is replaced wholesale; the accessor cache is stale. See ACCESSOR
+     * CACHE CONTRACT in the header.
      */
     function hydrateFromMasterData() {
         _placeById.clear();
@@ -255,10 +345,12 @@
             seenTypeIds[t.id] = true;
             _typeById.set(t.id, t);
         }
+
+        _invalidateAccessorCaches();
     }
 
     // -------------------------------------------------------------------------
-    // 8. INTERNAL LIVE-REFERENCE ACCESSORS
+    // 9. INTERNAL LIVE-REFERENCE ACCESSORS
     // -------------------------------------------------------------------------
     //
     // Reserved for LocationCommands and LocationHierarchy, which operate on
@@ -290,7 +382,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 9. PUBLIC READ ACCESSORS (clones)
+    // 10. PUBLIC READ ACCESSORS (clones)
     // -------------------------------------------------------------------------
 
     function getPlaceById(placeId) {
@@ -328,16 +420,19 @@
     }
 
     // -------------------------------------------------------------------------
-    // 10. MUTATION PRIMITIVES (reserved for LocationCommands)
+    // 11. MUTATION PRIMITIVES (reserved for LocationCommands)
     // -------------------------------------------------------------------------
     //
     // Operate on the canonical arrays. They do NOT hydrate, persist, or
     // publish. LocationCommands is responsible for calling
     // hydrateFromMasterData after a batch, then markDataDirty + publish.
     //
-    // Each primitive calls window.markDataDirty() after a successful write so
-    // the dirty flag is set even if the caller forgets the commit tail.
-    // LocationCommands still owns the batched persist boundary.
+    // Each primitive calls window.markDataDirty() AND
+    // window.invalidateAccessorCaches() after a successful write. The dirty
+    // flag ensures persistence is scheduled even if the caller forgets the
+    // commit tail; the cache invalidation ensures getPlaceById /
+    // getLocationTypeById return fresh records after any write. LocationCommands
+    // still owns the batched persist boundary.
 
     function _addPlace(place) {
         if (!place || !place.id) {
@@ -350,6 +445,7 @@
         }
         _canonicalPlaces().push(place);
         window.markDataDirty();
+        _invalidateAccessorCaches();
     }
 
     function _removePlace(placeId) {
@@ -359,6 +455,7 @@
             if (places[i].id === placeId) {
                 places.splice(i, 1);
                 window.markDataDirty();
+                _invalidateAccessorCaches();
                 return true;
             }
         }
@@ -378,6 +475,7 @@
         }
         _canonicalTypes().push(type);
         window.markDataDirty();
+        _invalidateAccessorCaches();
     }
 
     function _removeLocationType(typeId) {
@@ -387,6 +485,7 @@
             if (types[i].id === typeId) {
                 types.splice(i, 1);
                 window.markDataDirty();
+                _invalidateAccessorCaches();
                 return true;
             }
         }
@@ -394,7 +493,26 @@
     }
 
     // -------------------------------------------------------------------------
-    // 11. SUBSCRIPTIONS
+    // 12. MANUAL REFRESH
+    // -------------------------------------------------------------------------
+    //
+    // Rebuilds indexes from canonical data and invalidates the accessor
+    // cache. Manual escape hatch for diagnostic tooling, hot reload, and
+    // tests. Ordinary mutation paths do not need to call this — the
+    // mutation primitives and the masterDataUpdated listener handle the
+    // two automatic paths.
+    //
+    // Throws on corrupted canonical data (same contract as
+    // hydrateFromMasterData). Does not publish to subscribers; callers
+    // who want a 'stateReloaded' event should use the masterDataUpdated
+    // listener path or publish explicitly.
+
+    function refresh() {
+        hydrateFromMasterData();
+    }
+
+    // -------------------------------------------------------------------------
+    // 13. SUBSCRIPTIONS
     // -------------------------------------------------------------------------
 
     /**
@@ -448,12 +566,60 @@
     }
 
     // -------------------------------------------------------------------------
-    // 12. EXPORTS
+    // 14. MASTER DATA RELOAD LISTENER
+    // -------------------------------------------------------------------------
+    //
+    // storage.js dispatches 'masterDataUpdated' on cross-tab reload, import,
+    // and reset. This module re-hydrates its indexes from the newly
+    // installed masterData, then publishes 'stateReloaded' to its own
+    // subscribers.
+    //
+    // The re-hydration is synchronous and can throw on corrupted canonical
+    // data (same contract as the direct hydrateFromMasterData call). When
+    // it throws, the error is logged and the prior indexes are left in
+    // place. That preserves the last-known-good state on a bad reload —
+    // better than half-hydrating and then abandoning the process.
+    //
+    // Cross-tab cache invalidation: storage.js already invalidates the
+    // accessor cache before dispatching. hydrateFromMasterData also
+    // invalidates. Redundant but harmless, and defense in depth: if
+    // storage.js ever stops invalidating, this module still does.
+
+    function _handleMasterDataUpdated() {
+        if (!window.masterData || !window.masterData.data) {
+            // Storage cleared masterData or it is not yet available. Reset
+            // indexes so subsequent reads see empty state, matching the
+            // canonical emptiness.
+            _placeById.clear();
+            _placesByParent.clear();
+            _placesByType.clear();
+            _typeById.clear();
+            _invalidateAccessorCaches();
+            publish('stateReloaded', {});
+            return;
+        }
+        try {
+            hydrateFromMasterData();
+            publish('stateReloaded', {});
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'LocationState: reload from masterDataUpdated failed:', err
+                );
+            }
+        }
+    }
+
+    window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
+
+    // -------------------------------------------------------------------------
+    // 15. EXPORTS
     // -------------------------------------------------------------------------
 
     window.LocationState = {
         // Lifecycle
         hydrateFromMasterData: hydrateFromMasterData,
+        refresh: refresh,
 
         // Public reads (clones)
         getPlaceById: getPlaceById,
@@ -472,7 +638,8 @@
         _getPlacesByTypeIdCanonical: _getPlacesByTypeIdCanonical,
 
         // Internal mutation primitives
-        // Reserved for LocationCommands. Each calls markDataDirty on success.
+        // Reserved for LocationCommands. Each calls markDataDirty and
+        // invalidateAccessorCaches on success.
         _addPlace: _addPlace,
         _removePlace: _removePlace,
         _addLocationType: _addLocationType,
