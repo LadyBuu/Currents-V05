@@ -22,8 +22,8 @@
  * Persistence contract:
  *
  *     Every mutation writes the canonical representation into
- *     masterData.data in memory and calls window.markDataDirty(). It
- *     does NOT call window.saveMasterData().
+ *     masterData.data and calls window.markDataDirty(). It does NOT call
+ *     window.saveMasterData().
  *
  *     The caller is responsible for calling RoleCommands.persist() once
  *     per batch. This matches the rank and character domains.
@@ -43,12 +43,46 @@
  *     (_syncToMasterData), not at persistence time, because the cache
  *     mirrors canonical memory, not storage.
  *
+ * Cross-tab reload contract:
+ *
+ *     storage.js dispatches `masterDataUpdated` when a cross-tab write
+ *     replaces window.masterData. RoleState subscribes to that event and
+ *     re-hydrates from masterData. Without this, a role write in tab B
+ *     is invisible in tab A until tab A refreshes.
+ *
+ *     The listener resets _initialized to false, re-reads masterData,
+ *     rebuilds caches, and notifies subscribers with a 'reloaded' event.
+ *     It does NOT mark data dirty (nothing changed locally); the inbound
+ *     data is already the canonical truth.
+ *
+ *     This matches family-state.js and children-state.js. character-state.js
+ *     uses the same event but handles it via its own reload helper; the
+ *     behavior is equivalent.
+ *
  * Initialisation contract:
  *
  *     RoleState must be explicitly initialised via RoleState.init() AFTER
  *     masterData has loaded. Calling any public reader before init()
  *     throws. This is deliberate: silent initialisation against an empty
  *     store is how "where did all the roles go?" bugs are born.
+ *
+ * Read projection contract:
+ *
+ *     Every public read returns a defensive copy. No live canonical role
+ *     object leaves this module. getRole(id) and getAllRoles() and
+ *     getRolesByCategory(cat) all return cloned records. This matches
+ *     character-state.js and family-state.js.
+ *
+ *     Mutations receive and store canonical records; the internal cache
+ *     (role-state._cache.byId) holds the live canonical record for
+ *     RoleCommands to mutate. Public reads clone through
+ *     _cloneRoleForRead(). Subscriber notifications clone through
+ *     _cloneRoleForSubscriber(), which additionally freezes.
+ *
+ *     The distinction is deliberate: subscriber callbacks are notification
+ *     surfaces and get frozen copies so a subscriber cannot accidentally
+ *     corrupt canonical state; read callers get mutable clones so they can
+ *     adjust the shape locally without affecting the store.
  *
  * Schema normalisation:
  *
@@ -369,30 +403,151 @@
     }
 
     // =========================================================================
-    // 9. PUBLIC READ API
+    // 9. CROSS-TAB RELOAD
     // =========================================================================
+    //
+    // storage.js dispatches masterDataUpdated when another tab writes.
+    // We re-hydrate from masterData. This is NOT a local mutation, so we
+    // do NOT mark data dirty; the inbound data IS the canonical truth.
+    //
+    // The reload path is:
+    //   - reset _initialized so init() will re-run
+    //   - re-read masterData.data.roles and .roleCategories
+    //   - rebuild caches
+    //   - notify subscribers with a 'reloaded' event
+    //
+    // If masterData is missing at reload time, we stay initialised with
+    // the pre-reload state and log. Removing the state on a missing
+    // masterData would be worse than keeping stale data.
+
+    function _handleMasterDataUpdated() {
+        if (!window.masterData || !window.masterData.data) {
+            if (window.console && typeof window.console.warn === 'function') {
+                window.console.warn(
+                    'role-state.js: masterDataUpdated fired without ' +
+                    'masterData. Skipping role state reload.'
+                );
+            }
+            return;
+        }
+
+        // Reset so init() will re-read from masterData.
+        _initialized = false;
+
+        try {
+            init();
+        } catch (err) {
+            if (window.console && typeof window.console.error === 'function') {
+                window.console.error(
+                    'role-state.js: reload after masterDataUpdated failed:',
+                    err
+                );
+            }
+            return;
+        }
+
+        _notify('reloaded', { count: _roles.length });
+    }
+
+    window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
+
+    // =========================================================================
+    // 10. READ COPIES
+    // =========================================================================
+    //
+    // Two copy flavors:
+    //
+    //   _cloneRoleForRead(role)
+    //       Mutable shallow-copy, used by getRole / getAllRoles /
+    //       getRolesByCategory. Callers may adjust the copy without
+    //       affecting canonical state. The `specializations` array is
+    //       copied so callers cannot mutate the canonical array.
+    //
+    //   _cloneRoleForSubscriber(role)
+    //       Deep-frozen, used by _notify. Subscribers get a snapshot
+    //       they cannot corrupt.
+    //
+    // Neither flavor returns the live canonical record. The only way to
+    // reach a live record is _cache.byId, which is private and only used
+    // by RoleCommands via updateRole / deleteRole.
+
+    function _cloneRoleForRead(role) {
+        if (!role) return null;
+        return {
+            id: role.id,
+            name: role.name,
+            category: role.category,
+            icon: role.icon,
+            specializations: Array.isArray(role.specializations)
+                ? role.specializations.slice()
+                : [],
+            notes: role.notes,
+            genderRestriction: role.genderRestriction,
+            baseSalary: role.baseSalary,
+            requiresLiteracy: role.requiresLiteracy,
+            literacyLevel: role.literacyLevel
+        };
+    }
+
+    function _cloneRoleForSubscriber(role) {
+        return Object.freeze({
+            id: role.id,
+            name: role.name,
+            category: role.category,
+            icon: role.icon,
+            specializations: Object.freeze(
+                Array.isArray(role.specializations)
+                    ? role.specializations.slice()
+                    : []
+            ),
+            notes: role.notes,
+            genderRestriction: role.genderRestriction,
+            baseSalary: role.baseSalary,
+            requiresLiteracy: role.requiresLiteracy,
+            literacyLevel: role.literacyLevel
+        });
+    }
+
+    // =========================================================================
+    // 11. PUBLIC READ API
+    // =========================================================================
+    //
+    // Every read returns a defensive copy. No live canonical role leaves
+    // this module. Callers that need to mutate a role do so via
+    // RoleCommands.
 
     function getAllRoles() {
         _assertInitialised();
-        return _roles.slice();
+        var out = [];
+        for (var i = 0; i < _roles.length; i++) {
+            out.push(_cloneRoleForRead(_roles[i]));
+        }
+        return out;
     }
 
     function getRole(id) {
         _assertInitialised();
         if (typeof id !== 'string' || !id) return null;
-        return _cache.byId.get(id) || null;
+        var role = _cache.byId.get(id);
+        return role ? _cloneRoleForRead(role) : null;
     }
 
     function getRoleByName(name) {
         _assertInitialised();
         if (typeof name !== 'string' || !name) return null;
-        return _cache.byName.get(name.toLowerCase()) || null;
+        var role = _cache.byName.get(name.toLowerCase());
+        return role ? _cloneRoleForRead(role) : null;
     }
 
     function getRolesByCategory(categoryId) {
         _assertInitialised();
         if (typeof categoryId !== 'string' || !categoryId) return [];
-        return (_cache.byCategory.get(categoryId) || []).slice();
+        var arr = _cache.byCategory.get(categoryId) || [];
+        var out = [];
+        for (var i = 0; i < arr.length; i++) {
+            out.push(_cloneRoleForRead(arr[i]));
+        }
+        return out;
     }
 
     function getCategories() {
@@ -401,7 +556,7 @@
     }
 
     // =========================================================================
-    // 10. SUBSCRIPTIONS
+    // 12. SUBSCRIPTIONS
     // =========================================================================
 
     function subscribe(callback) {
@@ -416,7 +571,7 @@
     }
 
     // =========================================================================
-    // 11. INTERNAL MUTATIONS (invoked by RoleCommands)
+    // 13. INTERNAL MUTATIONS (invoked by RoleCommands)
     // =========================================================================
     //
     // These are the only sanctioned ways to change role state. They are named
@@ -426,6 +581,9 @@
     //
     // Each mutation marks data dirty. None of them flush to localStorage.
     // RoleCommands.persist() is the flush boundary.
+    //
+    // Return values are defensive copies for the caller; the canonical
+    // record stays in _cache.byId.
 
     function addRole(role) {
         _assertInitialised();
@@ -435,7 +593,7 @@
         _rebuildCaches();
         _syncToMasterData();
         _notify('roleAdded', _cloneRoleForSubscriber(normalised));
-        return _cloneRoleForSubscriber(normalised);
+        return _cloneRoleForRead(normalised);
     }
 
     function updateRole(id, updates) {
@@ -476,7 +634,7 @@
         _rebuildCaches();
         _syncToMasterData();
         _notify('roleUpdated', _cloneRoleForSubscriber(normalised));
-        return _cloneRoleForSubscriber(normalised);
+        return _cloneRoleForRead(normalised);
     }
 
     function deleteRole(id) {
@@ -518,26 +676,7 @@
     }
 
     // =========================================================================
-    // 12. SUBSCRIBER-SAFE ROLE COPIES
-    // =========================================================================
-
-    function _cloneRoleForSubscriber(role) {
-        return Object.freeze({
-            id: role.id,
-            name: role.name,
-            category: role.category,
-            icon: role.icon,
-            specializations: Object.freeze(role.specializations.slice()),
-            notes: role.notes,
-            genderRestriction: role.genderRestriction,
-            baseSalary: role.baseSalary,
-            requiresLiteracy: role.requiresLiteracy,
-            literacyLevel: role.literacyLevel
-        });
-    }
-
-    // =========================================================================
-    // 13. CATEGORY MANAGEMENT (invoked by RoleCommands)
+    // 14. CATEGORY MANAGEMENT (invoked by RoleCommands)
     // =========================================================================
 
     function addCategory(id, name) {
@@ -587,7 +726,7 @@
     }
 
     // =========================================================================
-    // 14. FACADE COMPATIBILITY SURFACE
+    // 15. FACADE COMPATIBILITY SURFACE
     // =========================================================================
     //
     // The historical js/core/role-state.js exposed selectedRoleId,
@@ -622,7 +761,7 @@
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 16. EXPORTS
     // =========================================================================
 
     window.RoleState = {
@@ -636,7 +775,7 @@
         // Subscriptions
         subscribe: subscribe,
 
-        // Reads
+        // Reads (defensive copies)
         getAllRoles: getAllRoles,
         getRole: getRole,
         getRoleByName: getRoleByName,
