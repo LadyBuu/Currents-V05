@@ -27,7 +27,8 @@
  *
  * CONVERGED PATTERN NOTES
  * -----------------------
- *   - Every mutation ends with ResidenceSystem.persist().
+ *   - Every mutation ends with ResidenceSystem.persist() (via
+ *     HouseholdModals.persistResidenceOrFail).
  *   - Cross-domain effect: assignHouseholdToUnit / markUnitVacant /
  *     markResidenceVacant / demolishResidence all call into
  *     HouseholdCommands, which marks household state dirty. One
@@ -48,19 +49,23 @@
  *
  * PERSIST CONTRACT
  * ----------------
- *   This modal persists via ResidenceSystem.persist(). That function
- *   returns { success, data } | { success: false, code, reason } —
- *   different shape from HouseholdCommands.persist() (which returns
- *   boolean or { success, data }). The local `_persistOrFail` wrapper
- *   adapts the shape.
+ *   This modal persists via ResidenceSystem.persist(), which returns
+ *   { success, data } | { success: false, code, reason } — not a
+ *   boolean. HouseholdModals.persistResidenceOrFail adapts the shape
+ *   to { ok, reason } for the modal flows. The local wrapper that
+ *   existed in prior revisions is gone.
  *
- *   HouseholdModals.persistOrFail is not used here because it calls
- *   HouseholdCommands.persist specifically. A future Prompt 43 pass
- *   could add a ResidenceSystem variant; for now the local wrapper
- *   keeps this file self-contained.
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom, persist*OrFail,
+ *   reportFailure, esc, readValue, readIntOrNull, onOpen, currentYear,
+ *   closeThen, confirmDialog — lives in HouseholdModals. This file
+ *   keeps only its local aliases (var _esc = _Modals.esc; etc.) and
+ *   its domain-specific builders (_buildLocationDropdown,
+ *   _buildDetailsContent, etc.).
  *
  * DEPENDENCIES (REQUIRED, verified at load):
- *   - modals-core.js (openModal, closeTopModal, confirmDialog)
+ *   - modals-core.js (openModal, closeTopModal)
  *   - accessors.js (getPlaceById, getPlaces)
  *   - household-queries.js (HouseholdQueries)
  *   - household-modals-helper.js (HouseholdModals)
@@ -73,6 +78,24 @@
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _persistOrFail, _confirmDialog,
+ *       _currentYear, and _closeThen. All four were structurally
+ *       identical to the shared versions now exported by
+ *       HouseholdModals (persistResidenceOrFail, confirmDialog,
+ *       currentYear, closeThen). The local aliases at the top of this
+ *       file delegate to those shared helpers.
+ *     - No behavioural change.
+ *   Previous revisions:
+ *     - Consolidated from three files (modals-residence.js,
+ *       modals-residence-vacancy.js, modals-residence-history.js)
+ *       into this single canonical implementation. The two shims
+ *       point at the functions exported here.
+ *     - Every DOM lookup is scoped to handle.element via
+ *       HouseholdModals.rootFrom(modal). The prior _resolveModalRoot()
+ *       fallback ended at document.body.
  * =============================================================================
  */
 
@@ -155,78 +178,36 @@
 
     var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
     _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.persistResidenceOrFail',
+        _Modals.persistResidenceOrFail);
     _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
     _requireFunction('HouseholdModals.esc', _Modals.esc);
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
+    _requireFunction('HouseholdModals.confirmDialog', _Modals.confirmDialog);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showWarning = _Modals.showWarning;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    function _currentYear() {
-        return (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    var _persistOrFail = _Modals.persistResidenceOrFail;
+    var _confirmDialog = _Modals.confirmDialog;
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
-    // 1. LOCAL PERSIST (ResidenceSystem shape)
-    // =========================================================================
-    //
-    // ResidenceSystem.persist returns { success, data } | { success: false,
-    // code, reason } — not a boolean. This wrapper adapts to the
-    // { ok, reason } shape the modal flows expect.
-
-    function _persistOrFail(messagePrefix) {
-        var result;
-        try {
-            result = _residence.persist();
-        } catch (e) {
-            var threwReason = (e && e.message) ? e.message : 'persist threw';
-            _showError(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + threwReason);
-            return { ok: false, reason: threwReason };
-        }
-
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showError(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason);
-            return { ok: false, reason: reason };
-        }
-
-        return { ok: true };
-    }
-
-    // =========================================================================
-    // 2. CONFIRM DIALOG
-    // =========================================================================
-
-    function _confirmDialog(message, title, onConfirm, onCancel) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (typeof window._confirmDialog === 'function') {
-            return window._confirmDialog(message, title, onConfirm, onCancel);
-        }
-        if (window.confirm(message)) {
-            if (onConfirm) onConfirm();
-        } else if (onCancel) {
-            onCancel();
-        }
-    }
-
-    // =========================================================================
-    // 3. LOCATION OPTIONS
+    // 1. LOCATION OPTIONS
     // =========================================================================
 
     function _buildLocationDropdown(selectedId, placeholder) {
@@ -251,7 +232,7 @@
     }
 
     // =========================================================================
-    // 4. CREATE RESIDENCE MODAL
+    // 2. CREATE RESIDENCE MODAL
     // =========================================================================
 
     function openNewResidenceModal(locationId, locationName, onSuccess) {
@@ -404,7 +385,7 @@
     }
 
     // =========================================================================
-    // 5. EDIT RESIDENCE MODAL
+    // 3. EDIT RESIDENCE MODAL
     // =========================================================================
 
     function openEditResidenceModal(residenceId, onSuccess) {
@@ -584,7 +565,7 @@
     }
 
     // =========================================================================
-    // 6. DELETE RESIDENCE MODAL
+    // 4. DELETE RESIDENCE MODAL
     // =========================================================================
 
     function openDeleteResidenceModal(residenceId, onSuccess) {
@@ -683,7 +664,7 @@
     }
 
     // =========================================================================
-    // 7. RENAME RESIDENCE MODAL
+    // 5. RENAME RESIDENCE MODAL
     // =========================================================================
 
     function openRenameResidenceModal(residenceId, onSuccess) {
@@ -822,7 +803,7 @@
     }
 
     // =========================================================================
-    // 8. RESIDENCE DETAILS MODAL
+    // 6. RESIDENCE DETAILS MODAL
     // =========================================================================
 
     function openResidenceDetailsModal(residenceId, onRefresh) {
@@ -1101,11 +1082,6 @@
     }
 
     function _wireDetailsActions(root, residenceId, residence, onRefresh) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         function _reopen() {
             if (typeof onRefresh === 'function') onRefresh();
             setTimeout(function() {
@@ -1186,8 +1162,6 @@
                     (function(btn) {
                         btn.onclick = function(e) {
                             e.stopPropagation();
-                            var unitNumber = _Modals.readIntOrNull(btn, '');
-                            // Direct dataset read.
                             var parsed = parseInt(btn.dataset.unitNumber, 10);
                             if (!Number.isInteger(parsed)) return;
                             unitActions[action](parsed);
@@ -1213,7 +1187,7 @@
     }
 
     // =========================================================================
-    // 9. ASSIGN RESIDENCE TO HOUSEHOLD
+    // 7. ASSIGN RESIDENCE TO HOUSEHOLD
     // =========================================================================
 
     function openAssignResidenceModal(residenceId, onSuccess) {
@@ -1296,7 +1270,7 @@
     }
 
     // =========================================================================
-    // 10. VACATE RESIDENCE MODAL
+    // 8. VACATE RESIDENCE MODAL
     // =========================================================================
 
     function openVacateResidenceModal(residenceId, onSuccess) {
@@ -1383,7 +1357,7 @@
     }
 
     // =========================================================================
-    // 11. END ASSOCIATION MODAL
+    // 9. END ASSOCIATION MODAL
     // =========================================================================
 
     function openEndResidenceAssociationModal(residenceId, onSuccess) {
@@ -1487,7 +1461,7 @@
     }
 
     // =========================================================================
-    // 12. UNIT MODALS
+    // 10. UNIT MODALS
     // =========================================================================
 
     function openAddUnitModal(residenceId, onSuccess) {
@@ -1885,11 +1859,6 @@
         });
 
         _Modals.onOpen(modal, function(root) {
-            function _closeThen(fn) {
-                _closeTopModal();
-                setTimeout(fn, 0);
-            }
-
             var closeBtn = root.querySelector('[data-action="unit-close"]');
             if (closeBtn) closeBtn.onclick = function() { _closeTopModal(); };
 
@@ -1925,7 +1894,7 @@
     }
 
     // =========================================================================
-    // 13. REHABILITATE MODAL
+    // 11. REHABILITATE MODAL
     // =========================================================================
 
     function openRehabilitateResidenceModal(residenceId, onSuccess) {
@@ -2038,7 +2007,7 @@
     }
 
     // =========================================================================
-    // 14. DEMOLISH MODAL
+    // 12. DEMOLISH MODAL
     // =========================================================================
 
     function openDemolishResidenceModal(residenceId, onSuccess) {
@@ -2145,7 +2114,7 @@
     }
 
     // =========================================================================
-    // 15. HISTORY MODALS
+    // 13. HISTORY MODALS
     // =========================================================================
 
     function openResidenceHistoryModal(residenceId) {
@@ -2416,7 +2385,7 @@
     }
 
     // =========================================================================
-    // 16. HEIR FINDER (placeholder)
+    // 14. HEIR FINDER (placeholder)
     // =========================================================================
 
     function openResidenceHeirFinderModal(residenceId) {
@@ -2434,7 +2403,7 @@
     }
 
     // =========================================================================
-    // 17. RESIDENCE SELECTOR
+    // 15. RESIDENCE SELECTOR
     // =========================================================================
 
     function openResidenceSelector(options) {
@@ -2518,7 +2487,7 @@
     }
 
     // =========================================================================
-    // 18. EXPORTS
+    // 16. EXPORTS
     // =========================================================================
 
     // CRUD
