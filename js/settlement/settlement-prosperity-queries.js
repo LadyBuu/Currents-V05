@@ -4,13 +4,72 @@
  * js/settlement/settlement-prosperity-queries.js
  * =============================================================================
  *
- * (Header preserved — see current file. Only the time-dependency block
- * below changed.)
+ * (Header preserved — see current file. Only the character-enumeration,
+ * leader-traits, and time-dependency blocks changed.)
  *
  * Time dependency:
  *   window.getCurrentYear, defined in js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used here.
  *
+ * CHARACTER ENUMERATION:
+ *   The role-density, master-concentration, and average-skill modifiers
+ *   are computed over every living character whose CURRENT location is
+ *   anywhere in the settlement's location subtree.
+ *
+ *   "Current location" here is the SEMANTIC notion owned by
+ *   world.js::getCurrentLocationId — explicit field, then latest move,
+ *   then birthplace. It is NOT the raw currentLocationId field.
+ *
+ *   The prior revision called CharacterQueries.getCharactersInLocations,
+ *   which filters on c.currentLocationId === locationId. That missed
+ *   characters placed via moves and included characters whose raw field
+ *   pointed into the subtree but whose latest move pointed elsewhere.
+ *   The under/over-count silently shifted role diversity, master
+ *   concentration, and average-skill modifiers.
+ *
+ *   This revision enumerates via CharacterQueries.getAllCharacters and
+ *   filters through LocationQueries.getCurrentLocationId, matching the
+ *   fix in location-view-models.js::buildBulkMoveModel and in
+ *   settlement-education-queries.js.
+ *
+ * LEADER TRAITS:
+ *   LocationQueries.getCurrentLeader returns a leader ASSIGNMENT
+ *   projection, not a character projection. Its shape is:
+ *
+ *     { id, characterId, characterName, startYear, endYear, title,
+ *       notes, isActive, endReason }
+ *
+ *   It does NOT carry a `character` field. The prior revision read
+ *   `leader.character` and `leader.character.traits`, both of which
+ *   were always undefined, so the government-leader modifier was
+ *   silently 0 for every settlement.
+ *
+ *   This revision looks up the character projection via
+ *   CharacterQueries.getCharacterById(leader.characterId) and reads
+ *   traits from that projection. The tenure bonus still uses
+ *   leader.startYear, which IS present on the assignment projection.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _computeRoleFacts now enumerates characters via
+ *       CharacterQueries.getAllCharacters() + LocationQueries.getCurrentLocationId,
+ *       matching the fix in settlement-education-queries.js and
+ *       location-view-models.js::buildBulkMoveModel. The prior
+ *       CharacterQueries.getCharactersInLocations call missed
+ *       characters placed via moves; role-diversity, master-
+ *       concentration, and average-skill modifiers silently
+ *       under-counted.
+ *     - The government-leader modifier now resolves the leader's
+ *       character via CharacterQueries.getCharacterById(leader.characterId)
+ *       instead of the never-populated leader.character field. The
+ *       trait-based portion of the modifier (+wise/+just/+charismatic/
+ *       +diplomatic, -tyrant/-cruel/-incompetent/-corrupt) now actually
+ *       contributes to prosperity.
+ *     - Header CHARACTER ENUMERATION and LEADER TRAITS sections added.
+ *     - No public signature change, no public return-shape change.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -57,9 +116,44 @@
         return window.getCurrentYear();
     }
 
-    function _computeRoleFacts(locationId) {
+    /**
+     * Enumerates every living character whose resolved current location
+     * is anywhere in the settlement's location subtree.
+     *
+     * Uses LocationQueries.getCurrentLocationId (the semantic resolver)
+     * rather than CharacterQueries.getCharactersInLocations (the raw-
+     * field filter). See CHARACTER ENUMERATION in the module header.
+     *
+     * @private
+     * @param {string} locationId
+     * @returns {Array<Object>} character projections
+     */
+    function _getCharactersInSettlement(locationId) {
         var locationIds = _getLocationIdsForSettlement(locationId);
-        var characters = _getCharacterQueries().getCharactersInLocations(locationIds);
+        var idSet = {};
+        for (var i = 0; i < locationIds.length; i++) {
+            idSet[locationIds[i]] = true;
+        }
+
+        var allCharacters = _getCharacterQueries().getAllCharacters();
+        if (!Array.isArray(allCharacters)) return [];
+
+        var result = [];
+        for (var j = 0; j < allCharacters.length; j++) {
+            var character = allCharacters[j];
+            if (!character || !character.id) continue;
+            if (character.isDeceased === true) continue;
+
+            var resolvedId = _getLocationQueries().getCurrentLocationId(character.id);
+            if (resolvedId && idSet[resolvedId]) {
+                result.push(character);
+            }
+        }
+        return result;
+    }
+
+    function _computeRoleFacts(locationId) {
+        var characters = _getCharactersInSettlement(locationId);
 
         var roles = {};
         var totalProfessions = 0;
@@ -70,7 +164,6 @@
         for (var i = 0; i < characters.length; i++) {
             var character = characters[i];
             if (!character) continue;
-            if (character.isDeceased) continue;
 
             var professions = character.professions;
             if (!professions || professions.length === 0) continue;
@@ -111,6 +204,60 @@
             averageSkill: skillSamples > 0 ? Math.round(totalSkill / skillSamples) : 0,
             roles: roles
         };
+    }
+
+    /**
+     * Computes the government-leader prosperity modifier.
+     *
+     * Resolves the leader's character projection via
+     * CharacterQueries.getCharacterById(leader.characterId), because
+     * LocationQueries.getCurrentLeader returns an ASSIGNMENT projection,
+     * not a character projection. See LEADER TRAITS in the module header.
+     *
+     * Trait contributions (flat, not weighted — matches the prior
+     * intent of the code that never fired):
+     *
+     *   wise, just                      +5  each
+     *   charismatic, diplomatic         +3  each
+     *   tyrant, cruel                   -5  each
+     *   incompetent, corrupt            -3  each
+     *
+     * Tenure bonus (per year of rule):
+     *   tenure > 10 years               +2
+     *   tenure > 5 years                +1
+     *
+     * Returns 0 when there is no current leader, when the leader's
+     * character cannot be resolved, or when the leader assignment has no
+     * usable startYear.
+     *
+     * @private
+     * @param {string} locationId
+     * @returns {number}
+     */
+    function _computeLeaderModifier(locationId) {
+        var leader = _getLocationQueries().getCurrentLeader(locationId);
+        if (!leader) return 0;
+        if (!leader.characterId) return 0;
+
+        var character = _getCharacterQueries().getCharacterById(leader.characterId);
+        if (!character) return 0;
+
+        var traits = Array.isArray(character.traits) ? character.traits : [];
+        var leaderDelta = 0;
+
+        if (traits.indexOf('wise') !== -1 || traits.indexOf('just') !== -1) leaderDelta += 5;
+        if (traits.indexOf('tyrant') !== -1 || traits.indexOf('cruel') !== -1) leaderDelta -= 5;
+        if (traits.indexOf('charismatic') !== -1 || traits.indexOf('diplomatic') !== -1) leaderDelta += 3;
+        if (traits.indexOf('incompetent') !== -1 || traits.indexOf('corrupt') !== -1) leaderDelta -= 3;
+
+        if (_isFiniteNumber(leader.startYear)) {
+            var currentYear = _currentYear();
+            var tenure = currentYear - leader.startYear;
+            if (tenure > 10) leaderDelta += 2;
+            else if (tenure > 5) leaderDelta += 1;
+        }
+
+        return leaderDelta;
     }
 
     function getProsperity(locationId) {
@@ -192,22 +339,7 @@
             modifiers.debt = -Math.floor(debtRatio * 15);
         }
 
-        var leader = _getLocationQueries().getCurrentLeader(locationId);
-        if (leader && leader.character) {
-            var traits = leader.character.traits || [];
-            var leaderDelta = 0;
-            if (traits.indexOf('wise') !== -1 || traits.indexOf('just') !== -1) leaderDelta += 5;
-            if (traits.indexOf('tyrant') !== -1 || traits.indexOf('cruel') !== -1) leaderDelta -= 5;
-            if (traits.indexOf('charismatic') !== -1 || traits.indexOf('diplomatic') !== -1) leaderDelta += 3;
-            if (traits.indexOf('incompetent') !== -1 || traits.indexOf('corrupt') !== -1) leaderDelta -= 3;
-            if (_isFiniteNumber(leader.startYear)) {
-                var currentYear = _currentYear();
-                var tenure = currentYear - leader.startYear;
-                if (tenure > 10) leaderDelta += 2;
-                else if (tenure > 5) leaderDelta += 1;
-            }
-            modifiers.governmentLeader = leaderDelta;
-        }
+        modifiers.governmentLeader = _computeLeaderModifier(locationId);
 
         var roleFacts = _computeRoleFacts(locationId);
 
