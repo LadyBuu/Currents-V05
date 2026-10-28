@@ -1,3 +1,4 @@
+// js/location/location-bootstrap.js
 /**
  * =============================================================================
  * LOCATION BOOTSTRAP
@@ -51,6 +52,62 @@
  *     this file; the domain works without transient UI state, and
  *     js/core/state.js is the module that requires LocationUIState.
  *
+ * CROSS-DOMAIN SURFACE VERIFICATION:
+ *   The bootstrap verifies the methods the location domain actually
+ *   consumes from cross-domain modules. It does NOT verify methods the
+ *   domain does not call. Specifically:
+ *
+ *     CharacterQueries.getAllCharacters       used by location-queries
+ *                                              (population)
+ *     CharacterQueries.getCharacterById       used by location-queries,
+ *                                              location-movement,
+ *                                              location-view-models
+ *     CharacterQueries.getCurrentLocationId   used by location-commands
+ *                                              (deletePlace cleanup) and
+ *                                              as the fallback resolver in
+ *                                              location-queries
+ *     CharacterQueries.getMoveHistory         used by location-movement,
+ *                                              location-queries
+ *
+ *   Prior revisions also verified CharacterQueries.getCharactersAtLocation.
+ *   That method is no longer used by any location module: the bulk-move
+ *   view model was rewritten to enumerate characters via
+ *   getAllCharacters + LocationQueries.getCurrentLocationId, matching the
+ *   semantic resolution used by population counts. Verifying a method
+ *   nothing calls would fail bootstrap if the character domain ever
+ *   retired it for its own reasons — a false alarm for a dead dependency.
+ *   The check has been removed. If a future location module reintroduces
+ *   a dependency on getCharactersAtLocation, add the check back with a
+ *   comment naming the caller.
+ *
+ *   Similarly, the bootstrap does NOT verify methods on modules the
+ *   domain does not load (e.g. it does not require RankQueries; that is
+ *   an optional dependency of location-movement's travel-restriction
+ *   warning, guarded at call time). The bootstrap's job is to verify the
+ *   modules the domain cannot function without; optional dependencies are
+ *   the optional-dependency check's job, not the bootstrap's.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the CharacterQueries.getCharactersAtLocation check from
+ *       _verifyCrossDomain. The method is no longer consumed by any
+ *       location module (the bulk-move view model uses
+ *       getAllCharacters + LocationQueries.getCurrentLocationId instead).
+ *       The check was a dead-dependency false positive waiting to fire
+ *       the first time character-queries.js cleaned up an unused export.
+ *       See CROSS-DOMAIN SURFACE VERIFICATION in the module header.
+ *     - Header CROSS-DOMAIN SURFACE VERIFICATION section added,
+ *       explaining the surface-verification policy (verify what is
+ *       called, not what might be callable) and the prior dead check.
+ *     - No behavioural change to any other check. Every other required
+ *       method, global, and module is verified exactly as before.
+ *   Previous revision:
+ *     - Uses window.getCurrentYear (canonical) rather than the deprecated
+ *       window.getCurrentYearSafe alias.
+ *     - Requires getLastSaveError alongside saveMasterData.
+ *     - Adds _verifyCommandsSurface which checks the full LocationCommands
+ *       surface (including updatePlaceCulture).
  * =============================================================================
  */
 
@@ -127,11 +184,14 @@
         var CQ = _requireModule('CharacterQueries', function () {
             return window.CharacterQueries;
         });
+
+        // Methods the location domain actually consumes. See
+        // CROSS-DOMAIN SURFACE VERIFICATION in the header for the
+        // policy and for why getCharactersAtLocation is NOT checked.
         _requireMethod('CharacterQueries', CQ, 'getAllCharacters');
         _requireMethod('CharacterQueries', CQ, 'getCharacterById');
         _requireMethod('CharacterQueries', CQ, 'getCurrentLocationId');
         _requireMethod('CharacterQueries', CQ, 'getMoveHistory');
-        _requireMethod('CharacterQueries', CQ, 'getCharactersAtLocation');
     }
 
     function _verifyCanonical() {
