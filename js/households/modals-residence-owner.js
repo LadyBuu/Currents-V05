@@ -28,7 +28,7 @@
  * CONVERGED PATTERN NOTES
  * -----------------------
  *   - Ownership transfer is ONE logical operation: the modal calls
- *     setResidenceOwner once, then persist() once. No ownershipHistory
+ *     setResidenceOwner once, then persists once. No ownershipHistory
  *     mutation happens in the UI — the command owns that.
  *   - No direct residence record mutation.
  *   - No stale selection between owner types — changing ownerType
@@ -36,6 +36,22 @@
  *   - No _processingOwnerModal guard.
  *   - Result shape: setResidenceOwner returns { success, data } |
  *     { success: false, code, reason }. The modal reads .success.
+ *
+ * SHARED HELPERS
+ * --------------
+ *   Every shared helper used by this file — rootFrom,
+ *   persistResidenceOrFail, reportFailure, esc, readValue,
+ *   readIntOrNull, onOpen, currentYear, closeThen, confirmDialog —
+ *   lives in HouseholdModals. This file keeps only its local aliases
+ *   (var _esc = _Modals.esc; etc.) and its domain-specific builders
+ *   (_resolveOwnerDisplay, _openHouseholdSelector,
+ *   _openCharacterSelector, the details/manage/stats content builders,
+ *   and the wire functions for each modal).
+ *
+ *   Prior revisions carried local copies of _persistOrFail,
+ *   _currentYear, _closeThen, and _confirmDialog. Those are now
+ *   HouseholdModals exports; the aliases at the top of this file
+ *   delegate to those shared helpers.
  *
  * DOM-SCOPE
  * ---------
@@ -47,13 +63,10 @@
  * PERSIST CONTRACT
  * ----------------
  *   This modal persists via ResidenceSystem.persist(), which returns
- *   { success, data } | { success: false, code, reason }. The local
- *   `_persistOrFail` adapts the shape to { ok, reason } for the modal
- *   flows.
- *
- *   HouseholdModals.persistOrFail is not used here because it calls
- *   HouseholdCommands.persist specifically. Same reasoning as
- *   modals-residence.js.
+ *   { success, data } | { success: false, code, reason } — not a
+ *   boolean. HouseholdModals.persistResidenceOrFail adapts the shape
+ *   to { ok, reason } for the modal flows. The local wrapper that
+ *   existed in prior revisions is gone.
  *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - modals-core.js (openModal, closeTopModal)
@@ -69,6 +82,28 @@
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed the local copies of _persistOrFail, _currentYear,
+ *       _closeThen, and _confirmDialog. All four were structurally
+ *       identical to the shared versions exported by HouseholdModals.
+ *       The aliases at the top of this file delegate to those shared
+ *       helpers.
+ *     - _persistOrFail is now aliased to
+ *       HouseholdModals.persistResidenceOrFail (the residence variant),
+ *       matching the pattern established in modals-residence.js,
+ *       modals-residence-rental.js, and modals-residence-staff.js.
+ *       The persistence behaviour is unchanged — ResidenceSystem.persist
+ *       shape, { ok, reason } result — but the canonical home is now
+ *       the shared helper.
+ *     - No behavioural change to any modal entry point.
+ *   Previous revisions:
+ *     - Every DOM lookup is scoped to handle.element via
+ *       HouseholdModals.rootFrom(modal).
+ *     - The transfer-ownership flow clears the current selection when
+ *       the owner type changes, preventing the mixed-state
+ *       household-id-with-character-type bug.
  * =============================================================================
  */
 
@@ -127,61 +162,51 @@
 
     var _Modals = _requireObject('HouseholdModals', window.HouseholdModals);
     _requireFunction('HouseholdModals.rootFrom', _Modals.rootFrom);
+    _requireFunction('HouseholdModals.persistResidenceOrFail',
+        _Modals.persistResidenceOrFail);
     _requireFunction('HouseholdModals.reportFailure', _Modals.reportFailure);
     _requireFunction('HouseholdModals.esc', _Modals.esc);
     _requireFunction('HouseholdModals.readValue', _Modals.readValue);
     _requireFunction('HouseholdModals.readIntOrNull', _Modals.readIntOrNull);
     _requireFunction('HouseholdModals.onOpen', _Modals.onOpen);
+    _requireFunction('HouseholdModals.currentYear', _Modals.currentYear);
+    _requireFunction('HouseholdModals.closeThen', _Modals.closeThen);
 
     var _VM = _requireObject('HouseholdViewModels', window.HouseholdViewModels);
 
-    // Local aliases.
+    // Local aliases. Keep the call sites short and unchanged.
     var _esc = _Modals.esc;
     var _showSuccess = _Modals.showSuccess;
     var _showWarning = _Modals.showWarning;
     var _showInfo = _Modals.showInfo;
     var _showError = _Modals.showError;
 
-    function _currentYear() {
-        return (typeof window.getCurrentYearSafe === 'function')
-            ? window.getCurrentYearSafe()
-            : null;
-    }
+    // Per-modal delegates to the shared helpers. The prior revision
+    // defined these as standalone functions; they are now one-line
+    // delegations to HouseholdModals.
+    //
+    // NOTE: _persistOrFail is the ResidenceSystem variant. The shared
+    // helper is HouseholdModals.persistResidenceOrFail, which adapts
+    // ResidenceSystem.persist's { success, data } shape.
+    var _persistOrFail = _Modals.persistResidenceOrFail;
+    var _currentYear = _Modals.currentYear;
+    var _closeThen = _Modals.closeThen;
 
     // =========================================================================
-    // 1. LOCAL PERSIST (ResidenceSystem shape)
+    // 1. OWNER / PORTFOLIO LOOKUPS
     // =========================================================================
     //
-    // ResidenceSystem.persist returns { success, data } | { success: false,
-    // code, reason } — not a boolean. This wrapper adapts to the
-    // { ok, reason } shape the modal flows expect.
-
-    function _persistOrFail(messagePrefix) {
-        var result;
-        try {
-            result = _residence.persist();
-        } catch (e) {
-            var threwReason = (e && e.message) ? e.message : 'persist threw';
-            _showError(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + threwReason);
-            return { ok: false, reason: threwReason };
-        }
-
-        if (!result || result.success === false) {
-            var reason = (result && result.reason) || 'Unknown persist error';
-            _showError(
-                (messagePrefix || 'Changes made') +
-                ' but could not save: ' + reason);
-            return { ok: false, reason: reason };
-        }
-
-        return { ok: true };
-    }
-
-    // =========================================================================
-    // 2. OWNER / PORTFOLIO LOOKUPS
-    // =========================================================================
+    // These three helpers are residence-owner-specific:
+    //   _resolveOwnerDisplay     — display name for an owner (household
+    //                              or character)
+    //   _openHouseholdSelector   — fail-loud wrapper on
+    //                              openHouseholdSelector
+    //   _openCharacterSelector   — fail-loud wrapper on
+    //                              openCharacterSelector
+    //
+    // They stay local because no other household modal file uses the
+    // same combination (owner-type-aware resolution and both selector
+    // variants with this exact error surface).
 
     function _resolveOwnerDisplay(ownerType, ownerId, fallbackName) {
         if (!ownerId) return 'None';
@@ -217,7 +242,7 @@
     }
 
     // =========================================================================
-    // 3. RESIDENCE OWNER DETAILS MODAL (pure projection)
+    // 2. RESIDENCE OWNER DETAILS MODAL (pure projection)
     // =========================================================================
 
     function openResidenceOwnerDetailsModal(residenceId, onRefresh) {
@@ -360,11 +385,6 @@
     }
 
     function _wireOwnerDetailsActions(root, residenceId, residence, onRefresh) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         function _reopen() {
             if (typeof onRefresh === 'function') onRefresh();
             setTimeout(function() {
@@ -457,7 +477,7 @@
     }
 
     // =========================================================================
-    // 4. MANAGE OWNED PROPERTIES MODAL (pure projection)
+    // 3. MANAGE OWNED PROPERTIES MODAL (pure projection)
     // =========================================================================
 
     function openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess) {
@@ -551,11 +571,6 @@
     }
 
     function _wireManagePropertiesActions(root, ownerId, ownerType, onSuccess) {
-        function _closeThen(fn) {
-            _closeTopModal();
-            setTimeout(fn, 0);
-        }
-
         function _reopen() {
             setTimeout(function() {
                 openManageOwnedPropertiesModal(ownerId, ownerType, onSuccess);
@@ -600,7 +615,7 @@
     }
 
     // =========================================================================
-    // 5. TRANSFER OWNERSHIP MODAL
+    // 4. TRANSFER OWNERSHIP MODAL
     // =========================================================================
     //
     // Ownership transfer is a single logical operation. The ResidenceSystem
@@ -802,7 +817,7 @@
     }
 
     // =========================================================================
-    // 6. OWNER STATS MODAL (pure projection)
+    // 5. OWNER STATS MODAL (pure projection)
     // =========================================================================
 
     function openOwnerStatsModal(ownerId, ownerType) {
@@ -946,7 +961,7 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 6. EXPORTS
     // =========================================================================
 
     window.openResidenceOwnerDetailsModal = openResidenceOwnerDetailsModal;
