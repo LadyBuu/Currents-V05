@@ -82,8 +82,8 @@
  *   notifications for what is one logical operation. The current version
  *   makes setHead always one commit.
  *
- * ASSIGN ROLE IF MISSING (NEW)
- * ----------------------------
+ * ASSIGN ROLE IF MISSING
+ * ----------------------
  *   assignCharacterToPosition and bulkAssign accept
  *   options.addRoleIfMissing. When true and the position requires a role
  *   the character lacks, the command adds the profession to the character
@@ -111,6 +111,27 @@
  *   inside an orchestration — it does not call persist(), so the caller
  *   controls the batch boundary.
  *
+ * REMOVE CHARACTER REFERENCES (NEW)
+ * ---------------------------------
+ *   removeCharacterReferences(characterId) is the cross-domain cleanup
+ *   hook that character-deletion-commands.js dispatches on hard delete.
+ *   It walks every household that contains the character as a member,
+ *   removes the member entry, applies head-succession rules if the
+ *   character was the head, and writes the character-side reverse index
+ *   only if the character still exists (it will not, in the hard-delete
+ *   path).
+ *
+ *   This command does NOT persist. It runs inside the delete-character
+ *   orchestration, which persists once. It does NOT commit an event per
+ *   household — it accumulates affected household ids and commits a
+ *   single 'householdReferencesRemoved' event at the end. That keeps the
+ *   event stream coherent and matches the "one logical operation, one
+ *   commit" contract.
+ *
+ *   The command is idempotent: re-running it against a character that
+ *   has already been fully cleaned up returns success with
+ *   removedCount: 0 and does not commit.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - household-state.js: HouseholdState
  *   - household-rules.js: HouseholdRules
@@ -128,6 +149,33 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added removeCharacterReferences(characterId). This is the cross-
+ *       domain cleanup hook that character-deletion-commands.js's
+ *       _CLEANUP_TARGETS entry for 'households' dispatches on hard
+ *       delete. Prior to this revision, the cleanup target named
+ *       HouseholdCommands.removeCharacterReferences but this module did
+ *       not export that function, so every hard delete reported the
+ *       households domain as 'skipped: not loaded or method
+ *       unavailable'. The result: deleted characters remained in their
+ *       household.members[] arrays pointing at a now-nonexistent id,
+ *       visible as isMissing:true in every subsequent getHouseholdMembers
+ *       call. This revision closes that gap.
+ *     - Header REMOVE CHARACTER REFERENCES section added.
+ *     - No other behavioural change.
+ *   Previous revisions:
+ *     - setHead became a single-commit command. The prior revision
+ *       called addMember() for non-member characters, producing two
+ *       commits (one for the add, one for the head change) and two
+ *       different events. Now: single commit, event
+ *       'householdHeadSet', addedInline flag in the result.
+ *     - assignCharacterToPosition and bulkAssign gained
+ *       addRoleIfMissing support (via CharacterCommands.addProfession).
+ *     - Deletion-routed residence cleanup uses ResidenceSystem's
+ *       markUnitVacant / markResidenceVacant and reports failures in
+ *       eventLog.
  * =============================================================================
  */
 
@@ -2420,7 +2468,103 @@
     }
 
     // =========================================================================
-    // 21. INTERNAL CHARACTER LOOKUP
+    // 21. CROSS-DOMAIN REFERENCE CLEANUP
+    // =========================================================================
+    //
+    // removeCharacterReferences is the cleanup hook that
+    // character-deletion-commands.js dispatches on hard delete. It is
+    // distinct from removeMember: removeMember is a user-facing command
+    // that operates on ONE household with the character's reverse index
+    // intact, while removeCharacterReferences is a cross-domain sweep
+    // that must succeed regardless of whether the character still exists.
+    //
+    // The character does NOT exist at the time this runs (it has just
+    // been removed from the canonical collection). Every reverse-index
+    // write is therefore skipped. The household-side cleanup is the
+    // entire job.
+    //
+    // COMMIT CONTRACT:
+    //   - Does NOT persist (the delete-character orchestration persists
+    //     once at the end).
+    //   - Emits ONE commit for the whole sweep (event
+    //     'householdReferencesRemoved'), not one per household. This
+    //     keeps the event stream coherent with the "one logical
+    //     operation, one commit" contract.
+    //   - Returns { success: true, removedCount, households } so the
+    //     caller's cleanup report can attribute the domain correctly.
+    //   - Idempotent: re-running against an already-cleaned character
+    //     returns success with removedCount: 0 and does not commit.
+
+    function removeCharacterReferences(characterId) {
+        if (!_hasId(characterId)) {
+            return _fail('INVALID_INPUT', 'characterId is required');
+        }
+
+        var year = _getCurrentYear();
+        var all = _internal.getAllHouseholdRecords({ includeDeprecated: true });
+        var affectedHouseholds = [];
+        var removedCount = 0;
+
+        for (var i = 0; i < all.length; i++) {
+            var household = all[i];
+            if (!Array.isArray(household.members)) continue;
+
+            var idx = _findMember(household, characterId);
+            if (idx === -1) continue;
+
+            var wasHead = household.members[idx].isHead === true;
+            household.members.splice(idx, 1);
+            household.updatedAt = Date.now();
+            removedCount++;
+
+            // Head succession — if the removed member was head, pick a
+            // new successor from the remaining members. This mirrors
+            // removeMember's succession behaviour and keeps the
+            // household from being left headless.
+            var successorId = null;
+            if (wasHead) {
+                successorId = _rules.pickSuccessor(
+                    household, _getCharacterById
+                );
+                if (successorId) {
+                    _rules.applyHeadChange(
+                        household, successorId, year,
+                        'Succession after character deletion'
+                    );
+                }
+            }
+
+            affectedHouseholds.push({
+                householdId: household.id,
+                householdName: household.name,
+                wasHead: wasHead,
+                successorId: successorId
+            });
+        }
+
+        if (removedCount === 0) {
+            // Idempotent: nothing to remove, nothing to commit.
+            return _ok({
+                removedCount: 0,
+                households: []
+            });
+        }
+
+        _commit('householdReferencesRemoved', {
+            characterId: characterId,
+            removedCount: removedCount,
+            households: affectedHouseholds,
+            year: year
+        });
+
+        return _ok({
+            removedCount: removedCount,
+            households: affectedHouseholds
+        });
+    }
+
+    // =========================================================================
+    // 22. INTERNAL CHARACTER LOOKUP
     // =========================================================================
 
     function _getCharacterById(id) {
@@ -2439,7 +2583,7 @@
     }
 
     // =========================================================================
-    // 22. EXPORTS
+    // 23. EXPORTS
     // =========================================================================
 
     window.HouseholdCommands = {
@@ -2495,7 +2639,10 @@
         bulkAssign: bulkAssign,
 
         // Repair
-        repairMemberships: repairMemberships
+        repairMemberships: repairMemberships,
+
+        // Cross-domain reference cleanup (character-deletion-commands.js)
+        removeCharacterReferences: removeCharacterReferences
     };
 
     if (typeof module !== 'undefined' && module.exports) {
