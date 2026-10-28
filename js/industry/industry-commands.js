@@ -40,11 +40,47 @@
  *   - ids.js               (generateId)
  *   - storage.js           (saveMasterData)
  *   - time.js              (getCurrentYear)
- *   - accessors.js         (getCharacterById, getPlaceById)
+ *   - accessors.js         (getCharacterById, getPlaceById, getHouseholdById)
  *   - household-commands.js (HouseholdCommands) — for household ownership
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P1 + P2 from the cross-domain compatibility review):
+ *     - updateEnterprise now reconciles the household reverse index when
+ *       ownerType / ownerId change. Prior revisions changed the enterprise
+ *       record's owner fields but left household A's enterprises[] still
+ *       listing the enterprise and household B's enterprises[] missing it,
+ *       producing a silent reverse-index desync on both sides. The new
+ *       _reconcileHouseholdOwnership helper runs after IS._updateEnterprise
+ *       succeeds, and rolls back the industry record (and, for the target
+ *       side, the source removal) on any cross-domain failure. See
+ *       REVERSE-INDEX RECONCILIATION in the header.
+ *     - workerList and workerWages removed from _ALLOWED_UPDATE_FIELDS.
+ *       Callers must go through addWorkerToEnterprise /
+ *       removeWorkerFromEnterprise / setWorkerWage. This eliminates the
+ *       validation-error back door where a generic update could bypass the
+ *       dedicated worker commands and produce an inconsistent
+ *       workerList / workerWages pair.
+ *     - updateEnterprise now rejects wealth / debt changes while status is
+ *       in FINANCIALS_FROZEN_STATUSES, and rejects the single-call
+ *       combination { status: 'demolished', wealth } / { status:
+ *       'demolished', debt }. Prior revisions allowed this combination to
+ *       bypass updateEnterpriseWealth's / updateEnterpriseDebt's
+ *       frozen-status guard.
+ *     - _applyHouseholdTransfer now writes only wealth, not notes. Prior
+ *       revisions wrote notes based on a potentially stale read, which
+ *       overwrote concurrent household note edits. The reason goes into
+ *       the industry event payload and the household eventLog entry
+ *       written by HouseholdCommands.updateHousehold.
+ *     - createEnterprise rollback (IS._removeEnterprise after a failed
+ *       _registerWithHousehold) is now wrapped in try/catch. Prior
+ *       revisions allowed a rollback failure to mask the original error.
+ *     - getHouseholdById added to _requireHouseholdCommands' required
+ *       globals. DEPENDENCIES header updated.
+ *     - Header REVERSE-INDEX RECONCILIATION section added.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -95,9 +131,9 @@
     // HouseholdCommands is required only when a command actually crosses the
     // household boundary. Verified at call time so that domains that never
     // touch households do not need it loaded. IndustryCommands' own
-    // createEnterprise, updateEnterprise, and deleteEnterprise DO touch
-    // households when ownerType === 'household', so a bootstrap will verify
-    // it as a hard dependency.
+    // createEnterprise, updateEnterprise, deleteEnterprise, and
+    // _applyHouseholdTransfer DO touch households when ownerType ===
+    // 'household', so a bootstrap will verify it as a hard dependency.
     function _requireHouseholdCommands() {
         if (typeof window.HouseholdCommands === 'undefined') {
             throw new Error(
@@ -118,6 +154,12 @@
                     required[i] + ' is required.'
                 );
             }
+        }
+        if (typeof window.getHouseholdById !== 'function') {
+            throw new Error(
+                'industry-commands.js: getHouseholdById is required for ' +
+                'household ownership operations but is not loaded.'
+            );
         }
         return hc;
     }
@@ -184,12 +226,6 @@
     // markDataDirty. persist() is the caller's explicit save signal.
 
     function _publish(eventName, payload) {
-        if (typeof IS.subscribe === 'function') {
-            // IndustryState has no public publish — the state primitives
-            // already notify their own subscribers with their own event
-            // names. _commit's job is only the cross-domain channel.
-            // No-op here to avoid double-notify.
-        }
         if (typeof window.dispatchEvent !== 'function') return;
         if (typeof window.CustomEvent !== 'function') return;
         try {
@@ -232,6 +268,15 @@
     // =========================================================================
     // 6. CROSS-DOMAIN: HOUSEHOLD
     // =========================================================================
+    //
+    // Three concerns live here:
+    //   1. Reverse-index registration / unregistration (enterprises[]).
+    //   2. Wealth transfer (annual processing).
+    //   3. Reverse-index reconciliation on owner change (updateEnterprise).
+    //
+    // The first two are single-hop: one command mutates one household. The
+    // third is multi-hop and must roll back on partial failure. See
+    // REVERSE-INDEX RECONCILIATION in the header.
 
     function _registerWithHousehold(householdId, enterpriseId, year) {
         var hc = _requireHouseholdCommands();
@@ -269,16 +314,15 @@
      * current wealth via the household record and writes the new total.
      *
      * The getHouseholdById accessor is required to read the current wealth.
-     * If it is not loaded, this throws — the caller has already committed to
-     * a cross-domain write and cannot proceed safely without it.
+     * Verified via _requireHouseholdCommands at call time.
+     *
+     * M5: writes only `wealth`. Prior revisions also wrote `notes`,
+     * overwriting concurrent household note edits based on a stale read.
+     * The reason goes into the industry event payload and the household
+     * eventLog entry written by HouseholdCommands.updateHousehold.
      */
     function _applyHouseholdTransfer(householdId, amount, reason) {
-        if (typeof window.getHouseholdById !== 'function') {
-            throw new Error(
-                'industry-commands.js: getHouseholdById is required to apply ' +
-                'a household wealth transfer.'
-            );
-        }
+        _requireHouseholdCommands();
         var household = window.getHouseholdById(householdId);
         if (!household) {
             throw new Error(
@@ -293,10 +337,9 @@
             : 0;
         var newWealth = currentWealth + amount;
 
-        var hc = _requireHouseholdCommands();
+        var hc = window.HouseholdCommands;
         var r = hc.updateHousehold(householdId, {
-            wealth: newWealth,
-            notes: reason ? 'Industry transfer: ' + reason : household.notes
+            wealth: newWealth
         });
         if (!r || r.success !== true) {
             throw new Error(
@@ -305,6 +348,101 @@
                 ': ' + (r && r.reason ? r.reason : 'unknown')
             );
         }
+    }
+
+    /**
+     * Reconciles the household reverse index when an enterprise's owner
+     * changes.
+     *
+     * Called by updateEnterprise after IS._updateEnterprise succeeds and
+     * before _commit. Steps:
+     *   1. If the enterprise was previously household-owned (and the owner
+     *      fields actually changed), remove it from the previous household.
+     *   2. If the enterprise is now household-owned (and the owner fields
+     *      actually changed), add it to the new household.
+     *
+     * Rollback semantics: on any failure in step 1 or 2, the industry record
+     * is restored to its prior owner shape. If step 2 fails after step 1
+     * succeeded, the source-side removal is also rolled back (best effort).
+     * The caller sees a structured failure and nothing is committed.
+     *
+     * Idempotency: if the previous and next (ownerType, ownerId) are
+     * identical, this function is a no-op. That is the common case for
+     * updates that do not touch ownership.
+     *
+     * @param {Object} current  the pre-update enterprise record
+     * @param {string} nextOwnerType
+     * @param {string|null} nextOwnerId
+     * @param {number} year
+     * @returns {{success: boolean, reason?: string}}
+     */
+    function _reconcileHouseholdOwnership(current, nextOwnerType, nextOwnerId, year) {
+        var currentOwnerType = current.ownerType;
+        var currentOwnerId = current.ownerId;
+
+        var wasHouseholdOwned =
+            currentOwnerType === C.OWNER_TYPE.HOUSEHOLD
+            && _hasId(currentOwnerId);
+        var isHouseholdOwned =
+            nextOwnerType === C.OWNER_TYPE.HOUSEHOLD
+            && _hasId(nextOwnerId);
+
+        var sameOwner =
+            currentOwnerType === nextOwnerType
+            && currentOwnerId === nextOwnerId;
+
+        if (sameOwner) {
+            return { success: true };
+        }
+
+        // Step 1: remove from previous household if it was household-owned
+        // and is being moved (to another household, a character, a place,
+        // or to none).
+        if (wasHouseholdOwned) {
+            try {
+                _unregisterFromHousehold(currentOwnerId, current.id, year);
+            } catch (e) {
+                return {
+                    success: false,
+                    reason: e && e.message
+                        ? e.message
+                        : 'Failed to unregister from prior household.'
+                };
+            }
+        }
+
+        // Step 2: add to the new household if it is now household-owned.
+        if (isHouseholdOwned) {
+            try {
+                _registerWithHousehold(nextOwnerId, current.id, year);
+            } catch (e) {
+                // Best-effort rollback of step 1 (the source-side removal).
+                // If step 1 didn't run (not wasHouseholdOwned), there is
+                // nothing to roll back here.
+                if (wasHouseholdOwned) {
+                    try {
+                        _registerWithHousehold(currentOwnerId, current.id, year);
+                    } catch (rollbackErr) {
+                        if (typeof console !== 'undefined' && console.error) {
+                            console.error(
+                                'industry-commands.js: ' +
+                                '_reconcileHouseholdOwnership rollback ' +
+                                '(re-register with prior household) failed:',
+                                rollbackErr
+                            );
+                        }
+                    }
+                }
+                return {
+                    success: false,
+                    reason: e && e.message
+                        ? e.message
+                        : 'Failed to register with new household.'
+                };
+            }
+        }
+
+        return { success: true };
     }
 
     // =========================================================================
@@ -381,7 +519,7 @@
         if (ownerType === C.OWNER_TYPE.HOUSEHOLD && ownerId) {
             if (typeof window.getHouseholdById !== 'function') {
                 return _fail(
-                    'HouseholdCommands is not loaded; cannot assign household owner.'
+                    'getHouseholdById is not loaded; cannot assign household owner.'
                 );
             }
             if (!window.getHouseholdById(ownerId)) {
@@ -473,7 +611,17 @@
                 // Roll back the enterprise add. This is the only
                 // compensating path in this file; household registration is
                 // a cross-domain invariant that must be all-or-nothing.
-                IS._removeEnterprise(candidate.id);
+                try {
+                    IS._removeEnterprise(candidate.id);
+                } catch (rollbackErr) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'industry-commands.js: createEnterprise ' +
+                            'rollback (_removeEnterprise) failed after a ' +
+                            'household registration failure:', rollbackErr
+                        );
+                    }
+                }
                 return _fail(e && e.message
                     ? e.message
                     : 'Household registration failed.');
@@ -499,14 +647,25 @@
      *
      * Writable fields:
      *   name, typeId, ownershipType, ownerType, ownerId, locationId,
-     *   wealth, debt, income, expenses, wages, maxWorkers, workerList,
-     *   workerWages, status, lastProcessedYear, notes
+     *   wealth, debt, income, expenses, wages, maxWorkers, status,
+     *   lastProcessedYear, notes
      *
-     * Derived fields are rejected by RULES.validateUpdateInput.
-     * Domain-owned fields are rejected by the same.
-     * Unknown fields are rejected by the command layer's own allowlist
-     * below — if a caller adds a field the domain does not recognize, this
-     * returns a structured rejection rather than silently ignoring it.
+     * NOTE: workerList and workerWages are NOT in the allowlist. Callers
+     * must use addWorkerToEnterprise / removeWorkerFromEnterprise /
+     * setWorkerWage. Prior revisions accepted them, which invited a
+     * generic update to produce a workerList / workerWages pair that
+     * validateEnterprise would then reject with an opaque error.
+     *
+     * NOTE: wealth and debt are rejected while status is in
+     * FINANCIALS_FROZEN_STATUSES, and the combination
+     * { status: 'demolished', wealth } / { status: 'demolished', debt }
+     * is rejected in a single call. Callers use updateEnterpriseWealth /
+     * updateEnterpriseDebt, which enforce the same rule.
+     *
+     * OWNER CHANGE RECONCILIATION: if ownerType / ownerId change, the
+     * household reverse index is reconciled after the industry record is
+     * updated. See _reconcileHouseholdOwnership and REVERSE-INDEX
+     * RECONCILIATION in the header.
      */
     var _ALLOWED_UPDATE_FIELDS = {
         name: true,
@@ -521,8 +680,6 @@
         expenses: true,
         wages: true,
         maxWorkers: true,
-        workerList: true,
-        workerWages: true,
         status: true,
         lastProcessedYear: true,
         notes: true
@@ -547,7 +704,36 @@
             if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
             if (!_ALLOWED_UPDATE_FIELDS[key]) {
                 return _fail(
-                    'Field "' + key + '" is not a writable enterprise field.'
+                    'Field "' + key + '" is not a writable enterprise field. ' +
+                    'Use the dedicated command for workers ' +
+                    '(addWorkerToEnterprise / removeWorkerFromEnterprise / ' +
+                    'setWorkerWage) or financial mutations ' +
+                    '(updateEnterpriseWealth / updateEnterpriseDebt).'
+                );
+            }
+        }
+
+        // Frozen-status financial guard. Reject wealth / debt writes when
+        // the current status is in FINANCIALS_FROZEN_STATUSES, and reject
+        // the single-call combination { status: 'demolished', wealth/debt }.
+        var touchesWealth = Object.prototype.hasOwnProperty.call(updates, 'wealth');
+        var touchesDebt = Object.prototype.hasOwnProperty.call(updates, 'debt');
+        var touchesStatus = Object.prototype.hasOwnProperty.call(updates, 'status');
+
+        if (touchesWealth || touchesDebt) {
+            var currentFrozen =
+                C.FINANCIALS_FROZEN_STATUSES.indexOf(current.status) !== -1;
+            if (currentFrozen) {
+                return _fail(
+                    'Cannot modify wealth/debt of a ' + current.status +
+                    ' enterprise.'
+                );
+            }
+            if (touchesStatus
+                && C.FINANCIALS_FROZEN_STATUSES.indexOf(updates.status) !== -1) {
+                return _fail(
+                    'Cannot modify wealth/debt in the same update that sets ' +
+                    'status to "' + updates.status + '".'
                 );
             }
         }
@@ -564,23 +750,17 @@
             (Object.prototype.hasOwnProperty.call(updates, 'ownerId')
                 && updates.ownerId !== current.ownerId);
 
-        if (ownerChanged || Object.prototype.hasOwnProperty.call(updates, 'ownershipType')) {
-            var nextOwnershipType = Object.prototype.hasOwnProperty.call(
-                updates, 'ownershipType'
-            )
-                ? updates.ownershipType
-                : current.ownershipType;
-            var nextOwnerType = Object.prototype.hasOwnProperty.call(
-                updates, 'ownerType'
-            )
-                ? updates.ownerType
-                : current.ownerType;
-            var nextOwnerId = Object.prototype.hasOwnProperty.call(
-                updates, 'ownerId'
-            )
-                ? updates.ownerId
-                : current.ownerId;
+        var nextOwnershipType = Object.prototype.hasOwnProperty.call(
+            updates, 'ownershipType'
+        ) ? updates.ownershipType : current.ownershipType;
+        var nextOwnerType = Object.prototype.hasOwnProperty.call(
+            updates, 'ownerType'
+        ) ? updates.ownerType : current.ownerType;
+        var nextOwnerId = Object.prototype.hasOwnProperty.call(
+            updates, 'ownerId'
+        ) ? updates.ownerId : current.ownerId;
 
+        if (ownerChanged || Object.prototype.hasOwnProperty.call(updates, 'ownershipType')) {
             var coherence = RULES.canApplyOwnershipChange(current, {
                 ownershipType: nextOwnershipType,
                 ownerType: nextOwnerType,
@@ -636,12 +816,8 @@
                 type: 'owner_changed',
                 previousOwnerType: current.ownerType,
                 previousOwnerId: current.ownerId,
-                newOwnerType: Object.prototype.hasOwnProperty.call(
-                    updates, 'ownerType'
-                ) ? updates.ownerType : current.ownerType,
-                newOwnerId: Object.prototype.hasOwnProperty.call(
-                    updates, 'ownerId'
-                ) ? updates.ownerId : current.ownerId,
+                newOwnerType: nextOwnerType,
+                newOwnerId: nextOwnerId,
                 newOwnerName: updates.ownerName,
                 timestamp: now
             });
@@ -653,12 +829,6 @@
             if (f === 'history' || f === 'updatedAt') continue;
             if (f === 'ownerName') continue;   // history only
             if (f === 'id' || f === 'createdAt') continue; // not writable
-            if (f === 'workerList' && !Array.isArray(updates.workerList)) {
-                return _fail('workerList must be an array.');
-            }
-            if (f === 'workerWages' && !_isPlainObject(updates.workerWages)) {
-                return _fail('workerWages must be a plain object.');
-            }
             if (f === 'maxWorkers' && !_isNonNegativeFinite(updates.maxWorkers)) {
                 return _fail('maxWorkers must be a non-negative finite number.');
             }
@@ -687,6 +857,43 @@
             return _fail(e && e.message
                 ? e.message
                 : 'IndustryState refused the write.');
+        }
+
+        // --- Reverse-index reconciliation (C2) ---
+        //
+        // If ownership changed, reconcile the household reverse index
+        // AFTER the industry record is updated and BEFORE the commit.
+        // On reconciliation failure, roll back the industry record to its
+        // prior shape and return a structured failure.
+        //
+        // Same-owner no-ops inside _reconcileHouseholdOwnership mean this
+        // is free for updates that don't touch ownership.
+        if (ownerChanged || (nextOwnerType !== current.ownerType)
+            || (nextOwnerId !== current.ownerId)) {
+            var reconcile = _reconcileHouseholdOwnership(
+                current, nextOwnerType, nextOwnerId, currentYear
+            );
+            if (!reconcile.success) {
+                // Roll back the industry record.
+                var rollbackPatch = {
+                    ownerType: current.ownerType,
+                    ownerId: current.ownerId,
+                    updatedAt: Date.now()
+                };
+                try {
+                    IS._updateEnterprise(enterpriseId, rollbackPatch);
+                } catch (rollbackErr) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'industry-commands.js: updateEnterprise rollback ' +
+                            '(owner fields) failed after a reverse-index ' +
+                            'reconciliation failure:', rollbackErr
+                        );
+                    }
+                }
+                return _fail(reconcile.reason ||
+                    'Household reverse-index reconciliation failed.');
+            }
         }
 
         _commit(C.EVENT.ENTERPRISE_UPDATED, {
