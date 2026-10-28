@@ -1,3 +1,4 @@
+// js/core/names.js
 /**
  * =============================================================================
  * STILL WATERS - NAMING SYSTEM (names.js)
@@ -44,13 +45,77 @@
  *   Waters supports multiple simulated worlds. For now they live here
  *   because this module is their only consumer.
  *
+ * CHARACTER LOOKUP CONTRACT (getCharacterById PROVIDER):
+ *   Three functions in this module read character fields via
+ *   window.getCharacterById:
+ *
+ *     getCharacterSurnameRules(characterId)  → char.surnameRules
+ *     getCharacterEpithet(characterId)       → char.epithet
+ *     getCharacterSurnameSource(characterId) → char.surnameSource
+ *
+ *   Under the documented load order, window.getCharacterById is
+ *   character-queries.js's PROJECTION-returning version (installed by
+ *   character-queries.js, then re-installed by the character-system.js
+ *   shim, both of which override accessors.js's live-entity version).
+ *   The projection includes all three fields the getters read, so the
+ *   getters work identically whether they receive the projection or the
+ *   live entity.
+ *
+ *   Specifically:
+ *     - surnameRules is on the projection (cloned as a plain object)
+ *     - epithet is on the projection (cloned string or '')
+ *     - surnameSource is on the projection (cloned string or null)
+ *
+ *   This module does NOT require a specific provider. It reads the
+ *   fields that are present on any character record (live or
+ *   projection). Do not add a dependency on accessors.js specifically —
+ *   the provider is whichever override is currently winning, and the
+ *   fields this module needs are the same on both.
+ *
+ *   Prior revisions of this header listed accessors.js as the sole
+ *   provider, which was misleading: the function actually resolves to
+ *   whichever module last assigned window.getCharacterById, which is
+ *   character-queries.js or the shim under the documented load order.
+ *   The behaviour is correct in both cases; only the documentation
+ *   was wrong.
+ *
+ *   If a caller specifically needs a live entity (rare in a names
+ *   context), it should call CharacterState.getLiveCharacterForMutation
+ *   directly. This module never does, because it does not need to.
+ *
  * DEPENDENCIES (all REQUIRED):
  *   - randomness.js: pickRandom, random, randomBoolean
- *   - accessors.js:  getNameLists, getCityNameParts, getCharacterById
- *                    (loaded lazily by the functions that need them)
+ *   - accessors.js:  getNameLists, getCityNameParts
+ *   - character-queries.js OR accessors.js OR character-system.js shim:
+ *                    getCharacterById
+ *                    (whichever loads last; all three return the fields
+ *                    this module reads)
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P2-5):
+ *     - Header CHARACTER LOOKUP CONTRACT section added. Documents that
+ *       getCharacterById resolves to whichever module last assigned
+ *       window.getCharacterById (character-queries.js or the shim under
+ *       the documented load order), that the projection includes all
+ *       three fields this module reads (surnameRules, epithet,
+ *       surnameSource), and that the getters work identically whether
+ *       they receive the projection or the live entity.
+ *     - DEPENDENCIES list updated: the provider for getCharacterById is
+ *       documented as "character-queries.js OR accessors.js OR the
+ *       character-system.js shim", reflecting what the runtime actually
+ *       does. No behavioural change — this is documentation only.
+ *   Previous revision:
+ *     - Character name lookup rules clarified: missing countryId → null;
+ *       place generators have a generic fallback but character lookups
+ *       do not.
+ *     - Header SEMANTIC RULES updated accordingly.
+ *   Earlier revisions:
+ *     - window.normalizeName was removed. Name normalization is a
+ *       storage-boundary concern, not a naming-system operation.
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -256,12 +321,19 @@
     // 3. CHARACTER NAME RULE QUERIES
     // =========================================================================
     //
+    // These read from window.getCharacterById. See CHARACTER LOOKUP
+    // CONTRACT in the header. Under the documented load order, that is
+    // the projection-returning version (character-queries.js or the
+    // shim), not accessors.js's live-entity version. The three fields
+    // these getters read are present on both the projection and the live
+    // entity, so the getters behave identically regardless.
+    //
     // Missing character → null. Character exists but field is absent →
     // the field's legitimate empty value ('' for epithet, 'country' for
     // an unspecified surname source).
 
     function getCharacterSurnameRules(characterId) {
-        _requireAccessor('getCharacterById', 'accessors.js');
+        _requireAccessor('getCharacterById', 'character-queries.js, accessors.js, or character-system.js');
         var c = window.getCharacterById(characterId);
         if (!c) return null;
         if (_isMissing(c.surnameRules)) return null;
@@ -276,7 +348,7 @@
      *   character exists, value  → the epithet string
      */
     function getCharacterEpithet(characterId) {
-        _requireAccessor('getCharacterById', 'accessors.js');
+        _requireAccessor('getCharacterById', 'character-queries.js, accessors.js, or character-system.js');
         var c = window.getCharacterById(characterId);
         if (!c) return null;
         if (_isMissing(c.epithet)) return '';
@@ -291,7 +363,7 @@
      *   character exists, value       → the source string
      */
     function getCharacterSurnameSource(characterId) {
-        _requireAccessor('getCharacterById', 'accessors.js');
+        _requireAccessor('getCharacterById', 'character-queries.js, accessors.js, or character-system.js');
         var c = window.getCharacterById(characterId);
         if (!c) return null;
         if (_isMissing(c.surnameSource)) return 'country';
