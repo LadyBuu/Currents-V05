@@ -36,6 +36,7 @@
  * Cross-domain mutations go through the owning domain's commands:
  *   - Character movement → CharacterCommands (via LocationCommands orchestration)
  *   - Culture lookup     → CultureQueries (read only)
+ *   - Household cleanup  → HouseholdCommands.clearLocationReferences
  *
  * Persistence boundary:
  *   Commands do NOT call saveMasterData except inside persist(). Every command
@@ -66,24 +67,68 @@
  *   Pattern C (the historical broken pattern that silently reported
  *   success on every failed save) must not be reintroduced.
  *
+ * HOUSEHOLD RECONCILIATION ON PLACE DELETE:
+ *   deletePlace performs THREE cleanups in sequence:
+ *
+ *     1. Character cleanup — nulls character.currentLocationId for every
+ *        character whose current location is being removed. Delegated to
+ *        CharacterCommands.updateCharacterFields (per character).
+ *
+ *     2. Household cleanup — clears household.locationId for every
+ *        household whose location points at the removed place. Delegated
+ *        to HouseholdCommands.clearLocationReferences (one batch commit).
+ *        This is the revision that closes the householdReconciliation
+ *        deferral: prior revisions returned 'deferred' here.
+ *
+ *     3. Residence cleanup — NOT performed by this command. Households at
+ *        a deleted place keep their residence associations until the
+ *        residence is separately removed or vacated. ResidenceSystem owns
+ *        the canonical unit occupancy and handles residence lifecycle;
+ *        deleting a place does not delete its residences. If a caller
+ *        wants residences removed too, that is a separate orchestration
+ *        above this command.
+ *
+ *   All three cleanups are best-effort from the command's point of view.
+ *   The place is removed regardless; the cleanup report is returned in the
+ *   result envelope so the caller can surface failures. A failed cleanup
+ *   means the domain's own data still references a now-deleted place id;
+ *   that is a bug in the domain, not a reason to refuse the delete.
+ *
+ *   HouseholdCommands is OPTIONAL for this module. If it is not loaded,
+ *   the household cleanup step is skipped and reported as
+ *   householdReconciliation: 'unavailable'. Character cleanup requires
+ *   CharacterCommands, which is a load-time dependency of this module
+ *   and cannot be missing.
+ *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - deletePlace now dispatches HouseholdCommands.clearLocationReferences
+ *       after character cleanup. Prior revisions returned
+ *       householdReconciliation: 'deferred' and left every
+ *       household.locationId pointing at the deleted place. This is the
+ *       change that closes that deferral.
+ *     - deletePlace result envelope now includes:
+ *         householdReconciliation: { status, clearedCount, households,
+ *                                    reason? }
+ *       Status is 'applied' (cleanup ran and succeeded),
+ *       'unavailable' (HouseholdCommands not loaded),
+ *       'failed' (cleanup ran but reported failure),
+ *       or 'skipped' (nothing to clean up).
+ *       Prior revisions returned the bare string 'deferred' with no
+ *       counts. Callers that inspected the old value are the only
+ *       consumers of the shape; no in-tree caller reads
+ *       householdReconciliation. The new shape is strictly more
+ *       informative.
+ *     - persist() unchanged: already reads getLastSaveError() on failure
+ *       (Pattern A from storage.js DOMAIN PERSIST CONTRACT).
+ *     - No other behavioural change.
+ *   Previous revision:
  *     - persist() now reads getLastSaveError() when saveMasterData()
- *       returns false. The actual failure reason (quota exceeded,
- *       serialization failure, storage disabled) is surfaced in the
- *       returned reason field instead of the generic
- *       'saveMasterData returned false'. Matches the implementation in
- *       rank-commands.js and name-commands.js, and matches
- *       storage.js's DOMAIN PERSIST CONTRACT Pattern A.
- *     - getLastSaveError added to the load-time dependency check.
- *       If storage.js does not export it, that is a load-order bug
- *       (storage.js must always export it per its module header).
- *     - Header PERSIST CONTRACT section added, documenting the
- *       Pattern A form with the getLastSaveError() branch.
- *     - No public signature change, no public return-shape change.
- *       Callers of persist() already inspect { success, reason? }.
- *       The reason string becomes more informative on failure.
+ *       returns false.
+ *     - Header PERSIST CONTRACT section added.
+ *   Prior revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -171,6 +216,20 @@
     var CC = window.CharacterCommands;
     var CQ = window.CharacterQueries;
 
+    // HouseholdCommands is OPTIONAL. If loaded, deletePlace dispatches
+    // clearLocationReferences. If not, the household cleanup step is
+    // skipped and reported as 'unavailable' in the result envelope.
+    // HouseholdCommands is loaded before this module in the canonical
+    // HTML order (households load early so that rank/settlement/etc.
+    // can read from them), so this is a defensive presence check rather
+    // than a load-order requirement.
+    function _householdCommands() {
+        return (typeof window.HouseholdCommands !== 'undefined'
+                && window.HouseholdCommands !== null)
+            ? window.HouseholdCommands
+            : null;
+    }
+
     // =========================================================================
     // 2. RESULT HELPERS
     // =========================================================================
@@ -235,11 +294,9 @@
      *
      * Uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
      * saveMasterData() returns a boolean and does NOT throw on write
-     * failure. The previous revision used Pattern A but did not read
-     * getLastSaveError(), so a failed save surfaced as a generic
-     * 'saveMasterData returned false'. This revision reads
-     * getLastSaveError() and surfaces the underlying failure message
-     * (quota exceeded, serialization failure, storage disabled).
+     * failure. On false, getLastSaveError() provides the underlying
+     * failure message (quota exceeded, serialization failure, storage
+     * disabled).
      *
      * Returns { success, reason? }. Does not throw.
      */
@@ -520,6 +577,7 @@
         }
 
         var characterCleanup = _cleanupCharactersAtPlaces(toRemove);
+        var householdCleanup = _cleanupHouseholdsAtPlaces(toRemove);
 
         var removed = [];
         for (var rid in toRemove) {
@@ -531,7 +589,11 @@
         _commit('placeDeleted', {
             placeId: placeId,
             mode: mode,
-            removedCount: removed.length
+            removedCount: removed.length,
+            characterReconciled: characterCleanup.reconciled,
+            characterFailed: characterCleanup.failed,
+            householdCleared: householdCleanup.clearedCount,
+            householdStatus: householdCleanup.status
         });
 
         return _ok({
@@ -540,10 +602,27 @@
             removedCount: removed.length,
             charactersReconciled: characterCleanup.reconciled,
             charactersFailed: characterCleanup.failed,
-            householdReconciliation: 'deferred'
+            charactersFailedIds: characterCleanup.failedIds,
+            householdReconciliation: householdCleanup
         });
     }
 
+    /**
+     * Character cleanup on place delete.
+     *
+     * For every character whose CURRENT location is in `removeSet`, nulls
+     * the currentLocationId via CharacterCommands.updateCharacterFields
+     * (which owns the write boundary for character-owned fields).
+     *
+     * Returns { reconciled, failed, failedIds }. Does not throw: a per-
+     * character failure is recorded and the sweep continues. A missing
+     * CharacterCommands module would be a load-order bug (it is a load-
+     * time dependency of this module), so it is not defensively handled.
+     *
+     * @private
+     * @param {Object} removeSet - id -> true
+     * @returns {{ reconciled: number, failed: number, failedIds: string[] }}
+     */
     function _cleanupCharactersAtPlaces(removeSet) {
         var reconciled = 0;
         var failed = 0;
@@ -587,6 +666,151 @@
             reconciled: reconciled,
             failed: failed,
             failedIds: failedIds
+        };
+    }
+
+    /**
+     * Household cleanup on place delete.
+     *
+     * For every place being removed, dispatches
+     * HouseholdCommands.clearLocationReferences(placeId). The household
+     * command is a batch sweep across every household whose locationId
+     * matches; it emits one commit and returns { clearedCount, households }.
+     *
+     * Returns:
+     *   {
+     *     status: 'applied' | 'unavailable' | 'failed' | 'skipped',
+     *     clearedCount: number,
+     *     households: Array,
+     *     reason?: string,
+     *     perPlace: Array<{ placeId, status, clearedCount, reason? }>
+     *   }
+     *
+     * Status semantics:
+     *   'skipped'     — nothing was removed from toRemove (unreachable in
+     *                   practice, but defensive; deletePlace always has at
+     *                   least one id).
+     *   'unavailable' — HouseholdCommands is not loaded. The place is
+     *                   still removed; household.locationId may dangle.
+     *                   See HOUSEHOLD RECONCILIATION ON PLACE DELETE in
+     *                   the module header.
+     *   'failed'      — at least one per-place dispatch returned failure
+     *                   or threw. perPlace carries the per-place outcome.
+     *   'applied'     — every per-place dispatch succeeded.
+     *
+     * Design notes:
+     *   - Iterates toRemove, not the child chain. For cascade, this means
+     *     every descendant place is cleared from households independently.
+     *     Because a household can only have ONE locationId at a time,
+     *     clearing the ancestor covers the descendant case (a household
+     *     at a descendant is at a place in the same cascade; the specific
+     *     descendant's id is what the household.locationId points at, so
+     *     we dispatch per-id, not per-ancestor).
+     *   - The household-side clearLocationReferences commits once per
+     *     call (per placeId). For a cascade of N places, this fires N
+     *     household commits. That is consistent with deletePlace emitting
+     *     N place removals inside one command — each place removal is
+     *     its own reconciliation action.
+     *   - Idempotent by construction: clearLocationReferences returns
+     *     { clearedCount: 0 } without committing for places no household
+     *     references.
+     *
+     * @private
+     * @param {Object} removeSet - id -> true
+     * @returns {{ status: string, clearedCount: number, households: Array,
+     *             reason?: string, perPlace: Array }}
+     */
+    function _cleanupHouseholdsAtPlaces(removeSet) {
+        var HC = _householdCommands();
+        var perPlace = [];
+
+        if (!HC || typeof HC.clearLocationReferences !== 'function') {
+            return {
+                status: 'unavailable',
+                clearedCount: 0,
+                households: [],
+                reason: 'HouseholdCommands.clearLocationReferences is not available',
+                perPlace: perPlace
+            };
+        }
+
+        var removedIds = Object.keys(removeSet);
+        if (removedIds.length === 0) {
+            return {
+                status: 'skipped',
+                clearedCount: 0,
+                households: [],
+                perPlace: perPlace
+            };
+        }
+
+        var totalCleared = 0;
+        var allHouseholds = [];
+        var anyFailed = false;
+        var firstFailureReason = null;
+
+        for (var i = 0; i < removedIds.length; i++) {
+            var placeId = removedIds[i];
+            var result = null;
+            try {
+                result = HC.clearLocationReferences(placeId);
+            } catch (e) {
+                result = {
+                    success: false,
+                    reason: e && e.message ? e.message : 'clearLocationReferences threw'
+                };
+            }
+
+            if (!result || result.success !== true) {
+                anyFailed = true;
+                if (!firstFailureReason) {
+                    firstFailureReason = (result && result.reason)
+                        ? result.reason
+                        : 'clearLocationReferences returned failure';
+                }
+                perPlace.push({
+                    placeId: placeId,
+                    status: 'failed',
+                    clearedCount: 0,
+                    reason: (result && result.reason) ? result.reason : null
+                });
+                continue;
+            }
+
+            var data = result.data || {};
+            var cleared = typeof data.clearedCount === 'number'
+                ? data.clearedCount
+                : 0;
+            var households = Array.isArray(data.households)
+                ? data.households
+                : [];
+
+            totalCleared += cleared;
+            for (var h = 0; h < households.length; h++) {
+                allHouseholds.push(households[h]);
+            }
+            perPlace.push({
+                placeId: placeId,
+                status: 'applied',
+                clearedCount: cleared
+            });
+        }
+
+        if (anyFailed) {
+            return {
+                status: 'failed',
+                clearedCount: totalCleared,
+                households: allHouseholds,
+                reason: firstFailureReason,
+                perPlace: perPlace
+            };
+        }
+
+        return {
+            status: 'applied',
+            clearedCount: totalCleared,
+            households: allHouseholds,
+            perPlace: perPlace
         };
     }
 
