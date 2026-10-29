@@ -1,5 +1,10 @@
 /**
+ * =============================================================================
  * STILL WATERS - EDUCATION COMMANDS
+ * =============================================================================
+ *
+ * LOCATION: js/systems/education/education-commands.js
+ *
  * All write operations for education. Commands mutate education state via
  * EducationState._* primitives and write character-owned fields through
  * CharacterCommands. Return results; no toasts; no history saves beyond
@@ -85,6 +90,66 @@
  *   decision, taken at graduation (via RoleCommands.assignRoleToCharacter)
  *   or through the role assignment UI.
  *
+ * ROLE READS
+ *
+ *   Two role-read intents exist in this module and are handled separately:
+ *
+ *     _getRoleById(id)          — LENIENT. Used only for display-name
+ *                                 resolution. Returns null when RoleState
+ *                                 is unavailable or the role is missing.
+ *                                 Callers must tolerate a null return.
+ *
+ *     _requireRoleForWrite(id)  — STRICT. Used by write paths that MUST
+ *                                 have the role record (e.g. assigning a
+ *                                 role on graduation, computing tuition
+ *                                 from role.baseSalary). Throws when the
+ *                                 role is missing. Callers must catch or
+ *                                 surface the failure.
+ *
+ *   Prior revisions conflated the two intents in a single helper, which
+ *   made it impossible for a caller to distinguish "role is missing, use
+ *   a placeholder" from "role is missing, abort the write." The split
+ *   restores the fail-loud contract for writes without forcing
+ *   RoleState to be loaded at module-load time for callers that never
+ *   touch roles.
+ *
+ * ORPHAN CLEANUP ON DELETE
+ *
+ *   deleteInstitution(id, cascade) has two paths:
+ *
+ *     cascade=true   → withdrawStudent and fireTeacher run for each
+ *                      student/teacher first, which writes the proper
+ *                      character-side history. Then the institution
+ *                      record is removed.
+ *
+ *     cascade=false  → the institution record is removed, but
+ *                      character-side education records referencing it
+ *                      are NOT touched by the withdraw/fire path.
+ *                      Character.education[institutionId] entries would
+ *                      be orphaned.
+ *
+ *   To prevent that, deleteInstitution now sweeps character-side records
+ *   for this institution's student and teacher IDs *regardless* of the
+ *   cascade flag, via CharacterCommands.removeEducationRecord. This is a
+ *   best-effort sweep: individual failures are logged and do not abort
+ *   the delete. The institution record is removed even if some character
+ *   records could not be cleaned.
+ *
+ *   The cascade flag continues to control whether withdrawal/fire
+ *   *history* is written (via withdrawStudent/fireTeacher). Without
+ *   cascade, no history is written; the sweep just drops the orphaned
+ *   education entry.
+ *
+ * TUITION HISTORY
+ *
+ *   updateInstitution's tuitionPerYear branch and updateTuition's
+ *   customTuition branch both append to tuitionHistory. The tuition
+ *   management modal calls both in sequence for a single user save.
+ *   To prevent double-history entries, both branches now skip the push
+ *   when the current year already has an entry for this institution
+ *   with the same newAmount. This makes the modal's two-call pattern
+ *   produce exactly one history entry per distinct change.
+ *
  * DEPENDENCIES
  *
  *   Required at load:
@@ -104,6 +169,29 @@
  *     - HouseholdEconomy     (tuition payment, hard requirement when a
  *                             household is present)
  *     - SettlementCommands   (public funding, hard requirement)
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Split role reads into _getRoleById (lenient, display-only) and
+ *       _requireRoleForWrite (strict, write paths). Prior revisions used
+ *       a single lenient helper everywhere, which silently dropped role
+ *       data from write paths (notably graduateStudent's role grant).
+ *       See ROLE READS in the header.
+ *     - deleteInstitution now sweeps character-side education records
+ *       for this institution's student and teacher IDs even when
+ *       cascade is false. Prior revisions left orphaned
+ *       character.education[institutionId] entries after a non-cascade
+ *       delete. The sweep requires
+ *       CharacterCommands.removeEducationRecord; if that method is
+ *       missing, the sweep is skipped (with a warning) rather than
+ *       failing the delete. See ORPHAN CLEANUP ON DELETE.
+ *     - updateInstitution's tuitionPerYear branch and updateTuition's
+ *       customTuition branch now skip the tuitionHistory push when the
+ *       current year already has an entry with the same newAmount.
+ *       Prior revisions produced two history entries per modal save.
+ *       See TUITION HISTORY.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -235,6 +323,45 @@
         return CC[name];
     }
 
+    /**
+     * Best-effort orphan cleanup helper. Removes this institution's
+     * education record from a character, if CharacterCommands exposes
+     * removeEducationRecord. Returns true on success (or when the method
+     * is not present — the sweep is best-effort). Returns false only when
+     * the method exists and threw or returned a failure.
+     *
+     * See ORPHAN CLEANUP ON DELETE in the header.
+     */
+    function _removeCharacterEducationRecord(characterId, institutionId) {
+        if (typeof window.CharacterCommands === 'undefined') return true;
+        if (typeof window.CharacterCommands.removeEducationRecord !== 'function') {
+            // Method not available: sweep is skipped. Log once.
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'education-commands.js: CharacterCommands.removeEducationRecord ' +
+                    'is not available; character-side orphan records may remain ' +
+                    'for institution ' + institutionId + '.'
+                );
+            }
+            return true;
+        }
+        try {
+            var result = window.CharacterCommands.removeEducationRecord(
+                characterId, institutionId
+            );
+            return !result || result.success !== false;
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'education-commands.js: removeEducationRecord failed for ' +
+                    'character ' + characterId + ', institution ' + institutionId + ':',
+                    e
+                );
+            }
+            return false;
+        }
+    }
+
     // ---- RoleCommands — required for graduation role grant and for role
     //      skill progression on role-type curriculum items.
 
@@ -267,12 +394,41 @@
         return window.RoleQueries;
     }
 
+    /**
+     * LENIENT role read. Used for display-name resolution only.
+     * Returns the role record (clone from RoleState) or null.
+     * Callers must tolerate null. See ROLE READS in the header.
+     */
     function _getRoleById(id) {
+        if (!id) return null;
         if (typeof window.RoleState !== 'undefined' &&
             typeof window.RoleState.getRole === 'function') {
             return window.RoleState.getRole(id);
         }
+        if (typeof window.getRoleById === 'function') {
+            return window.getRoleById(id);
+        }
         return null;
+    }
+
+    /**
+     * STRICT role read. Used by write paths that must have the role.
+     * Throws when the role is missing or no reader is available.
+     * See ROLE READS in the header.
+     */
+    function _requireRoleForWrite(id) {
+        if (!id || typeof id !== 'string') {
+            throw new Error(
+                'education-commands.js: role id is required for write'
+            );
+        }
+        var role = _getRoleById(id);
+        if (!role) {
+            throw new Error(
+                'education-commands.js: role not found for write: ' + id
+            );
+        }
+        return role;
     }
 
     // ---- Religion, household, settlement.
@@ -477,6 +633,25 @@
             },
             manualOverride: null
         };
+    }
+
+    /**
+     * Returns true if the institution already has a tuition-history entry
+     * for the given year with the given newAmount. Used to deduplicate
+     * history entries when a caller makes two tuition writes in the same
+     * save. See TUITION HISTORY in the header.
+     */
+    function _hasTuitionHistoryEntry(institution, year, newAmount) {
+        if (!institution || !Array.isArray(institution.tuitionHistory)) {
+            return false;
+        }
+        for (var i = 0; i < institution.tuitionHistory.length; i++) {
+            var h = institution.tuitionHistory[i];
+            if (h && h.year === year && h.newAmount === newAmount) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // =========================================================================
@@ -765,18 +940,23 @@
             patch.isSpecialized = !!cat && roles.length > 0;
         }
 
+        // Tuition history: skip the push if the current year already has
+        // an entry with the same newAmount. This deduplicates the modal's
+        // updateInstitution + updateTuition sequence. See TUITION HISTORY.
         if (patch.tuitionPerYear !== undefined &&
             patch.tuitionPerYear !== inst.tuitionPerYear) {
             var bounded = Math.max(0, patch.tuitionPerYear);
-            var history = (inst.tuitionHistory || []).slice();
-            history.push({
-                year: year,
-                oldAmount: inst.tuitionPerYear,
-                newAmount: bounded,
-                reason: patch.tuitionReason || 'Updated'
-            });
+            if (!_hasTuitionHistoryEntry(inst, year, bounded)) {
+                var history = (inst.tuitionHistory || []).slice();
+                history.push({
+                    year: year,
+                    oldAmount: inst.tuitionPerYear,
+                    newAmount: bounded,
+                    reason: patch.tuitionReason || 'Updated'
+                });
+                patch.tuitionHistory = history;
+            }
             patch.tuitionPerYear = bounded;
-            patch.tuitionHistory = history;
             delete patch.tuitionReason;
         }
 
@@ -795,6 +975,25 @@
         var inst = _state()._getInstitutionCanonical(institutionId);
         if (!inst) return _fail('Institution not found');
 
+        // Snapshot student and teacher IDs for the orphan sweep BEFORE
+        // removing the institution. See ORPHAN CLEANUP ON DELETE.
+        var studentIds = [];
+        var teacherIds = [];
+        if (Array.isArray(inst.students)) {
+            for (var s = 0; s < inst.students.length; s++) {
+                if (inst.students[s] && inst.students[s].studentId) {
+                    studentIds.push(inst.students[s].studentId);
+                }
+            }
+        }
+        if (Array.isArray(inst.teachers)) {
+            for (var t = 0; t < inst.teachers.length; t++) {
+                if (inst.teachers[t] && inst.teachers[t].teacherId) {
+                    teacherIds.push(inst.teachers[t].teacherId);
+                }
+            }
+        }
+
         if (cascade) {
             var students = (inst.students || []).slice();
             for (var i = 0; i < students.length; i++) {
@@ -809,8 +1008,36 @@
             }
         }
 
+        // Orphan sweep: regardless of cascade, drop character-side
+        // education records for this institution. When cascade=true, the
+        // withdraw/fire path above already wrote proper history and
+        // removed character.education entries via recordEducationWithdrawal;
+        // the sweep is a no-op for those characters. When cascade=false,
+        // this is the only cleanup. See ORPHAN CLEANUP ON DELETE.
+        var sweepAttempted = 0;
+        var sweepSucceeded = 0;
+        for (var si = 0; si < studentIds.length; si++) {
+            sweepAttempted++;
+            if (_removeCharacterEducationRecord(studentIds[si], institutionId)) {
+                sweepSucceeded++;
+            }
+        }
+        for (var ti = 0; ti < teacherIds.length; ti++) {
+            // Teachers do not own an education record on the character
+            // side today, but they may in the future (e.g. employment
+            // history). Calling the sweep is harmless and forward-safe.
+            sweepAttempted++;
+            if (_removeCharacterEducationRecord(teacherIds[ti], institutionId)) {
+                sweepSucceeded++;
+            }
+        }
+
         _state()._removeInstitution(institutionId);
-        return _ok({ institutionId: institutionId });
+        return _ok({
+            institutionId: institutionId,
+            orphanSweepAttempted: sweepAttempted,
+            orphanSweepSucceeded: sweepSucceeded
+        });
     }
 
     function updateReputation(institutionId, delta) {
@@ -1055,29 +1282,40 @@
 
         var roleGrantError = null;
         if (roleToGrant) {
+            // Strict read for the write path. See ROLE READS.
+            var grantRole = null;
             try {
-                var roleResult = _assignRoleToCharacter(studentId, roleToGrant, {
-                    skillLevel: 100,
-                    primary: false,
-                    startYear: inst.students[idx].enrollmentYear,
-                    notes: 'Graduated from ' + inst.name,
-                    learnedVia: 'institution',
-                    institutionId: institutionId
-                });
-                if (!roleResult || roleResult.success === false) {
-                    roleGrantError = (roleResult && roleResult.reason)
-                        ? roleResult.reason
-                        : 'Role grant failed for unknown reason';
-                }
-            } catch (err) {
-                roleGrantError = err && err.message
-                    ? err.message
-                    : 'Role grant threw';
+                grantRole = _requireRoleForWrite(roleToGrant);
+            } catch (e) {
+                roleGrantError = e && e.message ? e.message : String(e);
             }
+
+            if (!roleGrantError && grantRole) {
+                try {
+                    var roleResult = _assignRoleToCharacter(studentId, roleToGrant, {
+                        skillLevel: 100,
+                        primary: false,
+                        startYear: inst.students[idx].enrollmentYear,
+                        notes: 'Graduated from ' + inst.name,
+                        learnedVia: 'institution',
+                        institutionId: institutionId
+                    });
+                    if (!roleResult || roleResult.success === false) {
+                        roleGrantError = (roleResult && roleResult.reason)
+                            ? roleResult.reason
+                            : 'Role grant failed for unknown reason';
+                    }
+                } catch (err) {
+                    roleGrantError = err && err.message
+                        ? err.message
+                        : 'Role grant threw';
+                }
+            }
+
             if (roleGrantError) {
                 if (typeof console !== 'undefined' &&
                     typeof console.warn === 'function') {
-                    var roleName = (_getRoleById(roleToGrant) || {}).name || roleToGrant;
+                    var roleName = grantRole && grantRole.name ? grantRole.name : roleToGrant;
                     console.warn(
                         'Role grant failed during graduation: student=' + studentId +
                         ' role=' + roleName +
@@ -1144,9 +1382,15 @@
             }
         }
 
+        // Lenient role read for display in the history reason. See ROLE READS.
+        var grantedRoleName = '';
+        if (roleToGrant) {
+            var displayRole = _getRoleById(roleToGrant);
+            grantedRoleName = displayRole ? (displayRole.name || '') : '';
+        }
         _history().recordStudentGraduated(institutionId, studentId, year,
             'Graduated' + (roleToGrant
-                ? ' as ' + ((_getRoleById(roleToGrant) || {}).name || '')
+                ? ' as ' + grantedRoleName
                 : ''));
         updateReputation(institutionId, 2);
 
@@ -1405,18 +1649,25 @@
             ? inst.customTuition
             : inst.tuitionPerYear;
 
-        var history = (inst.tuitionHistory || []).slice();
-        history.push({
-            year: _getCurrentYear(),
-            oldAmount: oldAmount,
-            newAmount: bounded,
-            reason: reason || 'Manual override'
-        });
-
-        _state()._updateInstitution(institutionId, {
-            customTuition: bounded,
-            tuitionHistory: history
-        });
+        var year = _getCurrentYear();
+        // Skip the history push if the current year already has an entry
+        // with the same newAmount. Deduplicates the modal's
+        // updateInstitution + updateTuition sequence. See TUITION HISTORY.
+        if (!_hasTuitionHistoryEntry(inst, year, bounded)) {
+            var history = (inst.tuitionHistory || []).slice();
+            history.push({
+                year: year,
+                oldAmount: oldAmount,
+                newAmount: bounded,
+                reason: reason || 'Manual override'
+            });
+            _state()._updateInstitution(institutionId, {
+                customTuition: bounded,
+                tuitionHistory: history
+            });
+        } else {
+            _state()._updateInstitution(institutionId, { customTuition: bounded });
+        }
 
         return _ok({
             institutionId: institutionId,
