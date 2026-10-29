@@ -38,6 +38,33 @@
  * religion modal's onConfirm handlers do not return a boolean — they
  * control flow via the _handleCommandResult helper and the explicit close.
  *
+ * CALLBACK ORDERING
+ * -----------------
+ * When a command succeeds, _handleCommandResult fires onSuccess BEFORE
+ * calling closeTopModal. The ordering is:
+ *
+ *   1. toast(successMessage, 'success')
+ *   2. ReligionCommands.persist()
+ *   3. onSuccess(result.data || result)
+ *   4. closeTopModal()
+ *
+ * onSuccess fires while the modal is still on the stack. This is
+ * deliberate: callers that reopen another modal from onSuccess (a
+ * common pattern for chained navigation — details → edit, details →
+ * set leader, etc.) can do so directly, without the setTimeout(100)
+ * dance that the details modal still uses for its own button
+ * handlers. Prior revisions called closeTopModal() before onSuccess,
+ * which made any caller that reopened a modal see a brief empty
+ * state between closes.
+ *
+ * The closeTopModal() call still runs synchronously after onSuccess,
+ * so the command path is unchanged for callers that do not reopen a
+ * modal: on success, the modal closes; on failure, it stays open and
+ * a failure toast is shown.
+ *
+ * onSuccess exceptions are caught and logged. A throwing onSuccess
+ * cannot prevent the modal from closing.
+ *
  * MODAL INFRASTRUCTURE (core/modals-core.js):
  *
  *   window.openModal(options) -> { element, close }
@@ -68,7 +95,11 @@
  * Two known deferrals, both documented in religion-doc.md:
  *   - Inline styles remain. Layout rewrite is a design task, deferred.
  *   - The details modal uses setTimeout(100) between close and open to
- *     avoid a z-index/transition race. Documented as deferral.
+ *     avoid a z-index/transition race. Documented as deferral. Now
+ *     that _handleCommandResult calls onSuccess before close, callers
+ *     that reopen via onSuccess do not need the timeout; the timeout
+ *     is retained only for the details modal's button handlers that
+ *     close-then-open in a single click.
  *
  * DEPENDENCIES:
  *   - modals-core.js: openModal, closeTopModal
@@ -90,22 +121,40 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
+ *   Current revision (C2):
+ *     - _handleCommandResult now fires onSuccess BEFORE closeTopModal().
+ *       Prior revisions closed the modal first, then called onSuccess.
+ *       Callers that reopened another modal from onSuccess saw a brief
+ *       empty state between the close and the reopen — the modal stack
+ *       momentarily had zero elements in the DOM. The onSuccess-first
+ *       ordering lets chained navigation (details → edit, details →
+ *       set leader, etc.) reuse onSuccess without the setTimeout(100)
+ *       dance that this file's own button handlers still use.
+ *     - onSuccess exceptions are caught and logged. A throwing
+ *       onSuccess cannot prevent the modal from closing (same
+ *       containment policy as modals-core.js's own onCancel handling).
+ *     - Header CALLBACK ORDERING section added, documenting the
+ *       precedence and the rationale.
+ *     - The details modal's button handlers (openEditReligionModal,
+ *       openSetLeaderModal, openAddGodModal, openAddLawModal,
+ *       openCreatePlaceOfWorshipModal, openDeprecateReligionModal,
+ *       openDeleteReligionModal) continue to use _closeTopModal() +
+ *       setTimeout(100) to open the next modal. That is a separate
+ *       deferral: the button click closes the details modal, and the
+ *       next modal is opened after a delay. See DEFERRALS in the
+ *       header. C2 does not touch those call sites.
  *   Phase 0: removed _openingModal re-entry guard, fixed year-zero bugs,
  *            removed emoji from delete modal.
  *   Phase 2: delegated vocabulary to ReligionFormat/ReligionConstants;
  *            removed prefill and fallback.
  *   Phase 4 (deferred): inline styles, event handling, setTimeout
  *            navigation. Not addressed here.
- *   Phase 7 (current): converge to the reference pattern.
+ *   Phase 7: converge to the reference pattern.
  *     - Added _handleCommandResult helper.
  *     - persist() called once per successful command.
  *     - ReligionLaws.addLaw → ReligionCommands.addLaw.
- *     - Fallback wrappers removed (_getAllReligions, _getReligion,
- *       _getFollowerCount, _getGodsByReligion, _getLawsByReligion,
- *       _getPlacesOfWorshipByReligion, _getLocationOptions,
- *       _getCurrentYear). Direct ReligionQueries calls.
+ *     - Fallback wrappers removed.
  *     - Load-time verification of every required dependency.
- *     - Inline styles and setTimeout navigation left as documented deferrals.
  * =============================================================================
  */
 
@@ -115,11 +164,6 @@
     // =========================================================================
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
-    //
-    // These throw at load time (see verification block at module bottom) if
-    // the underlying capability is missing. The wrappers exist only to
-    // narrow the reference path; they do not have fallbacks.
-    //
 
     function _openModal(options) {
         return window.openModal(options);
@@ -289,22 +333,22 @@
     // =========================================================================
     // 3. RESULT HANDLING
     // =========================================================================
+    //
+    // See CALLBACK ORDERING in the module header. Summary:
+    //
+    //   1. toast(successMessage, 'success')
+    //   2. ReligionCommands.persist()
+    //   3. onSuccess(result.data || result)   ← modal still open here
+    //   4. closeTopModal()
+    //
+    // onSuccess-before-close lets a caller that reopens another modal
+    // from onSuccess do so without the modal stack flashing empty. The
+    // close still runs synchronously afterward, so the success path
+    // still closes the modal for callers that do not reopen.
+    //
+    // onSuccess exceptions are caught and logged. A throwing onSuccess
+    // cannot prevent the close.
 
-    /**
-     * Handles the result of a command.
-     *
-     * On success: toast, persist, onSuccess, close.
-     * On failure: toast, keep the modal open.
-     *
-     * A failed persist is a second toast. Canonical data is already updated;
-     * the user can retry the save through whatever save UI exists.
-     *
-     * @param {Object}   result
-     * @param {string}   successMessage
-     * @param {string}   failurePrefix
-     * @param {Function} [onSuccess]
-     * @returns {boolean} true on success
-     */
     function _handleCommandResult(result, successMessage, failurePrefix, onSuccess) {
         if (result && result.success) {
             _showToast(successMessage, 'success');
@@ -317,8 +361,21 @@
                 );
             }
 
+            // Fire onSuccess while the modal is still on the stack, so
+            // callers that reopen a modal from onSuccess see no gap.
+            if (typeof onSuccess === 'function') {
+                try {
+                    onSuccess(result.data || result);
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'modals-religion.js: onSuccess threw:', e
+                        );
+                    }
+                }
+            }
+
             _closeTopModal();
-            if (typeof onSuccess === 'function') onSuccess(result.data || result);
             return true;
         }
 
