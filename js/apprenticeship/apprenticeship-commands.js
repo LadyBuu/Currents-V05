@@ -44,25 +44,34 @@
  *
  * ROLE READS
  *
- *   _getRoleById prefers RoleState.getRole (returns clones) and falls
- *   back to window.getRoleById (accessors.js, live records) only when
- *   RoleState is unavailable. This matches education-commands.js and
- *   ensures the apprenticeship command layer sees the same role shape
- *   that apprenticeship-queries.js reads through RoleState.
+ *   Two role-read intents exist in this module and are handled separately:
  *
- *   Reading the live accessor record when RoleState is available would
- *   make commands and queries observe different role data during a
- *   category-reassignment mutation (RoleState.deleteCategory reassigns
- *   roles before re-notifying).
+ *     _getRoleById(id)          — LENIENT. Used only for display-name
+ *                                 resolution. Prefers RoleState.getRole
+ *                                 (returns clones). Falls back to
+ *                                 window.getRoleById ONLY when RoleState
+ *                                 is unavailable. After the role-system.js
+ *                                 compatibility shim loads, window.getRoleById
+ *                                 also resolves to RoleState.getRole (clones),
+ *                                 so the fallback is a compatibility path,
+ *                                 not a live-record path. Callers must
+ *                                 tolerate a null return.
+ *
+ *     _requireRoleForWrite(id)  — STRICT. Used by write paths that must
+ *                                 have the role record. Throws when the
+ *                                 role is missing.
+ *
+ *   This matches education-commands.js's _getRoleById / _requireRoleForWrite
+ *   split.
  *
  * PERSISTENCE
  *
  *   Commands in this module do NOT call saveMasterData. They mutate
- *   in-memory state (via CharacterCommands and ProfessionalCommands),
- *   which in turn mark data dirty through RelationshipState and the
- *   character mutation boundary. The caller is responsible for calling
- *   ApprenticeshipCommands.persist() exactly once per batch, after
- *   every command in the batch has succeeded.
+ *   in-memory state (via CharacterCommands, RoleCommands, and
+ *   ProfessionalCommands), which in turn mark data dirty through
+ *   RelationshipState and the character mutation boundary. The caller
+ *   is responsible for calling ApprenticeshipCommands.persist() exactly
+ *   once per batch, after every command in the batch has succeeded.
  *
  *   Modal callers (modals-apprenticeship.js) call persist() once per
  *   user action, at the end of the successful command chain. Batch
@@ -70,10 +79,24 @@
  *   persist() once at the end.
  *
  *   persist() returns { success, reason }. On saveMasterData() returning
- *   false, it reads window.getLastSaveError() for the underlying error
- *   so the caller can surface the actual cause (quota, serialization,
- *   disabled storage) rather than the generic "returned false". This
- *   matches RoleCommands.persist() and EducationCommands.persist().
+ *   false, it reads window.getLastSaveError() for the underlying error.
+ *   This matches RoleCommands.persist() and EducationCommands.persist().
+ *
+ * SKILL PROGRESSION
+ *
+ *   Role skill progression routes through
+ *   RoleCommands.recordCharacterSkillProgress, not
+ *   CharacterCommands.updateProfession. The former enforces the
+ *   non-decreasing invariant; the latter is a blind write (the
+ *   administrative override path). Prior revisions called
+ *   updateProfession directly, which meant an apprenticeship write could
+ *   lower a character's canonical role skill if it read a stale value.
+ *   The invariant is now enforced by the role domain, not re-implemented
+ *   here. See RoleCommands.recordCharacterSkillProgress.
+ *
+ *   Role creation (when a character does not yet hold a role and the
+ *   apprenticeship grants it) still calls CharacterCommands.addProfession.
+ *   That is a creation, not a progression; the invariant does not apply.
  *
  * RANDOMNESS
  *
@@ -91,12 +114,42 @@
  *     roleName: string,
  *     startSkill: number,
  *     stage: string,
- *     teachingHistory: Array,
+ *     teachingHistory: Array,   // unbounded growth; see education-doc §10
  *     notes: string
  *   }
  *
  *   startYear is an EDGE field, not metadata. It is patched through
  *   ProfessionalCommands.updateEdgeFields.
+ *
+ * MULTI-ROLE DISAMBIGUATION
+ *
+ *   A character may have concurrent apprenticeships with multiple masters
+ *   for different roles. The singular query
+ *   getOngoingApprenticeship(masterId, apprenticeId) throws when the pair
+ *   has more than one ongoing apprenticeship (see
+ *   apprenticeship-queries.js's ROLEID CONTRACT).
+ *
+ *   To avoid the throw, progressApprenticeship, teachSkill, and
+ *   teachSpecialization accept an OPTIONAL roleId argument. When supplied,
+ *   the command disambiguates. When omitted and the pair has multiple
+ *   ongoing apprenticeships, the command returns
+ *   { success: false, code: 'MULTIPLE_ROLES' } — a structured failure,
+ *   not an exception.
+ *
+ * PARTIAL-TRANSACTION ROLLBACK
+ *
+ *   createApprenticeship writes a profession record to the apprentice
+ *   BEFORE creating the apprenticeship edge. If the edge creation fails,
+ *   the profession write is a half-transaction: the apprentice now holds
+ *   a role they did not have, or has a higher skill than before.
+ *
+ *   The command captures the pre-state (existedBefore, previousSkillLevel)
+ *   and, on edge creation failure, restores it: updateProfession back to
+ *   previousSkillLevel if existedBefore; removeProfession if not. Revert
+ *   failures are logged but do not change the returned result — the edge
+ *   failure is the reported outcome. This is the same half-transaction
+ *   discipline professional-knowledge-commands.js documents for its
+ *   death-cascade caller.
  *
  * DEPENDENCIES (must be loaded first):
  *   - apprenticeship-constants.js
@@ -104,11 +157,44 @@
  *   - apprenticeship-queries.js
  *   - professional-commands.js
  *   - character-commands.js
+ *   - role-commands.js      (recordCharacterSkillProgress)
  *   - accessors.js
- *   - time.js                (getCurrentYear)
- *   - storage.js             (saveMasterData, getLastSaveError)
+ *   - time.js               (getCurrentYear)
+ *   - storage.js            (saveMasterData, getLastSaveError)
  *   - relationship-types.js
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Role reads split into _getRoleById (lenient, display-only) and
+ *       _requireRoleForWrite (strict, write paths). Prior revisions used
+ *       a single lenient helper. See ROLE READS.
+ *     - progressApprenticeship, teachSkill, teachSpecialization accept
+ *       an optional roleId. When omitted and the pair has multiple
+ *       ongoing apprenticeships, they return
+ *       { code: 'MULTIPLE_ROLES' } instead of letting the query throw.
+ *       See MULTI-ROLE DISAMBIGUATION.
+ *     - Skill progression now routes through
+ *       RoleCommands.recordCharacterSkillProgress instead of
+ *       CharacterCommands.updateProfession. This enforces the
+ *       non-decreasing invariant at the domain layer, matching the
+ *       deferred consolidation in education-doc §9. Role creation
+ *       (addProfession) is unchanged. See SKILL PROGRESSION.
+ *     - _handleRoleDeleted wraps each cancelApprenticeship in a
+ *       try/catch and calls persist() once after the loop. Prior
+ *       revisions let a single throw abort the loop, orphaning the
+ *       remaining apprenticeships. See _handleRoleDeleted.
+ *     - updateApprenticeship gates updateEdgeMetadata on metaChanged.
+ *       Prior revisions always wrote metadata, even for status-only or
+ *       startYear-only updates.
+ *     - updateApprenticeship's endEdge call now runs only when
+ *       updates.status actually differs from rel.status. Prior revisions
+ *       called endEdge even for a same-status no-op, which likely failed
+ *       or corrupted the edge.
+ *     - createApprenticeship captures the profession pre-state and
+ *       restores it on edge creation failure. See PARTIAL-TRANSACTION
+ *       ROLLBACK.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -146,33 +232,25 @@
             'apprenticeship-commands.js requires character-commands.js first.'
         );
     }
+    if (!window.RoleCommands ||
+        typeof window.RoleCommands.recordCharacterSkillProgress !== 'function') {
+        throw new Error(
+            'apprenticeship-commands.js requires role-commands.js ' +
+            '(RoleCommands.recordCharacterSkillProgress) first.'
+        );
+    }
     if (!window.RELATIONSHIP_ARCHETYPES || !window.RELATIONSHIP_STATUS) {
         throw new Error(
             'apprenticeship-commands.js requires relationship-types.js first.'
         );
     }
 
-    // -------------------------------------------------------------------------
-    // CharacterCommands method requirements.
-    //
-    // Every CharacterCommands method this module calls must be present at
-    // load time. A missing method would otherwise surface as a runtime
-    // TypeError inside a user action (e.g. teachSpecialization) instead of
-    // as an actionable load-order error. This matches role-commands.js's
-    // requiredCharacterMethods check.
-    //
-    //   getProfession              createApprenticeship, progressApprenticeship,
-    //                              teachSkill, teachSpecialization
-    //   updateProfession           createApprenticeship, progressApprenticeship,
-    //                              teachSkill
-    //   addProfession              createApprenticeship
-    //   addProfessionSpecialization  teachSpecialization
-    // -------------------------------------------------------------------------
     var _REQUIRED_CHARACTER_METHODS = [
         'getProfession',
         'updateProfession',
         'addProfession',
-        'addProfessionSpecialization'
+        'addProfessionSpecialization',
+        'removeProfession'
     ];
     for (var _cm = 0; _cm < _REQUIRED_CHARACTER_METHODS.length; _cm++) {
         var _methodName = _REQUIRED_CHARACTER_METHODS[_cm];
@@ -202,21 +280,36 @@
     }
 
     /**
-     * Role reads prefer RoleState (returns clones) and fall back to
-     * accessors' window.getRoleById only when RoleState is unavailable.
-     * See ROLE READS in the module header.
+     * LENIENT role read. Display-name resolution only.
+     * Prefers RoleState.getRole (clones). Falls back to window.getRoleById
+     * (which under the documented load order is also RoleState.getRole via
+     * role-system.js). Returns null when neither is available.
+     * See ROLE READS in the header.
      */
     function _getRoleById(id) {
+        if (!id) return null;
         if (window.RoleState && typeof window.RoleState.getRole === 'function') {
             return window.RoleState.getRole(id);
         }
         if (typeof window.getRoleById === 'function') {
             return window.getRoleById(id);
         }
-        throw new Error(
-            'ApprenticeshipCommands: no role reader available ' +
-            '(RoleState.getRole or getRoleById required)'
-        );
+        return null;
+    }
+
+    /**
+     * STRICT role read. Throws when the role is missing or no reader is
+     * available. See ROLE READS in the header.
+     */
+    function _requireRoleForWrite(id) {
+        if (!id || typeof id !== 'string') {
+            throw new Error('ApprenticeshipCommands: role id is required for write');
+        }
+        var role = _getRoleById(id);
+        if (!role) {
+            throw new Error('ApprenticeshipCommands: role not found: ' + id);
+        }
+        return role;
     }
 
     function _getCurrentYear() {
@@ -242,6 +335,10 @@
         return window.ApprenticeshipRules;
     }
 
+    function _roleCommands() {
+        return window.RoleCommands;
+    }
+
     function _roll() {
         if (window.Random && typeof window.Random.next === 'function') {
             return window.Random.next();
@@ -258,11 +355,6 @@
     // =========================================================================
     // 3. SPECIALIZATION VALIDATION
     // =========================================================================
-    //
-    // Sole validator for role.specializations membership in the
-    // apprenticeship domain. Replaces the removed
-    // RoleRules.validateSpecialization. See SPECIALIZATION VALIDATION in
-    // the module header.
 
     function _validateSpecialization(role, specialization) {
         if (!role || typeof role !== 'object') {
@@ -313,9 +405,6 @@
     }
 
     function _commitAndNotify(payload) {
-        // No saveMasterData() here. The mutation boundary that
-        // CharacterCommands and ProfessionalCommands already use
-        // (markDataDirty) is enough; the caller flushes via persist().
         _notify('apprenticeshipUpdated', payload);
         _notify('characterUpdated', payload);
     }
@@ -324,18 +413,6 @@
     // 5. PERSISTENCE
     // =========================================================================
 
-    /**
-     * Forces a synchronous flush of masterData to storage.
-     *
-     * The caller is responsible for invoking persist() exactly once per
-     * batch, after every command in the batch has succeeded. This matches
-     * RoleCommands.persist() and EducationCommands.persist().
-     *
-     * Returns { success: true } on success. On failure, reads
-     * window.getLastSaveError() (if available) to surface the underlying
-     * error (quota, serialization, disabled storage) rather than the
-     * generic "returned false".
-     */
     function persist() {
         if (typeof window.saveMasterData !== 'function') {
             return { success: false, reason: 'saveMasterData is not available.' };
@@ -390,37 +467,61 @@
         };
     }
 
+    /**
+     * Ensures the apprentice's profession record is at least at
+     * `skillLevel`.
+     *
+     * Two paths:
+     *   - profession exists:  call RoleCommands.recordCharacterSkillProgress
+     *                         (non-decreasing invariant enforced by role domain)
+     *   - profession missing: call CharacterCommands.addProfession (creation,
+     *                         not progression; invariant does not apply)
+     *
+     * Returns { success, updated, existedBefore, previousSkillLevel, profession }.
+     * existedBefore and previousSkillLevel are captured for the caller's
+     * partial-transaction rollback (see PARTIAL-TRANSACTION ROLLBACK).
+     */
     function _ensureProfession(characterId, roleId, roleName, roleBaseSalary,
                                 skillLevel, startYear, notes) {
         var CC = _characterCommands();
         var existing = CC.getProfession(characterId, roleId);
 
         if (existing) {
-            var existingSkill = typeof existing.skillLevel === 'number'
+            var previousSkillLevel = typeof existing.skillLevel === 'number'
                 ? existing.skillLevel
                 : 0;
-            if (existingSkill >= skillLevel) {
-                return { success: true, updated: false, profession: existing };
-            }
-            var updateResult = CC.updateProfession(characterId, roleId, {
-                skillLevel: skillLevel
-            });
-            if (!updateResult || !updateResult.success) {
+
+            if (previousSkillLevel >= skillLevel) {
                 return {
-                    success: false,
-                    reason: (updateResult && updateResult.reason)
-                        ? updateResult.reason
-                        : 'Failed to update profession'
+                    success: true,
+                    updated: false,
+                    existedBefore: true,
+                    previousSkillLevel: previousSkillLevel,
+                    profession: existing
                 };
             }
-            return { success: true, updated: true, profession: updateResult.profession };
+
+            var progressResult = _roleCommands().recordCharacterSkillProgress(
+                characterId, roleId, skillLevel
+            );
+            if (!progressResult || progressResult.success !== true) {
+                return {
+                    success: false,
+                    reason: (progressResult && progressResult.reason)
+                        ? progressResult.reason
+                        : 'Failed to record skill progression'
+                };
+            }
+
+            return {
+                success: true,
+                updated: progressResult.unchanged !== true,
+                existedBefore: true,
+                previousSkillLevel: previousSkillLevel,
+                profession: CC.getProfession(characterId, roleId)
+            };
         }
 
-        // Use the role's canonical base salary when the caller supplies
-        // one; this matches role-commands.js::_assignRoleInternal, which
-        // also uses role.baseSalary. A prior revision hardcoded 0 here,
-        // which meant an apprenticeship-created profession record started
-        // at salary 0 while a role-assigned one started at the role's base.
         var baseSalary = (typeof roleBaseSalary === 'number' && isFinite(roleBaseSalary))
             ? roleBaseSalary
             : 0;
@@ -447,7 +548,42 @@
                     : 'Failed to add profession'
             };
         }
-        return { success: true, updated: false, profession: addResult.profession };
+        return {
+            success: true,
+            updated: false,
+            existedBefore: false,
+            previousSkillLevel: null,
+            profession: addResult.profession
+        };
+    }
+
+    /**
+     * Best-effort revert of _ensureProfession's effects on edge creation
+     * failure. See PARTIAL-TRANSACTION ROLLBACK in the header.
+     */
+    function _revertEnsureProfession(characterId, roleId, capture) {
+        if (!capture) return;
+        var CC = _characterCommands();
+        try {
+            if (capture.existedBefore === true) {
+                if (typeof capture.previousSkillLevel === 'number') {
+                    CC.updateProfession(characterId, roleId, {
+                        skillLevel: capture.previousSkillLevel
+                    });
+                }
+            } else {
+                if (typeof CC.removeProfession === 'function') {
+                    CC.removeProfession(characterId, roleId);
+                }
+            }
+        } catch (e) {
+            if (window.console && typeof window.console.error === 'function') {
+                window.console.error(
+                    'apprenticeship-commands: revert of profession write failed for ' +
+                    characterId + '/' + roleId + ':', e
+                );
+            }
+        }
     }
 
     // =========================================================================
@@ -465,11 +601,6 @@
         if (!apprentice) return fail('APPRENTICE_NOT_FOUND', 'Apprentice not found');
         if (!role) return fail('ROLE_NOT_FOUND', 'Role not found: ' + args.roleId);
 
-        // Validate startYear BEFORE passing it down to
-        // CharacterCommands.addProfession. updateApprenticeship already
-        // validates it; this command must be consistent, otherwise an
-        // invalid startYear surfaces as PROFESSION_WRITE_FAILED from the
-        // character layer instead of INVALID_START_YEAR from this one.
         var startYear = (args.startYear !== undefined && args.startYear !== null)
             ? args.startYear
             : _getCurrentYear();
@@ -514,6 +645,8 @@
         var resolvedInitialSkill = validation.resolvedInitialSkill;
         var initialStage = _rules().getStageForSkill(resolvedInitialSkill);
 
+        // Profession write is the preparatory step. Capture pre-state
+        // for the edge-failure revert. See PARTIAL-TRANSACTION ROLLBACK.
         var ensure = _ensureProfession(
             apprentice.id,
             role.id,
@@ -543,6 +676,10 @@
             }
         });
         if (!edge.success) {
+            // Edge creation is the atomic commit point. Revert the
+            // preparatory profession write. See PARTIAL-TRANSACTION
+            // ROLLBACK.
+            _revertEnsureProfession(apprentice.id, role.id, ensure);
             return fail(edge.code || 'EDGE_CREATE_FAILED',
                 edge.message || 'Failed to create apprenticeship');
         }
@@ -566,14 +703,6 @@
     // =========================================================================
     // 9. UPDATE
     // =========================================================================
-    //
-    // Two write paths are used here:
-    //
-    //   1. metadata (skill-derived stage, notes) → updateEdgeMetadata
-    //   2. edge-level fields (startYear)          → updateEdgeFields
-    //
-    // Skill changes go through CharacterCommands.updateProfession.
-    // Status changes go through endEdge (see terminate/complete/cancel).
 
     function updateApprenticeship(masterId, apprenticeId, updates) {
         updates = updates || {};
@@ -590,10 +719,13 @@
         }
 
         var meta = _readMetadata(rel);
+        var metaChanged = false;
 
+        var statusChanged = false;
         if (updates.status && updates.status !== rel.status) {
             var transition = _rules().validateStatusTransition(rel.status, updates.status);
             if (!transition.valid) return fail(transition.code, transition.reason);
+            statusChanged = true;
         }
 
         // ---- Skill ----
@@ -601,20 +733,29 @@
             if (!_rules().isSkillInRange(updates.skillLevel)) {
                 return fail('INVALID_SKILL', 'Skill must be 0-100');
             }
-            var updateResult = _characterCommands().updateProfession(
-                apprenticeId, meta.roleId, { skillLevel: updates.skillLevel }
+            var progressResult = _roleCommands().recordCharacterSkillProgress(
+                apprenticeId, meta.roleId, updates.skillLevel
             );
-            if (!updateResult || !updateResult.success) {
+            if (!progressResult || progressResult.success !== true) {
                 return fail(
                     'SKILL_UPDATE_FAILED',
-                    (updateResult && updateResult.reason) || 'Skill update failed'
+                    (progressResult && progressResult.reason)
+                        ? progressResult.reason
+                        : 'Skill update failed'
                 );
             }
-            meta.stage = _rules().getStageForSkill(updates.skillLevel).id;
+            var newStage = _rules().getStageForSkill(updates.skillLevel).id;
+            if (meta.stage !== newStage) {
+                meta.stage = newStage;
+                metaChanged = true;
+            }
         }
 
         // ---- Notes ----
-        if (typeof updates.notes === 'string') meta.notes = updates.notes;
+        if (typeof updates.notes === 'string' && updates.notes !== meta.notes) {
+            meta.notes = updates.notes;
+            metaChanged = true;
+        }
 
         // ---- Edge-level fields (startYear) ----
         if (updates.startYear !== undefined &&
@@ -633,15 +774,17 @@
             }
         }
 
-        // ---- Metadata (one call, after all metadata changes are staged) ----
-        var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
-        if (!metaResult.success) {
-            return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
-                metaResult.message || 'Failed to update apprenticeship metadata');
+        // ---- Metadata (conditional write) ----
+        if (metaChanged) {
+            var metaResult = _professionalCommands().updateEdgeMetadata(rel.id, meta);
+            if (!metaResult.success) {
+                return fail(metaResult.code || 'METADATA_UPDATE_FAILED',
+                    metaResult.message || 'Failed to update apprenticeship metadata');
+            }
         }
 
-        // ---- Status ----
-        if (updates.status) {
+        // ---- Status (only when it actually changed) ----
+        if (statusChanged) {
             var statusResult = _professionalCommands().endEdge(
                 rel.id, _getCurrentYear(), updates.status
             );
@@ -670,11 +813,34 @@
     // 10. PROGRESS
     // =========================================================================
 
-    function progressApprenticeship(masterId, apprenticeId, amount) {
+    /**
+     * Advances the apprentice's skill by `amount`.
+     *
+     * roleId is OPTIONAL. When supplied, disambiguates multi-role pairs.
+     * When omitted and the pair has multiple ongoing apprenticeships,
+     * returns { code: 'MULTIPLE_ROLES' } rather than throwing.
+     * See MULTI-ROLE DISAMBIGUATION.
+     */
+    function progressApprenticeship(masterId, apprenticeId, amount, roleId) {
         amount = amount != null ? amount : TEACH.DEFAULT_PROGRESS_GAIN;
 
-        var rel = _queries().getOngoingApprenticeship(masterId, apprenticeId);
-        if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship');
+        var rel;
+        if (roleId) {
+            rel = _queries().getApprenticeship(masterId, apprenticeId, roleId);
+            if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship for role ' + roleId);
+            if (rel.status !== STATUS.ONGOING) {
+                return fail('NOT_ONGOING', 'Apprenticeship is not ongoing');
+            }
+        } else {
+            try {
+                rel = _queries().getOngoingApprenticeship(masterId, apprenticeId);
+            } catch (e) {
+                return fail('MULTIPLE_ROLES',
+                    'Multiple ongoing apprenticeships between ' + masterId +
+                    ' and ' + apprenticeId + '; pass roleId to disambiguate.');
+            }
+            if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship');
+        }
 
         var meta = _readMetadata(rel);
         if (!meta.roleId) return fail('NO_ROLE', 'Apprenticeship has no role');
@@ -685,21 +851,28 @@
         var newSkill = _rules().clampSkill(currentSkill + amount);
         var newStage = _rules().getStageForSkill(newSkill);
 
-        var updateResult = _characterCommands().updateProfession(
-            apprenticeId, meta.roleId, { skillLevel: newSkill }
+        var progressResult = _roleCommands().recordCharacterSkillProgress(
+            apprenticeId, meta.roleId, newSkill
         );
-        if (!updateResult || !updateResult.success) {
+        if (!progressResult || progressResult.success !== true) {
             return fail(
                 'SKILL_UPDATE_FAILED',
-                (updateResult && updateResult.reason) || 'Failed to update profession skill'
+                (progressResult && progressResult.reason)
+                    ? progressResult.reason
+                    : 'Failed to update profession skill'
             );
         }
 
-        meta.stage = newStage.id;
+        // If the invariant held (unchanged), the effective gain is 0.
+        var effectiveNewSkill = progressResult.unchanged === true
+            ? currentSkill
+            : newSkill;
+
+        meta.stage = _rules().getStageForSkill(effectiveNewSkill).id;
         meta.teachingHistory.push({
             type: 'progress',
-            gain: newSkill - currentSkill,
-            newLevel: newSkill,
+            gain: effectiveNewSkill - currentSkill,
+            newLevel: effectiveNewSkill,
             year: _getCurrentYear()
         });
 
@@ -719,10 +892,10 @@
 
         return ok({
             oldSkill: currentSkill,
-            newSkill: newSkill,
-            gained: newSkill - currentSkill,
+            newSkill: effectiveNewSkill,
+            gained: effectiveNewSkill - currentSkill,
             stage: newStage,
-            eligibleForCompletion: newSkill >= TEACH.COMPLETION_SKILL
+            eligibleForCompletion: effectiveNewSkill >= TEACH.COMPLETION_SKILL
         });
     }
 
@@ -730,9 +903,27 @@
     // 11. TEACH
     // =========================================================================
 
-    function teachSkill(masterId, apprenticeId, methodId) {
-        var rel = _queries().getOngoingApprenticeship(masterId, apprenticeId);
-        if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship');
+    /**
+     * Teaches a skill. roleId is OPTIONAL; see progressApprenticeship.
+     */
+    function teachSkill(masterId, apprenticeId, methodId, roleId) {
+        var rel;
+        if (roleId) {
+            rel = _queries().getApprenticeship(masterId, apprenticeId, roleId);
+            if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship for role ' + roleId);
+            if (rel.status !== STATUS.ONGOING) {
+                return fail('NOT_ONGOING', 'Apprenticeship is not ongoing');
+            }
+        } else {
+            try {
+                rel = _queries().getOngoingApprenticeship(masterId, apprenticeId);
+            } catch (e) {
+                return fail('MULTIPLE_ROLES',
+                    'Multiple ongoing apprenticeships between ' + masterId +
+                    ' and ' + apprenticeId + '; pass roleId to disambiguate.');
+            }
+            if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship');
+        }
 
         var meta = _readMetadata(rel);
         if (!meta.roleId) return fail('NO_ROLE', 'Apprenticeship has no role');
@@ -763,25 +954,31 @@
             roll: _roll()
         });
 
+        var effectiveNewSkill = currentSkill;
         if (outcome.success) {
-            var updateResult = _characterCommands().updateProfession(
-                apprenticeId, meta.roleId, { skillLevel: outcome.newSkill }
+            var progressResult = _roleCommands().recordCharacterSkillProgress(
+                apprenticeId, meta.roleId, outcome.newSkill
             );
-            if (!updateResult || !updateResult.success) {
+            if (!progressResult || progressResult.success !== true) {
                 return fail(
                     'SKILL_UPDATE_FAILED',
-                    (updateResult && updateResult.reason) || 'Failed to update profession skill'
+                    (progressResult && progressResult.reason)
+                        ? progressResult.reason
+                        : 'Failed to update profession skill'
                 );
             }
-            meta.stage = _rules().getStageForSkill(outcome.newSkill).id;
+            effectiveNewSkill = progressResult.unchanged === true
+                ? currentSkill
+                : outcome.newSkill;
+            meta.stage = _rules().getStageForSkill(effectiveNewSkill).id;
         }
 
         meta.teachingHistory.push({
             type: 'teach_skill',
             method: methodId,
             success: outcome.success,
-            gain: outcome.gain,
-            newLevel: outcome.newSkill,
+            gain: effectiveNewSkill - currentSkill,
+            newLevel: effectiveNewSkill,
             year: _getCurrentYear()
         });
 
@@ -802,12 +999,12 @@
 
         return ok({
             success: outcome.success,
-            gain: outcome.gain,
-            newSkill: outcome.newSkill,
+            gain: effectiveNewSkill - currentSkill,
+            newSkill: effectiveNewSkill,
             oldSkill: currentSkill,
             successChance: outcome.successChance,
             roll: outcome.roll,
-            eligibleForCompletion: outcome.newSkill >= TEACH.COMPLETION_SKILL
+            eligibleForCompletion: effectiveNewSkill >= TEACH.COMPLETION_SKILL
         });
     }
 
@@ -815,9 +1012,28 @@
     // 12. TEACH SPECIALIZATION
     // =========================================================================
 
-    function teachSpecialization(masterId, apprenticeId, specialization) {
-        var rel = _queries().getOngoingApprenticeship(masterId, apprenticeId);
-        if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship');
+    /**
+     * Teaches a specialization. roleId is OPTIONAL; see
+     * progressApprenticeship.
+     */
+    function teachSpecialization(masterId, apprenticeId, specialization, roleId) {
+        var rel;
+        if (roleId) {
+            rel = _queries().getApprenticeship(masterId, apprenticeId, roleId);
+            if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship for role ' + roleId);
+            if (rel.status !== STATUS.ONGOING) {
+                return fail('NOT_ONGOING', 'Apprenticeship is not ongoing');
+            }
+        } else {
+            try {
+                rel = _queries().getOngoingApprenticeship(masterId, apprenticeId);
+            } catch (e) {
+                return fail('MULTIPLE_ROLES',
+                    'Multiple ongoing apprenticeships between ' + masterId +
+                    ' and ' + apprenticeId + '; pass roleId to disambiguate.');
+            }
+            if (!rel) return fail('NOT_FOUND', 'No ongoing apprenticeship');
+        }
 
         var meta = _readMetadata(rel);
         if (!meta.roleId) return fail('NO_ROLE', 'Apprenticeship has no role');
@@ -952,7 +1168,7 @@
 
         var rel = _queries().getApprenticeship(masterId, apprenticeId, roleId);
         if (!rel) return fail('NOT_FOUND', 'Apprenticeship not found');
-        if (rel.status === STATUS.CANCELLED) {
+        if (rel.status === 'cancelled') {
             return ok({ cancelled: true, alreadyCancelled: true });
         }
 
@@ -1035,20 +1251,24 @@
             });
             if (progress.gain <= 0) continue;
 
-            var updateResult = _characterCommands().updateProfession(
-                projected.apprenticeId, projected.roleId,
-                { skillLevel: progress.newSkill }
+            var progressResult = _roleCommands().recordCharacterSkillProgress(
+                projected.apprenticeId, projected.roleId, progress.newSkill
             );
-            if (!updateResult || !updateResult.success) continue;
+            if (!progressResult || progressResult.success !== true) continue;
+
+            var effectiveNewSkill = progressResult.unchanged === true
+                ? currentSkill
+                : progress.newSkill;
+            if (effectiveNewSkill <= currentSkill) continue;
 
             var rel = _queries().getApprenticeshipById(projected.id);
             if (!rel) continue;
             var meta = _readMetadata(rel);
-            meta.stage = _rules().getStageForSkill(progress.newSkill).id;
+            meta.stage = _rules().getStageForSkill(effectiveNewSkill).id;
             meta.teachingHistory.push({
                 type: 'annual_advance',
-                gain: progress.gain,
-                newLevel: progress.newSkill,
+                gain: effectiveNewSkill - currentSkill,
+                newLevel: effectiveNewSkill,
                 year: year
             });
 
@@ -1061,9 +1281,9 @@
                 apprenticeId: projected.apprenticeId,
                 roleId: projected.roleId,
                 oldSkill: currentSkill,
-                newSkill: progress.newSkill,
-                gained: progress.gain,
-                eligibleForCompletion: progress.newSkill >= TEACH.COMPLETION_SKILL
+                newSkill: effectiveNewSkill,
+                gained: effectiveNewSkill - currentSkill,
+                eligibleForCompletion: effectiveNewSkill >= TEACH.COMPLETION_SKILL
             });
         }
 
@@ -1098,14 +1318,47 @@
             return;
         }
 
+        var cancelled = 0;
+        var failed = 0;
         for (var i = 0; i < active.length; i++) {
             var a = active[i];
             if (a.status !== STATUS.ONGOING) continue;
-            cancelApprenticeship(
-                a.masterId,
-                a.apprenticeId,
-                a.roleId,
-                'Role deleted: ' + roleId
+            try {
+                var result = cancelApprenticeship(
+                    a.masterId,
+                    a.apprenticeId,
+                    a.roleId,
+                    'Role deleted: ' + roleId
+                );
+                if (result.success) cancelled++;
+                else failed++;
+            } catch (e) {
+                failed++;
+                if (window.console && typeof window.console.error === 'function') {
+                    window.console.error(
+                        'apprenticeship-commands: cancelApprenticeship threw during ' +
+                        'roleDeleted handler for apprenticeship ' + a.id + ':', e
+                    );
+                }
+            }
+        }
+
+        if (cancelled > 0) {
+            var persistResult = persist();
+            if (!persistResult.success) {
+                if (window.console && typeof window.console.error === 'function') {
+                    window.console.error(
+                        'apprenticeship-commands: persist failed after roleDeleted ' +
+                        'cancelled ' + cancelled + ' apprenticeship(s):', persistResult.reason
+                    );
+                }
+            }
+        }
+
+        if (failed > 0 && window.console && typeof window.console.warn === 'function') {
+            window.console.warn(
+                'apprenticeship-commands: roleDeleted handler cancelled ' +
+                cancelled + ' apprenticeship(s), ' + failed + ' failed.'
             );
         }
     }
