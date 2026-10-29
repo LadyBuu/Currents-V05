@@ -3,6 +3,8 @@
  * STILL WATERS - ROLE STATE (role-state.js)
  * =============================================================================
  *
+ * LOCATION: js/systems/roles/role-state.js
+ *
  * The authoritative in-memory store for role records and role categories.
  *
  * Ownership contract:
@@ -50,14 +52,28 @@
  *     re-hydrates from masterData. Without this, a role write in tab B
  *     is invisible in tab A until tab A refreshes.
  *
- *     The listener resets _initialized to false, re-reads masterData,
- *     rebuilds caches, and notifies subscribers with a 'reloaded' event.
- *     It does NOT mark data dirty (nothing changed locally); the inbound
- *     data is already the canonical truth.
+ *     The reload path does NOT call markDataDirty. The inbound data IS
+ *     the canonical truth; scheduling a save would be a redundant write
+ *     and would put _isDirty into a state the caller did not cause.
+ *     Prior revisions called _syncToMasterData unconditionally, which
+ *     marked the data dirty on every cross-tab reload and contradicted
+ *     this paragraph.
  *
- *     This matches family-state.js and children-state.js. character-state.js
- *     uses the same event but handles it via its own reload helper; the
- *     behavior is equivalent.
+ *     The listener still invalidates the accessor cache, because the
+ *     cache must reflect the newly-arrived records. That is not a
+ *     "local mutation" — it is a cache refresh, and cache state is not
+ *     persisted.
+ *
+ *     This matches family-state.js and children-state.js.
+ *     character-state.js uses the same event but handles it via its own
+ *     reload helper; the behavior is equivalent.
+ *
+ *     DUPLICATE IDS ON RELOAD: the reload path drops the later copy of
+ *     a duplicate id rather than throwing, and logs the duplicate to
+ *     the console. A cross-tab reload is inbound data; a corrupt write
+ *     in another tab must not break the current tab. The init() path,
+ *     by contrast, is strict — a first boot with duplicate ids is a
+ *     load-order or corruption bug, and should surface as an error.
  *
  * Initialisation contract:
  *
@@ -90,6 +106,32 @@
  *     added in later versions of the schema. Normalisation runs once, at
  *     init() time, over the persisted array. Reads do not mutate roles.
  *
+ *     _normaliseSalary clamps to [MIN_SALARY, MAX_SALARY] at the schema
+ *     boundary. RoleCommands._validSalary already rejects out-of-range
+ *     values before they reach state, so the clamp is only reachable
+ *     via a direct RoleState.setRoles call or a corrupted persisted
+ *     envelope. The clamp is a schema-boundary defense, not a command
+ *     layer override.
+ *
+ * MUTATION PRIMITIVES
+ *
+ *     Every mutation primitive (addRole, updateRole, deleteRole,
+ *     setRoles, deleteCategory's role-reassignment) runs _normaliseRole
+ *     on the affected record. If a future revision adds a derived field
+ *     or a normalization step, every mutation path picks it up. Prior
+ *     revisions had deleteCategory mutate `_roles[i].category` directly,
+ *     which bypassed _normaliseRole and would have diverged from the
+ *     other paths under any future schema change.
+ *
+ * FACADE COMPATIBILITY SURFACE
+ *
+ *     reset() resets ONLY _uiState (selectedRoleId, roleSearchTerm). It
+ *     does NOT clear _roles or _categories. reset() is the facade
+ *     compatibility surface used by state.js::clearAllRuntimeState,
+ *     which is explicitly runtime-state-only. Canonical role data is
+ *     not cleared by reset(). See FACADE COMPATIBILITY SURFACE in the
+ *     code comments.
+ *
  * NAMESPACE OWNERSHIP
  * -------------------
  *   This file is the SINGLE owner of window.RoleState. The historical
@@ -109,6 +151,33 @@
  * DEPENDENCIES (OPTIONAL, called defensively):
  *   - accessors.js      (invalidateAccessorCaches). If absent, no-op.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _handleMasterDataUpdated no longer marks data dirty. Prior
+ *       revisions called init() which unconditionally called
+ *       _syncToMasterData() which called markDataDirty(), contradicting
+ *       the header's "the listener does NOT mark data dirty" claim.
+ *       Extracted _hydrateFromMasterData(sync) so init() (sync=true)
+ *       and the reload path (sync=false) share the read + index
+ *       rebuild + notify logic but differ on whether a re-sync to
+ *       masterData occurs. See CROSS-TAB RELOAD CONTRACT.
+ *     - deleteCategory now routes the affected role records through
+ *       _normaliseRole (with category = UNCATEGORIZED_ID) instead of
+ *       mutating them in place. Prior revisions bypassed
+ *       _normaliseRole, diverging from every other mutation primitive.
+ *       See MUTATION PRIMITIVES.
+ *     - _hydrateFromMasterData's reload path now drops duplicate ids
+ *       and logs them, rather than throwing. init() remains strict.
+ *       See CROSS-TAB RELOAD CONTRACT (DUPLICATE IDS ON RELOAD).
+ *     - _notify('reloaded', ...) payload now includes
+ *       { source: 'cross-tab' } so subscribers can distinguish a
+ *       cross-tab reload from a first-init event. Additive.
+ *     - Header MUTATION PRIMITIVES, FACADE COMPATIBILITY SURFACE, and
+ *       CROSS-TAB RELOAD CONTRACT (DUPLICATE IDS ON RELOAD) sections
+ *       added. _normaliseSalary clamping documented in Schema
+ *       normalisation.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -310,7 +379,7 @@
     // 6. PERSISTENCE SYNC (in-memory write only)
     // =========================================================================
     //
-    // After every mutation:
+    // After every LOCAL mutation:
     //   - masterData.data.roles is reassigned to a plain-array copy of _roles
     //   - masterData.data.roleCategories is reassigned to a plain-object copy
     //   - the accessor cache is invalidated (getRoleById reads fresh data)
@@ -318,6 +387,10 @@
     //
     // Storage flushes on its own schedule, or when RoleCommands.persist()
     // calls saveMasterData().
+    //
+    // The cross-tab reload path does NOT call this function. See
+    // CROSS-TAB RELOAD CONTRACT in the header: inbound data is already
+    // canonical, and marking it dirty would schedule a redundant save.
 
     function _syncToMasterData() {
         if (!window.masterData || !window.masterData.data) {
@@ -360,16 +433,42 @@
     }
 
     // =========================================================================
-    // 8. INITIALISATION
+    // 8. HYDRATION (shared by init() and cross-tab reload)
     // =========================================================================
+    //
+    // Both paths read masterData.data.roles and roleCategories, normalise
+    // records, rebuild indexes, and notify subscribers. They differ ONLY
+    // on whether _syncToMasterData runs afterwards:
+    //
+    //   init() (first boot)   → sync = true  → writes masterData + marks
+    //                                          dirty (the freshly hydrated
+    //                                          state IS the canonical set
+    //                                          and should be persisted if
+    //                                          it was loaded from defaults)
+    //
+    //   reload (cross-tab)    → sync = false → writes nothing, marks
+    //                                          nothing dirty (inbound data
+    //                                          IS the canonical truth)
+    //
+    // In both paths, the accessor cache is invalidated because it must
+    // reflect the new records. Cache state is not persisted, so cache
+    // invalidation is not a "local mutation".
+    //
+    // Throwing on duplicate ids: the init() path throws (a first boot
+    // with duplicate ids is a load-order or corruption bug). The reload
+    // path drops the later copy and logs (a cross-tab reload is inbound
+    // data; a corrupt write in another tab must not break this tab).
+    // See CROSS-TAB RELOAD CONTRACT (DUPLICATE IDS ON RELOAD).
 
-    function init() {
-        if (_initialized) return;
-
+    function _hydrateFromMasterData(options) {
+        options = options || {};
+        var sync = options.sync === true;
+        var dropDuplicates = options.dropDuplicates === true;
         var masterData = window.masterData;
+
         if (!masterData || !masterData.data) {
             throw new Error(
-                'role-state.js: cannot initialise before masterData is loaded.'
+                'role-state.js: cannot hydrate before masterData is loaded.'
             );
         }
 
@@ -380,18 +479,58 @@
             );
         }
 
-        _roles = [];
+        var next = [];
+        var seenIds = {};
         if (Array.isArray(persistedRoles)) {
             for (var i = 0; i < persistedRoles.length; i++) {
-                _roles.push(_normaliseRole(persistedRoles[i]));
+                var raw = persistedRoles[i];
+                if (!raw || typeof raw !== 'object') continue;
+                var normalised = _normaliseRole(raw);
+
+                if (seenIds[normalised.id] === true) {
+                    if (dropDuplicates) {
+                        if (window.console && typeof window.console.error === 'function') {
+                            window.console.error(
+                                'role-state.js: duplicate role id "' +
+                                normalised.id + '" on cross-tab reload; ' +
+                                'dropping the later copy.'
+                            );
+                        }
+                        continue;
+                    }
+                    throw new Error(
+                        'role-state.js: duplicate role id "' +
+                        normalised.id + '" in masterData.'
+                    );
+                }
+                seenIds[normalised.id] = true;
+                next.push(normalised);
             }
         }
 
+        _roles = next;
         _categories = _applyPersistedCategories(_buildCategories());
-
         _rebuildCaches();
-        _syncToMasterData();
         _initialized = true;
+
+        if (sync) {
+            _syncToMasterData();
+        } else {
+            // Inbound reload. Refresh the accessor cache so getRoleById
+            // reads the new records, but do NOT mark data dirty.
+            _invalidateAccessorCaches();
+        }
+
+        return next.length;
+    }
+
+    // =========================================================================
+    // 9. INITIALISATION
+    // =========================================================================
+
+    function init() {
+        if (_initialized) return;
+        _hydrateFromMasterData({ sync: true, dropDuplicates: false });
     }
 
     function _assertInitialised() {
@@ -403,18 +542,21 @@
     }
 
     // =========================================================================
-    // 9. CROSS-TAB RELOAD
+    // 10. CROSS-TAB RELOAD
     // =========================================================================
     //
     // storage.js dispatches masterDataUpdated when another tab writes.
     // We re-hydrate from masterData. This is NOT a local mutation, so we
     // do NOT mark data dirty; the inbound data IS the canonical truth.
     //
-    // The reload path is:
-    //   - reset _initialized so init() will re-run
-    //   - re-read masterData.data.roles and .roleCategories
-    //   - rebuild caches
-    //   - notify subscribers with a 'reloaded' event
+    // The reload path:
+    //   - reads masterData.data.roles and .roleCategories
+    //   - drops duplicate ids (logs them) rather than throwing
+    //   - rebuilds caches
+    //   - invalidates the accessor cache (cache refresh, not mutation)
+    //   - notifies subscribers with a 'reloaded' event whose payload
+    //     includes { source: 'cross-tab' } so subscribers can
+    //     distinguish an inbound reload from a first-init event
     //
     // If masterData is missing at reload time, we stay initialised with
     // the pre-reload state and log. Removing the state on a missing
@@ -431,11 +573,8 @@
             return;
         }
 
-        // Reset so init() will re-read from masterData.
-        _initialized = false;
-
         try {
-            init();
+            _hydrateFromMasterData({ sync: false, dropDuplicates: true });
         } catch (err) {
             if (window.console && typeof window.console.error === 'function') {
                 window.console.error(
@@ -446,13 +585,13 @@
             return;
         }
 
-        _notify('reloaded', { count: _roles.length });
+        _notify('reloaded', { count: _roles.length, source: 'cross-tab' });
     }
 
     window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
 
     // =========================================================================
-    // 10. READ COPIES
+    // 11. READ COPIES
     // =========================================================================
     //
     // Two copy flavors:
@@ -509,7 +648,7 @@
     }
 
     // =========================================================================
-    // 11. PUBLIC READ API
+    // 12. PUBLIC READ API
     // =========================================================================
     //
     // Every read returns a defensive copy. No live canonical role leaves
@@ -556,7 +695,7 @@
     }
 
     // =========================================================================
-    // 12. SUBSCRIPTIONS
+    // 13. SUBSCRIPTIONS
     // =========================================================================
 
     function subscribe(callback) {
@@ -571,7 +710,7 @@
     }
 
     // =========================================================================
-    // 13. INTERNAL MUTATIONS (invoked by RoleCommands)
+    // 14. INTERNAL MUTATIONS (invoked by RoleCommands)
     // =========================================================================
     //
     // These are the only sanctioned ways to change role state. They are named
@@ -584,6 +723,9 @@
     //
     // Return values are defensive copies for the caller; the canonical
     // record stays in _cache.byId.
+    //
+    // MUTATION PRIMITIVES: every mutation primitive runs _normaliseRole
+    // on the affected records. See MUTATION PRIMITIVES in the header.
 
     function addRole(role) {
         _assertInitialised();
@@ -676,8 +818,14 @@
     }
 
     // =========================================================================
-    // 14. CATEGORY MANAGEMENT (invoked by RoleCommands)
+    // 15. CATEGORY MANAGEMENT (invoked by RoleCommands)
     // =========================================================================
+    //
+    // deleteCategory reassigns affected roles to UNCATEGORIZED_ID. The
+    // reassigned records go through _normaliseRole so any future schema
+    // normalization applies uniformly. Prior revisions mutated
+    // `_roles[i].category` directly, bypassing _normaliseRole. See
+    // MUTATION PRIMITIVES in the header.
 
     function addCategory(id, name) {
         _assertInitialised();
@@ -711,10 +859,25 @@
 
         var touched = [];
         for (var i = 0; i < _roles.length; i++) {
-            if (_roles[i].category === id) {
-                _roles[i].category = RC.UNCATEGORIZED_ID;
-                touched.push(_roles[i].id);
-            }
+            if (_roles[i].category !== id) continue;
+
+            // Rebuild the record through _normaliseRole so any future
+            // schema normalization applies uniformly. See MUTATION
+            // PRIMITIVES in the header.
+            var candidate = {
+                id: _roles[i].id,
+                name: _roles[i].name,
+                category: RC.UNCATEGORIZED_ID,
+                icon: _roles[i].icon,
+                specializations: _roles[i].specializations,
+                notes: _roles[i].notes,
+                genderRestriction: _roles[i].genderRestriction,
+                baseSalary: _roles[i].baseSalary,
+                requiresLiteracy: _roles[i].requiresLiteracy,
+                literacyLevel: _roles[i].literacyLevel
+            };
+            _roles[i] = _normaliseRole(candidate);
+            touched.push(_roles[i].id);
         }
 
         delete _categories[id];
@@ -726,7 +889,7 @@
     }
 
     // =========================================================================
-    // 15. FACADE COMPATIBILITY SURFACE
+    // 16. FACADE COMPATIBILITY SURFACE
     // =========================================================================
     //
     // The historical js/core/role-state.js exposed selectedRoleId,
@@ -738,6 +901,9 @@
     // touch the role catalogue, do NOT call markDataDirty, and do NOT
     // publish events on the state channel — the UI state is ephemeral and
     // not part of the catalogue's persistence contract.
+    //
+    // reset() resets ONLY _uiState. It does NOT clear _roles or
+    // _categories. See FACADE COMPATIBILITY SURFACE in the header.
 
     function _getSelectedRoleId() {
         return _uiState.selectedRoleId;
@@ -761,7 +927,7 @@
     }
 
     // =========================================================================
-    // 16. EXPORTS
+    // 17. EXPORTS
     // =========================================================================
 
     window.RoleState = {
@@ -798,7 +964,13 @@
         set selectedRoleId(v) { _setSelectedRoleId(v); },
         get roleSearchTerm() { return _getRoleSearchTerm(); },
         set roleSearchTerm(v) { _setRoleSearchTerm(v); },
-        reset: reset
+        reset: reset,
+
+        // Exposed for the clone-field-parity check in role-queries.js.
+        // This is a stable shape contract, not a general-purpose internal
+        // accessor. Do not use it to read live records — use getRole /
+        // getAllRoles, which return clones.
+        _cloneRoleForRead: _cloneRoleForRead
     };
 
     if (typeof module !== 'undefined' && module.exports) {
