@@ -39,6 +39,31 @@
  *   Uses window.getCurrentYear from js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used and is NOT verified.
  *
+ * LOCATION-RESOLUTION DEPENDENCIES:
+ *   The religion domain resolves character locations through
+ *   LocationQueries.getCurrentLocationId (semantic) with a fallback to
+ *   CharacterQueries.getCurrentLocationId (raw field). See
+ *   religion-queries.js's LOCATION-RESOLUTION CONTRACT.
+ *
+ *   Those two are REQUIRED AT CALL TIME, not at load time. The bootstrap
+ *   does NOT verify them, because:
+ *
+ *     - Loading religion-queries.js in isolation (a bare harness) must
+ *       not fail on location modules it may never call.
+ *
+ *     - Under the documented load order (character → location →
+ *       religion), both are always present at call time, so a runtime
+ *       failure means the caller's load order is broken. The call-time
+ *       guards in religion-queries.js throw a clear error in that case.
+ *
+ *   Prior revisions of the bootstrap verified the phantom
+ *   `getCharactersByLocation` global (which no module exports), which
+ *   meant the bootstrap failed at load on any page that loaded the
+ *   religion domain. That check has been removed. If a future
+ *   religion module reintroduces a hard load-time dependency on a
+ *   location-query surface, add the check here WITH a comment naming
+ *   the calling module.
+ *
  * LOAD ORDER
  * ----------
  * This file loads LAST in the religion script group, and after:
@@ -70,9 +95,31 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Phase 7: new module. Extracted from the ad-hoc initialization in
- *            religion-state.js and the informal script-tag-order assumption
- *            across the religion bundle.
+ *   Current revision (A2):
+ *     - Removed the phantom `getCharactersByLocation` from
+ *       _REQUIRED_GLOBALS. No module exports that global; every page
+ *       that loaded the religion domain failed at bootstrap. The
+ *       location resolution now goes through
+ *       LocationQueries.getCurrentLocationId (see A1 in
+ *       religion-queries.js) with a CharacterQueries fallback, both
+ *       called at runtime and guarded at call time.
+ *     - Removed `getCurrentLocationId` and `getCharactersByLocation`
+ *       from _REQUIRED_GLOBALS. The former is genuinely overloaded
+ *       (character-queries.js exports an id-taking version,
+ *       world.js exports a character-taking version) and the winner
+ *       depends on load order; religion code that needs a location
+ *       goes through LocationQueries.getCurrentLocationId, not the
+ *       window-global alias. The latter does not exist anywhere.
+ *     - Header LOCATION-RESOLUTION DEPENDENCIES section added,
+ *       documenting why the bootstrap does not verify location
+ *       modules at load time.
+ *     - No other verification surface changed. Every other global,
+ *       module, and cross-domain method the bootstrap requires is
+ *       verified exactly as before.
+ *   Previous revision (Phase 7):
+ *     - Extracted from the ad-hoc initialization in
+ *       religion-state.js and the informal script-tag-order assumption
+ *       across the religion bundle.
  * =============================================================================
  */
 
@@ -156,6 +203,24 @@
     // =========================================================================
     // 2. GLOBAL VERIFICATION
     // =========================================================================
+    //
+    // Globals the religion domain reads at runtime. Only globals that
+    // religion code actually calls belong here. See LOCATION-RESOLUTION
+    // DEPENDENCIES in the header for why location-related globals are
+    // NOT in this list.
+    //
+    // `getCurrentLocationId` and `getCharactersByLocation` are
+    // deliberately omitted:
+    //
+    //   - getCurrentLocationId is overloaded (two modules export
+    //     different signatures under the same name); religion code
+    //     does not call the window-global alias, it goes through
+    //     LocationQueries.getCurrentLocationId. Verifying the alias
+    //     would be a false reassurance.
+    //
+    //   - getCharactersByLocation does not exist anywhere. It was a
+    //     phantom verification from a prior revision and blocked
+    //     every page that loaded the religion domain.
 
     var _REQUIRED_GLOBALS = [
         // name                getter                                          type
@@ -165,9 +230,7 @@
         ['getCurrentYear', function() { return window.getCurrentYear; },      'function'],
         ['getCharacterById', function() { return window.getCharacterById; },  'function'],
         ['getCharacters',  function() { return window.getCharacters; },       'function'],
-        ['getPlaceById',   function() { return window.getPlaceById; },        'function'],
-        ['getCurrentLocationId', function() { return window.getCurrentLocationId; }, 'function'],
-        ['getCharactersByLocation', function() { return window.getCharactersByLocation; }, 'function']
+        ['getPlaceById',   function() { return window.getPlaceById; },        'function']
     ];
 
     function _verifyGlobals() {
@@ -196,10 +259,28 @@
     // 3. CROSS-DOMAIN VERIFICATION
     // =========================================================================
     //
-    // Religion depends on the character domain at runtime (religion assignment
-    // reads and mutates character records) and on the location domain for
-    // location lookups. Verify the namespaces and the specific methods
-    // religion calls on them.
+    // Religion reads from the character and location domains at runtime.
+    // The character globals above cover the character reads that go
+    // through accessors.js. The namespace-based queries below are checked
+    // here for completeness — but as warnings, not errors.
+    //
+    // Why warn-only:
+    //
+    //   - ReligionCommands uses accessors.getCharacterById (verified in
+    //     section 2), not CharacterQueries.getCharacterById. A page
+    //     that ships only accessors.js can still run the religion
+    //     commands.
+    //
+    //   - ReligionQueries uses LocationQueries.getCurrentLocationId
+    //     (semantic resolution) with a CharacterQueries fallback. Both
+    //     are call-time guards inside religion-queries.js. Verifying
+    //     them at bootstrap would turn a degradation (raw-field
+    //     resolution) into a boot failure on any page that shipped
+    //     religion without the location domain.
+    //
+    // The documented load order ships all of these. The warn-only
+    // posture exists so a bare harness can load the religion domain
+    // for testing and get clear call-time errors, not load-time ones.
     //
 
     var _CROSS_DOMAIN = [
