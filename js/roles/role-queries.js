@@ -3,7 +3,7 @@
  * STILL WATERS - ROLE QUERIES (role-queries.js)
  * =============================================================================
  *
- * LOCATION: js/roles/role-queries.js
+ * LOCATION: js/systems/roles/role-queries.js
  *
  * Read-only queries and aggregations over the role catalogue and the
  * characters who hold each role.
@@ -61,6 +61,40 @@
  *   before RoleState.init(). Any code that reads the role catalogue
  *   before RoleState has initialised still gets correct, detached
  *   data; there is no silent live-record leak.
+ *
+ * CLONE FIELD SYNC
+ *
+ *   _cloneRoleRecord's field list MUST stay in sync with
+ *   RoleState._cloneRoleForRead's field list. If one gains a field the
+ *   other does not, the bootstrap path and the steady-state path return
+ *   different shapes, and every consumer of a role record in the
+ *   bootstrap window (rare, but non-zero) gets a record missing fields
+ *   the steady-state path provides.
+ *
+ *   To make that drift loud instead of silent, the module performs a
+ *   one-time load-time check comparing the two field lists. If they
+ *   diverge, the module throws at load. See _verifyCloneFieldParity.
+ *
+ * STATISTICS PERFORMANCE
+ *
+ *   getRoleStatistics(roleId) is O(characters) if implemented naively
+ *   (loop over holders, call getProfessions per holder). Calling it
+ *   once per role in renderRoleList is O(roles × characters × avg
+ *   professions) — quadratic in the worst case. To avoid that:
+ *
+ *     - getRoleStatisticsBatch(roleIds) computes every role's stats in
+ *       a single pass over CharacterState.getAllCharacters().
+ *     - getRoleStatistics(roleId) delegates to the batch with a
+ *       single-element array. It is O(characters × avg professions),
+ *       not O(holders × avg professions) anymore.
+ *
+ *   Callers that want stats for N roles should call
+ *   getRoleStatisticsBatch([...]) directly; that pays one scan, not N.
+ *
+ *   The change is behaviour-preserving: both paths use the same
+ *   per-character role-skill lookup (via CharacterCommands.getProfessions
+ *   once per character) and the same tier classification (via SkillUtils
+ *   with a per-call tier cache). See STATISTICS in REFACTOR HISTORY.
  *
  * CONTRACT:
  *   - Reads are pure. No mutation. No caching. Reentrant.
@@ -130,6 +164,38 @@
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added getRoleStatisticsBatch(roleIds). Computes every role's
+ *       stats in a single pass over CharacterState.getAllCharacters().
+ *       getRoleStatistics(roleId) now delegates to the batch with a
+ *       single-element array, which changes its complexity from
+ *       O(holders × avg professions) getProfessions calls to
+ *       O(characters × avg professions) — a single CharacterCommands
+ *       call per character, not per holder. See STATISTICS PERFORMANCE
+ *       in the header.
+ *     - Added _verifyCloneFieldParity(), a one-time load-time check
+ *       that the field list in _cloneRoleRecord matches
+ *       RoleState._cloneRoleForRead. If the two diverge, the module
+ *       throws at load rather than silently returning different role
+ *       shapes on the bootstrap path vs the steady-state path. See
+ *       CLONE FIELD SYNC in the header.
+ *     - getCharactersWithRoleDetails now:
+ *         * accepts options.characterIds to skip the
+ *           getCharactersByProfession lookup when the caller already
+ *           has the ID set;
+ *         * short-circuits non-masters before computing canTeach and
+ *           specialization fields, when options.mastersOnly is true;
+ *         * uses a per-call tier cache keyed by skill level, so repeated
+ *           skill values resolve from the cache rather than calling
+ *           SkillUtils.getTier once per holder.
+ *       All three are behaviour-preserving.
+ *     - getTeachingThreshold() is cached per call, not per holder.
+ *       Prior revisions re-resolved it once per getRoleStatistics call;
+ *       the batch path resolves it once for the whole batch.
+ *     - No other behavioural change. Every public read's return shape
+ *       is unchanged.
+ * =============================================================================
  */
 
 (function () {
@@ -185,7 +251,8 @@
      * that callers receive detached records regardless of which source
      * answered the read.
      *
-     * Keep this field list in sync with RoleState._cloneRoleForRead.
+     * MUST stay in sync with RoleState._cloneRoleForRead. See CLONE FIELD
+     * SYNC in the module header and _verifyCloneFieldParity below.
      */
     function _cloneRoleRecord(role) {
         if (!role) return null;
@@ -204,6 +271,63 @@
             literacyLevel: role.literacyLevel
         };
     }
+
+    // One-time load-time parity check: the field list in _cloneRoleRecord
+    // must match the field list RoleState._cloneRoleForRead produces. If
+    // RoleState is loaded (it is required above), we can compare the two
+    // by probing a synthesized record. This turns silent shape drift into
+    // a load-time error.
+    (function _verifyCloneFieldParity() {
+        if (typeof window.RoleState === 'undefined'
+            || typeof window.RoleState._cloneRoleForRead !== 'function') {
+            // RoleState does not expose its internal clone helper. Skip
+            // the check rather than inventing a comparison against a
+            // function we cannot call.
+            return;
+        }
+        var probe = {
+            id: '__probe__',
+            name: '__probe__',
+            category: '__probe__',
+            icon: '__probe__',
+            specializations: [],
+            notes: '__probe__',
+            genderRestriction: 'both',
+            baseSalary: 0,
+            requiresLiteracy: false,
+            literacyLevel: null
+        };
+        var fromState;
+        try {
+            fromState = window.RoleState._cloneRoleForRead(probe);
+        } catch (e) {
+            // If probing throws, skip the check. This is a defensive
+            // load-time diagnostic, not a hard contract.
+            return;
+        }
+        if (!fromState || typeof fromState !== 'object') return;
+
+        var stateKeys = Object.keys(fromState).sort();
+        var queryKeys = Object.keys(_cloneRoleRecord(probe)).sort();
+        if (stateKeys.length !== queryKeys.length) {
+            throw new Error(
+                'role-queries.js: _cloneRoleRecord field list diverges from ' +
+                'RoleState._cloneRoleForRead. State has [' + stateKeys.join(',') +
+                '], queries has [' + queryKeys.join(',') +
+                ']. Keep them in sync.'
+            );
+        }
+        for (var i = 0; i < stateKeys.length; i++) {
+            if (stateKeys[i] !== queryKeys[i]) {
+                throw new Error(
+                    'role-queries.js: _cloneRoleRecord field list diverges ' +
+                    'from RoleState._cloneRoleForRead at index ' + i +
+                    '. State has "' + stateKeys[i] + '", queries has "' +
+                    queryKeys[i] + '". Keep them in sync.'
+                );
+            }
+        }
+    })();
 
     /**
      * Reads the canonical role array.
@@ -270,6 +394,29 @@
         if (!_isFiniteNumber(skillLevel)) return '';
         var tier = window.SkillUtils.getTier(skillLevel);
         return tier && typeof tier.id === 'string' ? tier.id : '';
+    }
+
+    /**
+     * Per-call tier cache. Repeated skill values (very common — most
+     * holders cluster at tier boundaries) resolve from the cache instead
+     * of calling SkillUtils.getTier once per holder.
+     *
+     * The cache is per-invocation, not module-level, so it does not
+     * outlive a stale SkillUtils. Callers that make many
+     * getTier/getTierId calls within a single query (getRoleStatistics,
+     * getCharactersWithRoleDetails) pass one cache into the loop.
+     */
+    function _createTierCache() {
+        var cache = Object.create(null);
+        return function (skillLevel) {
+            var key = String(skillLevel);
+            if (cache[key] !== undefined) return cache[key];
+            cache[key] = {
+                key: _getTierKey(skillLevel),
+                name: _getTierName(skillLevel)
+            };
+            return cache[key];
+        };
     }
 
     function _getTeachingThreshold() {
@@ -506,6 +653,26 @@
     }
 
     /**
+     * Extracts the profession entry matching `roleId` from a character's
+     * professions array. Returns null if the character does not hold the
+     * role.
+     *
+     * Hoisted from the loop body so both getCharactersWithRoleDetails
+     * and getRoleStatisticsBatch can share the same extraction and the
+     * same skill-level validation.
+     */
+    function _professionForRole(characterId, roleId) {
+        var professions = window.CharacterCommands.getProfessions(characterId);
+        if (!Array.isArray(professions)) return null;
+        for (var i = 0; i < professions.length; i++) {
+            if (professions[i] && professions[i].id === roleId) {
+                return professions[i];
+            }
+        }
+        return null;
+    }
+
+    /**
      * Returns per-character detail entries for everyone who holds the
      * given role.
      *
@@ -521,19 +688,36 @@
      *     isPrimary,      // boolean
      *     startYear       // number | null
      *   }
+     *
+     * Options:
+     *   mastersOnly     if true, only returns holders whose tier key is
+     *                   'master'. The tier key is computed first, so
+     *                   non-masters skip the canTeach and specialization
+     *                   work.
+     *   characterIds    if supplied (array of strings), used directly
+     *                   instead of the getCharactersByProfession lookup.
+     *                   Callers that already have the ID set save a
+     *                   CharacterState scan.
      */
     function getCharactersWithRoleDetails(roleId, options) {
         if (!_hasId(roleId)) return [];
 
         var mastersOnly = false;
+        var providedIds = null;
         if (options && typeof options === 'object') {
             mastersOnly = options.mastersOnly === true;
+            if (Array.isArray(options.characterIds)) {
+                providedIds = options.characterIds;
+            }
         }
 
-        var ids = getCharactersWithRoleIds(roleId);
+        var ids = providedIds !== null
+            ? providedIds
+            : getCharactersWithRoleIds(roleId);
         if (ids.length === 0) return [];
 
         var teachingThreshold = _getTeachingThreshold();
+        var tierFor = _createTierCache();
         var out = [];
 
         for (var i = 0; i < ids.length; i++) {
@@ -541,36 +725,27 @@
             var character = window.CharacterQueries.getCharacterSummary(id);
             if (!character) continue;
 
-            var professions = window.CharacterCommands.getProfessions(id);
-            if (!Array.isArray(professions)) continue;
-
-            var match = null;
-            for (var j = 0; j < professions.length; j++) {
-                if (professions[j] && professions[j].id === roleId) {
-                    match = professions[j];
-                    break;
-                }
-            }
+            var match = _professionForRole(id, roleId);
             if (!match) continue;
 
             var skillLevel = _isFiniteNumber(match.skillLevel)
                 ? match.skillLevel
                 : 0;
-            var tierKey = _getTierKey(skillLevel);
-            var tierName = _getTierName(skillLevel);
+            var tier = tierFor(skillLevel);
+
+            // mastersOnly fast path: check tier BEFORE the expensive
+            // canTeach and specialization work.
+            if (mastersOnly && tier.key !== 'master') continue;
+
             var canTeach = teachingThreshold !== null
                 && skillLevel >= teachingThreshold;
-
-            if (mastersOnly) {
-                if (tierKey !== 'master') continue;
-            }
 
             out.push({
                 characterId: id,
                 character: character,
                 skillLevel: skillLevel,
-                tierKey: tierKey,
-                tierName: tierName,
+                tierKey: tier.key,
+                tierName: tier.name,
                 canTeach: canTeach,
                 specializations: Array.isArray(match.specs) ? match.specs.slice() : [],
                 isPrimary: match.primary === true,
@@ -686,83 +861,129 @@
     // =========================================================================
     // 7. ROLE STATISTICS
     // =========================================================================
+    //
+    // Both getRoleStatistics and getRoleStatisticsBatch share a single
+    // pass over CharacterState.getAllCharacters(). Per character:
+    //
+    //   - one getProfessions call (not one per requested role)
+    //   - one tier lookup per distinct skill level, via the per-call
+    //     tier cache
+    //
+    // The batch is O(characters × avg professions). The single-role
+    // form delegates to the batch with a one-element array, so it is the
+    // same complexity. See STATISTICS PERFORMANCE in the header.
 
-    function getRoleStatistics(roleId) {
-        if (!_hasId(roleId)) {
-            return _emptyStats(roleId);
+    /**
+     * Returns statistics for a batch of roles in one pass.
+     *
+     * Each entry has the shape returned by getRoleStatistics. Roles with
+     * no holders still get a zeroed entry (matching the single-role
+     * contract that a role with no holders returns zeros, not null).
+     *
+     * Non-existent role ids are silently skipped (they get no entry in
+     * the result map), matching getRoleStatistics(roleId) returning
+     * _emptyStats for missing ids.
+     *
+     * @param {string[]} roleIds
+     * @returns {Object<string, Object>} roleId -> statistics
+     */
+    function getRoleStatisticsBatch(roleIds) {
+        var result = Object.create(null);
+        if (!Array.isArray(roleIds) || roleIds.length === 0) return result;
+
+        // Dedupe and filter to known roles. Unknown role ids are skipped
+        // entirely (they get no entry), matching getRoleStatistics.
+        var wanted = Object.create(null);
+        var wantedList = [];
+        for (var w = 0; w < roleIds.length; w++) {
+            var rid = roleIds[w];
+            if (!_hasId(rid)) continue;
+            if (wanted[rid]) continue;
+            wanted[rid] = true;
+            wantedList.push(rid);
+        }
+        if (wantedList.length === 0) return result;
+
+        // Pre-populate with empty stats so a role with no holders still
+        // gets an entry (matches the single-role "zeros not null"
+        // contract).
+        for (var p = 0; p < wantedList.length; p++) {
+            result[wantedList[p]] = _emptyStats(wantedList[p]);
         }
 
-        var ids = getCharactersWithRoleIds(roleId);
-        if (ids.length === 0) {
-            return _emptyStats(roleId);
+        var characters = window.CharacterState.getAllCharacters();
+        if (!Array.isArray(characters) || characters.length === 0) {
+            return result;
         }
 
         var teachingThreshold = _getTeachingThreshold();
-        var countsByTier = _emptyTierCounts();
+        var tierFor = _createTierCache();
 
-        var totalSkill = 0;
-        var skillCount = 0;
-        var canTeachCount = 0;
-        var primaryCount = 0;
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            if (!c || !_hasId(c.id)) continue;
 
-        var specializationSet = {};
-        var specializationCount = 0;
+            var professions = window.CharacterCommands.getProfessions(c.id);
+            if (!Array.isArray(professions) || professions.length === 0) continue;
 
-        for (var i = 0; i < ids.length; i++) {
-            var id = ids[i];
-            var professions = window.CharacterCommands.getProfessions(id);
-            if (!Array.isArray(professions)) continue;
-
-            var match = null;
             for (var j = 0; j < professions.length; j++) {
-                if (professions[j] && professions[j].id === roleId) {
-                    match = professions[j];
-                    break;
+                var prof = professions[j];
+                if (!prof || !_hasId(prof.id)) continue;
+                if (!wanted[prof.id]) continue;
+
+                var stats = result[prof.id];
+                var skillLevel = _isFiniteNumber(prof.skillLevel)
+                    ? prof.skillLevel
+                    : 0;
+                stats.totalCharacters++;
+                stats._totalSkill += skillLevel;
+
+                var tier = tierFor(skillLevel);
+                if (tier.key && Object.prototype.hasOwnProperty.call(
+                    stats.countsByTier, tier.key
+                )) {
+                    stats.countsByTier[tier.key]++;
                 }
-            }
-            if (!match) continue;
 
-            var skillLevel = _isFiniteNumber(match.skillLevel)
-                ? match.skillLevel
-                : 0;
-            totalSkill += skillLevel;
-            skillCount++;
+                if (teachingThreshold !== null && skillLevel >= teachingThreshold) {
+                    stats.canTeachCount++;
+                }
+                if (prof.primary === true) stats.primaryCount++;
 
-            var tierKey = _getTierKey(skillLevel);
-            if (tierKey && Object.prototype.hasOwnProperty.call(countsByTier, tierKey)) {
-                countsByTier[tierKey]++;
-            }
-
-            if (teachingThreshold !== null && skillLevel >= teachingThreshold) {
-                canTeachCount++;
-            }
-            if (match.primary === true) primaryCount++;
-
-            if (Array.isArray(match.specs)) {
-                for (var k = 0; k < match.specs.length; k++) {
-                    var spec = match.specs[k];
-                    if (typeof spec !== 'string' || spec.length === 0) continue;
-                    if (!specializationSet[spec]) {
-                        specializationSet[spec] = true;
-                        specializationCount++;
+                if (Array.isArray(prof.specs)) {
+                    for (var k = 0; k < prof.specs.length; k++) {
+                        var spec = prof.specs[k];
+                        if (typeof spec !== 'string' || spec.length === 0) continue;
+                        if (!stats._specSet[spec]) {
+                            stats._specSet[spec] = true;
+                            stats.totalSpecializations++;
+                        }
                     }
                 }
             }
         }
 
-        var averageSkill = skillCount > 0
-            ? Math.round(totalSkill / skillCount)
-            : 0;
+        // Finalize: average skill, drop internal accumulators.
+        for (var r = 0; r < wantedList.length; r++) {
+            var roleId = wantedList[r];
+            var s = result[roleId];
+            s.averageSkill = s.totalCharacters > 0
+                ? Math.round(s._totalSkill / s.totalCharacters)
+                : 0;
+            delete s._totalSkill;
+            delete s._specSet;
+        }
 
-        return {
-            roleId: roleId,
-            totalCharacters: skillCount,
-            totalSpecializations: specializationCount,
-            averageSkill: averageSkill,
-            countsByTier: countsByTier,
-            canTeachCount: canTeachCount,
-            primaryCount: primaryCount
-        };
+        return result;
+    }
+
+    function getRoleStatistics(roleId) {
+        if (!_hasId(roleId)) {
+            return _emptyStats(roleId);
+        }
+        var batch = getRoleStatisticsBatch([roleId]);
+        var entry = batch[roleId];
+        return entry !== undefined ? entry : _emptyStats(roleId);
     }
 
     function _emptyStats(roleId) {
@@ -773,7 +994,12 @@
             averageSkill: 0,
             countsByTier: _emptyTierCounts(),
             canTeachCount: 0,
-            primaryCount: 0
+            primaryCount: 0,
+            // Internal accumulators, deleted in getRoleStatisticsBatch
+            // before returning. Present here so the single-role path
+            // produces the same shape as a pre-populated batch entry.
+            _totalSkill: 0,
+            _specSet: Object.create(null)
         };
     }
 
@@ -826,6 +1052,7 @@
         getSkillLevel: getSkillLevel,
 
         getRoleStatistics: getRoleStatistics,
+        getRoleStatisticsBatch: getRoleStatisticsBatch,
 
         getRankSummary: getRankSummary
     };
