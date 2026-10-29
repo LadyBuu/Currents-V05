@@ -66,6 +66,24 @@
  *   settlement. The current code enumerates characters at the location
  *   and buckets by religionId — the correct semantic.
  *
+ * COMPATIBILITY QUERIES:
+ *   isCulturallyCompatible and isReligiouslyPermitted are both stubs.
+ *   The real implementations belong to the relationship domain
+ *   (marriage eligibility) and the culture domain (cultural
+ *   compatibility), neither of which currently exist. The functions
+ *   return { permitted / compatible: true, reason: '<not yet
+ *   implemented>' } so that callers do not have to null-check the
+ *   result. See the individual function docstrings for the migration
+ *   path once those domains ship.
+ *
+ *   Prior revisions of isReligiouslyPermitted tried to derive interfaith
+ *   marriage eligibility from religion laws whose crimeMapping.crimeType
+ *   was 'interfaith_marriage'. That crime type does not exist in
+ *   crime-constants.js::CRIME_TYPES; no religion law could ever be
+ *   written to carry it; and the check therefore always returned
+ *   { permitted: true } regardless of the religions involved. The dead
+ *   code has been removed.
+ *
  * DEPENDENCIES (required, verified at load):
  *   - religion-state.js:   ReligionState (indexes, clones)
  *   - religion-format.js:  ReligionFormat (display labels)
@@ -93,37 +111,36 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A1):
+ *   Current revision (C1):
+ *     - isReligiouslyPermitted stubbed. Prior revisions looked for a
+ *       law whose crimeMapping.crimeType was 'interfaith_marriage',
+ *       which crime-constants.js::CRIME_TYPES does not contain. The
+ *       check always returned { permitted: true } because no law could
+ *       carry the phantom type. Stub returns { permitted: true,
+ *       reason: '<not yet implemented>' } and defers the real
+ *       implementation to the relationship domain (which owns
+ *       marriage-eligibility rules). Matches the isCulturallyCompatible
+ *       stub pattern immediately above it.
+ *     - _findInterfaithRestriction removed entirely. It existed only to
+ *       serve the phantom check and had no other callers.
+ *     - Header COMPATIBILITY QUERIES section added, documenting both
+ *       stubs and the migration path.
+ *     - No behavioural change to any other function. getFollowersByLocation,
+ *       getDominantReligion, getReligiousBreakdown, and
+ *       _resolveCurrentLocationId are unchanged from A1.
+ *   Previous revision (A1):
  *     - Added _resolveCurrentLocationId helper with LocationQueries →
  *       CharacterQueries → null precedence. Fixes the alias-race bug
  *       described in LOCATION-RESOLUTION CONTRACT.
- *     - getFollowersByLocation now resolves through
- *       _resolveCurrentLocationId. Prior revisions passed a character
- *       object to window.getCurrentLocationId (which expects an id under
- *       the documented load order), so every follower failed the
- *       location check and the function always returned [].
- *     - getDominantReligion rewritten. Prior revisions iterated
- *       religions whose locations array declared the settlement;
- *       religions whose followers moved in but never declared the
- *       settlement were missed, and the function returned null for
- *       most settlements. New implementation enumerates characters at
- *       the location and buckets by religionId.
- *     - getReligiousBreakdown rewritten. Prior revisions enumerated
- *       location characters via a phantom
- *       window.getCharactersByLocation (no module exports it), so the
- *       unaffiliated count was always zero and the religion-follower
- *       counts (via getFollowersByLocation) were also always zero. New
- *       implementation enumerates characters once and buckets by
- *       religionId; unaffiliated is the no-religion bucket.
- *     - CharacterQueries.getCharactersAtLocation is the canonical bulk
- *       enumeration used by getReligiousBreakdown. Its signature is
- *       (locationId, { aliveOnly }). aliveOnly: false matches the
- *       original getReligiousBreakdown behaviour (included deceased).
+ *     - getFollowersByLocation, getDominantReligion, and
+ *       getReligiousBreakdown rewritten to resolve location
+ *       semantically and to enumerate characters at the location
+ *       rather than religions that declare it.
  *     - Header LOCATION-RESOLUTION CONTRACT section added.
  *     - Header DEPENDENCIES section clarified: location-queries.js and
  *       character-queries.js are call-time (not load-time) requirements
  *       for the location-resolving functions.
- *   Previous revision:
+ *   Previous revisions:
  *     - Phase 0: recursion guard removal.
  *     - Phase 3: reads State indexes + canonical data; range-based
  *       growth queries; year-zero preserved.
@@ -410,9 +427,9 @@
     // =========================================================================
     //
     // NOTE: getFollowers / getFollowerCount / getFollowersByLocation return
-    // character projections (as cloned by CharacterState._project). Character
-    // records are owned by the character domain; callers that want a
-    // detached snapshot must deep-clone themselves.
+    // character projections (as cloned by CharacterState._project).
+    // Character records are owned by the character domain; callers that
+    // want a detached snapshot must deep-clone themselves.
 
     function getFollowers(religionId, options) {
         options = options || {};
@@ -871,60 +888,77 @@
     // =========================================================================
     // 14. COMPATIBILITY QUERIES
     // =========================================================================
+    //
+    // Both functions are stubs. See COMPATIBILITY QUERIES in the module
+    // header for the migration path.
 
+    /**
+     * Reports whether two characters are culturally compatible.
+     *
+     * NOT YET IMPLEMENTED. Cultural compatibility belongs to the culture
+     * domain's rules layer (culture-rules.js or equivalent), which does
+     * not currently exist. This stub returns { compatible: true } so
+     * callers do not have to null-check the result. When the culture
+     * domain's rules layer ships, this function should delegate to it
+     * or be removed from this module entirely (religion should not own
+     * cultural compatibility decisions).
+     *
+     * @param {string} characterIdA
+     * @param {string} characterIdB
+     * @returns {{ compatible: boolean, reason: string }}
+     */
     function isCulturallyCompatible(characterIdA, characterIdB) {
         return {
             compatible: true,
-            reason: 'Culture system not yet implemented'
+            reason: 'Cultural compatibility is not yet implemented. ' +
+                    'This check will move to the culture domain when ' +
+                    'its rules layer ships.'
         };
     }
 
+    /**
+     * Reports whether two characters may marry under any religion's laws.
+     *
+     * NOT YET IMPLEMENTED. Interfaith marriage eligibility belongs to
+     * the relationship domain (relationship-rules.js or equivalent),
+     * which will own the marriage-eligibility check once it exists.
+     * This module does not attempt to derive eligibility from religion
+     * laws because:
+     *
+     *   - No religion law can currently express an interfaith-marriage
+     *     restriction. crime-constants.js::CRIME_TYPES does not contain
+     *     'interfaith_marriage'; the crime domain's law catalog has no
+     *     placeholder for it; and no religion law written through
+     *     modals-religion.js::openAddLawModal can carry it.
+     *
+     *   - Marriage eligibility is a relationship-domain concern, not a
+     *     religion-domain concern. Different faiths have different
+     *     rules, but the rule evaluation belongs where marriages are
+     *     formed.
+     *
+     *   - The prior implementation looked for a law whose
+     *     crimeMapping.crimeType was the string 'interfaith_marriage',
+     *     which nothing could ever set. The check was dead code and
+     *     returned { permitted: true } on every input regardless of
+     *     the religions involved.
+     *
+     * Callers that need a real answer should wait for the relationship
+     * domain to ship and route through its marriage-rules module. This
+     * function exists only so that callers do not have to null-check it
+     * before use; it returns the same { permitted, reason } shape as
+     * the intended implementation.
+     *
+     * @param {string} characterIdA
+     * @param {string} characterIdB
+     * @returns {{ permitted: boolean, reason: string }}
+     */
     function isReligiouslyPermitted(characterIdA, characterIdB) {
-        var charA = _getCharacterById(characterIdA);
-        var charB = _getCharacterById(characterIdB);
-
-        if (!charA || !charB) {
-            return { permitted: false, reason: 'One or both characters not found' };
-        }
-
-        if (!charA.religionId || !charB.religionId) {
-            return { permitted: true, reason: 'One or both characters have no religion' };
-        }
-
-        if (charA.religionId === charB.religionId) {
-            return { permitted: true, reason: 'Same religion' };
-        }
-
-        var religionA = getReligion(charA.religionId);
-        var religionB = getReligion(charB.religionId);
-
-        var restrictionA = _findInterfaithRestriction(religionA);
-        if (restrictionA) {
-            return { permitted: false, reason: restrictionA };
-        }
-
-        var restrictionB = _findInterfaithRestriction(religionB);
-        if (restrictionB) {
-            return { permitted: false, reason: restrictionB };
-        }
-
-        return { permitted: true, reason: 'No restrictions found' };
-    }
-
-    function _findInterfaithRestriction(religion) {
-        if (!religion) return null;
-
-        var laws = religion.laws || [];
-        for (var i = 0; i < laws.length; i++) {
-            var law = laws[i];
-            if (law.domain !== 'marriage') continue;
-            if (!law.crimeMapping || !law.crimeMapping.isEnforced) continue;
-            if (law.crimeMapping.crimeType === 'interfaith_marriage') {
-                return 'Restricted by ' + religion.name + ' law: ' + law.name;
-            }
-        }
-
-        return null;
+        return {
+            permitted: true,
+            reason: 'Interfaith marriage eligibility is not yet ' +
+                    'implemented. This check will move to the relationship ' +
+                    'domain when it ships.'
+        };
     }
 
     // =========================================================================
