@@ -52,8 +52,8 @@
  *
  * CANONICAL ENTRY POINTS
  *
- *   The module exposes the core PRNG under three names, all pointing at
- *   the same function so there is exactly one RNG stream:
+ *   The module exposes the core PRNG under multiple names, all pointing
+ *   at the same function so there is exactly one RNG stream:
  *
  *     window.random        — direct function form (used by names.js,
  *                            simulation-generators.js, and most callers)
@@ -63,16 +63,49 @@
  *                            and relationship-integrations.js
  *     window.randomNext    — deprecated legacy alias, honoured by those
  *                            same _roll() implementations as a fallback
+ *     window.randomness    — GROUPED PROVIDER (see PROVIDER below).
+ *                            Preferred by consumers that expect a
+ *                            namespaced object with the standard
+ *                            pickWeighted / randomInt / pickRandom shape
+ *                            (notably culture-generation.js).
  *
- *   All three are the same PRNG. They consume the same _rngState. There
- *   is no separate stream, no divergence, and no way to accidentally
- *   fork the sequence by picking a different accessor.
+ *   All four names consume the same `_rngState`. There is no separate
+ *   stream, no divergence, and no way to accidentally fork the sequence
+ *   by picking a different accessor.
  *
- *   Prior revisions exported only window.random and window.randomInt
- *   /window.randomFloat/etc. The relationship domain's _roll() helpers
+ *   Prior revisions exported window.random and the individual functions
+ *   but not a grouped provider. The relationship domain's _roll() helpers
  *   were written against a `window.Random.next` that did not exist and
- *   a `window.randomNext` fallback that also did not exist. Both
- *   aliases are now installed here. See REFACTOR HISTORY.
+ *   a `window.randomNext` fallback that also did not exist. Those were
+ *   added in a prior revision. The grouped `window.randomness` provider
+ *   is added in this revision so that culture-generation.js's
+ *   _resolveRng — which looks for `window.randomness` and throws when
+ *   absent — finds a valid provider by default instead of requiring
+ *   every caller to construct one.
+ *
+ * PROVIDER (window.randomness)
+ *
+ *   A frozen object exposing the module's function surface under the
+ *   names a generic RNG provider is expected to expose:
+ *
+ *     pickWeighted       — items → selected item
+ *     pickWeightedKey    — weight map → selected key
+ *     pickRandom         — array → element
+ *     pickRandomMultiple — array, count → elements
+ *     randomInt          — min, max → int
+ *     randomFloat        — min, max → float
+ *     random             — no args → [0, 1)
+ *     next               — alias for random
+ *     chance             — probability → boolean
+ *     randomBoolean      — trueChance → boolean
+ *     shuffleArray       — array → shuffled copy
+ *     shuffleArrayInPlace — array → array
+ *
+ *   Every function on the provider is the SAME function exported at
+ *   window.<name>. There is no duplicate implementation, no second
+ *   state, no wrapper layer. Passing `window.randomness` to
+ *   culture-generation.js is exactly equivalent to calling the globals
+ *   directly.
  *
  * DEPENDENCIES:
  *   - localStorage (optional, for seed persistence only)
@@ -81,7 +114,20 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (P2-6):
+ *     - window.randomness provider added. A frozen namespaced object
+ *       exposing the standard RNG surface (pickWeighted, randomInt,
+ *       pickRandom, random, ...). Points at the same functions the
+ *       module already exports; no new RNG state, no divergence.
+ *     - This unblocks culture-generation.js, whose _resolveRng requires
+ *       window.randomness (or an explicit provider argument) and throws
+ *       otherwise. Under the documented load order, window.getCharacterById
+ *       resolves to character-queries.js's projection-returning version,
+ *       so culture generation was reached via character-generator.js
+ *       without an explicit provider argument and threw on every call.
+ *     - Header CANONICAL ENTRY POINTS and PROVIDER sections added.
+ *     - No behavioural change to any existing export.
+ *   Previous revision:
  *     - window.Random and window.randomNext aliases added. Both point
  *       at the same `random` function the module already exported as
  *       window.random, so no new RNG state, no divergence, and no
@@ -809,7 +855,65 @@
     });
 
     // =========================================================================
-    // 11. EXPORTS
+    // 11. PROVIDER (window.randomness)
+    // =========================================================================
+    //
+    // Frozen grouped provider exposing the standard RNG surface.
+    // Consumers that expect a namespaced object (notably
+    // culture-generation.js's _resolveRng) get a valid provider by
+    // default instead of needing to construct one.
+    //
+    // Every function below is the SAME function exported at window.<name>
+    // in section 12. There is no wrapper, no second state, no divergence.
+
+    var randomnessProvider = Object.freeze({
+        // Core
+        random:               random,
+        next:                 random,    // alias for the namespaced form
+
+        // Numeric
+        randomInt:            randomInt,
+        randomFloat:          randomFloat,
+        randomNormal:         randomNormal,
+        randomGaussian:       randomGaussian,
+        randomExponential:    randomExponential,
+        randomVariation:      randomVariation,
+
+        // Probability
+        chance:               chance,
+        randomBoolean:        randomBoolean,
+        randomSign:           randomSign,
+        percentile:           percentile,
+        checkPercentile:      checkPercentile,
+
+        // Selection
+        pickRandom:           pickRandom,
+        pickRandomMultiple:   pickRandomMultiple,
+        pickWeighted:         pickWeighted,
+        pickWeightedKey:      pickWeightedKey,
+
+        // Shuffling
+        shuffleArray:         shuffleArray,
+        shuffleArrayInPlace:  shuffleArrayInPlace,
+        shuffleString:        shuffleString,
+
+        // Dice
+        roll:                 roll,
+        rollDice:             rollDice,
+        rollHighest:          rollHighest,
+        rollLowest:           rollLowest,
+        rollWithDropLowest:   rollWithDropLowest,
+
+        // Tables
+        weightedTable:        weightedTable,
+        createWeightedTable:  createWeightedTable,
+
+        // String
+        randomString:         randomString
+    });
+
+    // =========================================================================
+    // 12. EXPORTS
     // =========================================================================
 
     window.RNG_CONSTANTS = RNG_CONSTANTS;
@@ -825,7 +929,7 @@
     window.randomFloat = randomFloat;
     window.chance = chance;
 
-    // Canonical namespaced accessors. Both point at the same `random`
+    // Canonical namespaced accessors. All point at the same `random`
     // function exported above. See CANONICAL ENTRY POINTS in the header.
     //
     //   window.Random.next   — namespaced form, preferred by the social
@@ -836,6 +940,12 @@
     // Neither introduces a second RNG stream. Both consume _rngState.
     window.Random = Object.freeze({ next: random });
     window.randomNext = random;
+
+    // Grouped provider (frozen). See PROVIDER in the header.
+    // Every method points at the same function exported at window.<name>.
+    // Consumers that expect a namespaced surface use this; consumers that
+    // call the individual globals get identical behaviour.
+    window.randomness = randomnessProvider;
 
     // Dice
     window.rollDice = rollDice;
