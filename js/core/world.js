@@ -13,6 +13,7 @@
  *   - Country and district resolution for places and characters
  *   - Current-location resolution from character.moves
  *   - Character grouping by location (using stable IDs, not display strings)
+ *   - Location population count (demographic queries)
  *
  * OUT OF SCOPE:
  *   - Display strings ("Unknown", "Other Locations", breadcrumbs with arrows)
@@ -54,12 +55,61 @@
  *   still be part of a hierarchy (via parentId), but they are not
  *   recognized as a country, district, etc.
  *
+ * POPULATION QUERIES:
+ *   getLocationPopulationCount(locationId, options) counts characters
+ *   whose resolved current location is the given location or (by default)
+ *   any location in its subtree.
+ *
+ *   Resolution uses getCharactersGroupedByLocation internally: each
+ *   character's current place is resolved once, then grouped by place
+ *   id. The count is the sum of groups whose place id equals the target
+ *   or appears in the target's descendant set (computed via
+ *   getChildPlaces(locationId, true)).
+ *
+ *   Options:
+ *     includeDescendants  default true
+ *       When true, counts the target location AND every descendant.
+ *       When false, counts only characters whose current place IS the
+ *       target location.
+ *
+ *     aliveOnly           default false
+ *       When true, excludes characters with isDeceased === true.
+ *       The grouping is done with includeDeceased=false when set, so
+ *       the filter is applied at the source rather than post-sum.
+ *
+ *   Return value:
+ *     number   count of matching characters (0 is a real answer)
+ *     null     locationId is not a valid string, or the target place
+ *              does not exist
+ *
+ *   The function returns a NUMBER, not a projection. Callers that need
+ *   the underlying character IDs must use getCharactersGroupedByLocation
+ *   directly, or getCharactersInLocations from character-queries.js.
+ *
+ *   A future revision may accept a `groupBy` option ('gender',
+ *   'ageGroup', 'lifeStage', 'rank', 'household') that returns a
+ *   bucketed object instead of a bare count. Not implemented today;
+ *   documented so callers know the shape will be a bucketed object, not
+ *   a flat count, if the option is added.
+ *
  * DEPENDENCIES (all REQUIRED):
  *   - accessors.js: getPlaces, getPlaceById, getLocationTypeById, getCharacters
  *   - time.js:      isValidYear
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added getLocationPopulationCount(locationId, options).
+ *       education-queries.js requires this function (per its
+ *       LOCATION RESOLUTION section) and previously threw for
+ *       getEducationHealthScore, recommendNewSchoolLocations,
+ *       getEducationDemandBySettlement, and
+ *       getStudentDensityBySettlement because the primitive did not
+ *       exist. See POPULATION QUERIES in the header.
+ *     - Header POPULATION QUERIES section added.
+ *     - No behavioural change to any existing function.
  * =============================================================================
  */
 
@@ -157,36 +207,21 @@
     // 2. LOCATION TYPE QUERIES
     // =========================================================================
 
-    /**
-     * Gets the priority of a location type by ID.
-     * Returns null for missing type or missing priority. Priority 0 is
-     * preserved as a valid value.
-     */
     function getLocationTypePriority(typeId) {
         if (!_hasId(typeId)) return null;
         return _typePriority(_getLocationTypeById(typeId));
     }
 
-    /**
-     * Gets the priority of a place.
-     */
     function getPlacePriority(place) {
         if (!place) return null;
         return getLocationTypePriority(place.typeId);
     }
 
-    /**
-     * Gets the semantic scope of a location type by ID.
-     * Returns null for missing type or missing scope.
-     */
     function getLocationTypeScope(typeId) {
         if (!_hasId(typeId)) return null;
         return _typeScope(_getLocationTypeById(typeId));
     }
 
-    /**
-     * Gets the scope of a place.
-     */
     function getPlaceScope(place) {
         if (!place) return null;
         return getLocationTypeScope(place.typeId);
@@ -196,15 +231,6 @@
     // 3. HIERARCHY QUERIES
     // =========================================================================
 
-    /**
-     * Gets direct children of a place, or the full subtree if recursive.
-     *
-     * Cycle safety:
-     *   - The starting place never appears in its own result.
-     *   - Each descendant appears at most once.
-     *   - Corrupted cycles are not repaired; they simply stop contributing
-     *     new descendants once every reachable node has been visited.
-     */
     function getChildPlaces(parentId, recursive) {
         if (!_hasId(parentId)) return [];
         recursive = recursive === true;
@@ -250,9 +276,6 @@
         return result;
     }
 
-    /**
-     * Gets top-level places (no parent).
-     */
     function getTopLevelPlaces() {
         var places = _getPlaces();
         var result = [];
@@ -265,9 +288,6 @@
         return result;
     }
 
-    /**
-     * Gets places whose location type has the given priority.
-     */
     function getPlacesByPriority(priority) {
         if (typeof priority !== 'number' || !Number.isFinite(priority)) return [];
         var places = _getPlaces();
@@ -280,9 +300,6 @@
         return result;
     }
 
-    /**
-     * Gets places whose location type has the given scope.
-     */
     function getPlacesByScope(scope) {
         if (typeof scope !== 'string' || scope.length === 0) return [];
         var places = _getPlaces();
@@ -299,12 +316,6 @@
     // 4. PATH QUERIES
     // =========================================================================
 
-    /**
-     * Gets the full parent chain for a place, ordered root → leaf.
-     * Includes the place itself.
-     *
-     * Returns [] when `place` is missing or has no valid ID.
-     */
     function getParentChain(place) {
         if (!place || !_hasId(place.id)) return [];
 
@@ -324,9 +335,6 @@
         return chain;
     }
 
-    /**
-     * True if `possibleAncestor` appears in the parent chain of `place`.
-     */
     function isAncestorOf(possibleAncestor, place) {
         if (!possibleAncestor || !_hasId(possibleAncestor.id)) return false;
         if (!place || !_hasId(place.id)) return false;
@@ -346,16 +354,6 @@
         return false;
     }
 
-    /**
-     * Gets the country-level ancestor of a place, if any.
-     *
-     * Resolution: highest ancestor whose location type's scope is
-     * 'country'. Returns null when no such ancestor exists.
-     *
-     * This module does NOT substitute the root place for a missing
-     * country. Callers who want "country or topmost ancestor" should
-     * compose that themselves with getParentChain()[0].
-     */
     function getLocationCountry(place) {
         if (!place) return null;
         var chain = getParentChain(place);
@@ -367,10 +365,6 @@
         return null;
     }
 
-    /**
-     * Gets the district-level ancestor of a place, if any.
-     * Returns null when no such ancestor exists.
-     */
     function getLocationDistrict(place) {
         if (!place) return null;
         var chain = getParentChain(place);
@@ -386,19 +380,10 @@
     // 5. COUNTRY RESOLUTION HELPERS
     // =========================================================================
 
-    /**
-     * Returns all places whose scope is 'country'.
-     * Used by callers that need to enumerate countries (country selectors,
-     * name generation, census filters, etc.).
-     */
     function getCountryPlaces() {
         return getPlacesByScope('country');
     }
 
-    /**
-     * Resolves the country ID for a place by walking its parent chain.
-     * Returns null when the place is invalid or no country ancestor exists.
-     */
     function getCountryIdForPlace(placeId) {
         if (!_hasId(placeId)) return null;
         var place = _getPlaceById(placeId);
@@ -407,37 +392,19 @@
         return country ? country.id : null;
     }
 
-    /**
-     * Resolves the country ID for a character.
-     *
-     * Uses the character's current location if it resolves to a place;
-     * otherwise falls back to birthplace. Returns null when neither
-     * resolves to a country.
-     *
-     * This is the canonical character → country resolution. Callers in
-     * name generation, modals, census, etc. should use this rather than
-     * walking the hierarchy themselves.
-     *
-     * @param {string} characterId
-     * @returns {string|null}
-     */
     function getCharacterCountryId(characterId) {
         if (!_hasId(characterId)) return null;
 
-        // Resolve character via accessors to avoid depending on any
-        // specific character-state module.
         if (typeof window.getCharacterById !== 'function') return null;
         var character = window.getCharacterById(characterId);
         if (!character) return null;
 
-        // Current location takes precedence.
         var locationId = getCurrentLocationId(character);
         if (_hasId(locationId)) {
             var countryId = getCountryIdForPlace(locationId);
             if (countryId) return countryId;
         }
 
-        // Fallback: birthplace.
         if (_hasId(character.birthplaceId)) {
             var birthplaceCountryId = getCountryIdForPlace(character.birthplaceId);
             if (birthplaceCountryId) return birthplaceCountryId;
@@ -446,13 +413,6 @@
         return null;
     }
 
-    /**
-     * Resolves the country object for a character.
-     * Convenience wrapper around getCharacterCountryId.
-     *
-     * @param {string} characterId
-     * @returns {Object|null}
-     */
     function getCharacterCountry(characterId) {
         var countryId = getCharacterCountryId(characterId);
         if (!countryId) return null;
@@ -467,20 +427,6 @@
         return window.isValidYear(year);
     }
 
-    /**
-     * Gets the current location ID for a character. The ID may be dangling.
-     * Returns null when no location can be resolved from the character
-     * record.
-     *
-     * Resolution order:
-     *   1. character.currentLocationId (explicit override)
-     *   2. Latest valid move in character.moves (highest year; ties break
-     *      by first-encountered in array order)
-     *   3. character.birthplaceId
-     *
-     * Moves with invalid years are skipped. If all moves have invalid
-     * years, resolution falls back to birthplaceId.
-     */
     function getCurrentLocationId(character) {
         if (!character) return null;
 
@@ -513,25 +459,12 @@
         return null;
     }
 
-    /**
-     * Gets the current location place object for a character.
-     * Returns null if no location can be resolved, or if the resolved
-     * ID is dangling.
-     */
     function getCurrentPlace(character) {
         var id = getCurrentLocationId(character);
         if (!id) return null;
         return _getPlaceById(id);
     }
 
-    /**
-     * Gets a character's location path as an array of stable structural
-     * fields, ordered root → leaf. Returns [] if no location can be
-     * resolved or the resolved reference is dangling.
-     *
-     * Each entry contains: { id, typeId, priority, scope }
-     * Presentation is responsible for turning these into labels.
-     */
     function getCharacterLocationPath(character) {
         var place = getCurrentPlace(character);
         if (!place) return [];
@@ -550,25 +483,6 @@
         return path;
     }
 
-    /**
-     * Groups characters by the ID of their resolved current place.
-     *
-     * Returns an array of:
-     *   {
-     *     locationId: string|null,
-     *     place: Object|null,
-     *     characters: Array
-     *   }
-     *
-     * Characters with no resolvable location are returned in a single
-     * group with locationId === null and place === null.
-     *
-     * GROUPS ARE ORDERED BY:
-     *   1. Parent-chain length (shallow before deep)
-     *   2. Ancestor ID path, lexicographic (root → leaf, joined by '/')
-     *
-     * Stable IDs are used for ordering. Display names are not consulted.
-     */
     function getCharactersGroupedByLocation(includeDeceased) {
         includeDeceased = includeDeceased === true;
 
@@ -631,7 +545,77 @@
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 7. POPULATION QUERIES
+    // =========================================================================
+    //
+    // See POPULATION QUERIES in the header.
+    //
+    // getLocationPopulationCount(locationId, options) counts characters
+    // whose resolved current location is the given location or (by default)
+    // any location in its subtree.
+    //
+    // Implementation note: uses getCharactersGroupedByLocation to avoid a
+    // second pass over characters. The grouping function already resolves
+    // each character's current place exactly once; the count sums the
+    // groups whose place is in the target set. That is O(characters) +
+    // O(places) for the descendant walk, not O(characters × places).
+
+    /**
+     * Counts the characters whose current location is the given place
+     * (or, when includeDescendants is true, any place in its subtree).
+     *
+     * @param {string} locationId
+     * @param {Object} [options]
+     * @param {boolean} [options.includeDescendants=true]
+     * @param {boolean} [options.aliveOnly=false]
+     * @returns {number|null}
+     *   number  count of matching characters (0 is a real answer)
+     *   null    locationId is not a valid string, or the target place
+     *           does not exist
+     */
+    function getLocationPopulationCount(locationId, options) {
+        if (!_hasId(locationId)) return null;
+
+        var place = _getPlaceById(locationId);
+        if (!place) return null;
+
+        options = options || {};
+        var includeDescendants = options.includeDescendants !== false;
+        var aliveOnly = options.aliveOnly === true;
+
+        // Build the target location id set.
+        var targetIds = new Set();
+        targetIds.add(locationId);
+
+        if (includeDescendants) {
+            var children = getChildPlaces(locationId, true);
+            for (var i = 0; i < children.length; i++) {
+                if (children[i] && _hasId(children[i].id)) {
+                    targetIds.add(children[i].id);
+                }
+            }
+        }
+
+        // getCharactersGroupedByLocation resolves each character's
+        // current place exactly once. When aliveOnly is set, the
+        // grouping function's includeDeceased=false filter runs first,
+        // so we do not pay for deceased characters that we would then
+        // filter out.
+        var groups = getCharactersGroupedByLocation(aliveOnly ? false : true);
+
+        var count = 0;
+        for (var g = 0; g < groups.length; g++) {
+            var group = groups[g];
+            if (!group || !group.locationId) continue;
+            if (!targetIds.has(group.locationId)) continue;
+            count += group.characters.length;
+        }
+
+        return count;
+    }
+
+    // =========================================================================
+    // 8. EXPORTS
     // =========================================================================
 
     // Type / priority / scope
@@ -663,5 +647,8 @@
     window.getCurrentPlace = getCurrentPlace;
     window.getCharacterLocationPath = getCharacterLocationPath;
     window.getCharactersGroupedByLocation = getCharactersGroupedByLocation;
+
+    // Population
+    window.getLocationPopulationCount = getLocationPopulationCount;
 
 })();
