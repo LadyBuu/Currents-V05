@@ -14,9 +14,26 @@
  *   LocationCommands.persist() exactly once. On failure, shows a toast and
  *   does NOT call persist.
  *
+ *   The invoke-then-persist-then-close pattern lives in
+ *   window.LocationModals.runCommand (from modals-location-helper.js).
+ *   Every onConfirm below routes through it.
+ *
+ * SHARED HELPERS
+ * --------------
+ *   _escapeHtml, _toast, _close, and _runCommand are aliases to the
+ *   corresponding helpers exported by modals-location-helper.js. They
+ *   were previously defined locally in this file AND in
+ *   modals-location.js; both files were byte-identical copies. This
+ *   file no longer defines them.
+ *
+ *   The helper module (modals-location-helper.js) must load BEFORE this
+ *   file. It owns the LocationCommands.persist dependency; this file
+ *   does not need to call persist() directly.
+ *
  * Bulk move:
  *   Calls LocationCommands.bulkRecordMoves once for the whole batch, then
- *   LocationCommands.persist() once. One commit, one persist.
+ *   LocationCommands.persist() once (via _runCommand). One commit, one
+ *   persist.
  *
  * MODAL CALLBACK API (from modals-core.js):
  *   openModal(options) returns { element, close }.
@@ -37,11 +54,11 @@
  *   stack permits it), and `document.querySelector` returns the first
  *   match in DOM order — always the older modal.
  *
- *   This file was previously written against `document.querySelector`
- *   and `setTimeout(0)` for interactive wiring. Two open bulk-move
- *   modals would both read the first modal's checkboxes; the move-form
- *   and history modals had the same page-scoped read pattern. Fixed in
- *   this revision. See MODAL INPUT READS and BULK-MOVE WIRING below.
+ *   Prior revisions of this file used `document.querySelector` and
+ *   `setTimeout(0)` for interactive wiring. Two open bulk-move modals
+ *   would both read the first modal's checkboxes; the move-form and
+ *   history modals had the same page-scoped read pattern. Fixed in an
+ *   earlier revision. The current file scopes everything to `root`.
  *
  * MODAL INPUT READS:
  *   Every modal reads its inputs via `root.querySelector('.<form-class>')`
@@ -55,52 +72,52 @@
  *
  * BULK-MOVE WIRING:
  *   The bulk-move modal has a character-selection list with checkboxes,
- *   select-all / select-none buttons, and a live counter. The prior
- *   revision wired these after the modal opened via:
- *
- *     setTimeout(function () {
- *         var form = document.querySelector('.bulk-move-form');
- *         // ... querySelector on form ...
- *     }, 0);
- *
- *   Two defects:
- *     1. Race window between modal-open and click-wiring.
- *     2. Page-scoped selectors — two open bulk-move modals cross-read.
- *
- *   The current revision wires the interactions synchronously in
- *   onMount(root). Every selector is `root.querySelector(...)` or
- *   scoped to a container that root.querySelector returned. Event
- *   handling on the character list uses a single delegated listener on
- *   the list container, so re-rendering the checkbox rows (which
- *   happens on every toggle) does not stack listeners.
+ *   select-all / select-none buttons, and a live counter. Wiring is
+ *   synchronous in onMount(root). Every selector is
+ *   `root.querySelector(...)` or scoped to a container that
+ *   root.querySelector returned. Event handling on the character list
+ *   uses a single delegated listener on the list container, so
+ *   re-rendering the checkbox rows does not stack listeners.
  *
  * Depends on (checked at load time):
  *   - LocationViewModels
  *   - LocationCommands
+ *   - modals-location-helper.js  (escapeHtml, toast, close, runCommand)
  *   - window.openModal, window.closeTopModal
  *
- * Optional, used when present:
+ * Optional, used when present (via the helper's fallbacks):
  *   - window.escapeHtml  (formatting.js)
  *   - window.showToast   (ui.js)
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision:
+ *   Current revision (B2):
+ *     - Local copies of _escapeHtml, _toast, _close, and _runCommand
+ *       removed. All four now alias the shared helpers exported by
+ *       modals-location-helper.js, matching modals-location.js. Prior
+ *       revisions had byte-identical duplicates in this file and in
+ *       modals-location.js; the extraction that consolidated them into
+ *       the helper was applied to modals-location.js but not to this
+ *       file. Both _runCommand implementations are currently identical
+ *       in behaviour; there is no structural guarantee they stay that
+ *       way. The extraction closes that drift risk.
+ *     - Added load-time dependency on modals-location-helper.js (same
+ *       guard shape as modals-location.js).
+ *     - No behavioural change to any modal entry point. Every
+ *       onConfirm still routes through _runCommand, which now delegates
+ *       to the shared helper.
+ *   Previous revision:
  *     - CRITICAL (compatibility with modals-core.js): every onConfirm
- *       callback now accepts the modal DOM element as its parameter and
- *       scopes its DOM reads via `root.querySelector`. Previously used
- *       `document.querySelector`, which returned the first match in DOM
- *       order — the older modal when two of the same type were open.
- *       Affected: openMoveCharacterModal, openBulkMoveModal.
+ *       callback now accepts the modal DOM element as its parameter
+ *       and scopes its DOM reads via `root.querySelector`. Previously
+ *       used `document.querySelector`, which returned the first match
+ *       in DOM order — the older modal when two of the same type were
+ *       open.
  *     - openBulkMoveModal: the setTimeout(0) + document.querySelector +
  *       document.querySelectorAll wiring pattern is removed. Checkbox
  *       selection, select-all, select-none, and the live counter are
  *       wired synchronously in onMount(root), with a single delegated
- *       listener on the character list. Same class of defect as the
- *       onConfirm fixes.
- *     - Header MODAL CALLBACK API, MODAL INPUT READS, and BULK-MOVE
- *       WIRING sections added.
- *     - No public signature change, no public return-shape change.
+ *       listener on the character list.
  * =============================================================================
  */
 
@@ -126,80 +143,30 @@
             'modals-moves.js requires modals-core.js (openModal).'
         );
     }
+    if (!window.LocationModals
+        || typeof window.LocationModals.escapeHtml !== 'function'
+        || typeof window.LocationModals.toast !== 'function'
+        || typeof window.LocationModals.close !== 'function'
+        || typeof window.LocationModals.runCommand !== 'function') {
+        throw new Error(
+            'modals-moves.js requires modals-location-helper.js ' +
+            '(escapeHtml / toast / close / runCommand missing from ' +
+            'window.LocationModals).'
+        );
+    }
 
     var VM = window.LocationViewModels;
     var LC = window.LocationCommands;
 
+    // Local aliases to the shared helpers. Keep the call sites short.
+    var _escapeHtml = window.LocationModals.escapeHtml;
+    var _toast = window.LocationModals.toast;
+    var _close = window.LocationModals.close;
+    var _runCommand = window.LocationModals.runCommand;
+
     // =========================================================================
     // 2. HELPERS
     // =========================================================================
-
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') {
-            return window.escapeHtml(str);
-        }
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    function _toast(msg, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(msg, type || 'info');
-        }
-    }
-
-    function _close() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
-    }
-
-    /**
-     * Runs a command, persists on success, toasts on failure.
-     * Returns true on full success (command + persist), false otherwise.
-     */
-    function _runCommand(commandFn, onSuccess, options) {
-        options = options || {};
-        var result;
-        try {
-            result = commandFn();
-        } catch (e) {
-            _toast(e && e.message ? e.message : 'Command failed', 'error');
-            return false;
-        }
-
-        if (!result || result.success !== true) {
-            _toast(
-                result && result.reason ? result.reason : 'Command failed',
-                'error'
-            );
-            return false;
-        }
-
-        var persistResult = LC.persist();
-        if (!persistResult || persistResult.success !== true) {
-            _toast(
-                persistResult && persistResult.reason
-                    ? persistResult.reason
-                    : 'Failed to persist changes',
-                'error'
-            );
-            return false;
-        }
-
-        if (options.keepOpen !== true) {
-            _close();
-        }
-        if (typeof onSuccess === 'function') {
-            onSuccess(result);
-        }
-        return true;
-    }
 
     /**
      * Renders destination options as `<option>` elements, indented by
