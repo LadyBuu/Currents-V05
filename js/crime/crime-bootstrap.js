@@ -40,6 +40,48 @@
  * its own beyond the global surface it reads to perform the verification.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P1-7):
+ *     - _verifyGlobals now requires window.getCurrentYear instead of
+ *       window.getCurrentYearSafe. The deprecated alias is no longer
+ *       exported by time.js in the current tree, and crime-docs.txt §3
+ *       prohibits its use. Every crime module already calls
+ *       window.getCurrentYear (see crime-commands.js::_now,
+ *       crime-queries.js::_getCurrentYear, crime-state.js::_now,
+ *       crime-view-models.js::_currentYear). The bootstrap was the
+ *       only place still referencing the deprecated name, which
+ *       produced a boot failure on every page that loaded the crime
+ *       domain against a time.js without the deprecated alias.
+ *     - _verifyCrossDomain now requires SettlementLawQueries and
+ *       SettlementReligionQueries, not SettlementQueries, for the law
+ *       and religion-query surface. Per crime-docs.txt §1 and §3,
+ *       SettlementQueries.getDominantReligion and
+ *       SettlementQueries.getCivilLaws do NOT exist — those methods
+ *       live on SettlementReligionQueries and SettlementLawQueries
+ *       respectively, and crime-law-integration.js::_getCivilLaws /
+ *       _getDominantReligion already resolve through those modules.
+ *       The previous bootstrap verified a surface the crime domain
+ *       does not call, which meant:
+ *         (a) boot failed if SettlementQueries lacked the phantom
+ *             methods, OR
+ *         (b) the bootstrap silently passed if a shim happened to
+ *             expose them on SettlementQueries, giving a false sense
+ *             that law evaluation would work — when it actually
+ *             resolves through the correct modules at runtime, and
+ *             those modules were never verified.
+ *       The current bootstrap verifies exactly what the crime domain
+ *       resolves through, matching the crime-docs.txt §1
+ *       "Canonical law sources" table.
+ *     - Header REFACTOR HISTORY entry added.
+ *     - No behavioural change to any other verification surface.
+ *       _verifyCrimeModules, _verifyCanonical, _hydrate,
+ *       _runIntegrityCheck, init, reinit, and the auto-init block
+ *       are byte-identical to the version shipped prior to P1-7.
+ *   Previous revision:
+ *     - escalateVendetta added to the crime-commands verification
+ *       surface, alongside triggerMurder / triggerExecution /
+ *       createBloodFeud.
+ * =============================================================================
  */
 
 (function() {
@@ -86,8 +128,8 @@
         if (typeof window.generateId !== 'function') {
             throw new Error('crime-bootstrap: generateId required');
         }
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('crime-bootstrap: getCurrentYearSafe required');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('crime-bootstrap: getCurrentYear required');
         }
         if (typeof window.saveMasterData !== 'function') {
             throw new Error('crime-bootstrap: saveMasterData required');
@@ -155,10 +197,10 @@
         _requireMethod('CrimeCommands', window.CrimeCommands, 'triggerExecution');
         _requireMethod('CrimeCommands', window.CrimeCommands, 'createBloodFeud');
 
-        // escalateVendetta is a new command added by the crime refactor.
-        // It is required. If this bootstrap runs against an older CrimeCommands,
-        // the load fails, which is the correct outcome — the shim and any UI
-        // that expects escalation to be a first-class command needs it.
+        // escalateVendetta is a first-class command added by the crime
+        // refactor. It is required. If this bootstrap runs against an
+        // older CrimeCommands, the load fails — the shim and any UI that
+        // expects escalation to be a first-class command needs it.
         _requireMethod('CrimeCommands', window.CrimeCommands, 'escalateVendetta');
     }
 
@@ -169,6 +211,28 @@
     // Crime touches six other domains. Every method listed here is one that a
     // Crime module calls at runtime. Missing a required one fails the load.
     // Optional ones are named as such and the absence is warned once.
+    //
+    // SETTLEMENT SPLIT:
+    //   The settlement domain splits its read APIs across several query
+    //   modules. Per crime-docs.txt §1 "Canonical law sources":
+    //
+    //     SettlementQueries            → getSettlementData
+    //     SettlementLawQueries         → getCivilLaws
+    //     SettlementReligionQueries    → getDominantReligion
+    //
+    //   CrimeLawIntegration resolves civil laws through
+    //   SettlementLawQueries.getCivilLaws and the dominant religion
+    //   through SettlementReligionQueries.getDominantReligion. It does
+    //   NOT call SettlementQueries.getCivilLaws or
+    //   SettlementQueries.getDominantReligion (those methods do not
+    //   exist on SettlementQueries). The verification surface below
+    //   matches what the crime domain actually resolves through.
+    //
+    //   Prior revisions verified the phantom surface on
+    //   SettlementQueries. That verification was either wrong (boot
+    //   failed against a clean SettlementQueries) or misleading
+    //   (passed against a SettlementQueries shim, while the modules
+    //   the domain actually uses went unverified).
 
     function _verifyCrossDomain() {
         // ---- Character -----------------------------------------------------
@@ -203,11 +267,20 @@
         // the modals to resolve display labels. Its absence is not fatal —
         // the modal falls back to getPlaceById().displayName.
 
-        // ---- Settlement ----------------------------------------------------
+        // ---- Settlement (split across three modules) -----------------------
+        // See SETTLEMENT SPLIT in the section header for the rationale.
+        //
+        // SettlementQueries owns the settlement record itself.
         _require('SettlementQueries', window.SettlementQueries);
         _requireMethod('SettlementQueries', window.SettlementQueries, 'getSettlementData');
-        _requireMethod('SettlementQueries', window.SettlementQueries, 'getDominantReligion');
-        _requireMethod('SettlementQueries', window.SettlementQueries, 'getCivilLaws');
+
+        // SettlementLawQueries owns civil-law reads.
+        _require('SettlementLawQueries', window.SettlementLawQueries);
+        _requireMethod('SettlementLawQueries', window.SettlementLawQueries, 'getCivilLaws');
+
+        // SettlementReligionQueries owns dominant-religion reads.
+        _require('SettlementReligionQueries', window.SettlementReligionQueries);
+        _requireMethod('SettlementReligionQueries', window.SettlementReligionQueries, 'getDominantReligion');
 
         // SettlementGovernmentCommands.recordCrimeImpact is a documented
         // OPTIONAL dependency. Crime works without it; the settlement side
@@ -267,9 +340,10 @@
 
     function _hydrate() {
         // CrimeState._initialize runs lazily on first access in the current
-        // implementation. Under the refactor, it exposes hydrateFromMasterData
-        // explicitly. This bootstrap calls whichever is available so it works
-        // against both the current and the refactored CrimeState.
+        // implementation. Under the refactor, it exposes
+        // hydrateFromMasterData explicitly. This bootstrap calls whichever is
+        // available so it works against both the current and the refactored
+        // CrimeState.
         var State = window.CrimeState;
 
         if (typeof State.hydrateFromMasterData === 'function') {
