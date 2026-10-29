@@ -3,17 +3,19 @@
  * STILL WATERS - EDUCATION STATE
  * =============================================================================
  *
+ * LOCATION: js/systems/education/education-state.js
+ *
  * Canonical institution records, indexes, subscription, UI state.
  * No policy, no persistence format, no cross-domain vocabulary, no tuition
  * math. Mutation primitives are internal; callers use EducationCommands.
  *
- * PERSISTENCE CONTRACT (READ THIS FIRST)
+ * PERSISTENCE CONTRACT
  *
  *   State owns the in-memory canonical record. State ALSO writes the
  *   canonical record into masterData.data.educationalInstitutions and
- *   marks the data dirty on every mutation. This matches the pattern
- *   established by character-state.js, family-state.js, children-state.js
- *   and role-state.js.
+ *   marks the data dirty on every LOCAL mutation. This matches the
+ *   pattern established by character-state.js, family-state.js,
+ *   children-state.js and role-state.js.
  *
  *   EducationCommands.persist() is the flush boundary. It calls
  *   saveMasterData(), which writes masterData to localStorage. It does
@@ -33,22 +35,47 @@
  *   After hydrate, every public read and every internal mutation
  *   primitive throws if !isHydrated(). This is deliberate: a forgotten
  *   hydrate call must surface as an explicit error, not as an empty
- *   store that reads like "no institutions exist". The previous revision
- *   returned null / [] from un-hydrated reads, which is exactly the
- *   class of silent failure role-state.js's header warns against.
+ *   store that reads like "no institutions exist".
  *
- *   isHydrated() is exported for bootstrap code that wants to check
- *   without triggering. It is NOT a substitute for the assert.
+ *   hydrateFromMasterData has two modes:
+ *
+ *     options.syncToMasterData === true (default):
+ *       Writes masterData.data.educationalInstitutions and calls
+ *       markDataDirty(). Use this when the hydrated set IS the
+ *       canonical set and should be persisted (typically the first
+ *       boot, or an explicit reset).
+ *
+ *     options.syncToMasterData === false:
+ *       Writes masterData.data.educationalInstitutions but does NOT
+ *       call markDataDirty(). Use this when the hydrated set came
+ *       from existing storage and no local change occurred. The
+ *       cross-tab reload path uses this mode.
+ *
+ *   In both modes, the accessor cache is invalidated because the
+ *   in-memory records changed. Cache state is not persisted, so
+ *   invalidation is not a "local mutation".
+ *
+ *   Prior revisions always called markDataDirty, so every boot (and
+ *   every cross-tab reload) scheduled a save. That was harmless but
+ *   noisy, and it put _isDirty into a state the caller did not cause.
+ *   See CROSS-TAB RELOAD CONTRACT.
  *
  * CROSS-TAB RELOAD CONTRACT
  *
  *   storage.js dispatches `masterDataUpdated` when a cross-tab write
- *   replaces window.masterData. EducationState subscribes to that event
- *   and re-hydrates from masterData. Without this, an institution
+ *   replaces window.masterData. EducationState subscribes to that
+ *   event and re-hydrates from masterData. Without this, an institution
  *   created in tab B is invisible in tab A until tab A refreshes.
  *
- *   The listener does NOT mark data dirty. The inbound data IS the
- *   canonical truth; marking dirty would schedule a redundant save.
+ *   The reload path does NOT mark data dirty. The inbound data IS the
+ *   canonical truth; scheduling a save would be a redundant write.
+ *
+ *   DUPLICATE IDS ON RELOAD: the reload path drops the later copy of
+ *   a duplicate id and logs it, rather than throwing. A cross-tab
+ *   reload is inbound data; a corrupt write in another tab must not
+ *   break the current tab. The first-boot hydrate path (via
+ *   hydrateFromMasterData) is strict — a first boot with duplicate ids
+ *   is a load-order or corruption bug.
  *
  * ACCESSOR CACHE CONTRACT
  *
@@ -61,28 +88,86 @@
  *
  * PUBLIC READS RETURN DEEP-ENOUGH CLONES
  *
- *   Container fields (students, graduates, teachers, curriculum, taughtRoles,
- *   history, headmasterHistory, tuitionHistory, governmentFundingHistory,
- *   profitHistory, demolishedRecord) are copied so that mutating a clone
- *   cannot affect canonical state. Scalar fields are copied by value.
+ *   Container fields (students, graduates, teachers, curriculum,
+ *   taughtRoles, history, headmasterHistory, tuitionHistory,
+ *   governmentFundingHistory, profitHistory, demolishedRecord) are
+ *   copied so that mutating a clone cannot affect canonical state.
+ *   Scalar fields are copied by value.
  *
- *   This does not protect against a caller mutating a nested object inside a
- *   container (e.g. inst.students[0].notes = 'x'). Canonical records are
- *   shared by reference inside their container elements. Commands are the
- *   only legitimate mutators and they use _getInstitutionCanonical, so the
- *   nested case is a caller bug, not a boundary the state layer can defend.
+ *   This does not protect against a caller mutating a nested object
+ *   inside a container (e.g. inst.students[0].notes = 'x'). Canonical
+ *   records are shared by reference inside their container elements.
+ *   Commands are the only legitimate mutators and they use
+ *   _getInstitutionCanonical, so the nested case is a caller bug, not
+ *   a boundary the state layer can defend.
  *
  * HYDRATION THROWS ON CORRUPTED INPUT
  *
- *   hydrateFromMasterData validates structural shape and throws on duplicate
- *   ids. It coerces container fields to the right type (array/object) or
- *   nulls them out. This is the boundary between untrusted saved data and
- *   the in-memory store; shape errors do not spread past it.
+ *   hydrateFromMasterData validates structural shape and throws on
+ *   duplicate ids. It coerces container fields to the right type
+ *   (array/object) or nulls them out. This is the boundary between
+ *   untrusted saved data and the in-memory store; shape errors do not
+ *   spread past it.
+ *
+ * MIGRATION
+ *
+ *   migrateInstitution normalizes raw records into the canonical
+ *   shape. It fills missing fields with defaults and coerces container
+ *   fields to the right type. It does NOT infer policy from other
+ *   fields in the general case — with two exceptions:
+ *
+ *     isSpecialized  If the field is undefined (a save predating it),
+ *                    derive it from `!!(specializationCategory &&
+ *                    taughtRoles.length > 0)`. This matches what
+ *                    createInstitution produces, so an old save
+ *                    reaches the same state a new save would.
+ *
+ *     isReligiousSchool
+ *                    If the field is undefined AND
+ *                    `ownershipType === 'religious'`, set it to
+ *                    `true`. A save predating the field that was
+ *                    created as a religious school clearly is one.
+ *                    The two fields remain independent in the steady
+ *                    state (createInstitution sets both; commands can
+ *                    set either without touching the other).
+ *
+ *   In both cases, inference ONLY runs when the field is undefined.
+ *   A stored `false` is preserved as `false`, even if the derivation
+ *   would have said `true`. The migration trusts the stored value
+ *   when it exists.
  *
  * DEPENDENCIES
  *
  *   - storage.js  (masterData, markDataDirty) — required
  *   - accessors.js (invalidateAccessorCaches) — optional
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - migrateInstitution now derives isSpecialized (when undefined)
+ *       from specializationCategory + taughtRoles.length, and derives
+ *       isReligiousSchool (when undefined) from ownershipType ===
+ *       'religious'. Prior revisions set both to their falsy defaults
+ *       unconditionally, which lost the derivation for old saves that
+ *       predated the fields. See MIGRATION.
+ *     - hydrateFromMasterData now accepts
+ *       { syncToMasterData: boolean } (default true). When false, the
+ *       function still writes masterData.data.educationalInstitutions
+ *       (the caller asked for the hydrated set to become canonical)
+ *       but does NOT call markDataDirty. This closes the "cross-tab
+ *       reload marks dirty" bug without breaking the first-boot path.
+ *       See HYDRATION CONTRACT.
+ *     - _handleMasterDataUpdated now uses a separate internal
+ *       hydration path that:
+ *         - drops duplicate ids with a console.error
+ *         - does not call markDataDirty
+ *         - still invalidates the accessor cache
+ *       Prior revisions went through hydrateFromMasterData (via the
+ *       generic load path), which threw on duplicates and always
+ *       marked dirty. See CROSS-TAB RELOAD CONTRACT (DUPLICATE IDS ON
+ *       RELOAD).
+ *     - No other behavioural change. Clone semantics, mutation
+ *       primitives, and UI state are unchanged.
  * =============================================================================
  */
 
@@ -140,8 +225,6 @@
     var _hydrated = false;
     var _lastUpdated = null;
 
-    // Notification queue. Prevents nested notification dispatch from
-    // re-entering and dropping events.
     var _notifyQueue = [];
     var _notifying = false;
 
@@ -168,10 +251,6 @@
     // =========================================================================
     // 4. HYDRATION ASSERT
     // =========================================================================
-    //
-    // Every public read and every mutation primitive begins with
-    // _assertHydrated. A forgotten hydrate call surfaces here, not as a
-    // silent empty store.
 
     function _assertHydrated() {
         if (!_hydrated) {
@@ -329,25 +408,27 @@
     // =========================================================================
     //
     // Writes _institutions into masterData.data.educationalInstitutions,
-    // invalidates the accessor cache, and marks the data dirty.
+    // invalidates the accessor cache, and (conditionally) marks the data
+    // dirty.
     //
-    // This is the ONLY place education state touches masterData. Every
-    // mutation primitive funnels through here.
-    //
-    // EducationCommands.persist() flushes the debounced save by calling
-    // saveMasterData(); it does NOT re-copy state into masterData
-    // because this function already did.
+    // The "conditionally" is the syncToMasterData option from
+    // hydrateFromMasterData. Local mutations (add/update/remove) always
+    // mark dirty. Hydration from existing storage does not. See
+    // HYDRATION CONTRACT.
 
-    function _syncToMasterData() {
+    function _writeToMasterData() {
         if (!window.masterData || !window.masterData.data) {
             throw new Error(
                 'education-state.js: masterData is not available. ' +
                 'Cannot sync education state.'
             );
         }
-
         window.masterData.data.educationalInstitutions = _institutions.slice();
         _invalidateAccessorCaches();
+    }
+
+    function _syncToMasterData() {
+        _writeToMasterData();
         _markDirty();
     }
 
@@ -430,7 +511,7 @@
     }
 
     // =========================================================================
-    // 13. MUTATION PRIMITIVES (no persistence)
+    // 13. MUTATION PRIMITIVES
     // =========================================================================
     //
     // Each primitive:
@@ -497,12 +578,6 @@
     }
 
     function _indexesRebuildExport() {
-        // Kept for demolishInstitution / rebuildInstitution callers that
-        // mutate status and then want to force a reindex without going
-        // through _updateInstitution again. This does NOT sync to
-        // masterData; the caller is inside an _updateInstitution flow
-        // which already did. This exists only to preserve the existing
-        // call sites in education-commands.js.
         _assertHydrated();
         _indexesRebuild();
     }
@@ -514,10 +589,11 @@
     /**
      * Normalize a raw institution record into the canonical shape.
      * Defensive: fills missing fields with defaults and coerces container
-     * fields to the right type. Does not infer policy (no
-     * religionId → isReligiousSchool inference; no specializationCategory
-     * → isSpecialized inference). Those are handled by Rules/Commands at
-     * creation time.
+     * fields to the right type.
+     *
+     * Infers isSpecialized (when undefined) from specializationCategory +
+     * taughtRoles.length, and infers isReligiousSchool (when undefined)
+     * from ownershipType === 'religious'. See MIGRATION in the header.
      *
      * Returns null if raw is not an object or has no id.
      */
@@ -527,6 +603,8 @@
 
         var inst = Object.assign({}, raw);
 
+        // Container normalization FIRST so the derivation below reads
+        // normalized arrays.
         if (!Array.isArray(inst.students)) inst.students = [];
         if (!Array.isArray(inst.graduates)) inst.graduates = [];
         if (!Array.isArray(inst.teachers)) inst.teachers = [];
@@ -552,11 +630,27 @@
 
         if (inst.status === undefined) inst.status = 'active';
         if (inst.ownershipType === undefined) inst.ownershipType = 'public';
-        if (inst.isReligiousSchool === undefined) inst.isReligiousSchool = false;
-        if (inst.isSpecialized === undefined) inst.isSpecialized = false;
+
+        // Derive isReligiousSchool when undefined. A save predating the
+        // field that was created as religious should reach the same
+        // state a new save would. See MIGRATION.
+        if (inst.isReligiousSchool === undefined) {
+            inst.isReligiousSchool = (inst.ownershipType === 'religious');
+        }
+
         if (inst.specializationCategory === undefined) {
             inst.specializationCategory = null;
         }
+
+        // Derive isSpecialized when undefined. Same rationale. See
+        // MIGRATION.
+        if (inst.isSpecialized === undefined) {
+            inst.isSpecialized = !!(
+                inst.specializationCategory &&
+                inst.taughtRoles.length > 0
+            );
+        }
+
         if (inst.religionId === undefined) inst.religionId = null;
         if (inst.religionName === undefined) inst.religionName = null;
 
@@ -566,21 +660,31 @@
     /**
      * Replace the entire canonical state with hydrated institutions.
      *
-     * Throws if:
-     *   - rawInstitutions is not an array
-     *   - two records share an id
+     * Options:
+     *   syncToMasterData  (default true)
+     *     When true, writes masterData.data.educationalInstitutions and
+     *     calls markDataDirty. Use this when the hydrated set IS the
+     *     canonical set and should be persisted (first boot, reset).
      *
-     * Caller is responsible for having run migrateInstitution on each record
-     * (or relying on this function to call it) and for having arranged
-     * persistence.
+     *     When false, writes masterData.data.educationalInstitutions
+     *     but does NOT call markDataDirty. Use this when the hydrated
+     *     set came from existing storage and no local change occurred
+     *     (cross-tab reload).
      *
-     * After hydrate, _hydrated is true and every read / mutation primitive
-     * works. syncToMasterData is called once so masterData reflects the
-     * hydrated set, and markDataDirty schedules a save (which is correct:
-     * the freshly hydrated state IS the canonical set and should be
-     * persisted if it was loaded from defaults).
+     *     In both modes, the accessor cache is invalidated because the
+     *     in-memory records changed.
+     *
+     * See HYDRATION CONTRACT in the header.
+     *
+     * Throws if rawInstitutions is not an array, or if two records share
+     * an id. The cross-tab reload path uses an internal variant that
+     * drops duplicates instead of throwing (see
+     * _rehydrateFromMasterData).
      */
-    function hydrateFromMasterData(rawInstitutions) {
+    function hydrateFromMasterData(rawInstitutions, options) {
+        options = options || {};
+        var syncToMasterData = options.syncToMasterData !== false;
+
         if (!Array.isArray(rawInstitutions)) {
             throw new Error('hydrateFromMasterData requires an array');
         }
@@ -603,11 +707,16 @@
         }
 
         _institutions = next;
-
         _indexesRebuild();
         _hydrated = true;
         _lastUpdated = Date.now();
-        _syncToMasterData();
+
+        if (syncToMasterData) {
+            _syncToMasterData();
+        } else {
+            _writeToMasterData();
+        }
+
         _notify('hydrated', { count: _institutions.length });
     }
 
@@ -620,16 +729,51 @@
     // =========================================================================
     //
     // storage.js dispatches masterDataUpdated when another tab writes.
-    // We re-hydrate from masterData. This is NOT a local mutation, so we
-    // do NOT call _syncToMasterData (which would mark dirty); the inbound
-    // data IS the canonical truth.
+    // We re-hydrate from masterData.
+    //
+    // Reload path:
+    //   - drops duplicate ids and logs
+    //   - writes masterData.data.educationalInstitutions (the inbound data
+    //     is already canonical, so the write is a no-op for content but
+    //     ensures the in-memory array matches the masterData reference)
+    //   - does NOT call markDataDirty (nothing changed locally)
+    //   - invalidates the accessor cache
     //
     // If masterData is missing at reload time, we keep the pre-reload
     // state and log. Wiping the store on a missing masterData would be
     // worse than keeping stale data.
-    //
-    // The notify is dispatched with a 'reloaded' type so subscribers can
-    // distinguish an inbound refresh from a local mutation.
+
+    function _rehydrateFromMasterData(rawInstitutions) {
+        var next = [];
+        var seenIds = {};
+
+        for (var i = 0; i < rawInstitutions.length; i++) {
+            var migrated = migrateInstitution(rawInstitutions[i]);
+            if (!migrated) continue;
+
+            if (seenIds[migrated.id] === true) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'education-state.js: duplicate institution id "' +
+                        migrated.id + '" on cross-tab reload; dropping the ' +
+                        'later copy.'
+                    );
+                }
+                continue;
+            }
+            seenIds[migrated.id] = true;
+            next.push(migrated);
+        }
+
+        _institutions = next;
+        _indexesRebuild();
+        _hydrated = true;
+        _lastUpdated = Date.now();
+        // Cross-tab reload does not mark dirty. See CROSS-TAB RELOAD
+        // CONTRACT.
+        _writeToMasterData();
+        _notify('reloaded', { count: _institutions.length, source: 'cross-tab' });
+    }
 
     function _handleMasterDataUpdated() {
         if (!window.masterData || !window.masterData.data) {
@@ -648,31 +792,16 @@
             raw = [];
         }
 
-        var next = [];
-        var seenIds = {};
-
-        for (var i = 0; i < raw.length; i++) {
-            var migrated = migrateInstitution(raw[i]);
-            if (!migrated) continue;
-
-            if (seenIds[migrated.id] === true) {
-                if (window.console && typeof window.console.error === 'function') {
-                    window.console.error(
-                        'education-state.js: duplicate institution id "' +
-                        migrated.id + '" on reload; dropping the later copy.'
-                    );
-                }
-                continue;
+        try {
+            _rehydrateFromMasterData(raw);
+        } catch (err) {
+            if (window.console && typeof window.console.error === 'function') {
+                window.console.error(
+                    'education-state.js: reload after masterDataUpdated failed:',
+                    err
+                );
             }
-            seenIds[migrated.id] = true;
-            next.push(migrated);
         }
-
-        _institutions = next;
-        _indexesRebuild();
-        _hydrated = true;
-        _lastUpdated = Date.now();
-        _notify('reloaded', { count: _institutions.length });
     }
 
     window.addEventListener('masterDataUpdated', _handleMasterDataUpdated);
@@ -742,10 +871,6 @@
     // =========================================================================
     // 17. MODULE LOAD
     // =========================================================================
-    //
-    // Nothing is initialised. Bootstrap must call hydrateFromMasterData.
-    // _assertHydrated fires on every read and every mutation primitive
-    // until that happens.
 
     _indexesRebuild();
 
@@ -784,8 +909,7 @@
         _removeInstitution: _removeInstitution,
 
         // Kept for education-commands.js callers. Forces a reindex. Does
-        // NOT sync to masterData (callers are always inside an
-        // _updateInstitution flow which already synced).
+        // NOT sync to masterData.
         _indexesRebuild: _indexesRebuildExport
     };
 
