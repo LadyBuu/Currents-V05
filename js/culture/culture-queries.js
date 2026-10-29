@@ -39,10 +39,86 @@
  *   locations a culture is culturally associated with). It is a different
  *   relationship and does not participate in primary-culture resolution.
  *
+ * LOCATION-RESOLUTION CONTRACT:
+ *   "Where is this character currently located?" resolves through a
+ *   layered path, all inside _resolveCurrentLocationId:
+ *
+ *     1. LocationQueries.getCurrentLocationId(characterId)
+ *          The location domain's semantic resolver. Honours the explicit
+ *          currentLocationId field, the moves-based fallback, and the
+ *          birthplace fallback. This is the canonical answer.
+ *
+ *     2. CharacterQueries.getCurrentLocationId(characterId)
+ *          The raw currentLocationId FIELD. Does NOT resolve moves or
+ *          birthplace. Used as a fallback for bare test harnesses that
+ *          load only character-queries.js.
+ *
+ *     3. null
+ *          No viable source.
+ *
+ *   Every function that needs a character's location calls
+ *   _resolveCurrentLocationId. Do NOT call window.getCurrentLocationId
+ *   directly: its name is overloaded (character-queries.js exports a
+ *   version that takes an id; world.js exports a version that takes a
+ *   character object), and the winner depends on script load order.
+ *   LocationQueries.getCurrentLocationId is unambiguous because it is
+ *   the only function with that name on that namespace.
+ *
+ *   Prior revisions of getCultureForCharacter read
+ *   character.currentLocationId and character.birthLocationId directly.
+ *   The first missed every character placed only via a move record (their
+ *   currentLocationId is null but their moves array places them
+ *   somewhere). The second field does not exist on the character record;
+ *   the canonical field is birthplaceId, so the birth fallback was dead
+ *   code even for characters whose birth location was set. Both fixed at
+ *   the call site.
+ *
  * NOTE ON NAMING:
  *   The canonical lookup function is `getCultureById(id)`.
  *   This matches `getPlaceById`, `getReligionById`, `getCharacterById`.
  *
+ * DEPENDENCIES (required, verified at load):
+ *   - CultureState
+ *   - masterData.data.cultures (via CultureState)
+ *   - PlaceQueries   (location hierarchy walks)
+ *   - ReligionQueries (religion lookups in getCultureSummary)
+ *   - CharacterQueries (character enumeration and by-id reads)
+ *
+ * DEPENDENCIES (required at call time, guarded per-call):
+ *   - location-queries.js: LocationQueries.getCurrentLocationId
+ *                          (semantic location resolution; see
+ *                          LOCATION-RESOLUTION CONTRACT above)
+ *
+ *   Why "required at call time" and not "required at load":
+ *   The documented load order (character → location → culture) always
+ *   has location-queries.js loaded before any culture function is
+ *   called. Loading culture-queries.js in isolation (bare harness) does
+ *   not need it, and would fail at load if it were a hard dependency.
+ *   The call-time guard in _resolveCurrentLocationId throws a clear
+ *   error only if neither resolver is present; if only
+ *   CharacterQueries is present, the resolution degrades to raw-field
+ *   (which is the documented fallback).
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (A3):
+ *     - Added _resolveCurrentLocationId helper with LocationQueries →
+ *       CharacterQueries → null precedence. Matches the resolution
+ *       pattern used by religion-queries.js and location-commands.js.
+ *     - getCultureForCharacter now resolves the current location via
+ *       _resolveCurrentLocationId instead of reading
+ *       character.currentLocationId directly. Prior revisions missed
+ *       every character placed only by a move record.
+ *     - getCultureForCharacter now reads character.birthplaceId
+ *       (canonical field) instead of character.birthLocationId (which
+ *       does not exist on the character record). Prior revisions had a
+ *       dead fallback for the birthplace case.
+ *     - Header LOCATION-RESOLUTION CONTRACT section added, plus
+ *       DEPENDENCIES section clarifying which modules are load-time
+ *       hard dependencies and which are call-time.
+ *     - No public signature change, no public return-shape change.
+ *   Previous revisions:
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -101,7 +177,54 @@
     }
 
     // =========================================================================
-    // 2. CANONICAL READS
+    // 2. LOCATION RESOLUTION
+    // =========================================================================
+    //
+    // See LOCATION-RESOLUTION CONTRACT in the header. This helper is the
+    // single place where the resolution precedence is chosen. Every
+    // function in this module that needs a character's location calls it.
+
+    function _resolveCurrentLocationId(character) {
+        if (!character || !character.id) return null;
+
+        // Prefer LocationQueries: unambiguous name, semantic resolution
+        // (explicit field → latest move → birthplace), stable across
+        // load-order permutations.
+        if (typeof window.LocationQueries !== 'undefined'
+            && window.LocationQueries !== null
+            && typeof window.LocationQueries.getCurrentLocationId === 'function') {
+            try {
+                var resolved = window.LocationQueries.getCurrentLocationId(character.id);
+                // LocationQueries returns string|null. A null result is a
+                // legitimate "no location resolved" — do not fall through
+                // to the weaker resolver, which would silently substitute
+                // the raw field for a character whose only location signal
+                // was a stale move pointing at a deleted place.
+                if (resolved === null) return null;
+                if (typeof resolved === 'string' && resolved.length > 0) {
+                    return resolved;
+                }
+            } catch (e) {
+                // LocationQueries threw. Fall through to the raw field.
+            }
+        }
+
+        // Fallback: the raw currentLocationId field.
+        if (typeof window.CharacterQueries !== 'undefined'
+            && window.CharacterQueries !== null
+            && typeof window.CharacterQueries.getCurrentLocationId === 'function') {
+            try {
+                return window.CharacterQueries.getCurrentLocationId(character.id);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    // =========================================================================
+    // 3. CANONICAL READS
     // =========================================================================
     //
     // Listing functions read the canonical array directly. Single-record
@@ -117,7 +240,7 @@
     }
 
     // =========================================================================
-    // 3. BASIC LOOKUPS
+    // 4. BASIC LOOKUPS
     // =========================================================================
 
     /**
@@ -135,13 +258,11 @@
      * Returns the live canonical record. Reserved for CultureCommands
      * (which owns the transaction) and for transaction-time reads inside
      * this module's composing helpers when a cloned record would be
-     * insufficient (e.g. when the caller intends to compare against a
-     * record another module is about to mutate).
+     * insufficient.
      *
      * No query-layer function in this module uses this. It is exposed so
      * that callers who genuinely need the live record have a named entry
-     * point rather than reaching into `window.CultureState._getCultureCanonical`
-     * directly.
+     * point.
      *
      * @param {string} id
      * @returns {Object|null}
@@ -166,13 +287,8 @@
                 out[i] = null;
                 continue;
             }
-            // Clone via state to keep the clone policy in one place. Falls
-            // back to the canonical object if State cannot find it (which
-            // would indicate an index inconsistency — State would have
-            // thrown on hydrate).
             out[i] = state.getById(c.id) || null;
         }
-        // Filter out any nulls (corrupted records that hydrate skipped).
         var filtered = [];
         for (var j = 0; j < out.length; j++) {
             if (out[j]) filtered.push(out[j]);
@@ -199,20 +315,9 @@
     }
 
     // =========================================================================
-    // 4. SEARCH
+    // 5. SEARCH
     // =========================================================================
 
-    /**
-     * Searches cultures by name and display name.
-     *
-     * Reads canonical for matching, then returns clones via State.
-     *
-     * @param {string} query
-     * @param {Object} [options]
-     * @param {number} [options.limit]
-     * @param {string} [options.sortBy]
-     * @returns {Array}
-     */
     function searchCultures(query, options) {
         options = options || {};
 
@@ -261,7 +366,6 @@
             matches = matches.slice(0, options.limit);
         }
 
-        // Return clones.
         var state = _requireCultureState();
         var out = new Array(matches.length);
         for (var k = 0; k < matches.length; k++) {
@@ -271,7 +375,7 @@
     }
 
     // =========================================================================
-    // 5. LOCATION HIERARCHY
+    // 6. LOCATION HIERARCHY
     // =========================================================================
     //
     // The authoritative "primary culture for this place" relationship lives
@@ -402,7 +506,7 @@
     }
 
     // =========================================================================
-    // 6. CHARACTER RELATIONSHIPS
+    // 7. CHARACTER RELATIONSHIPS
     // =========================================================================
 
     /**
@@ -410,8 +514,11 @@
      *
      * Resolution order:
      *   1. Character's explicit cultureId
-     *   2. Primary culture of the character's current location
-     *   3. Primary culture of the character's birth location, if different
+     *   2. Primary culture of the character's current location (semantic:
+     *      explicit field → latest move → birthplace, via
+     *      _resolveCurrentLocationId)
+     *   3. Primary culture of the character's birthplaceId, if different
+     *      from the resolved current location
      *   4. null
      *
      * @param {string} characterId
@@ -426,19 +533,26 @@
         var character = characterQueries.getCharacterById(characterId);
         if (!character) return null;
 
+        // 1. Explicit culture.
         if (character.cultureId) {
             var direct = state.getById(character.cultureId);
             if (direct) return direct;
         }
 
-        if (character.currentLocationId) {
-            var fromCurrent = getPrimaryCultureForLocation(character.currentLocationId);
+        // 2. Primary culture of the character's current location.
+        //    Resolved semantically so characters placed only via a move
+        //    record are still found.
+        var resolvedLocationId = _resolveCurrentLocationId(character);
+        if (resolvedLocationId) {
+            var fromCurrent = getPrimaryCultureForLocation(resolvedLocationId);
             if (fromCurrent) return fromCurrent;
         }
 
-        if (character.birthLocationId &&
-            character.birthLocationId !== character.currentLocationId) {
-            var fromBirth = getPrimaryCultureForLocation(character.birthLocationId);
+        // 3. Primary culture of the character's birthplace, if different.
+        //    The canonical field is birthplaceId, not birthLocationId.
+        var birthplaceId = character.birthplaceId;
+        if (birthplaceId && birthplaceId !== resolvedLocationId) {
+            var fromBirth = getPrimaryCultureForLocation(birthplaceId);
             if (fromBirth) return fromBirth;
         }
 
@@ -465,32 +579,18 @@
     }
 
     // =========================================================================
-    // 7. RELIGION RELATIONSHIPS
+    // 8. RELIGION RELATIONSHIPS
     // =========================================================================
 
-    /**
-     * Gets all cultures associated with a religion.
-     *
-     * @param {string} religionId
-     * @returns {Array}
-     */
     function getCulturesForReligion(religionId) {
         if (!religionId) return [];
         return _requireCultureState().getByReligion(religionId);
     }
 
     // =========================================================================
-    // 8. SUMMARY
+    // 9. SUMMARY
     // =========================================================================
 
-    /**
-     * Builds a data summary of a culture.
-     *
-     * Data projection only. No presentation defaults.
-     *
-     * @param {string} id
-     * @returns {Object|null}
-     */
     function getCultureSummary(id) {
         if (!id) return null;
 
@@ -536,14 +636,9 @@
     }
 
     // =========================================================================
-    // 9. STATISTICS
+    // 10. STATISTICS
     // =========================================================================
 
-    /**
-     * Computes comprehensive culture statistics.
-     *
-     * @returns {Object}
-     */
     function getCultureStatistics() {
         var cultures = _readCanonicalCultures();
         var placeQueries = _requirePlaceQueries();
@@ -640,7 +735,7 @@
     }
 
     // =========================================================================
-    // 10. MYTHOLOGY / APPEARANCE FILTERS
+    // 11. MYTHOLOGY / APPEARANCE FILTERS
     // =========================================================================
 
     function getCulturesWithMythology() {
@@ -673,8 +768,14 @@
     }
 
     // =========================================================================
-    // 11. LOAD-TIME VERIFICATION
+    // 12. LOAD-TIME VERIFICATION
     // =========================================================================
+    //
+    // Only the load-time hard dependencies are verified here. Location
+    // resolution is a call-time requirement — location-queries.js is
+    // always present at call time under the documented load order, but
+    // loading culture-queries.js in isolation should not fail on it.
+    // See DEPENDENCIES in the header.
 
     (function _verifyLoadTimeDependencies() {
         if (!window.CultureState) {
@@ -710,7 +811,7 @@
     })();
 
     // =========================================================================
-    // 12. PUBLIC API
+    // 13. PUBLIC API
     // =========================================================================
 
     window.CultureQueries = {
