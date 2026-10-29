@@ -65,6 +65,26 @@
  *   The boolean form is unambiguous and matches character-creation-commands'
  *   bulkCreateCharacters convention.
  *
+ * ROLE ASSIGNMENT PROVENANCE
+ *
+ *   assignRoleToCharacter accepts and forwards two provenance fields
+ *   through to the character's profession record:
+ *
+ *     learnedVia      string   (e.g. 'institution', 'apprenticeship',
+ *                              'self', 'family')
+ *     institutionId   string   (the education institution, when learnedVia
+ *                              is 'institution')
+ *
+ *   These are educational provenance, not role-domain policy. The role
+ *   domain does not interpret them; it forwards them so the profession
+ *   record can answer "where did this skill come from." Education's
+ *   graduation path (education-commands.graduateStudent) depends on this
+ *   forwarding. Prior revisions silently dropped both fields.
+ *
+ *   CharacterCommands.addProfession / updateProfession are the writers.
+ *   They must accept and persist these fields on the profession record
+ *   for the forwarding here to survive a save cycle.
+ *
  * Reentrancy:
  *   There is no module-wide guard. Commands may call other commands
  *   freely because every operation is synchronous and side-effect
@@ -84,9 +104,31 @@
  *   - character-commands.js  (CharacterCommands) — profession API only
  *   - accessors.js           (getCharacterById)
  *   - ids.js                 (generateId)
- *   - time.js                (getCurrentYear, optional)
+ *   - time.js                (getCurrentYear — required, no fallback)
  *   - storage.js             (saveMasterData, getLastSaveError — persist boundary only)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear no longer falls back to 1250. time.js is required
+ *       and the command throws if getCurrentYear is unavailable. The
+ *       hardcoded fallback violated the core's explicit invariant
+ *       (state.js: "no magic year 1250"; storage-schema.js: "No silent
+ *       fallbacks to magic constants (e.g. year 1250)"). This was the only
+ *       module in the tree that broke the invariant.
+ *     - _validCategory now consults RoleState.getCategories() (which
+ *       includes persisted custom categories), not only the static
+ *       DEFAULT_ROLE_CATEGORIES. Prior revisions made it impossible to
+ *       create a role in a custom category the user had just added via
+ *       the category manager. RC.DEFAULT_ROLE_CATEGORIES is kept as a
+ *       fallback for the (impossible in normal load order) case where
+ *       RoleState is not yet loaded.
+ *     - _assignRoleInternal now forwards options.learnedVia and
+ *       options.institutionId to CC.addProfession and CC.updateProfession.
+ *       Prior revisions silently dropped both, which meant education's
+ *       graduation role grant lost its provenance. See ROLE ASSIGNMENT
+ *       PROVENANCE in the header.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -119,6 +161,14 @@
     if (typeof window.generateId !== 'function') {
         throw new Error(
             'role-commands.js requires ids.js (generateId).'
+        );
+    }
+    // time.js is required — no 1250 fallback. See REFACTOR HISTORY.
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error(
+            'role-commands.js requires time.js (getCurrentYear). ' +
+            'There is no fallback year; the role domain does not guess ' +
+            'the current year on time.js behalf.'
         );
     }
 
@@ -246,16 +296,44 @@
         return v === 'both' || v === 'male' || v === 'female';
     }
 
+    /**
+     * Validates a category id.
+     *
+     * Consults RoleState.getCategories() first — that is the authoritative
+     * list, and it includes custom categories the user has added via the
+     * category manager (persisted in masterData.data.roleCategories).
+     * Prior revisions validated only against RC.DEFAULT_ROLE_CATEGORIES,
+     * which made every custom category unusable for new roles.
+     *
+     * RC.DEFAULT_ROLE_CATEGORIES is kept as a fallback for the (impossible
+     * under the documented load order) case where RoleState has not been
+     * initialised. The uncategorized bucket is always valid.
+     */
     function _validCategory(v) {
+        if (!_validString(v)) return false;
         if (v === RC.UNCATEGORIZED_ID) return true;
+
+        if (window.RoleState && typeof window.RoleState.getCategories === 'function') {
+            try {
+                var live = window.RoleState.getCategories();
+                if (live && Object.prototype.hasOwnProperty.call(live, v)) {
+                    return true;
+                }
+            } catch (e) {
+                // RoleState.getCategories throws if init() hasn't run.
+                // Fall through to the static defaults.
+            }
+        }
+
         return Object.prototype.hasOwnProperty.call(RC.DEFAULT_ROLE_CATEGORIES, v);
     }
 
+    /**
+     * Required. There is no fallback year. See REFACTOR HISTORY and the
+     * dependency check at the top of the file.
+     */
     function _getCurrentYear() {
-        if (typeof window.getCurrentYear === 'function') {
-            return window.getCurrentYear();
-        }
-        return 1250;
+        return window.getCurrentYear();
     }
 
     // =========================================================================
@@ -605,6 +683,26 @@
     // 9. ROLE ASSIGNMENT
     // =========================================================================
 
+    /**
+     * Extracts the provenance fields that should be forwarded to the
+     * character's profession record. Returns only the fields the caller
+     * explicitly supplied; missing fields are omitted so the underlying
+     * writer can use its own defaults.
+     *
+     * See ROLE ASSIGNMENT PROVENANCE in the header.
+     */
+    function _provenanceFields(options) {
+        var out = {};
+        if (!options || typeof options !== 'object') return out;
+        if (typeof options.learnedVia === 'string' && options.learnedVia.length > 0) {
+            out.learnedVia = options.learnedVia;
+        }
+        if (typeof options.institutionId === 'string' && options.institutionId.length > 0) {
+            out.institutionId = options.institutionId;
+        }
+        return out;
+    }
+
     function _assignRoleInternal(characterId, role, options) {
         options = options || {};
 
@@ -632,15 +730,25 @@
             startYear = _getCurrentYear();
         }
 
+        var provenance = _provenanceFields(options);
         var existing = CC.getProfession(characterId, role.id);
 
         if (existing) {
-            var updateResult = CC.updateProfession(characterId, role.id, {
+            var updatePayload = {
                 skillLevel: skillLevel,
                 startYear: startYear !== null ? startYear : existing.startYear,
                 notes: options.notes !== undefined ? options.notes : existing.notes,
                 primary: options.primary !== undefined ? options.primary : existing.primary
-            });
+            };
+            // Provenance forwarding. See ROLE ASSIGNMENT PROVENANCE.
+            if (provenance.learnedVia !== undefined) {
+                updatePayload.learnedVia = provenance.learnedVia;
+            }
+            if (provenance.institutionId !== undefined) {
+                updatePayload.institutionId = provenance.institutionId;
+            }
+
+            var updateResult = CC.updateProfession(characterId, role.id, updatePayload);
             if (!updateResult || updateResult.success !== true) {
                 return _fail(updateResult && updateResult.reason
                     ? updateResult.reason
@@ -653,7 +761,7 @@
             });
         }
 
-        var addResult = CC.addProfession(characterId, {
+        var addPayload = {
             id: role.id,
             name: role.name,
             skillLevel: skillLevel,
@@ -668,7 +776,16 @@
             salaryHistory: [],
             salaryLastCalculated: null,
             paysSalary: true
-        });
+        };
+        // Provenance forwarding. See ROLE ASSIGNMENT PROVENANCE.
+        if (provenance.learnedVia !== undefined) {
+            addPayload.learnedVia = provenance.learnedVia;
+        }
+        if (provenance.institutionId !== undefined) {
+            addPayload.institutionId = provenance.institutionId;
+        }
+
+        var addResult = CC.addProfession(characterId, addPayload);
 
         if (!addResult || addResult.success !== true) {
             return _fail(addResult && addResult.reason
