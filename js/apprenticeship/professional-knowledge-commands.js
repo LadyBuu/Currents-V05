@@ -4,6 +4,8 @@
  * js/apprenticeship/professional-knowledge-commands.js
  * =============================================================================
  *
+ * LOCATION: js/apprenticeship/professional-knowledge-commands.js
+ *
  * Knowledge preservation and inheritance on death.
  *
  * This command lives in the apprenticeship folder because apprenticeship is
@@ -19,9 +21,10 @@
  *
  *   preserveKnowledgeOnDeath does NOT call saveMasterData. It mutates
  *   in-memory state via CharacterCommands.addProfession /
- *   updateProfession, which fire markDataDirty through the character
- *   mutation boundary. The caller is responsible for flushing at the
- *   end of the enclosing batch.
+ *   RoleCommands.recordCharacterSkillProgress, which fire markDataDirty
+ *   through the character and role mutation boundaries respectively.
+ *   The caller is responsible for flushing at the end of the enclosing
+ *   batch.
  *
  *   This matters because knowledge preservation is typically invoked as
  *   one step in a larger death cascade that also ends relationships,
@@ -42,13 +45,74 @@
  *   persist() wrapper) after the preservation succeeds, exactly once
  *   per batch.
  *
+ * HALF-TRANSACTION RISK
+ *
+ *   preserveKnowledgeOnDeath writes each dying profession to the heir
+ *   independently. If step 3 fails, steps 1 and 2 are already in
+ *   memory. This command does NOT revert on partial failure — the
+ *   caller's death cascade is the atomic boundary (see PERSISTENCE).
+ *   Failures within the loop are logged via console.warn but do not
+ *   abort the loop, matching the discipline used by
+ *   character-lifecycle.js's death cascade: a single failing role
+ *   should not prevent the other roles from being preserved.
+ *
  * ROLE READS
  *
- *   _getRoleById prefers RoleState.getRole (returns clones) and falls
- *   back to window.getRoleById (accessors.js, live records) only when
- *   RoleState is unavailable. This matches apprenticeship-commands.js
- *   and education-commands.js and ensures this module observes the same
- *   role shape as the rest of the apprenticeship domain.
+ *   _getRoleById is LENIENT. It prefers RoleState.getRole (returns
+ *   clones). When RoleState is available and the role is missing, it
+ *   returns null (a legitimate missing-data case). When RoleState is
+ *   NOT available but window.getRoleById is, it uses that. When NEITHER
+ *   is available, it throws — a load-order regression must surface as
+ *   an error, not as a null role name silently substituted by
+ *   prof.name.
+ *
+ *   Prior revisions returned null when neither was available, which
+ *   violated the module's own "NO FALLBACKS" contract and masked a
+ *   load-order bug as a data-integrity issue. See ROLE READS in
+ *   REFACTOR HISTORY.
+ *
+ *   _requireRoleForWrite(id) is STRICT. Unused by this module today
+ *   (both write paths operate on professions, not roles), but present
+ *   so any future write path that needs the role record has one
+ *   consistent strict accessor to call.
+ *
+ * SKILL PROGRESSION
+ *
+ *   Role skill progression routes through
+ *   RoleCommands.recordCharacterSkillProgress, not
+ *   CharacterCommands.updateProfession. The former enforces the
+ *   non-decreasing invariant; the latter is a blind write (the
+ *   administrative override path). Prior revisions called
+ *   updateProfession directly with a self-implemented non-decreasing
+ *   check, which preserved the invariant by construction but bypassed
+ *   the domain-layer enforcement. The invariant is now enforced by the
+ *   role domain, matching apprenticeship-commands.js's consolidation.
+ *
+ *   Role creation (when the heir does not yet hold a role) still calls
+ *   CharacterCommands.addProfession. That is a creation, not a
+ *   progression; the invariant does not apply.
+ *
+ * CHARACTER PROJECTION CONTRACT
+ *
+ *   Several functions here read window.getCharacterById and access
+ *   fields off the result:
+ *
+ *     preserveKnowledgeOnDeath    reads dying.name (for the
+ *                                 "Inherited from" note)
+ *     assessKnowledgeLoss         reads char.birthYear, char.isDeceased,
+ *                                 char.deathYear (via _calculateAge)
+ *
+ *   Under the documented load order, window.getCharacterById resolves
+ *   to the projection installed by character-queries.js / the shim, not
+ *   the live entity from accessors.js. The projection includes `name`
+ *   (a base scalar), `birthYear`, `isDeceased`, and `deathYear` (all
+ *   base scalars used by the character summary projection). The reads
+ *   here work identically against the projection and the live entity.
+ *
+ *   This module does NOT depend on any projection field beyond those
+ *   four. If character-queries.js ever drops one, the reads here break
+ *   silently; that is the contract this note exists to enforce. See
+ *   names.js's CHARACTER LOOKUP CONTRACT section for the same pattern.
  *
  * NO FALLBACKS
  *
@@ -60,9 +124,37 @@
  *   - accessors.js                (getCharacterById, getRoleById fallback)
  *   - time.js                     (getCurrentYear, calculateAge)
  *   - role-state.js               (RoleState.getRole — preferred reader)
+ *   - role-commands.js            (RoleCommands.recordCharacterSkillProgress)
  *   - character-commands.js       (addProfession, updateProfession,
  *                                  getProfession, getProfessions)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getRoleById now throws when NEITHER RoleState.getRole NOR
+ *       window.getRoleById is available. Prior revisions returned null,
+ *       violating the module's own NO FALLBACKS contract and masking a
+ *       load-order bug as a data-integrity issue. The role-missing-but-
+ *       provider-available case still returns null (legitimate
+ *       missing-data). _requireRoleForWrite added for symmetry with
+ *       education-commands.js / apprenticeship-commands.js, even though
+ *       this module has no role writes today.
+ *     - preserveKnowledgeOnDeath now routes the "raise heir to inherited
+ *       level" write through RoleCommands.recordCharacterSkillProgress
+ *       instead of CharacterCommands.updateProfession. The
+ *       non-decreasing invariant is now enforced by the role domain,
+ *       not re-implemented here. The pre-write guard
+ *       `existingLevel < inheritedLevel` is kept as a fast path
+ *       (avoids a role-domain call when no change is needed). Role
+ *       creation (heir does not hold the role) still calls addProfession.
+ *       See SKILL PROGRESSION.
+ *     - preserveKnowledgeOnDeath's result gains an `alreadyAtOrAbove`
+ *       array: roles where the heir was already at or above the
+ *       inherited level. `preserved` still records only the roles that
+ *       were raised. Informational.
+ *     - Header CHARACTER PROJECTION CONTRACT and HALF-TRANSACTION RISK
+ *       sections added.
+ *     - No other behavioural change to assessKnowledgeLoss.
  * =============================================================================
  */
 
@@ -81,18 +173,57 @@
     }
 
     /**
-     * Role reads prefer RoleState (returns clones) and fall back to
-     * accessors' window.getRoleById only when RoleState is unavailable.
-     * See ROLE READS in the module header.
+     * LENIENT role read.
+     *
+     *   - RoleState available + role found   → clone
+     *   - RoleState available + role missing → null (missing data)
+     *   - RoleState absent + getRoleById available → result of that call
+     *   - Both providers absent → THROW (load-order regression)
+     *
+     * See ROLE READS in the header.
      */
     function _getRoleById(id) {
-        if (window.RoleState && typeof window.RoleState.getRole === 'function') {
+        if (!id) return null;
+
+        var hasRoleState = (typeof window.RoleState !== 'undefined' &&
+                            typeof window.RoleState.getRole === 'function');
+        var hasAccessor = (typeof window.getRoleById === 'function');
+
+        if (hasRoleState) {
             return window.RoleState.getRole(id);
         }
-        if (typeof window.getRoleById === 'function') {
+        if (hasAccessor) {
             return window.getRoleById(id);
         }
-        return null;
+
+        throw new Error(
+            'ProfessionalKnowledgeCommands: no role reader available. ' +
+            'Load role-state.js (RoleState.getRole) or accessors.js ' +
+            '(getRoleById) before using this module.'
+        );
+    }
+
+    /**
+     * STRICT role read. Throws when the role is missing.
+     *
+     * Unused by this module today (both write paths operate on
+     * professions, not roles). Present so any future write path that
+     * needs the role record has a single strict accessor, matching
+     * education-commands.js / apprenticeship-commands.js.
+     */
+    function _requireRoleForWrite(id) {
+        if (!id || typeof id !== 'string') {
+            throw new Error(
+                'ProfessionalKnowledgeCommands: role id is required for write'
+            );
+        }
+        var role = _getRoleById(id);
+        if (!role) {
+            throw new Error(
+                'ProfessionalKnowledgeCommands: role not found: ' + id
+            );
+        }
+        return role;
     }
 
     function _getCurrentYear() {
@@ -131,6 +262,21 @@
         return _characterCommandsMethod('getProfessions')(cid);
     }
 
+    /**
+     * Required role-commands reader for skill progression. Throws if
+     * RoleCommands or the specific method is missing.
+     */
+    function _recordCharacterSkillProgress(cid, rid, level) {
+        if (!window.RoleCommands ||
+            typeof window.RoleCommands.recordCharacterSkillProgress !== 'function') {
+            throw new Error(
+                'ProfessionalKnowledgeCommands requires ' +
+                'RoleCommands.recordCharacterSkillProgress'
+            );
+        }
+        return window.RoleCommands.recordCharacterSkillProgress(cid, rid, level);
+    }
+
     function _calculateAge(char) {
         if (typeof window.calculateAge === 'function') {
             return window.calculateAge(char.birthYear, char.isDeceased, char.deathYear);
@@ -150,28 +296,32 @@
 
     /**
      * Preserve knowledge from dying character to heir.
-     * Inherits half the skill level of each profession >= 10.
      *
-     * Uses CharacterCommands for all profession mutations so that the
-     * character-commands ownership contract on `character.professions` is
-     * respected.
+     * For each profession on the dying character with skill >= 10:
+     *   - compute inheritedLevel = floor(skillLevel * 0.5)
+     *   - if the heir already holds the role at >= inheritedLevel,
+     *     record the role in `alreadyAtOrAbove` and do nothing
+     *   - if the heir holds the role at < inheritedLevel, call
+     *     RoleCommands.recordCharacterSkillProgress to raise it
+     *   - if the heir does not hold the role, call
+     *     CharacterCommands.addProfession to create it at inheritedLevel
      *
      * Does NOT flush to storage. See PERSISTENCE in the module header.
-     * The caller flushes at the end of the enclosing batch.
      *
-     * Idempotency: the inherited skill level is always
-     *   floor(originalLevel * 0.5)
-     *
-     * If the heir already holds the role at a level >= the inherited
-     * level, no update is applied. If the heir holds the role at a
-     * lower level, the heir is raised to the inherited level. Repeated
-     * calls (which should not happen, but could if a caller retries
-     * after a cascade failure) therefore converge to the same state —
-     * the highest inherited level per role wins.
+     * Does NOT revert on partial failure — the caller's death cascade
+     * is the atomic boundary. See HALF-TRANSACTION RISK.
      *
      * @param {string} dyingId
      * @param {string} heirId
-     * @returns {{ success: boolean, data?: { preserved: Array }, code?: string, reason?: string }}
+     * @returns {{
+     *   success: boolean,
+     *   data?: {
+     *     preserved: Array<{roleId, roleName, originalLevel, inheritedLevel}>,
+     *     alreadyAtOrAbove: Array<{roleId, roleName, heirLevel, inheritedLevel}>
+     *   },
+     *   code?: string,
+     *   reason?: string
+     * }}
      */
     function preserveKnowledgeOnDeath(dyingId, heirId) {
         var dying = _getCharacterById(dyingId);
@@ -185,10 +335,11 @@
         var dyingProfessions = _getProfessions(dyingId);
 
         if (!Array.isArray(dyingProfessions) || dyingProfessions.length === 0) {
-            return ok({ preserved: [] });
+            return ok({ preserved: [], alreadyAtOrAbove: [] });
         }
 
         var preserved = [];
+        var alreadyAtOrAbove = [];
 
         for (var i = 0; i < dyingProfessions.length; i++) {
             var prof = dyingProfessions[i];
@@ -203,15 +354,39 @@
             var existing = _getProfession(heirId, roleId);
 
             if (existing) {
-                // Never downgrade the heir's existing skill.
                 var existingLevel = typeof existing.skillLevel === 'number'
                     ? existing.skillLevel
                     : 0;
-                if (existingLevel < inheritedLevel) {
-                    var updateResult = _updateProfession(heirId, roleId, {
-                        skillLevel: inheritedLevel
+
+                if (existingLevel >= inheritedLevel) {
+                    // Heir already at or above the inherited level. No
+                    // write; record for the caller's visibility.
+                    alreadyAtOrAbove.push({
+                        roleId: roleId,
+                        roleName: roleName,
+                        heirLevel: existingLevel,
+                        inheritedLevel: inheritedLevel
                     });
-                    if (!updateResult || !updateResult.success) continue;
+                    continue;
+                }
+
+                // Route through RoleCommands.recordCharacterSkillProgress
+                // so the non-decreasing invariant is enforced by the role
+                // domain. See SKILL PROGRESSION in the header.
+                var progressResult = _recordCharacterSkillProgress(
+                    heirId, roleId, inheritedLevel
+                );
+                if (!progressResult || progressResult.success !== true) {
+                    if (window.console && typeof window.console.warn === 'function') {
+                        window.console.warn(
+                            'ProfessionalKnowledgeCommands: skill progression ' +
+                            'failed for heir ' + heirId + ' role ' + roleId +
+                            ' (' + (progressResult && progressResult.reason
+                                ? progressResult.reason
+                                : 'unknown') + '); other roles continue.'
+                        );
+                    }
+                    continue;
                 }
             } else {
                 var addResult = _addProfession(heirId, {
@@ -222,7 +397,18 @@
                     notes: 'Inherited from ' + dying.name,
                     specs: []
                 });
-                if (!addResult || !addResult.success) continue;
+                if (!addResult || !addResult.success) {
+                    if (window.console && typeof window.console.warn === 'function') {
+                        window.console.warn(
+                            'ProfessionalKnowledgeCommands: addProfession ' +
+                            'failed for heir ' + heirId + ' role ' + roleId +
+                            ' (' + (addResult && addResult.reason
+                                ? addResult.reason
+                                : 'unknown') + '); other roles continue.'
+                        );
+                    }
+                    continue;
+                }
             }
 
             preserved.push({
@@ -246,7 +432,10 @@
             });
         }
 
-        return ok({ preserved: preserved });
+        return ok({
+            preserved: preserved,
+            alreadyAtOrAbove: alreadyAtOrAbove
+        });
     }
 
     /**
