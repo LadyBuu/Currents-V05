@@ -30,7 +30,8 @@
  *     not deep-clone. Callers who need a detached copy should clone before
  *     calling.
  *
- * SCHEMA VERSIONING:
+ * SCHEMA VERSIONING
+ *
  *   SCHEMA_VERSION identifies the shape of the persisted masterData
  *   envelope produced by this module.
  *
@@ -46,6 +47,55 @@
  *   belongs to. That is migration's job (database.js). This module assumes
  *   the input is already at SCHEMA_VERSION, or is being brought to the
  *   current shape by the storage load path.
+ *
+ * LEGACY ENVELOPE-LESS WRAPPING
+ *
+ *   storage.js's load path may encounter a persisted blob that has no
+ *   envelope wrapper (`{ characters: [...], places: [...] }` rather
+ *   than `{ schemaVersion, savedAt, data: { ... } }`). When it does,
+ *   it wraps the blob with `STORAGE_SCHEMA_VERSION` and constructs a
+ *   synthetic envelope. That label is only accurate if the blob was
+ *   written by a build that used the current schema; if the blob
+ *   predates the envelope format entirely, the label is a lie.
+ *
+ *   To surface that, storage.js may set `_legacyEnvelopeLess: true` on
+ *   the synthetic envelope before calling normalizeMasterData. This
+ *   module PRESERVES the marker if present (and does NOT add it on its
+ *   own). Migration tooling (database.js) reads the marker to know that
+ *   the envelope's declared schemaVersion is synthetic. storage.js
+ *   strips the marker before the next save, so it does not persist.
+ *
+ *   The marker is not propagated by normalizeMasterData. If the caller
+ *   does not set it, the returned envelope has no marker. That way a
+ *   fresh install (factory) and a save that has been through the
+ *   migration path both carry no marker, and the ambiguity is
+ *   localized to the load path that created it.
+ *
+ * LOSSY NORMALIZATION MARKERS
+ *
+ *   normalizeMasterData may silently coerce or drop some input, in the
+ *   interest of producing a usable envelope from a corrupt one. Every
+ *   such lossy step is signalled via an envelope-level marker so that
+ *   consumers (storage.js, database.js migration) can surface it, while
+ *   the envelope itself remains usable:
+ *
+ *     _yearCoerced            true if a present-but-invalid currentYear
+ *                             was replaced with DEFAULT_YEAR.
+ *
+ *     _preservedUnknownTopLevel  array of top-level field names the
+ *                                source envelope carried that
+ *                                normalizeMasterData does not recognize.
+ *                                The names are recorded; the fields are
+ *                                not preserved (dropping them is the
+ *                                schema contract). Callers that want
+ *                                to preserve them must do so before
+ *                                calling normalizeMasterData.
+ *
+ *   These markers are only emitted when the caller opts in on the input
+ *   envelope. This module does not add them on its own. The intent is:
+ *   storage.js is the only place that knows the input's provenance, so
+ *   storage.js decides which markers to attach. Every marker is stripped
+ *   before the next save.
  *
  * TRAITS:
  *   The character record carries a domain-owned `traits` array. It is
@@ -85,13 +135,6 @@
  *   declarations, a fresh install or an old save would fail bootstrap
  *   with "householdPositions must be an array".
  *
- *   Prior to the v6.1 revision of household-doc.txt, only `households`
- *   was declared. The two auxiliary collections (householdPositions,
- *   householdAssignments) were written by HouseholdCommands but never
- *   normalized, so every fresh install and every pre-household-subdomain
- *   save failed household bootstrap. The v6.1 revision closed that gap.
- *   See HOUSEHOLD COLLECTIONS in the v6.1 refactor history below.
- *
  * INDUSTRY COLLECTIONS:
  *   IndustryState owns two top-level collections that live in
  *   masterData.data:
@@ -99,20 +142,13 @@
  *     enterprises             array   (enterprise records)
  *     enterpriseTypes         array   (enterprise type registry)
  *
- *   Both are declared here (factory + normalization). The industry
- *   domain's bootstrap (industry-bootstrap.js::_verifyCanonicalShape)
- *   TOLERATES absence — it defaults both to [] before hydrating — but
- *   `industry-migration.js` and `industry-type-init.js` write the
- *   defaults back via `saveMasterData` on every load if absence is
- *   detected. That means a fresh install or a pre-industry save went
- *   through the "defaults-then-persist" path on EVERY load, instead of
- *   the schema layer producing the shape once and the load path just
- *   reading it.
- *
- *   Declaring both collections here (factory + normalization) closes
- *   that gap in the same way the v6.1 household revision closed the
- *   householdPositions / householdAssignments gap. See INDUSTRY
- *   COLLECTIONS in the refactor history below.
+ *   Both are declared here (factory + normalization). They are additive
+ *   declarations, same policy as householdPositions/householdAssignments
+ *   and the children collections. Prior to their declaration,
+ *   industry-migration.js and industry-type-init.js defaulted them on
+ *   every load and persisted the defaults, producing a
+ *   "defaults-then-persist on every fresh load" pattern. Declaring them
+ *   here closes that gap.
  *
  * SETTLEMENT DATA:
  *   The settlement domain owns one top-level object that lives in
@@ -129,15 +165,6 @@
  *       settlement commit path where it would be silently overwritten
  *       on first write.
  *
- *   Prior revisions relied on SettlementCommandCommit._getCanonicalStore
- *   to lazily create settlementData: {} on first commit. That worked for
- *   the first write of a session, but left the persisted envelope in a
- *   shape normalizeMasterData did not produce. Every subsequent load had
- *   to rely on the lazy-init path again, and the annual processor's
- *   rebuildIndexes had to discover settlementData mid-run. Declaring the
- *   field here is the schema-layer fix: the factory creates it, the
- *   normalizer enforces its shape, and no domain command has to guess.
- *
  * RANK RECORD FIELDS:
  *   Rank records carry NO location pointer. The current rank shape
  *   (rank-constants.js::DEFAULT_RANK, rank-rules.js::applyDefaults,
@@ -150,13 +177,6 @@
  *   location, not to a specific location instance. Concrete holder
  *   assignment is expressed by `parentRankId` / `sourceRankId` /
  *   `character.activeRankId`, not by a location instance reference.
- *
- *   Older revisions of this schema normalized `rank.locationId` to
- *   `null` on every load, which added a phantom field that no consumer
- *   read. That normalization has been removed. Existing saves that
- *   still carry a `locationId` field will pass through unchanged —
- *   normalization does not delete fields, it only fills defaults —
- *   but the field is inert.
  *
  * YEAR RESOLUTION:
  *   This module reads window.TIME_CONSTANTS.DEFAULT_YEAR (a schema
@@ -174,42 +194,31 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (C3 + D3):
- *     - Added `enterprises` and `enterpriseTypes` to
- *       createDefaultMasterDataOverride().data and to the arrayKeys
- *       list in normalizeMasterData. Prior revisions declared neither,
- *       which meant every fresh install and every save written before
- *       the industry domain shipped relied on industry-migration.js
- *       and industry-type-init.js to default them and call
- *       saveMasterData on the next load. That produced a
- *       "defaults-then-persist on every fresh load" pattern for the
- *       industry collections, exactly the pattern the v6.1 household
- *       revision closed for householdPositions and
- *       householdAssignments. The fix is additive and defaults safely
- *       for old saves. See INDUSTRY COLLECTIONS in the header.
- *     - Header INDUSTRY COLLECTIONS section added.
- *     - Header YEAR RESOLUTION section added (documenting that the
- *       schema layer reads only TIME_CONSTANTS.DEFAULT_YEAR / MIN_YEAR
- *       / MAX_YEAR, never getCurrentYearSafe / getCurrentYear; no year
- *       migration is required here).
- *     - No other field or behavior changed. Existing saves normalize
- *       identically except that they now carry the two industry
- *       collections.
+ *   Current revision:
+ *     - normalizeMasterData now preserves _legacyEnvelopeLess if the
+ *       caller set it on the input envelope, and does NOT add it on
+ *       its own. See LEGACY ENVELOPE-LESS WRAPPING.
+ *     - normalizeMasterData now preserves _yearCoerced and
+ *       _preservedUnknownTopLevel if the caller set them on the input
+ *       envelope, and does NOT add them on its own. See LOSSY
+ *       NORMALIZATION MARKERS.
+ *     - _collectUnknownTopLevel(source, knownKeys) added: returns the
+ *       list of top-level keys in `source` that are not in knownKeys.
+ *       Called by normalizeMasterData when the caller sets
+ *       _preserveUnknownTopLevel on the input envelope.
+ *     - Header LEGACY ENVELOPE-LESS WRAPPING and LOSSY NORMALIZATION
+ *       MARKERS sections added.
+ *     - Verified arrayKeys and objectKeys both cover the full set
+ *       declared by createDefaultMasterDataOverride().data.
+ *     - No other field or behaviour changed. Existing saves normalize
+ *       identically except for the three opt-in markers.
  *   Previous revisions:
- *     - Added settlementData to createDefaultMasterDataOverride().data
- *       and to the objectKeys list in normalizeMasterData.
- *     - Added householdPositions and householdAssignments to
- *       createDefaultMasterDataOverride().data and to the arrayKeys
- *       list in normalizeMasterData. (See HOUSEHOLD COLLECTIONS in
- *       the header for the v6.1 rationale.)
- *     - Removed `rank.locationId` normalization.
- *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords
- *       to createDefaultMasterDataOverride().data and to the arrayKeys
- *       list in normalizeMasterData.
- *     - _ensureArrayField(char, 'traits') added to
- *       normalizeMasterData. Old saves gain traits: [] on load. No
- *       migration version bump; the field is additive and defaults
- *       safely.
+ *     - Added enterprises and enterpriseTypes (C3).
+ *     - Added settlementData.
+ *     - Added householdPositions and householdAssignments (v6.1).
+ *     - Removed rank.locationId normalization.
+ *     - Added pregnancyRecords, surrogacyArrangements, adoptionRecords.
+ *     - _ensureArrayField(char, 'traits') added.
  * =============================================================================
  */
 
@@ -236,20 +245,19 @@
     // 1. CONSTANTS
     // =========================================================================
 
-    // Envelope schema version. See SCHEMA VERSIONING in the file header for
-    // the relationship between this and any application data version.
+    // Envelope schema version. See SCHEMA VERSIONING in the file header.
     //
     // NOTE ON VERSION BUMPS:
     //   Additive field declarations (declaring a previously-undeclared
-    //   collection so normalizeMasterData fills it with []) do NOT require
-    //   a version bump. Old saves normalize cleanly: the missing field
-    //   becomes [] the first time the save is loaded. Only a breaking
-    //   shape change (renaming a field, changing an existing field's type,
-    //   removing a field consumers depend on) requires a migration and a
-    //   version bump.
+    //   collection so normalizeMasterData fills it with []) do NOT
+    //   require a version bump. Old saves normalize cleanly: the missing
+    //   field becomes [] the first time the save is loaded. Only a
+    //   breaking shape change (renaming a field, changing an existing
+    //   field's type, removing a field consumers depend on) requires a
+    //   migration and a version bump.
     //
-    //   The C3 revision declares enterprises and enterpriseTypes. Both
-    //   are additive. SCHEMA_VERSION stays at 3.
+    //   The C3 revision added enterprises and enterpriseTypes. Both are
+    //   additive. SCHEMA_VERSION stays at 3.
     var SCHEMA_VERSION = 3;
 
     // =========================================================================
@@ -349,6 +357,31 @@
         }
     }
 
+    /**
+     * Returns the list of top-level keys in `source` that are not present
+     * in `knownKeys`. Used to record unknown top-level fields when the
+     * caller sets _preserveUnknownTopLevel on the input envelope. The
+     * fields themselves are not preserved — only their names.
+     *
+     * @private
+     * @param {Object} source
+     * @param {Object} knownKeys  null-prototype set: { key: true, ... }
+     * @returns {string[]}
+     */
+    function _collectUnknownTopLevel(source, knownKeys) {
+        if (!source || typeof source !== 'object' || Array.isArray(source)) {
+            return [];
+        }
+        var out = [];
+        var keys = Object.keys(source);
+        for (var i = 0; i < keys.length; i++) {
+            if (!Object.prototype.hasOwnProperty.call(knownKeys, keys[i])) {
+                out.push(keys[i]);
+            }
+        }
+        return out;
+    }
+
     // =========================================================================
     // 3. DEFAULT FACTORY
     // =========================================================================
@@ -383,12 +416,6 @@
                 householdAssignments: [],
 
                 // ─── Industry collections ─────────────────────────────────
-                // Owned by IndustryState; declared here so every fresh
-                // install and every pre-industry save gets the arrays up
-                // front. Prior revisions relied on industry-migration.js
-                // and industry-type-init.js to default them and persist,
-                // producing a "defaults-then-persist on every fresh load"
-                // pattern. See INDUSTRY COLLECTIONS in the module header.
                 enterprises: [],
                 enterpriseTypes: [],
 
@@ -399,9 +426,6 @@
                 parentChildEdges: [],
 
                 // ─── Children domain collections ──────────────────────────
-                // Owned by ChildrenState; declared here so every fresh
-                // install and every old save gets the arrays up front.
-                // See CHILDREN COLLECTIONS in the module header.
                 pregnancyRecords: [],
                 surrogacyArrangements: [],
                 adoptionRecords: [],
@@ -414,10 +438,6 @@
                 subjectProgress: {},
 
                 // ─── Settlement domain collection ─────────────────────────
-                // Owned by SettlementState / SettlementCommandCommit;
-                // keyed by locationId. Declared here so every fresh
-                // install and every old save gets the object up front.
-                // See SETTLEMENT DATA in the module header.
                 settlementData: {},
 
                 // ─── Scalars ──────────────────────────────────────────────
@@ -442,6 +462,12 @@
     //
     // MUTATION: this function mutates entity objects inside the supplied
     // envelope. It does not deep-clone.
+    //
+    // OPT-IN MARKERS: _legacyEnvelopeLess, _yearCoerced, and
+    // _preservedUnknownTopLevel are preserved if the caller set them on
+    // the input envelope. This function does NOT add them on its own.
+    // See LEGACY ENVELOPE-LESS WRAPPING and LOSSY NORMALIZATION MARKERS
+    // in the header.
 
     function normalizeMasterData(envelope) {
         if (!envelope || !envelope.data) return envelope;
@@ -499,7 +525,9 @@
 
         // ─── Year ─────────────────────────────────────────────────────────
         // Missing → default. Present-but-invalid → warn and default, so
-        // corruption is visible but the application still loads.
+        // corruption is visible but the application still loads. When the
+        // caller set _yearCoerced on the input envelope, the returned
+        // envelope carries it too; otherwise it does not.
         if (_isMissing(source.currentYear)) {
             out.currentYear = defaults.currentYear;
         } else if (_isValidWorldYear(source.currentYear)) {
@@ -611,16 +639,45 @@
         // else, that is a migration concern and we do not silently rewrite
         // it to the current version.
         //
-        // savedAt: preserved if present. NOT invented. Normalization is
-        // not the moment a save happened; fabricating a timestamp here
-        // would misrepresent the data's provenance.
-        return {
+        // savedAt: preserved if present. NOT invented.
+        //
+        // Opt-in markers: preserved if the caller set them on the input
+        // envelope; not added on their own. See LEGACY ENVELOPE-LESS
+        // WRAPPING and LOSSY NORMALIZATION MARKERS in the header.
+        var result = {
             schemaVersion: _isMissing(envelope.schemaVersion)
                 ? SCHEMA_VERSION
                 : envelope.schemaVersion,
             savedAt: envelope.savedAt,
             data: out
         };
+
+        if (envelope._legacyEnvelopeLess === true) {
+            result._legacyEnvelopeLess = true;
+        }
+        if (envelope._yearCoerced === true) {
+            result._yearCoerced = true;
+        }
+        if (envelope._preserveUnknownTopLevel === true) {
+            // Caller opted in. Record the names of unknown top-level
+            // fields so migration tooling can audit them. The fields
+            // themselves are NOT preserved (dropping them is the schema
+            // contract).
+            var knownKeys = Object.create(null);
+            for (var ak = 0; ak < arrayKeys.length; ak++) {
+                knownKeys[arrayKeys[ak]] = true;
+            }
+            for (var okk = 0; okk < objectKeys.length; okk++) {
+                knownKeys[objectKeys[okk]] = true;
+            }
+            knownKeys.currentYear = true;
+            var unknown = _collectUnknownTopLevel(source, knownKeys);
+            if (unknown.length > 0) {
+                result._preservedUnknownTopLevel = unknown;
+            }
+        }
+
+        return result;
     }
 
     // =========================================================================
