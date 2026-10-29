@@ -36,6 +36,12 @@
  *   memory until the next markDataDirty-triggering action. That is a
  *   bug. All mutating handlers below call it.
  *
+ *   As of the current apprenticeship-commands.js patch, persist()
+ *   returns { success, reason } with the reason propagated from
+ *   saveMasterData / getLastSaveError. Prior revisions could return a
+ *   generic 'unknown' reason; the modal surfaces whatever reason comes
+ *   back.
+ *
  * CONFIRMATION DIALOG CONTRACT
  *
  *   This module uses window.confirmDialog(message, title, onConfirm) —
@@ -67,6 +73,16 @@
  *   calculateAge(birthYear, isDeceased, deathYear). All calls pass the
  *   full character state so deceased characters render correctly.
  *
+ * LOCATION RESOLUTION
+ *
+ *   _getCurrentLocation resolves a character's current place id via
+ *   world.js. Prior revisions required window.getCurrentLocation, which
+ *   accessors.js does not export; the module threw at load because the
+ *   REQUIRED array listed it. The dependency has been removed and the
+ *   wrapper now uses world.js's getCurrentPlace / getCurrentLocationId
+ *   (returning null when neither is available). See LOCATION RESOLUTION
+ *   in REFACTOR HISTORY.
+ *
  * TERMINATE / CANCEL SIGNATURES
  *
  *   ApprenticeshipCommands.terminateApprenticeship(masterId, apprenticeId, roleId, reason)
@@ -75,18 +91,55 @@
  *   roleId is required — a character may have concurrent apprenticeships
  *   with multiple masters for different roles.
  *
+ * PROGRESS / TEACH SIGNATURES
+ *
+ *   progressApprenticeship(masterId, apprenticeId, amount, roleId?)
+ *   teachSkill(masterId, apprenticeId, methodId, roleId?)
+ *   teachSpecialization(masterId, apprenticeId, specialization, roleId?)
+ *
+ *   roleId is now optional in the commands. When supplied (as this modal
+ *   supplies it whenever it has one in scope), the command disambiguates
+ *   multi-role pairs; when omitted, ambiguous pairs return
+ *   { code: 'MULTIPLE_ROLES' } rather than throwing.
+ *
  * DEPENDENCIES (must be loaded first):
  *   - modals-core.js          (openModal, closeTopModal, confirmDialog)
  *   - formatting.js           (_escapeHtml)
  *   - ui.js                   (_showToast, confirmDialog)
  *   - icons.js                (Icons)
  *   - time.js                 (getCurrentYear, calculateAge)
- *   - accessors.js            (getCharacterById, getPlaceById, getCurrentLocation)
+ *   - accessors.js            (getCharacterById, getPlaceById)
  *   - apprenticeship-constants.js  (APPRENTICESHIP_STAGES, TEACHING_CONSTANTS)
  *   - apprenticeship-queries.js    (ApprenticeshipQueries)
  *   - apprenticeship-commands.js   (ApprenticeshipCommands)
  *   - apprenticeship-rules.js      (ApprenticeshipRules)
  *
+ * DEPENDENCIES (optional, called only if loaded):
+ *   - world.js                (getCurrentPlace / getCurrentLocationId —
+ *                              used by _getCurrentLocation)
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Removed getCurrentLocation from the REQUIRED dependency list.
+ *       accessors.js does not export it; the module previously threw at
+ *       load. The local wrapper now resolves via world.js's
+ *       getCurrentPlace / getCurrentLocationId, matching
+ *       modals-roles.js::_getCurrentLocationOrNull. See LOCATION
+ *       RESOLUTION in the header.
+ *     - progressApprenticeship / teachSkill / teachSpecialization call
+ *       sites now pass roleId where it is in scope. This avoids the
+ *       MULTIPLE_ROLES structured failure for characters with more than
+ *       one ongoing apprenticeship. See PROGRESS / TEACH SIGNATURES.
+ *     - _showToast now tries window._showToast first (the deprecated
+ *       alias used elsewhere in this modal), then window.showToast,
+ *       matching modals-roles.js and modals-education.js. A one-shot
+ *       console.warn fires if neither is available so a load-order
+ *       regression is visible.
+ *     - PERSISTENCE section updated to note that persist() now returns
+ *       a propagated reason (not 'unknown') after the
+ *       apprenticeship-commands.js patch.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -100,13 +153,12 @@
     var REQUIRED = [
         ['openModal',           'modals-core.js'],
         ['closeTopModal',       'modals-core.js'],
-        ['confirmDialog',       'ui.js'],
+        ['confirmDialog',       'modals-core.js'],
         ['_escapeHtml',         'formatting.js'],
         ['_showToast',          'ui.js'],
         ['Icons',               'icons.js'],
         ['getCharacterById',    'accessors.js'],
         ['getPlaceById',        'accessors.js'],
-        ['getCurrentLocation',  'accessors.js'],
         ['getCurrentYear',      'time.js'],
         ['calculateAge',        'time.js'],
         ['ApprenticeshipQueries',  'apprenticeship-queries.js'],
@@ -139,12 +191,57 @@
 
     function _getCharacterById(id)          { return window.getCharacterById(id); }
     function _getPlaceById(id)              { return window.getPlaceById(id); }
-    function _getCurrentLocation(c)         { return window.getCurrentLocation(c); }
     function _getCurrentYear()              { return window.getCurrentYear(); }
     function _escapeHtml(s)                 { return window._escapeHtml(s); }
     function _openModal(o)                  { return window.openModal(o); }
     function _closeTopModal()               { return window.closeTopModal(); }
-    function _showToast(m, t)               { return window._showToast(m, t); }
+
+    var _showToastWarned = false;
+    function _showToast(m, t) {
+        if (typeof window._showToast === 'function') {
+            window._showToast(m, t);
+            return;
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(m, t);
+            return;
+        }
+        if (!_showToastWarned) {
+            _showToastWarned = true;
+            if (window.console && typeof window.console.warn === 'function') {
+                window.console.warn(
+                    'modals-apprenticeship.js: no toast provider available. ' +
+                    'Load ui.js (showToast) or its _showToast alias.'
+                );
+            }
+        }
+    }
+
+    /**
+     * Resolves a character's current place id via world.js.
+     *
+     * Order:
+     *   1. world.getCurrentPlace(character) → place.id
+     *   2. world.getCurrentLocationId(character) → string
+     *   3. null
+     *
+     * Returns null when neither is available. See LOCATION RESOLUTION in
+     * the header.
+     */
+    function _getCurrentLocation(character) {
+        if (!character) return null;
+        if (typeof window.getCurrentPlace === 'function') {
+            var place = window.getCurrentPlace(character);
+            if (place && typeof place.id === 'string' && place.id.length > 0) {
+                return place.id;
+            }
+        }
+        if (typeof window.getCurrentLocationId === 'function') {
+            var id = window.getCurrentLocationId(character);
+            if (typeof id === 'string' && id.length > 0) return id;
+        }
+        return null;
+    }
 
     /**
      * Returns trusted SVG markup for a named icon. icons.js exports
@@ -191,16 +288,17 @@
         );
     }
 
+    function _locationNameFor(character) {
+        var locationId = _getCurrentLocation(character);
+        if (!locationId) return 'Unknown';
+        var place = _getPlaceById(locationId);
+        if (!place) return 'Unknown';
+        return place.displayName || 'Unknown';
+    }
+
     // =========================================================================
     // 3. PERSISTENCE HELPER
     // =========================================================================
-    //
-    // Runs ApprenticeshipCommands.persist() and toasts a warning if the
-    // disk write failed. The in-memory write is already done; this only
-    // reports whether it reached storage. Never rolls back.
-    //
-    // Mirrors modals-roles.js's _persistAndWarn. See PERSISTENCE in the
-    // module header for the rationale.
 
     function _persistAndWarn(successMessage) {
         var persistResult = C.persist();
@@ -256,6 +354,8 @@
         var currentYear = _getCurrentYear();
         var masterAge = _ageOf(master);
         var candidateAge = _ageOf(candidate);
+        var masterLocationName = _locationNameFor(master);
+        var candidateLocationName = _locationNameFor(candidate);
 
         var teachable = Q.getTeachableSkills(master.id);
         var skillOptions = '';
@@ -279,7 +379,7 @@
                 '<div style="font-weight:bold;font-size:0.9rem;">' + _personLine(master) + '</div>' +
                 '<div style="font-size:0.6rem;color:var(--dim);">' +
                   (masterAge != null ? masterAge + ' years' : '') +
-                  ' · ' + _escapeHtml(_getCurrentLocation(master) || 'Unknown') +
+                  ' · ' + _escapeHtml(masterLocationName) +
                 '</div>' +
               '</div>' +
               '<div style="background:var(--bg2);padding:12px;border-radius:8px;">' +
@@ -287,7 +387,7 @@
                 '<div style="font-weight:bold;font-size:0.9rem;">' + _personLine(candidate) + '</div>' +
                 '<div style="font-size:0.6rem;color:var(--dim);">' +
                   (candidateAge != null ? candidateAge + ' years' : '') +
-                  ' · ' + _escapeHtml(_getCurrentLocation(candidate) || 'Unknown') +
+                  ' · ' + _escapeHtml(candidateLocationName) +
                 '</div>' +
               '</div>' +
             '</div>' +
@@ -433,7 +533,7 @@
                 if (progressBtn) {
                     progressBtn.addEventListener('click', function () {
                         var result = C.progressApprenticeship(
-                            masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
+                            masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN, roleId
                         );
                         if (result.success) {
                             _persistAndWarn(null);
@@ -593,7 +693,7 @@
                 if (progressBtn) {
                     progressBtn.addEventListener('click', function () {
                         var result = C.progressApprenticeship(
-                            masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN
+                            masterId, apprenticeId, TEACH.DEFAULT_PROGRESS_GAIN, roleId
                         );
                         if (result.success) {
                             _persistAndWarn(null);
