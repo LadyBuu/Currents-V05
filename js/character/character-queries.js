@@ -30,6 +30,65 @@
  *   - Mutation                       -> character-commands.js
  *   - Persistence                    -> storage.js
  *
+ * CHARACTER PROJECTION CONTRACT
+ *
+ *   This module consumes `CharacterState._project` (via `CS.getCharacter`
+ *   and `CS.getAllCharacters`). The projection is BUILT by character-
+ *   state.js; this module only reads it. Every read in this module
+ *   trusts the projection to include the fields listed below.
+ *
+ *   GUARANTEED FIELDS (this module's reads break silently if any is
+ *   removed from the projection):
+ *
+ *     id                  string
+ *     name                string
+ *     surname             string | null
+ *     gender              'male' | 'female' | 'unknown'
+ *     birthYear           number | null
+ *     isDeceased          boolean
+ *     deathYear           number | null
+ *     deathCause          string | null
+ *     deathCauseDetail    string | null
+ *     currentLocationId   string | null
+ *     activeRankId        string | null
+ *     household           string | null
+ *     religionId          string | null
+ *     cultureId           string | null
+ *     notes               string
+ *     epithet             string
+ *     surnameRules        object | null       (names.js reads this)
+ *     surnameSource       string | null       (names.js reads this)
+ *     isDeleted           boolean
+ *     traits              string[]
+ *     moves               MoveRecord[]
+ *
+ *   This list is what the eleven modules named in accessors.js's
+ *   CONCRETE DEPENDENCY GRAPH consume (via this module, via
+ *   CharacterState directly, or via window.getCharacterById after this
+ *   module installs the projection). If character-state.js ever stops
+ *   including one of them, that is the contract this list exists to
+ *   enforce.
+ *
+ *   NOT IN THE PROJECTION CONTRACT (do not read these off a projection;
+ *   use the module named):
+ *
+ *     professions         → CharacterCommands.getProfessions / getProfession
+ *     subjectProgress     → CharacterCommands.getSubjectProgress /
+ *                           getSubjectProgressAll
+ *     isLiterate          → CharacterCommands.isLiterate
+ *     education           → CharacterCommands (via EducationLearning)
+ *     educationHistory    → CharacterCommands (via EducationHistory)
+ *     relationships       → CharacterCommands / relationship domain
+ *     friends             → CharacterCommands / relationship domain
+ *     rankAssignments     → CharacterCommands.getRankAssignment
+ *
+ *   `modals-roles.js::_openAssignModal` reads `character.professions`
+ *   off the projection for a role-count display. That is OUT OF
+ *   CONTRACT and should be migrated to
+ *   CharacterQueries.getCharacterProfessions or
+ *   CharacterCommands.getProfessions. Follow-up work, not a change to
+ *   this file.
+ *
  * NAME ALIASES:
  *   getCharacter(id) and getCharacterById(id) are the same function.
  *   getCharacter matches CharacterState's canonical read API.
@@ -38,9 +97,24 @@
  *   convention do not have to know which one is "canonical". They are
  *   not different operations.
  *
- *   Similarly, window.getCharacterById (from accessors.js / shim) reads
- *   the same underlying projection through CharacterState. The three
- *   names all resolve to the same read.
+ *   RUNTIME RESOLUTION OF window.getCharacterById:
+ *     Under the documented load order (accessors.js → character-queries.js
+ *     → character-system.js shim), the LAST writer of
+ *     window.getCharacterById wins. The shim (or this module, if the
+ *     shim is absent) installs the projection-returning version. So at
+ *     runtime, window.getCharacterById returns a projection.
+ *
+ *     The cached-live-entity version from accessors.js is still
+ *     reachable as `accessors.getCharacterById` if a caller reaches
+ *     into the accessor module directly. Callers that specifically
+ *     need a live entity for authorized mutation must use
+ *     CharacterState.getLiveCharacterForMutation — this is the
+ *     sanctioned accessor for that purpose, and it is the ONLY one
+ *     whose return value is safe to mutate.
+ *
+ *     The accessors.js header documents the same distinction from the
+ *     other side; see THE CACHED VERSUS PROJECTION ACCESSOR
+ *     DISTINCTION there.
  *
  * FAMILY DELEGATION:
  *   Family queries delegate to FamilyQueries when it is loaded. The
@@ -49,6 +123,13 @@
  *   so existing callers continue to work. They do not reimplement
  *   family semantics. If FamilyQueries is not loaded, they return
  *   null or [] without fabricating data.
+ *
+ *   FamilyQueries is OPTIONAL. When it is missing, the family fields
+ *   on getCharacterSummary.family default to:
+ *     father: null, mother: null, childCount: 0, hasChildren: false
+ *   That is a legitimate "no family data available" state, not an
+ *   error. Callers that need family data must ensure FamilyQueries is
+ *   loaded before calling; the summary does not throw.
  *
  *   SHAPE NOTE:
  *     FamilyQueries.getParents returns EDGE WRAPPERS:
@@ -85,9 +166,7 @@
  *   place-lookup, hierarchy walk, and current-location resolution
  *   (including the character.currentLocationId override and the
  *   moves-based fallback). Consumers that need to display a character's
- *   location MUST use locationId and resolve through world.js. See the
- *   full resolution pattern in the character-ui-list.js LOCATION
- *   RESOLUTION section.
+ *   location MUST use locationId and resolve through world.js.
  *
  * MOVE HISTORY:
  *   CharacterState._project now exposes `moves` as a defensive clone of
@@ -100,13 +179,32 @@
  *   and returns them. Mutating the returned array does NOT affect
  *   canonical data.
  *
- *   Location domain contract: getMoveHistory is required at load time
- *   by location-queries.js, location-movement.js, and location-view-
- *   models.js. It returns an array of move records (see character-
- *   state.js's _cloneMoves for the exact shape: year, locationId,
- *   locationName, note, fromLocationId, fromLocationName, isBirthMove,
- *   timestamp). An empty array means "no moves recorded," never
- *   "character not found" — a missing character returns null.
+ *   Each move record has the following shape (see character-state.js
+ *   _cloneMoves for the canonical field list):
+ *
+ *     {
+ *       year:             number | null,
+ *       locationId:       string | null,
+ *       locationName:     string | null,
+ *       note:             string | null,
+ *       fromLocationId:   string | null,
+ *       fromLocationName: string | null,
+ *       isBirthMove:      boolean,
+ *       timestamp:        number | null
+ *     }
+ *
+ *   Return values:
+ *     Array    move records, one per recorded move (chronological order
+ *              as written by CharacterCommands.updateCharacterFields —
+ *              LocationCommands.recordMove appends, so the array is
+ *              ordered oldest-first)
+ *     null     character not found
+ *     []       character exists, no moves recorded
+ *
+ *   Required at load time by:
+ *     - location-queries.js
+ *     - location-movement.js
+ *     - location-view-models.js
  *
  * getCharactersAtLocation:
  *   Convenience wrapper over getCharactersInLocations([locationId])
@@ -136,6 +234,15 @@
  *                       'Old age'), or null
  *
  *   Both fields are null for living characters.
+ *
+ * PROFESSIONS AND OTHER CHARACTER-OWNED STORES:
+ *   Professions, subjectProgress, isLiterate, education, educationHistory,
+ *   relationships, friends, rankAssignments — none of these are in the
+ *   projection contract. Each has a dedicated reader owned by the module
+ *   that writes it. This module's getCharacterProfessions and
+ *   getPrimaryProfession delegate to CharacterCommands; every other
+ *   store is read by its owning module's queries. Do NOT read any of
+ *   these fields off a projection.
  *
  * SEMANTIC RULES:
  *   - Missing/invalid input returns null (singular) or [] (collection).
@@ -172,40 +279,40 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Added getMoveHistory(characterId). Canonical read for the
- *       location domain. Reads character.moves off the projection
- *       (populated by CharacterState._project since the character-state
- *       fix that added moves to the projection). Returns a defensive
- *       clone. Required at load time by location-queries.js,
- *       location-movement.js, and location-view-models.js.
- *     - Added getCharactersAtLocation(locationId, options). Convenience
- *       wrapper over getCharactersInLocations with an aliveOnly filter.
- *       Required at load time by location-view-models.js.
- *     - Added getCharacterById(id) as an alias of getCharacter(id).
- *       The accessor layer and character-system.js shim both use the
- *       "ById" form; consumers reaching for either convention now work.
- *       Required at load time by location-queries.js,
- *       location-movement.js, location-view-models.js, and
- *       location-commands.js.
- *     - LOCATION DISPLAY section updated to reference the correct
- *       resolution pattern now that character-ui-list.js resolves
- *       through world.getCurrentPlace().
- *     - Header MOVE HISTORY and getCharactersAtLocation sections added.
- *     - DEPENDENCIES unchanged. No new external dependency added —
- *       every new function reads only from the existing projection and
- *       from the existing time.js helpers.
- *     - No behavioural change to any existing function.
- *   Previous revision:
- *     - LOCATION DISPLAY section added. Documented that
- *       getCharacterSummary.location is a stable shape placeholder that
- *       is always null.
- *   Previous revision (Phase 1.3):
- *     - getCharacterSummary now exposes deathCauseDetail.
- *     - getCharacterFacts now exposes deathCause and deathCauseDetail.
- *     - Header DEATH CAUSE section added.
- *   Previous revision:
- *     - getCharacterSummary.traits and getCharacterFacts.traits added
- *       as defensive copies of the projection's traits array.
+ *     - Header CHARACTER PROJECTION CONTRACT section added. Names the
+ *       fields that must remain on the projection (this module and the
+ *       eleven modules named in accessors.js depend on them), and the
+ *       fields that must NOT be read off the projection (professions,
+ *       subjectProgress, etc. — each has a dedicated reader). Closes
+ *       the contract that accessors.js's CONCRETE DEPENDENCY GRAPH
+ *       only half-documented.
+ *     - Header NAME ALIASES section extended: RUNTIME RESOLUTION OF
+ *       window.getCharacterById subsection added. Documents that under
+ *       the documented load order the projection-returning version
+ *       wins, and that accessors.getCharacterById remains reachable
+ *       but is not the sanctioned live-entity path (which is
+ *       CharacterState.getLiveCharacterForMutation).
+ *     - Header FAMILY DELEGATION section extended: documents that
+ *       FamilyQueries is OPTIONAL and that getCharacterSummary.family
+ *       defaults to null/0/false when FamilyQueries is missing.
+ *     - Header MOVE HISTORY section extended: enumerates the exact
+ *       per-record shape (matching character-state.js::_cloneMoves) so
+ *       a caller does not need to read character-state.js to know the
+ *       fields.
+ *     - Header PROFESSIONS AND OTHER CHARACTER-OWNED STORES section
+ *       added. Documents the out-of-contract reads.
+ *     - Inline comment added near getCharacterSummary's profession
+ *       resolution: "Do NOT read projection.professions; use
+ *       CharacterCommands.getProfessions." The code already did; the
+ *       comment prevents a future regression.
+ *     - No behavioural change. Every function's return value is
+ *       identical.
+ *   Previous revisions:
+ *     - getMoveHistory, getCharactersAtLocation, getCharacterById
+ *       alias added.
+ *     - LOCATION DISPLAY section added.
+ *     - DEATH CAUSE section added.
+ *     - traits added to summary and facts.
  * =============================================================================
  */
 
@@ -371,6 +478,15 @@
      * The accessor layer (accessors.js) and the character-system.js shim
      * both expose "getCharacterById". Consumers reaching for either
      * convention use this name. Same operation, same return shape.
+     *
+     * RUNTIME RESOLUTION: under the documented load order, this module
+     * (or the shim, whichever loads last) installs
+     * window.getCharacterById. At runtime the projection-returning
+     * version from this module wins. The cached-live-entity version
+     * from accessors.js remains reachable as
+     * accessors.getCharacterById, but the sanctioned live-entity path
+     * is CharacterState.getLiveCharacterForMutation. See NAME ALIASES
+     * in the header.
      */
     function getCharacterById(id) {
         return getCharacter(id);
@@ -415,11 +531,6 @@
      * @param {Object} [options]
      * @param {boolean} [options.aliveOnly] - default false
      * @returns {Array}
-     *
-     * Convenience wrapper over getCharactersInLocations. The location
-     * domain (location-view-models.js::buildBulkMoveModel) is the
-     * primary consumer. Reads only from the projection; no external
-     * dependency added.
      */
     function getCharactersAtLocation(locationId, options) {
         if (!_hasId(locationId)) return [];
@@ -531,6 +642,10 @@
 
         var rankDisplay = _resolveRankDisplay(projection.id, projection.activeRankId);
 
+        // Do NOT read projection.professions here. The projection is
+        // not guaranteed to include professions; CharacterCommands is
+        // the canonical reader. See PROFESSIONS AND OTHER
+        // CHARACTER-OWNED STORES in the header.
         var primaryProfession = null;
         var professionCount = 0;
         if (typeof window.CharacterCommands !== 'undefined'
@@ -675,20 +790,14 @@
     // =========================================================================
     //
     // Canonical read for the location domain. Reads character.moves from
-    // the projection (populated by CharacterState._project since the fix
-    // that added moves to the projection).
+    // the projection (populated by CharacterState._project).
     //
     // Returns:
-    //   Array    move records, one per recorded move (chronological order
-    //            as written by CharacterCommands.updateCharacterFields —
-    //            LocationCommands.recordMove appends, so the array is
-    //            ordered oldest-first)
+    //   Array    move records, chronological order (oldest-first)
     //   null     character not found
     //   []       character exists, no moves recorded
     //
-    // Every record has the canonical shape described in the header's
-    // MOVE HISTORY section. Mutating the returned array does not affect
-    // canonical data.
+    // See MOVE HISTORY in the header for the per-record shape.
     //
     // Required at load time by:
     //   - location-queries.js
@@ -705,6 +814,11 @@
     // =========================================================================
     // 9. FAMILY COMPATIBILITY DELEGATES
     // =========================================================================
+    //
+    // FamilyQueries is OPTIONAL. When it is missing, every delegating
+    // function returns its documented empty value ([] or null or the
+    // empty parents object). No fabrication. See FAMILY DELEGATION in
+    // the header.
 
     function _familyAvailable() {
         return typeof window.FamilyQueries !== 'undefined';
@@ -794,6 +908,10 @@
     // =========================================================================
     // 10. PROFESSION COMPATIBILITY DELEGATES
     // =========================================================================
+    //
+    // Profession reads delegate to CharacterCommands. Do NOT read
+    // projection.professions; it is not in the projection contract.
+    // See PROFESSIONS AND OTHER CHARACTER-OWNED STORES in the header.
 
     function getCharacterProfessions(id) {
         if (!_hasId(id)) return [];
