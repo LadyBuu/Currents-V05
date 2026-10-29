@@ -55,6 +55,43 @@
  *   undefined; the dialog appears and closes but the callback never
  *   fires. The three-argument form is correct.
  *
+ * LOCATION RESOLUTION
+ *
+ *   _getCurrentLocationOrNull resolves a character's current place id
+ *   through world.js. Prior revisions required window.getCurrentLocation,
+ *   which accessors.js does not export; the location filter in the assign
+ *   modal was effectively dead. See LOCATION RESOLUTION in REFACTOR
+ *   HISTORY.
+ *
+ *   world.js exports:
+ *     getCurrentPlace(character)      → place record | null
+ *     getCurrentLocationId(character) → string | null
+ *
+ *   _getCurrentLocationOrNull prefers getCurrentPlace (returns the place
+ *   id); falls back to getCurrentLocationId (returns the id directly);
+ *   returns null when neither is available. A null return from the
+ *   resolver causes RoleQueries.getOccupiedLocationIds and
+ *   getEligibleCharactersForRole to skip location filtering for that
+ *   character, which is the correct degradation when the resolver
+ *   cannot resolve a location.
+ *
+ * CATEGORY SOURCE
+ *
+ *   RS.getCategories() throws if RoleState.init() has not been called.
+ *   Every modal builder that renders a category dropdown reads through
+ *   _getCategoriesOrEmpty(), which returns {} on a thrown call. In a
+ *   normal load order this is unreachable (role UI mounts after role
+ *   bootstrap); it exists so that an unusual load order yields an empty
+ *   dropdown, not a failed modal open.
+ *
+ * ICON POLICY
+ *
+ *   _icon is STRICT: throws on unknown names. This is deliberate — an
+ *   unknown icon name is a data error that should surface at render,
+ *   not as a silent empty span. (modals-role-select.js::_iconOr falls
+ *   back to CIRCLE; that is a different module with a different
+ *   tolerance policy, documented there.)
+ *
  * DEPENDENCIES (must be loaded first):
  *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
  *   - formatting.js         (escapeHtml)
@@ -65,9 +102,40 @@
  *   - role-state.js         (RoleState)
  *   - role-queries.js       (RoleQueries)
  *   - role-commands.js      (RoleCommands)
- *   - accessors.js          (getCharacterById, getCharacters, getCurrentLocation)
+ *   - accessors.js          (getCharacterById, getCharacters)
  *   - time.js               (getCurrentYear, calculateAge)
+ *   - world.js              (getCurrentPlace / getCurrentLocationId —
+ *                            used by _getCurrentLocationOrNull)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentLocationOrNull rewritten to use world.js
+ *       (getCurrentPlace / getCurrentLocationId) instead of the
+ *       non-existent window.getCurrentLocation. Prior revisions returned
+ *       null unconditionally, so the assign-modal location filter was
+ *       dead. See LOCATION RESOLUTION in the header.
+ *     - All category-dropdown builders route through
+ *       _getCategoriesOrEmpty(), which returns {} if
+ *       RoleState.getCategories() throws (not yet initialised). Prior
+ *       revisions called RS.getCategories() directly and would fail the
+ *       modal open if role state was not yet initialised.
+ *     - openViewCharactersWithRoleModal now uses
+ *       RoleQueries.getRoleStatisticsBatch([roleId]) for the stats half
+ *       of its two-scan pattern. The detail half still requires a
+ *       separate getCharactersWithRoleDetails call (RoleQueries does not
+ *       expose a combined query). See STATISTICS BATCHING in
+ *       role-ui-list.js for the same tradeoff.
+ *     - openCategoryManagerModal no longer uses window.prompt for
+ *       add/rename. Both flows now render an inline text input inside
+ *       the modal. window.prompt is synchronous, blocking, and
+ *       inconsistent with every other role modal. The delete flow still
+ *       uses _confirmThen (the confirmation text is short enough that
+ *       window.confirmDialog's dialog is correct).
+ *     - Header LOCATION RESOLUTION, CATEGORY SOURCE, and ICON POLICY
+ *       sections added.
+ *     - No other behavioural change. Every modal's rendered output is
+ *       identical when the underlying data and load order are identical.
  * =============================================================================
  */
 
@@ -135,7 +203,7 @@
     }
 
     function _categoryLabel(categoryId) {
-        var categories = RS.getCategories();
+        var categories = _getCategoriesOrEmpty();
         var cat = categories[categoryId];
         return cat ? cat.name : RC.UNCATEGORIZED_NAME;
     }
@@ -160,9 +228,31 @@
         return '?';
     }
 
+    /**
+     * Resolves a character's current place id via world.js.
+     *
+     * Order:
+     *   1. world.getCurrentPlace(character) → place.id
+     *   2. world.getCurrentLocationId(character) → string
+     *   3. null
+     *
+     * See LOCATION RESOLUTION in the header. A null return means the
+     * caller's location filter degrades to "no location filter for this
+     * character" — that's the documented RoleQueries behaviour.
+     */
     function _getCurrentLocationOrNull(character) {
-        if (typeof window.getCurrentLocation !== 'function') return null;
-        return window.getCurrentLocation(character);
+        if (!character) return null;
+        if (typeof window.getCurrentPlace === 'function') {
+            var place = window.getCurrentPlace(character);
+            if (place && typeof place.id === 'string' && place.id.length > 0) {
+                return place.id;
+            }
+        }
+        if (typeof window.getCurrentLocationId === 'function') {
+            var id = window.getCurrentLocationId(character);
+            if (typeof id === 'string' && id.length > 0) return id;
+        }
+        return null;
     }
 
     function _calculateAgeOrNull(birthYear) {
@@ -175,6 +265,23 @@
             throw new Error('modals-roles.js requires getCurrentYear (time.js)');
         }
         return window.getCurrentYear();
+    }
+
+    /**
+     * Safe category read. Returns {} when RoleState has not yet been
+     * initialised. See CATEGORY SOURCE in the header.
+     */
+    function _getCategoriesOrEmpty() {
+        try {
+            if (RS && typeof RS.getCategories === 'function') {
+                return RS.getCategories();
+            }
+        } catch (e) {
+            // RoleState.getCategories throws if init() hasn't run. Return
+            // an empty map so the modal renders with no category options
+            // rather than failing to open.
+        }
+        return {};
     }
 
     /**
@@ -236,7 +343,7 @@
     // =========================================================================
 
     function _buildCategoryOptions(selectedId) {
-        var categories = RS.getCategories();
+        var categories = _getCategoriesOrEmpty();
         var keys = Object.keys(categories).sort(function (a, b) {
             return categories[a].name.localeCompare(categories[b].name);
         });
@@ -283,7 +390,7 @@
     // =========================================================================
 
     function openCreateRoleModal(onSuccess) {
-        var categories = RS.getCategories();
+        var categories = _getCategoriesOrEmpty();
         var firstCategory = Object.keys(categories).sort()[0] || RC.UNCATEGORIZED_ID;
 
         var content =
@@ -947,6 +1054,14 @@
         }
 
         var details = RQ.getCharactersWithRoleDetails(roleId);
+
+        // One batch call for the stats half. See STATISTICS BATCHING in
+        // role-ui-list.js for the same reasoning.
+        var statsBatch = RQ.getRoleStatisticsBatch([roleId]);
+        var stats = statsBatch[roleId] !== undefined
+            ? statsBatch[roleId]
+            : RQ.getRoleStatistics(roleId);
+
         var html;
 
         if (details.length === 0) {
@@ -990,6 +1105,9 @@
                 '<strong>' + _esc(role.name) + '</strong>' +
                 '<div style="font-size:0.65rem;color:var(--dim);margin-top:4px;">' +
                     details.length + ' character(s)' +
+                    (stats.averageSkill > 0
+                        ? ' · Avg skill: ' + stats.averageSkill
+                        : '') +
                 '</div>' +
             '</div>' +
             html +
@@ -1166,8 +1284,17 @@
     // =========================================================================
 
     function openCategoryManagerModal(onSuccess) {
+        // Inline sub-state for the add/rename form. Replaces the previous
+        // window.prompt calls, which were synchronous and inconsistent with
+        // the rest of the role modal surface.
+        var formState = {
+            mode: null,     // null | 'add' | 'rename'
+            catId: null,    // rename target only
+            currentName: ''
+        };
+
         function buildManagerHtml() {
-            var categories = RS.getCategories();
+            var categories = _getCategoriesOrEmpty();
             var roles = RS.getAllRoles();
 
             var counts = {};
@@ -1201,9 +1328,33 @@
                 '</div>';
             }
 
+            var formHtml = '';
+            if (formState.mode === 'add') {
+                formHtml =
+                    '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                        '<label style="display:block;font-size:0.6rem;color:var(--accent);margin-bottom:4px;">New Category Name</label>' +
+                        '<input type="text" id="catInlineName" value="" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;">' +
+                        '<div style="display:flex;gap:6px;margin-top:6px;">' +
+                            '<button type="button" id="catInlineSave" style="padding:4px 10px;font-size:0.6rem;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;">Add</button>' +
+                            '<button type="button" id="catInlineCancel" style="padding:4px 10px;font-size:0.6rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Cancel</button>' +
+                        '</div>' +
+                    '</div>';
+            } else if (formState.mode === 'rename') {
+                formHtml =
+                    '<div style="margin-bottom:12px;padding:8px;background:var(--bg3);border-radius:6px;">' +
+                        '<label style="display:block;font-size:0.6rem;color:var(--accent);margin-bottom:4px;">Rename Category</label>' +
+                        '<input type="text" id="catInlineName" value="' + _esc(formState.currentName) + '" style="width:100%;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;">' +
+                        '<div style="display:flex;gap:6px;margin-top:6px;">' +
+                            '<button type="button" id="catInlineSave" style="padding:4px 10px;font-size:0.6rem;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;">Save</button>' +
+                            '<button type="button" id="catInlineCancel" style="padding:4px 10px;font-size:0.6rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Cancel</button>' +
+                        '</div>' +
+                    '</div>';
+            }
+
             return '<div style="margin-bottom:12px;">' +
                     '<button type="button" id="catAddBtn" style="padding:4px 12px;background:var(--accent);border:none;color:white;border-radius:4px;cursor:pointer;font-size:0.6rem;">Add Category</button>' +
                 '</div>' +
+                formHtml +
                 '<div style="max-height:300px;overflow-y:auto;">' + html + '</div>' +
                 '<div style="margin-top:12px;padding:8px;background:var(--bg3);border-radius:6px;font-size:0.55rem;">' +
                     'Uncategorized cannot be deleted.' +
@@ -1219,22 +1370,72 @@
                 confirmText: 'Close',
                 cancelText: '',
                 onMount: function (modalEl) {
+                    function wireInlineForm() {
+                        var input = modalEl.querySelector('#catInlineName');
+                        var saveBtn = modalEl.querySelector('#catInlineSave');
+                        var cancelBtn = modalEl.querySelector('#catInlineCancel');
+                        if (input) input.focus();
+
+                        if (cancelBtn) {
+                            cancelBtn.addEventListener('click', function () {
+                                formState.mode = null;
+                                formState.catId = null;
+                                formState.currentName = '';
+                                window.closeTopModal();
+                                openManagerModal();
+                            });
+                        }
+
+                        if (saveBtn) {
+                            saveBtn.addEventListener('click', function () {
+                                var value = input ? input.value.trim() : '';
+                                if (!value) {
+                                    _showToast('Name is required', 'error');
+                                    return;
+                                }
+
+                                if (formState.mode === 'add') {
+                                    var id = value.toLowerCase()
+                                        .replace(/[^a-z0-9]+/g, '_')
+                                        .replace(/^_+|_+$/g, '');
+                                    if (!id) {
+                                        _showToast('Invalid category name', 'error');
+                                        return;
+                                    }
+                                    var result = RCMD.addCategory(id, value);
+                                    if (!result.success) {
+                                        _showToast(result.reason || 'Failed to add category', 'error');
+                                        return;
+                                    }
+                                    _persistAndWarn('Category added');
+                                } else if (formState.mode === 'rename') {
+                                    var catId = formState.catId;
+                                    if (!catId) return;
+                                    var rresult = RCMD.updateCategory(catId, { name: value });
+                                    if (!rresult.success) {
+                                        _showToast(rresult.reason || 'Failed to update category', 'error');
+                                        return;
+                                    }
+                                    _persistAndWarn('Category updated');
+                                }
+
+                                formState.mode = null;
+                                formState.catId = null;
+                                formState.currentName = '';
+                                window.closeTopModal();
+                                openManagerModal();
+                            });
+                        }
+                    }
+
+                    wireInlineForm();
+
                     var addBtn = modalEl.querySelector('#catAddBtn');
                     if (addBtn) {
                         addBtn.addEventListener('click', function () {
-                            var name = window.prompt('Category name:');
-                            if (!name || !name.trim()) return;
-                            var id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-                            if (!id) {
-                                _showToast('Invalid category name', 'error');
-                                return;
-                            }
-                            var result = RCMD.addCategory(id, name.trim());
-                            if (!result.success) {
-                                _showToast(result.reason || 'Failed to add category', 'error');
-                                return;
-                            }
-                            _persistAndWarn('Category added');
+                            formState.mode = 'add';
+                            formState.catId = null;
+                            formState.currentName = '';
                             window.closeTopModal();
                             openManagerModal();
                         });
@@ -1245,17 +1446,12 @@
                         (function (btn) {
                             btn.addEventListener('click', function () {
                                 var catId = btn.dataset.catId;
-                                var categories = RS.getCategories();
+                                var categories = _getCategoriesOrEmpty();
                                 var current = categories[catId];
                                 if (!current) return;
-                                var newName = window.prompt('Rename category:', current.name);
-                                if (!newName || !newName.trim() || newName.trim() === current.name) return;
-                                var result = RCMD.updateCategory(catId, { name: newName.trim() });
-                                if (!result.success) {
-                                    _showToast(result.reason || 'Failed to update category', 'error');
-                                    return;
-                                }
-                                _persistAndWarn('Category updated');
+                                formState.mode = 'rename';
+                                formState.catId = catId;
+                                formState.currentName = current.name;
                                 window.closeTopModal();
                                 openManagerModal();
                             });
@@ -1267,7 +1463,7 @@
                         (function (btn) {
                             btn.addEventListener('click', function () {
                                 var catId = btn.dataset.catId;
-                                var categories = RS.getCategories();
+                                var categories = _getCategoriesOrEmpty();
                                 var cat = categories[catId];
                                 if (!cat) return;
                                 var rolesInCat = RS.getAllRoles().filter(function (r) {
@@ -1275,7 +1471,7 @@
                                 });
                                 var msg = 'Delete category "' + cat.name + '"?';
                                 if (rolesInCat.length > 0) {
-                                    msg += '\n\n' + rolesInCat.length +
+                                    msg += ' ' + rolesInCat.length +
                                         ' role(s) will be reassigned to Uncategorized.';
                                 }
                                 _confirmThen(msg, function () {
