@@ -28,6 +28,44 @@
  * REQUIRED_FUNCTIONS check below enforces that every alias resolves to a
  * callable function before it is installed.
  *
+ * CLONE SEMANTICS (READ THIS)
+ *
+ *   Aliases that route through RoleState — getAllRoles, getRole,
+ *   getRoleByName, getRolesByCategory, getRoleById — return CLONES, not
+ *   the live canonical array or records. Legacy callers that used to
+ *   mutate the returned array or role object will now silently no-op.
+ *
+ *   This is intentional and matches RoleState's own read projection
+ *   contract: no live canonical role leaves the state module. Prior
+ *   revisions left some aliases pointing at accessors.getRoles (live)
+ *   and others at RoleState.getAllRoles (clones), so callers could not
+ *   tell which they were getting. That inconsistency is now closed:
+ *   every read alias returns clones.
+ *
+ *   Callers that specifically need the live array should use
+ *   window.accessorsGetRoles (re-exported below for exactly this case)
+ *   and accept that they are bypassing the shim's contract. Callers
+ *   that need to mutate a role should use RoleCommands.
+ *
+ *   The first call to window.getAllRoles fires a one-shot console.warn
+ *   naming the clone semantics, so a debugging session that starts with
+ *   "why did my push do nothing" resolves in seconds.
+ *
+ * GETROLEBYID RECONCILIATION
+ *
+ *   accessors.js exports getRoleById (live records). RoleState exports
+ *   getRole (clones). Prior revisions left window.getRoleById aliased
+ *   to accessors.getRoleById, which meant apprenticeship-commands.js's
+ *   fallback (if RoleState unavailable, use window.getRoleById) resolved
+ *   to the LIVE record even when RoleState was available — contradicting
+ *   apprenticeship-queries.js's stated "no accessor fallback" policy.
+ *
+ *   This shim now aliases window.getRoleById to RoleState.getRole
+ *   (clones), which is the canonical runtime representation. The live
+ *   accessor is re-exported as window.accessorsGetRoleById for any caller
+ *   that specifically needs it. None currently do; the re-export exists
+ *   so the choice is explicit rather than accidental.
+ *
  * Migration policy:
  *   Every alias below is one-way. New code must call RoleConstants,
  *   RoleState, RoleQueries, RoleCommands, SkillUtils directly. The aliases
@@ -65,6 +103,26 @@
  *   modal that consumes them works.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - window.getAllRoles now documented as returning CLONES, and a
+ *       one-shot console.warn fires on first call so the semantic change
+ *       is discoverable. See CLONE SEMANTICS in the header. Prior
+ *       revisions' headers acknowledged the aliases were "one-way" but
+ *       did not document the mutability break against the pre-refactor
+ *       accessors.getRoles (which returned the live array).
+ *     - window.getRoleById is now aliased to RoleState.getRole (clones),
+ *       not accessors.getRoleById (live). This closes the
+ *       apprenticeship-commands.js fallback hazard the queries header
+ *       warns against. See GETROLEBYID RECONCILIATION in the header.
+ *     - window.accessorsGetRoles and window.accessorsGetRoleById added
+ *       as explicit live-accessor re-exports for callers that
+ *       specifically need the live records. Prior revisions offered no
+ *       supported path to the live accessor once the shim overwrote the
+ *       global names.
+ *     - No other behavioural change. Every existing alias that was not
+ *       touched by the above remains byte-identical.
+ * =============================================================================
  */
 
 (function () {
@@ -100,6 +158,16 @@
     var RQ   = window.RoleQueries;
     var RCMD = window.RoleCommands;
     var SU   = window.SkillUtils;
+
+    // Capture accessors.* BEFORE this shim overwrites window.getRoles and
+    // window.getRoleById. These are the live-record readers. See
+    // GETROLEBYID RECONCILIATION and CLONE SEMANTICS in the header.
+    var _accessorsGetRoles = typeof window.getRoles === 'function'
+        ? window.getRoles
+        : null;
+    var _accessorsGetRoleById = typeof window.getRoleById === 'function'
+        ? window.getRoleById
+        : null;
 
     // =========================================================================
     // 2. FUNCTION RESOLUTION CHECK
@@ -202,13 +270,32 @@
     // =========================================================================
     // 4. STATE ALIASES (read helpers onto RoleState)
     // =========================================================================
+    //
+    // Every alias in this section returns CLONES. See CLONE SEMANTICS in
+    // the header. The first read of window.getAllRoles warns once.
+
+    var _getAllRolesWarned = false;
 
     window.subscribeRoles = function (callback) {
         return RS.subscribe(callback);
     };
+
     window.getAllRoles = function () {
+        if (!_getAllRolesWarned) {
+            _getAllRolesWarned = true;
+            if (window.console && typeof window.console.warn === 'function') {
+                window.console.warn(
+                    'role-system.js: window.getAllRoles returns CLONES of the ' +
+                    'role catalogue, not the live array. Mutating the returned ' +
+                    'array or its elements does not affect canonical state. ' +
+                    'Use RoleCommands to mutate; use window.accessorsGetRoles ' +
+                    'if you specifically need the live accessor array.'
+                );
+            }
+        }
         return RS.getAllRoles();
     };
+
     window.getRole = function (id) {
         return RS.getRole(id);
     };
@@ -222,10 +309,18 @@
         return RS.getCategories();
     };
 
-    // Legacy underscore-prefixed aliases used by older modules.
+    // Legacy underscore-prefixed aliases used by older modules. These
+    // follow the same clone semantics as their non-underscore forms.
     window._getRoles = RS.getAllRoles;
     window._getRoleById = RS.getRole;
     window._getRoleCategories = RS.getCategories;
+
+    // Live accessors, re-exported under explicit names. See CLONE
+    // SEMANTICS and GETROLEBYID RECONCILIATION in the header. Null when
+    // accessors.js did not export the corresponding function; the shim
+    // does not fabricate a fallback.
+    window.accessorsGetRoles = _accessorsGetRoles;
+    window.accessorsGetRoleById = _accessorsGetRoleById;
 
     // =========================================================================
     // 5. QUERY ALIASES (onto RoleQueries)
@@ -305,6 +400,14 @@
     window._updateRoleSalary = RCMD.updateRoleSalary;
     window._updateRoleLiteracyRequirement = RCMD.updateRoleLiteracyRequirement;
 
+    // window.getRoleById is installed LAST so that if any earlier alias in
+    // this file had already overwritten it (none currently do, but future
+    // additions to §4 might), the reconciliation below wins. See
+    // GETROLEBYID RECONCILIATION in the header.
+    window.getRoleById = function (id) {
+        return RS.getRole(id);
+    };
+
     // NOTE: window._updateProfessionSkill is NOT aliased here. It has no
     // equivalent: profession skill updates go through CharacterCommands
     // directly, or through RoleCommands.updateCharacterSkill for the
@@ -346,7 +449,9 @@
     if (window.console && typeof window.console.debug === 'function') {
         window.console.debug(
             'role-system.js: legacy aliases installed (compatibility shim). ' +
-            'New code should use RoleConstants / RoleState / RoleQueries / ' +
+            'Read aliases return CLONES; use window.accessorsGetRoles / ' +
+            'window.accessorsGetRoleById for the live records. New code ' +
+            'should use RoleConstants / RoleState / RoleQueries / ' +
             'RoleCommands / SkillUtils directly.'
         );
     }
@@ -371,6 +476,10 @@
             getRoleByName: window.getRoleByName,
             getRolesByCategory: window.getRolesByCategory,
             getRoleCategories: window.getRoleCategories,
+
+            // Live accessors (re-exported for callers that need live records)
+            accessorsGetRoles: window.accessorsGetRoles,
+            accessorsGetRoleById: window.accessorsGetRoleById,
 
             // Queries
             getRoles: window.getRoles,
