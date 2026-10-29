@@ -19,6 +19,45 @@
  * directly. The modal (or the caller) calls ReligionCommands.persist() once
  * per batch. persist() is the single save site in this module.
  *
+ * CHARACTER-RELIGION WRITES:
+ *   Three character fields are owned by the character domain:
+ *
+ *     character.religionId
+ *     character.religionHistory
+ *
+ *   This module does NOT write them directly. It routes through
+ *   CharacterCommands.setReligion, which is the ONLY sanctioned writer
+ *   for these fields. See CharacterCommands::setReligion and the
+ *   RELIGION FIELDS section in character-commands.js.
+ *
+ *   Prior to this revision, assignReligionToCharacter /
+ *   convertCharacter / removeReligionFromCharacter mutated the object
+ *   returned by window.getCharacterById directly. Under the documented
+ *   load order, that object is a defensive projection created by
+ *   character-queries.js (which overrides accessors.js's live-entity
+ *   version). Mutating a projection does not affect canonical state.
+ *   Every religion assignment reported { success: true } while leaving
+ *   the character's canonical religionId unchanged. The bug affected:
+ *
+ *     - ReligionCommands.assignReligionToCharacter
+ *     - ReligionCommands.convertCharacter
+ *     - ReligionCommands.removeReligionFromCharacter
+ *     - ReligionInheritance.inheritReligionForChild (delegates to
+ *       assignReligionToCharacter)
+ *     - CharacterCommands.assignCharacterReligion (delegates to
+ *       assignReligionToCharacter / convertCharacter)
+ *     - CharacterCommands.removeCharacterReligion (delegates to
+ *       removeReligionFromCharacter)
+ *
+ *   The current code routes through CharacterCommands.setReligion.
+ *   Every write now goes through CharacterState.updateCharacter, which:
+ *     - writes canonical state (not a projection),
+ *     - fires _emitChange: markDataDirty + invalidateAccessorCaches +
+ *       characterChanged.
+ *   The religion domain's _commit still fires afterward to publish the
+ *   cross-domain CustomEvent (characterReligionAssigned /
+ *   characterReligionConverted / characterReligionRemoved).
+ *
  * TIME CONTRACT:
  *   Uses window.getCurrentYear from js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used.
@@ -28,6 +67,8 @@
  *   - religion-queries.js     (reads)
  *   - religion-validation.js  (structural rules)
  *   - religion-rules.js       (eligibility rules)
+ *   - character-commands.js   (setReligion — the ONLY sanctioned writer
+ *                              for character.religionId / religionHistory)
  *   - accessors.js            (getCharacterById, getPlaceById)
  *   - ids.js                  (generateId)
  *   - time.js                 (getCurrentYear)
@@ -37,19 +78,37 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Phase 0: year-zero fixes, recursion guard removal.
- *   Phase 3: commands mutate masterData directly, clone-before-mutate,
- *            reactivateReligion added.
- *   Phase 5: rule logic extracted to ReligionRules; validation to
- *            ReligionValidation. Orchestration only.
- *   Phase 7 (current): converge to the reference pattern:
+ *   Current revision (R1):
+ *     - assignReligionToCharacter, convertCharacter, and
+ *       removeReligionFromCharacter now route through
+ *       CharacterCommands.setReligion. Prior revisions called a local
+ *       _setCharacterReligionField helper that mutated the projection
+ *       returned by window.getCharacterById. Under the documented load
+ *       order, that projection is a defensive copy from
+ *       character-queries.js; the writes were silently discarded.
+ *       Every religion assignment reported { success: true } while
+ *       canonical state was unchanged.
+ *     - The local _setCharacterReligionField helper is gone. It was
+ *       the sole reason these commands appeared to work while doing
+ *       nothing. All writes now go through CharacterState.updateCharacter
+ *       via CharacterCommands.setReligion, which fires markDataDirty,
+ *       invalidateAccessorCaches, and characterChanged.
+ *     - The TODO comment about routing through CharacterCommands.setReligion
+ *       is resolved and removed.
+ *     - CharacterCommands.setReligion was added to the load-time
+ *       dependency check.
+ *     - Header CHARACTER-RELIGION WRITES section added, documenting the
+ *       boundary and the historical bug.
+ *     - Header REFACTOR HISTORY entry added.
+ *     - No behavioural change to the religion-state mutations,
+ *       religion-laws wiring, or any non-character-facing command.
+ *   Previous revision (Phase 7):
  *     - _commit no longer saves; persist() is the single save site.
  *     - Mutations route through ReligionState primitives.
  *     - Law mutations absorbed from religion-laws.js.
- *     - Field allowlist on updateReligion (unknown fields rejected).
+ *     - Field allowlist on updateReligion.
  *     - CustomEvent dispatch for cross-domain.
  *     - Load-time verification.
- *
  * =============================================================================
  */
 
@@ -63,7 +122,6 @@
     // updateReligion only accepts these fields. Anything else is rejected
     // with a specific message. isDeprecated and deprecatedYear are NOT in
     // this list — they go through deprecateReligion / reactivateReligion.
-    //
 
     var _ALLOWED_UPDATE_FIELDS = {
         name: true,
@@ -108,6 +166,20 @@
             throw new Error('ReligionCommands requires ReligionRules.');
         }
         return window.ReligionRules;
+    }
+
+    function _characterCommands() {
+        if (typeof window.CharacterCommands === 'undefined') {
+            throw new Error('ReligionCommands requires CharacterCommands.');
+        }
+        if (typeof window.CharacterCommands.setReligion !== 'function') {
+            throw new Error(
+                'ReligionCommands requires CharacterCommands.setReligion. ' +
+                'This is the only sanctioned writer for character.religionId / ' +
+                'character.religionHistory.'
+            );
+        }
+        return window.CharacterCommands;
     }
 
     function _getCharacterById(id) {
@@ -156,7 +228,6 @@
     // dispatches the cross-domain CustomEvent.
     //
     // Does NOT save. Save is persist().
-    //
 
     function _commit(eventName, payload) {
         _state().hydrateFromMasterData();
@@ -596,11 +667,6 @@
             return _deny('God not found');
         }
 
-        // Find owning religion via the place-of-worship index — no,
-        // via State: the god index has the record but not the owner id.
-        // Use the religion index indirectly: scan the canonical religions
-        // for the god. This is O(religions × gods) which is fine at the
-        // scale a religion domain operates at.
         var owner = _findOwnerReligionByGodId(godId);
         if (!owner) {
             return _deny('God not found in any religion');
@@ -699,9 +765,6 @@
     // =========================================================================
     // 9. LAWS (absorbed from religion-laws.js)
     // =========================================================================
-    //
-    // Law mutations live here now. religion-laws.js keeps the pure queries.
-    //
 
     function addLaw(religionId, lawData) {
         var canonical = _state()._getReligionCanonical(religionId);
@@ -957,32 +1020,29 @@
     // 11. CHARACTER ASSIGNMENT (cross-domain)
     // =========================================================================
     //
-    // Character records are owned by the character domain. This command
-    // mutates character.religionId and character.religionHistory directly,
-    // because CharacterCommands.setReligion does not yet exist.
+    // See CHARACTER-RELIGION WRITES in the module header. All three
+    // functions route through CharacterCommands.setReligion, which is the
+    // ONLY sanctioned writer for character.religionId / religionHistory.
     //
-    // TODO: When CharacterCommands.setReligion is available, route through it
-    // and remove _setCharacterReligionField.
+    // The write goes through CharacterState.updateCharacter, which fires
+    // markDataDirty, invalidateAccessorCaches, and characterChanged. This
+    // module's _commit still fires afterward to publish the cross-domain
+    // CustomEvent (characterReligionAssigned / Converted / Removed).
     //
-    // The character domain's own commands are responsible for calling
-    // ReligionState.invalidateFollowerIndex() after a religionId change.
-    // Until then, we call it here as a best-effort cross-domain refresh.
-    //
-
-    function _setCharacterReligionField(character, newReligionId, historyEvent) {
-        if (!character.religionHistory) character.religionHistory = [];
-        character.religionHistory.push(historyEvent);
-        character.religionId = newReligionId;
-    }
+    // SNAPSHOT NAMES:
+    //   setReligion accepts optional fromReligionName / toReligionName
+    //   fields for the conversion event's historical snapshot. This
+    //   module supplies them from ReligionQueries, so the character
+    //   domain does not need any religion queries dependency.
 
     function assignReligionToCharacter(characterId, religionId, options) {
-        // If the character already has a religion, this is a conversion.
-        // Route through the same command so rules apply uniformly.
         var existing = _getCharacterById(characterId);
         if (!existing) {
             return _deny('Character not found');
         }
 
+        // If the character already has a religion, this is a conversion.
+        // Route through convertCharacter so rules apply uniformly.
         if (existing.religionId) {
             return convertCharacter(characterId, religionId, options);
         }
@@ -1000,24 +1060,32 @@
         var optionsObj = options || {};
         var year = _resolveYear(optionsObj.year, _getCurrentYear());
 
-        var event = {
-            id: _generateId('conversion'),
-            characterId: characterId,
-            fromReligionId: null,
-            fromReligionName: 'None',
-            toReligionId: religionId,
-            toReligionName: religion.name,
+        // Delegate to the sanctioned character-domain writer. setReligion
+        // creates the conversion event internally (generateId, from/to
+        // religion names, reason, notes, inherited fields, timestamp),
+        // writes canonical state, and fires markDataDirty +
+        // invalidateAccessorCaches + characterChanged.
+        var writeResult = _characterCommands().setReligion(characterId, religionId, {
             year: year,
-            reason: optionsObj.reason || 'personal',
+            reason: optionsObj.reason || (optionsObj.inherited ? 'inheritance' : 'personal'),
             notes: optionsObj.notes || '',
-            inherited: optionsObj.inherited || false,
+            inherited: optionsObj.inherited === true,
             inheritedFrom: optionsObj.inheritedFrom || null,
-            timestamp: Date.now()
-        };
+            fromReligionName: 'None',
+            toReligionName: religion.name
+        });
 
-        _setCharacterReligionField(existing, religionId, event);
+        if (!writeResult || writeResult.success !== true) {
+            return _deny(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterState refused the religion assignment.');
+        }
 
+        // The follower index is derived from character records. The
+        // character write already fired characterChanged, but the religion
+        // domain's followers index is its own cache and needs refresh.
         _state().invalidateFollowerIndex();
+
         _commit('characterReligionAssigned', {
             characterId: characterId,
             religionId: religionId
@@ -1025,7 +1093,10 @@
 
         return {
             success: true,
-            data: { character: existing, conversion: event },
+            data: {
+                character: _getCharacterById(characterId),
+                conversion: writeResult.conversion
+            },
             reason: 'Religion assigned to character successfully'
         };
     }
@@ -1046,27 +1117,29 @@
             : null;
         var oldReligionName = oldReligion ? oldReligion.name : 'Unknown';
 
-        var event = {
-            id: _generateId('conversion'),
-            characterId: characterId,
-            fromReligionId: character.religionId || null,
-            fromReligionName: oldReligionName,
-            toReligionId: null,
-            toReligionName: 'None',
+        var writeResult = _characterCommands().setReligion(characterId, null, {
             year: _getCurrentYear(),
             reason: 'removal',
             notes: 'Religion removed from character',
-            inherited: false,
-            inheritedFrom: null,
-            timestamp: Date.now()
-        };
+            fromReligionName: oldReligionName,
+            toReligionName: 'None'
+        });
 
-        _setCharacterReligionField(character, null, event);
+        if (!writeResult || writeResult.success !== true) {
+            return _deny(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterState refused the religion removal.');
+        }
 
         _state().invalidateFollowerIndex();
+
         _commit('characterReligionRemoved', { characterId: characterId });
 
-        return { success: true, data: character, reason: 'Religion removed from character successfully' };
+        return {
+            success: true,
+            data: _getCharacterById(characterId),
+            reason: 'Religion removed from character successfully'
+        };
     }
 
     function convertCharacter(characterId, newReligionId, options) {
@@ -1095,24 +1168,24 @@
         var oldReligionName = oldReligion ? oldReligion.name : 'None';
         var oldReligionId = character.religionId || null;
 
-        var event = {
-            id: _generateId('conversion'),
-            characterId: characterId,
-            fromReligionId: oldReligionId,
-            fromReligionName: oldReligionName,
-            toReligionId: newReligionId,
-            toReligionName: newReligion.name,
+        var writeResult = _characterCommands().setReligion(characterId, newReligionId, {
             year: year,
             reason: reason,
             notes: optionsObj.notes || '',
             inherited: false,
             inheritedFrom: null,
-            timestamp: Date.now()
-        };
+            fromReligionName: oldReligionName,
+            toReligionName: newReligion.name
+        });
 
-        _setCharacterReligionField(character, newReligionId, event);
+        if (!writeResult || writeResult.success !== true) {
+            return _deny(writeResult && writeResult.reason
+                ? writeResult.reason
+                : 'CharacterState refused the religion conversion.');
+        }
 
         _state().invalidateFollowerIndex();
+
         _commit('characterReligionConverted', {
             characterId: characterId,
             fromReligionId: oldReligionId,
@@ -1122,8 +1195,8 @@
         return {
             success: true,
             data: {
-                character: character,
-                conversion: event,
+                character: _getCharacterById(characterId),
+                conversion: writeResult.conversion,
                 fromReligion: oldReligionName,
                 toReligion: newReligion.name
             },
@@ -1136,7 +1209,6 @@
     // =========================================================================
     // Still partial: place records are not canonically stored. ADR Decision 2
     // resolves this in a future phase. Operations documented as partial.
-    //
 
     function createPlaceOfWorship(data) {
         if (!data || !data.name || data.name.trim() === '') {
@@ -1268,8 +1340,6 @@
         var ownerInfo = _state().getPlaceOfWorshipById(placeId);
         if (!ownerInfo) return 0;
 
-        // Partial: baseTithe not retrievable until places have a canonical
-        // store. Documented placeholder.
         var followers = _queries().getFollowerCount(ownerInfo.religionId);
         return followers * 1;
     }
@@ -1347,6 +1417,20 @@
             throw new Error(
                 'religion-commands.js loaded but window.ReligionRules is missing. ' +
                 'Check script tag order.'
+            );
+        }
+        if (!window.CharacterCommands) {
+            throw new Error(
+                'religion-commands.js loaded but window.CharacterCommands is missing. ' +
+                'Check script tag order (character-commands.js must load first).'
+            );
+        }
+        if (typeof window.CharacterCommands.setReligion !== 'function') {
+            throw new Error(
+                'religion-commands.js loaded but CharacterCommands.setReligion ' +
+                'is missing. This is the ONLY sanctioned writer for ' +
+                'character.religionId / religionHistory. See ' +
+                'character-commands.js::setReligion.'
             );
         }
         if (typeof window.generateId !== 'function') {
