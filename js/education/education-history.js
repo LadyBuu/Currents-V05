@@ -1,5 +1,10 @@
 /**
+ * =============================================================================
  * STILL WATERS - EDUCATION HISTORY
+ * =============================================================================
+ *
+ * LOCATION: js/systems/education/education-history.js
+ *
  * Append-only event ledger embedded on each institution (`institution.history`).
  * Structured events only. No persistence, no formatting, no character lookups
  * beyond snapshotting a name at event time.
@@ -25,6 +30,16 @@
  *   type must be a value of HISTORY_EVENT_TYPES. Unknown types throw.
  *   metadata is a flat object. Nested mutation of metadata is not protected.
  *
+ * EVENT ID PREFIX
+ *
+ *   Event ids are generated with the prefix 'eduevt' — no underscore.
+ *   ids.js's ID grammar is `[a-z][a-z0-9]*` for prefixes; an underscore
+ *   in the prefix makes generateId return null. Prior revisions passed
+ *   'edu_evt' (underscore) and silently stored null ids on every event.
+ *   The prefix is now 'eduevt'. addEvent additionally throws if generateId
+ *   returns a non-string, so a future prefix change cannot silently
+ *   reintroduce null ids. See IDs in REFACTOR HISTORY.
+ *
  * PERSISTENCE
  *
  *   addEvent mutates the canonical institution record in memory. It does
@@ -45,6 +60,21 @@
  *   _updateInstitution, it must follow the recorder with an explicit
  *   _updateInstitution({}) to force a sync — or (better) run the recorder
  *   before the last update.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Event prefix changed from 'edu_evt' to 'eduevt'. ids.js forbids
+ *       underscores in prefixes (ID_CONFIG grammar: `[a-z][a-z0-9]*`),
+ *       so generateId('edu_evt') returned null on every event. See the
+ *       EVENT ID PREFIX section above.
+ *     - addEvent now throws if generateId returns a non-string. This
+ *       matches the fail-loud contract already used for unknown event
+ *       types and missing institutions. Prior revisions silently stored
+ *       null ids, which broke the deterministic sort in _sortEvents
+ *       (which compares `a.id < b.id`) and made event ids unusable as
+ *       deduplication keys.
+ *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -103,6 +133,10 @@
         }
         return window.generateId(prefix);
     }
+
+    // --- Event id prefix (no underscore; see EVENT ID PREFIX in header). ---
+
+    var _EVENT_ID_PREFIX = 'eduevt';
 
     // --- Event vocabulary validation ---
 
@@ -191,8 +225,20 @@
             institution.history = [];
         }
 
+        // ids.js returns null for invalid prefixes (its contract), so a
+        // bad prefix silently produces null event ids. Fail loudly instead.
+        // See EVENT ID PREFIX in the header.
+        var generatedId = _generateId(_EVENT_ID_PREFIX);
+        if (typeof generatedId !== 'string' || generatedId.length === 0) {
+            throw new Error(
+                'addEvent: generateId returned a non-string for prefix "' +
+                _EVENT_ID_PREFIX + '". ' +
+                'Check ids.js ID_CONFIG grammar (prefixes must not contain underscores).'
+            );
+        }
+
         var record = {
-            id: _generateId('edu_evt'),
+            id: generatedId,
             type: event.type,
             year: (event.year !== undefined) ? event.year : _getCurrentYear(),
             entityId: event.entityId || null,
