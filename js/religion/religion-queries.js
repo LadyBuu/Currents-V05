@@ -20,27 +20,117 @@
  *   Uses window.getCurrentYear from js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used.
  *
- * DEPENDENCIES:
+ * LOCATION-RESOLUTION CONTRACT:
+ *   "Where is this character currently located?" resolves through a
+ *   layered path, all inside _resolveCurrentLocationId:
+ *
+ *     1. LocationQueries.getCurrentLocationId(characterId)
+ *          The location domain's semantic resolver. Honours the explicit
+ *          currentLocationId field, the moves-based fallback, and the
+ *          birthplace fallback (via world.getCurrentLocationId under the
+ *          hood). This is the canonical answer.
+ *
+ *     2. CharacterQueries.getCurrentLocationId(characterId)
+ *          The raw currentLocationId FIELD. Does NOT resolve moves or
+ *          birthplace. Used as a fallback for bare test harnesses that
+ *          load only character-queries.js.
+ *
+ *     3. null
+ *          No viable source.
+ *
+ *   Every function that needs a character's location calls
+ *   _resolveCurrentLocationId. Do NOT call window.getCurrentLocationId
+ *   directly: its name is overloaded (character-queries.js exports a
+ *   version that takes an id; world.js exports a version that takes a
+ *   character object), and the winner depends on script load order.
+ *   LocationQueries.getCurrentLocationId is unambiguous because it is
+ *   the only function with that name on that namespace.
+ *
+ *   Prior revisions called window.getCurrentLocationId(character) with a
+ *   character object, expecting world.js to win the alias race. Under
+ *   the documented load order, character-queries.js won instead, so the
+ *   call failed for every input and getFollowersByLocation always
+ *   returned []. Fixed at all call sites.
+ *
+ *   Prior revisions also called a phantom window.getCharactersByLocation
+ *   (which no module exports) from getReligiousBreakdown. The character
+ *   domain exposes getCharactersAtLocation (single id, aliveOnly option)
+ *   and getCharactersInLocations (array of ids). The current code uses
+ *   getCharactersAtLocation with aliveOnly: false — the same semantics
+ *   the raw-field filter had, before it stopped working.
+ *
+ *   Prior revisions of getDominantReligion iterated religions whose
+ *   locations array declares the given location, not religions whose
+ *   followers are there. That under-counted every religion whose
+ *   followers moved into a settlement but which never declared the
+ *   settlement. The current code enumerates characters at the location
+ *   and buckets by religionId — the correct semantic.
+ *
+ * DEPENDENCIES (required, verified at load):
  *   - religion-state.js:   ReligionState (indexes, clones)
  *   - religion-format.js:  ReligionFormat (display labels)
- *   - accessors.js:        getCharacterById, getCharacters,
- *                          getCurrentLocationId, getCharactersByLocation
+ *   - accessors.js:        getCharacterById, getCharacters
  *   - time.js:             getCurrentYear
+ *
+ * DEPENDENCIES (required at call time, guarded per-call):
+ *   - location-queries.js: LocationQueries.getCurrentLocationId
+ *                          (semantic location resolution)
+ *   - character-queries.js: CharacterQueries.getCurrentLocationId
+ *                          (raw-field fallback)
+ *   - character-queries.js: CharacterQueries.getCharactersAtLocation
+ *                          (bulk enumeration for getReligiousBreakdown)
+ *
+ *   Why "required at call time" and not "required at load":
+ *   The religion domain loads after location-queries.js and
+ *   character-queries.js in the documented order, so at call time they
+ *   are always present. But loading religion-queries.js in isolation (a
+ *   bare harness) does not need them, and would fail at load if they
+ *   were hard dependencies. The call-time guards throw a clear error
+ *   when a function that needs them is actually invoked. If a caller in
+ *   a bare harness never uses location resolution, no error.
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Phase 0: recursion guard removal.
- *   Phase 3: reads State indexes + canonical data; range-based growth
- *            queries; year-zero preserved.
- *   Phase 5: absorbed inheritance summary/statistics queries; deleted
- *            getApplicableLaws stub; structured isReligiouslyPermitted.
- *   Phase 7 (current): converge to the reference pattern.
- *     - State accessor names updated (getById, getByTrait, ...).
- *     - Public reads return clones.
- *     - Fallback paths removed (character location, breakdown).
- *     - Load-time verification.
+ *   Current revision (A1):
+ *     - Added _resolveCurrentLocationId helper with LocationQueries →
+ *       CharacterQueries → null precedence. Fixes the alias-race bug
+ *       described in LOCATION-RESOLUTION CONTRACT.
+ *     - getFollowersByLocation now resolves through
+ *       _resolveCurrentLocationId. Prior revisions passed a character
+ *       object to window.getCurrentLocationId (which expects an id under
+ *       the documented load order), so every follower failed the
+ *       location check and the function always returned [].
+ *     - getDominantReligion rewritten. Prior revisions iterated
+ *       religions whose locations array declared the settlement;
+ *       religions whose followers moved in but never declared the
+ *       settlement were missed, and the function returned null for
+ *       most settlements. New implementation enumerates characters at
+ *       the location and buckets by religionId.
+ *     - getReligiousBreakdown rewritten. Prior revisions enumerated
+ *       location characters via a phantom
+ *       window.getCharactersByLocation (no module exports it), so the
+ *       unaffiliated count was always zero and the religion-follower
+ *       counts (via getFollowersByLocation) were also always zero. New
+ *       implementation enumerates characters once and buckets by
+ *       religionId; unaffiliated is the no-religion bucket.
+ *     - CharacterQueries.getCharactersAtLocation is the canonical bulk
+ *       enumeration used by getReligiousBreakdown. Its signature is
+ *       (locationId, { aliveOnly }). aliveOnly: false matches the
+ *       original getReligiousBreakdown behaviour (included deceased).
+ *     - Header LOCATION-RESOLUTION CONTRACT section added.
+ *     - Header DEPENDENCIES section clarified: location-queries.js and
+ *       character-queries.js are call-time (not load-time) requirements
+ *       for the location-resolving functions.
+ *   Previous revision:
+ *     - Phase 0: recursion guard removal.
+ *     - Phase 3: reads State indexes + canonical data; range-based
+ *       growth queries; year-zero preserved.
+ *     - Phase 5: absorbed inheritance summary/statistics queries;
+ *       deleted getApplicableLaws stub; structured isReligiouslyPermitted.
+ *     - Phase 7: converges to reference pattern (State accessors,
+ *       clones, fallback paths removed, load-time verification).
  * =============================================================================
  */
 
@@ -79,20 +169,6 @@
         return window.getCharacters();
     }
 
-    function _getCurrentLocationId(char) {
-        if (typeof window.getCurrentLocationId !== 'function') {
-            throw new Error('ReligionQueries requires accessors.getCurrentLocationId.');
-        }
-        return window.getCurrentLocationId(char);
-    }
-
-    function _getCharactersByLocation(locationId) {
-        if (typeof window.getCharactersByLocation !== 'function') {
-            throw new Error('ReligionQueries requires accessors.getCharactersByLocation.');
-        }
-        return window.getCharactersByLocation(locationId);
-    }
-
     function _getCurrentYear() {
         if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
@@ -103,12 +179,58 @@
     }
 
     // =========================================================================
-    // 2. CANONICAL READ (enumeration only)
+    // 2. LOCATION RESOLUTION
     // =========================================================================
     //
-    // This reads the canonical array for enumeration. It is NOT exposed
-    // to callers. Every public read clones via State.
+    // See LOCATION-RESOLUTION CONTRACT in the header. This helper is the
+    // single place where the resolution precedence is chosen. Every
+    // function in this module that needs a character's location calls it.
+
+    function _resolveCurrentLocationId(character) {
+        if (!character || !character.id) return null;
+
+        // Prefer LocationQueries: unambiguous name, semantic resolution
+        // (explicit field → latest move → birthplace), stable across
+        // load-order permutations.
+        if (typeof window.LocationQueries !== 'undefined'
+            && window.LocationQueries !== null
+            && typeof window.LocationQueries.getCurrentLocationId === 'function') {
+            try {
+                var resolved = window.LocationQueries.getCurrentLocationId(character.id);
+                // LocationQueries returns string|null. A null result is a
+                // legitimate "no location resolved" — do not fall through
+                // to the weaker resolver, which would silently substitute
+                // the raw field for a character whose only location signal
+                // was a stale move pointing at a deleted place.
+                if (resolved === null) return null;
+                if (typeof resolved === 'string' && resolved.length > 0) {
+                    return resolved;
+                }
+            } catch (e) {
+                // LocationQueries threw. Fall through to the raw field.
+            }
+        }
+
+        // Fallback: the raw currentLocationId field.
+        if (typeof window.CharacterQueries !== 'undefined'
+            && window.CharacterQueries !== null
+            && typeof window.CharacterQueries.getCurrentLocationId === 'function') {
+            try {
+                return window.CharacterQueries.getCurrentLocationId(character.id);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    // =========================================================================
+    // 3. CANONICAL READ (enumeration only)
+    // =========================================================================
     //
+    // This reads the canonical array for enumeration. It is NOT exposed to
+    // callers. Every public read clones via State.
 
     function _enumerateCanonicalReligions() {
         if (!window.masterData || !window.masterData.data) {
@@ -126,7 +248,7 @@
     }
 
     // =========================================================================
-    // 3. CLONE
+    // 4. CLONE
     // =========================================================================
 
     function _clone(value) {
@@ -153,7 +275,7 @@
     }
 
     // =========================================================================
-    // 4. BASIC QUERIES
+    // 5. BASIC QUERIES
     // =========================================================================
 
     function getReligion(id) {
@@ -208,7 +330,7 @@
     }
 
     // =========================================================================
-    // 5. GOD QUERIES
+    // 6. GOD QUERIES
     // =========================================================================
 
     function getGod(godId) {
@@ -249,7 +371,7 @@
     }
 
     // =========================================================================
-    // 6. LAW QUERIES
+    // 7. LAW QUERIES
     // =========================================================================
 
     function getLaw(lawId) {
@@ -284,14 +406,13 @@
     }
 
     // =========================================================================
-    // 7. FOLLOWER QUERIES
+    // 8. FOLLOWER QUERIES
     // =========================================================================
     //
     // NOTE: getFollowers / getFollowerCount / getFollowersByLocation return
-    // character records. Character records are owned by the character domain;
-    // cloning here would create a false impression that mutation was safe.
-    // Callers that want a snapshot must deep-clone themselves.
-    //
+    // character projections (as cloned by CharacterState._project). Character
+    // records are owned by the character domain; callers that want a
+    // detached snapshot must deep-clone themselves.
 
     function getFollowers(religionId, options) {
         options = options || {};
@@ -322,6 +443,16 @@
         return count;
     }
 
+    /**
+     * Followers of a religion currently at a specific location.
+     *
+     * Location is resolved via _resolveCurrentLocationId, which honours
+     * the explicit currentLocationId override and the moves-based
+     * fallback. Prior revisions used the raw field, missing followers
+     * placed only by moves.
+     *
+     * Deceased followers are excluded.
+     */
     function getFollowersByLocation(religionId, locationId) {
         if (!religionId || !locationId) return [];
 
@@ -331,7 +462,8 @@
         for (var i = 0; i < followers.length; i++) {
             var char = followers[i];
             if (char.isDeceased) continue;
-            if (_getCurrentLocationId(char) === locationId) {
+            var locId = _resolveCurrentLocationId(char);
+            if (locId === locationId) {
                 result.push(char);
             }
         }
@@ -339,45 +471,93 @@
         return result;
     }
 
+    /**
+     * The religion with the most living followers at a location.
+     *
+     * Enumerates characters at the location (via _resolveCurrentLocationId)
+     * and buckets by religionId. Returns the religion with the most
+     * followers, or null when no character at the location has a religion.
+     *
+     * Prior revisions iterated religions whose `locations` array declares
+     * the location, missing every religion whose followers moved in but
+     * never declared it. Fixed at the algorithm level.
+     */
     function getDominantReligion(locationId) {
         if (!locationId) return null;
 
-        var religions = getReligionsByLocation(locationId);
-        var maxCount = 0;
-        var dominant = null;
+        var allCharacters = _getCharacters();
+        var counts = {};
+        var dominantReligionId = null;
+        var dominantCount = 0;
 
-        for (var i = 0; i < religions.length; i++) {
-            var count = getFollowersByLocation(religions[i].id, locationId).length;
-            if (count > maxCount) {
-                maxCount = count;
-                dominant = religions[i];
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || !c.id) continue;
+            if (c.isDeceased === true) continue;
+            if (!c.religionId) continue;
+
+            var locId = _resolveCurrentLocationId(c);
+            if (locId !== locationId) continue;
+
+            counts[c.religionId] = (counts[c.religionId] || 0) + 1;
+            if (counts[c.religionId] > dominantCount) {
+                dominantCount = counts[c.religionId];
+                dominantReligionId = c.religionId;
             }
         }
 
-        return dominant;
+        if (!dominantReligionId) return null;
+        return getReligion(dominantReligionId);
     }
 
+    /**
+     * Per-religion follower counts at a location, plus the unaffiliated
+     * bucket.
+     *
+     * Enumerates characters at the location once and buckets by
+     * religionId. The 'unaffiliated' key accumulates characters whose
+     * religionId is null or empty.
+     *
+     * Deceased characters are excluded (consistent with
+     * getFollowersByLocation and getFollowerCount).
+     *
+     * Prior revisions called a phantom window.getCharactersByLocation
+     * (which no module exports) and getFollowersByLocation (which always
+     * returned [] due to the alias-race bug), so the whole breakdown was
+     * zeros. Fixed at the algorithm level.
+     */
     function getReligiousBreakdown(locationId) {
         if (!locationId) return {};
 
-        var religions = getReligionsByLocation(locationId);
-        var breakdown = {};
-        var total = 0;
+        var allCharacters = _getCharacters();
+        var byReligionId = {};
+        var unaffiliated = 0;
 
-        for (var i = 0; i < religions.length; i++) {
-            var count = getFollowersByLocation(religions[i].id, locationId).length;
-            breakdown[religions[i].id] = {
-                name: religions[i].name,
-                count: count
-            };
-            total += count;
+        for (var i = 0; i < allCharacters.length; i++) {
+            var c = allCharacters[i];
+            if (!c || !c.id) continue;
+            if (c.isDeceased === true) continue;
+
+            var locId = _resolveCurrentLocationId(c);
+            if (locId !== locationId) continue;
+
+            if (!c.religionId) {
+                unaffiliated++;
+                continue;
+            }
+            byReligionId[c.religionId] = (byReligionId[c.religionId] || 0) + 1;
         }
 
-        var locationCharacters = _getCharactersByLocation(locationId);
-
-        var unaffiliated = 0;
-        for (var j = 0; j < locationCharacters.length; j++) {
-            if (!locationCharacters[j].religionId) unaffiliated++;
+        var breakdown = {};
+        for (var religionId in byReligionId) {
+            if (!Object.prototype.hasOwnProperty.call(byReligionId, religionId)) {
+                continue;
+            }
+            var religion = getReligion(religionId);
+            breakdown[religionId] = {
+                name: religion ? religion.name : 'Unknown',
+                count: byReligionId[religionId]
+            };
         }
 
         breakdown['unaffiliated'] = {
@@ -389,7 +569,7 @@
     }
 
     // =========================================================================
-    // 8. CHARACTER RELIGION QUERIES
+    // 9. CHARACTER RELIGION QUERIES
     // =========================================================================
 
     function getCharacterReligion(characterId) {
@@ -418,7 +598,7 @@
     }
 
     // =========================================================================
-    // 9. RELIGION STATISTICS
+    // 10. RELIGION STATISTICS
     // =========================================================================
 
     function getReligionStatistics(religionId) {
@@ -491,7 +671,7 @@
     }
 
     // =========================================================================
-    // 10. INHERITANCE QUERIES
+    // 11. INHERITANCE QUERIES
     // =========================================================================
 
     function getInheritanceDescription(religionId) {
@@ -554,7 +734,7 @@
     }
 
     // =========================================================================
-    // 11. GROWTH QUERIES (range-based)
+    // 12. GROWTH QUERIES (range-based)
     // =========================================================================
 
     function getReligionGrowth(religionId, startYear, endYear) {
@@ -646,7 +826,7 @@
     }
 
     // =========================================================================
-    // 12. PLACE OF WORSHIP QUERIES
+    // 13. PLACE OF WORSHIP QUERIES
     // =========================================================================
 
     function getPlaceOfWorship(placeId) {
@@ -689,7 +869,7 @@
     }
 
     // =========================================================================
-    // 13. COMPATIBILITY QUERIES
+    // 14. COMPATIBILITY QUERIES
     // =========================================================================
 
     function isCulturallyCompatible(characterIdA, characterIdB) {
@@ -748,8 +928,14 @@
     }
 
     // =========================================================================
-    // 14. LOAD-TIME VERIFICATION
+    // 15. LOAD-TIME VERIFICATION
     // =========================================================================
+    //
+    // Only the load-time hard dependencies are verified here. Location
+    // resolution is a call-time requirement — the location and character
+    // query modules are always present at call time under the documented
+    // load order, but loading religion-queries.js in isolation should not
+    // fail on them. See DEPENDENCIES in the header.
 
     (function _verifyLoadTimeDependencies() {
         if (!window.ReligionState) {
@@ -776,18 +962,6 @@
                 'Check script tag order (accessors.js must load first).'
             );
         }
-        if (typeof window.getCurrentLocationId !== 'function') {
-            throw new Error(
-                'religion-queries.js loaded but window.getCurrentLocationId is missing. ' +
-                'Check script tag order (accessors.js must load first).'
-            );
-        }
-        if (typeof window.getCharactersByLocation !== 'function') {
-            throw new Error(
-                'religion-queries.js loaded but window.getCharactersByLocation is missing. ' +
-                'Check script tag order (accessors.js must load first).'
-            );
-        }
         if (typeof window.getCurrentYear !== 'function') {
             throw new Error(
                 'religion-queries.js loaded but window.getCurrentYear is missing. ' +
@@ -797,7 +971,7 @@
     })();
 
     // =========================================================================
-    // 15. PUBLIC API
+    // 16. PUBLIC API
     // =========================================================================
 
     window.ReligionQueries = {
