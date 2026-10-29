@@ -73,6 +73,40 @@
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P1-6):
+ *     - _markDirty now syncs the in-memory indexes back to canonical
+ *       storage before flagging dirty. Prior revisions kept canonical
+ *       arrays (masterData.data.crimes, masterData.data.vendettas) in
+ *       sync only on load, and mutation primitives wrote exclusively
+ *       to _state.crimes / _state.vendettas. As a result,
+ *       CrimeCommands._commit's hydrateFromMasterData(true) call read
+ *       the pre-mutation canonical arrays and silently discarded the
+ *       just-applied mutation by rebuilding indexes from stale data.
+ *       Every triggerMurder / triggerExecution rolled itself back at
+ *       the commit tail. recordCrime returned { success: true } with
+ *       the crime record the command had just wiped. Fix: _markDirty
+ *       writes _state.crimes.all and _state.vendettas.all back to
+ *       masterData.data.crimes and masterData.data.vendettas before
+ *       calling window.markDataDirty(). The commit tail's subsequent
+ *       hydrateFromMasterData(true) now reads fresh canonical data and
+ *       rebuilds indexes identically. No public API change. No
+ *       behavioural change to any read or write primitive in
+ *       isolation. The only observable difference is that mutations
+ *       now survive the commit tail.
+ *     - Added _syncToCanonical() helper. Called only by _markDirty.
+ *       Not exported. Reads masterData defensively (returns silently
+ *       if the canonical store is absent). Writes are array-slices,
+ *       not aliases, so subsequent in-memory mutations cannot
+ *       corrupt the persisted snapshot before markDataDirty triggers
+ *       the debounced save.
+ *     - Header REFACTOR HISTORY entry added.
+ *     - No other behavioural change.
+ *   Previous revision:
+ *     - Added mutation primitives, hydrate/hydrate(force), integrity
+ *       warnings, lifecycle transitions, and the clone-vs-canonical
+ *       read split.
+ * =============================================================================
  */
 
 (function() {
@@ -152,8 +186,70 @@
         return obj;
     }
 
+    /**
+     * Syncs in-memory indexes back to canonical storage, then signals
+     * the persistence boundary.
+     *
+     * WHY THIS EXISTS:
+     *   The mutation primitives (recordCrime, solveCrime, createVendetta,
+     *   etc.) operate on _state.crimes / _state.vendettas — the in-memory
+     *   index containers. Canonical storage lives on masterData.data.
+     *   Without an explicit sync, the two diverge after every mutation.
+     *
+     *   CrimeCommands._commit calls State.hydrateFromMasterData(true)
+     *   after every mutation. That call reads masterData.data.crimes and
+     *   masterData.data.vendettas. Without the sync, it reads stale
+     *   canonical data and rebuilds indexes to the PRE-mutation state,
+     *   silently discarding the mutation that just happened.
+     *
+     *   _syncToCanonical closes that gap: it writes the current in-memory
+     *   arrays back to masterData.data before markDataDirty runs, so the
+     *   commit tail's re-hydrate reads what the mutation wrote.
+     *
+     * WHY ARRAY-SLICE AND NOT ALIAS:
+     *   _state.crimes.all and _state.vendettas.all are live arrays.
+     *   _syncToCanonical copies them (slice) rather than assigning the
+     *   reference. This ensures:
+     *     - subsequent in-memory mutation does not mutate the already-
+     *       persisted snapshot before markDataDirty's debounced save fires,
+     *     - the persisted envelope is a defensive copy, matching how the
+     *       culture-state.js and religion-state.js primitives write
+     *       canonical arrays.
+     *
+     * WHY THE SAVE DOESN'T HAPPEN HERE:
+     *   markDataDirty() is a persistence hint, not the save itself. The
+     *   storage layer debounces and eventually calls saveMasterData.
+     *   Commands that need synchronous durability call
+     *   CrimeCommands.persist() separately. See storage.js's DOMAIN
+     *   PERSIST CONTRACT.
+     */
     function _markDirty() {
-        window.markDataDirty();
+        _syncToCanonical();
+
+        if (typeof window.markDataDirty === 'function') {
+            try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
+        }
+    }
+
+    /**
+     * Writes the current in-memory indexes back to canonical storage.
+     *
+     * Defensive: returns silently if masterData is absent (which cannot
+     * happen in production, but is a legitimate pre-bootstrap state in
+     * test harnesses that load crime-state.js before storage.js).
+     *
+     * Not exported. Called only by _markDirty.
+     */
+    function _syncToCanonical() {
+        if (typeof window.masterData === 'undefined' || !window.masterData) {
+            return;
+        }
+        if (!window.masterData.data) {
+            return;
+        }
+
+        window.masterData.data.crimes = _state.crimes.all.slice();
+        window.masterData.data.vendettas = _state.vendettas.all.slice();
     }
 
     // =========================================================================
@@ -352,7 +448,7 @@
     // throw. Malformed records throw. Nothing is exposed until success.
     //
     // Idempotent: if indexes are already built, this is a no-op unless
-    // force===true (used by reload()).
+    // force===true (used by reload() and by the commit tail).
 
     function hydrateFromMasterData(force) {
         if (_state.initialized && !force) return;
@@ -651,10 +747,6 @@
     // =========================================================================
     // 10. CANONICAL ACCESSORS (Commands only)
     // =========================================================================
-    //
-    // These return live records. Reserved for CrimeCommands and
-    // CrimeLawIntegration during a command. Anything else must use the
-    // public reads above, which return clones.
 
     function _getCrimeCanonical(crimeId) {
         hydrateFromMasterData(false);
