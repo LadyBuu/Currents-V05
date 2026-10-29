@@ -1,9 +1,6 @@
 /**
- * =============================================================================
  * STILL WATERS - EDUCATION COMMANDS
- * =============================================================================
- *
- * LOCATION: js/systems/education/education-commands.js
+ * js/systems/education/education-commands.js
  *
  * All write operations for education. Commands mutate education state via
  * EducationState._* primitives and write character-owned fields through
@@ -60,58 +57,20 @@
  *   persist() means the debounced save will eventually run on its own
  *   schedule; calling it makes the save happen synchronously.
  *
- *   There is no aliasing between _institutions and
- *   masterData.data.educationalInstitutions. The two are kept in sync
- *   by assignment.
- *
- * ROLE SKILL PROGRESSION
- *
- *   Education owns educational progress (subjectProgress). The canonical
- *   role skill lives on the character record as professions[].skillLevel,
- *   written only through RoleCommands.
- *
- *   Two Role commands exist for writing role skill, with different
- *   semantics:
- *
- *     RoleCommands.updateCharacterSkill(cid, rid, level)
- *         Administrative override. Blind write. Can raise or lower.
- *         Used by the role edit-skill modal.
- *
- *     RoleCommands.recordCharacterSkillProgress(cid, rid, level)
- *         Domain progression. Can raise. Never lowers.
- *         Used by advanceLearning for role-type curriculum items.
- *
- *   The invariant: no progression system may reduce a character's
- *   canonical role skill. An administrator can, deliberately, through
- *   the override command.
- *
- *   If the character does not hold the role, recordCharacterSkillProgress
- *   fails. Education does not assign the role; that is a Role or Character
- *   decision, taken at graduation (via RoleCommands.assignRoleToCharacter)
- *   or through the role assignment UI.
- *
  * ROLE READS
  *
- *   Two role-read intents exist in this module and are handled separately:
+ *   Two role-read intents exist in this module and are handled
+ *   separately:
  *
- *     _getRoleById(id)          — LENIENT. Used only for display-name
- *                                 resolution. Returns null when RoleState
- *                                 is unavailable or the role is missing.
- *                                 Callers must tolerate a null return.
+ *     _getRoleById(id)          — LENIENT. Display-name resolution only.
+ *                                 Returns null when RoleState is
+ *                                 unavailable or the role is missing.
  *
- *     _requireRoleForWrite(id)  — STRICT. Used by write paths that MUST
- *                                 have the role record (e.g. assigning a
- *                                 role on graduation, computing tuition
- *                                 from role.baseSalary). Throws when the
- *                                 role is missing. Callers must catch or
- *                                 surface the failure.
+ *     _requireRoleForWrite(id)  — STRICT. Write paths that must have the
+ *                                 role record. Throws when the role is
+ *                                 missing.
  *
- *   Prior revisions conflated the two intents in a single helper, which
- *   made it impossible for a caller to distinguish "role is missing, use
- *   a placeholder" from "role is missing, abort the write." The split
- *   restores the fail-loud contract for writes without forcing
- *   RoleState to be loaded at module-load time for callers that never
- *   touch roles.
+ *   See the function docblocks for which is used where.
  *
  * ORPHAN CLEANUP ON DELETE
  *
@@ -124,31 +83,87 @@
  *
  *     cascade=false  → the institution record is removed, but
  *                      character-side education records referencing it
- *                      are NOT touched by the withdraw/fire path.
- *                      Character.education[institutionId] entries would
- *                      be orphaned.
+ *                      are NOT cleaned up by the withdraw/fire path.
  *
- *   To prevent that, deleteInstitution now sweeps character-side records
- *   for this institution's student and teacher IDs *regardless* of the
- *   cascade flag, via CharacterCommands.removeEducationRecord. This is a
- *   best-effort sweep: individual failures are logged and do not abort
- *   the delete. The institution record is removed even if some character
- *   records could not be cleaned.
+ *   deleteInstitution now sweeps character-side records for this
+ *   institution's student IDs *regardless* of the cascade flag, via
+ *   CharacterCommands.removeEducationRecord. Best-effort: individual
+ *   failures are logged, the delete still succeeds, and the counters on
+ *   the result envelope surface what happened.
  *
- *   The cascade flag continues to control whether withdrawal/fire
- *   *history* is written (via withdrawStudent/fireTeacher). Without
- *   cascade, no history is written; the sweep just drops the orphaned
- *   education entry.
+ *   If CharacterCommands.removeEducationRecord is not available, the
+ *   sweep is skipped with a single console.warn. The delete still
+ *   succeeds; orphan records may remain.
+ *
+ * ENROLLMENT TRANSACTION ORDER
+ *
+ *   Prior revisions debited the household's wealth BEFORE the
+ *   character-side enrollment write. If the character-side write
+ *   failed, the household was out the gold and no enrollment record
+ *   existed — the "Household wealth rollback" deferral in
+ *   education-doc.txt §10.
+ *
+ *   This revision reorders the flow:
+ *
+ *     1. Validate affordability (read household wealth; no writes).
+ *     2. Push the student into the institution roster.
+ *     3. Call CharacterCommands.recordEducationEnrollment.
+ *        - On failure: roll back step 2 (splice the student back out
+ *          and _updateInstitution to sync). Return failure.
+ *        - On success: proceed to step 4.
+ *     4. Debit the household via HouseholdEconomy.updateHouseholdWealth
+ *        and trackTuitionExpense.
+ *        - On failure: roll back step 3 via
+ *          CharacterCommands.recordEducationWithdrawal (reason:
+ *          "Enrollment rolled back: household debit failed") and
+ *          roll back step 2. Return failure.
+ *
+ *   HouseholdEconomy.updateHouseholdWealth returning false is treated
+ *   the same as throwing: the enrollment is rolled back.
+ *
+ *   The rollback of the character-side enrollment is best-effort. If
+ *   it fails, the household still gets refunded (the debit is the last
+ *   write attempted) and a console.error is logged. The roster entry
+ *   may be left in place; caller must inspect the failure result.
+ *
+ * GRADUATION PROGRESS CAP
+ *
+ *   graduateStudent caps every curriculum item's proficiency at 100 via
+ *   _cc('updateSubjectProgress'), iterating inst.curriculum item by
+ *   item. If a mid-loop call throws, the loop aborts, leaving some
+ *   items at 100 and others at their pre-graduation level. The
+ *   graduation record on the character side has already been written
+ *   by this point (recordEducationGraduation + appendEducationHistory
+ *   run before the cap loop).
+ *
+ *   This is a known partial-failure mode. The fix is a
+ *   CharacterCommands.updateSubjectProgressBatch command that applies
+ *   the cap atomically; no such command exists today, so the loop
+ *   remains item-by-item. A per-item failure is logged (not thrown)
+ *   so the rest of the loop continues — a single bad curriculum item
+ *   does not prevent the remaining items from being capped.
  *
  * TUITION HISTORY
  *
  *   updateInstitution's tuitionPerYear branch and updateTuition's
  *   customTuition branch both append to tuitionHistory. The tuition
  *   management modal calls both in sequence for a single user save.
- *   To prevent double-history entries, both branches now skip the push
- *   when the current year already has an entry for this institution
- *   with the same newAmount. This makes the modal's two-call pattern
- *   produce exactly one history entry per distinct change.
+ *   Both branches skip the push when the current year already has an
+ *   entry for this institution with the same newAmount. This makes the
+ *   modal's two-call pattern produce exactly one history entry per
+ *   distinct change.
+ *
+ * HISTORY EVENT TYPES
+ *
+ *   advanceLearning emits a STUDENT_BECAME_LITERATE event when a
+ *   student crosses the literacy threshold while enrolled. The event
+ *   type comes from window.HISTORY_EVENT_TYPES, which is loaded by
+ *   education-constants.js. If HISTORY_EVENT_TYPES is missing (a
+ *   load-order regression), the event is skipped with a console.warn —
+ *   the literacy flag write still succeeds. Prior revisions accessed
+ *   the constant inline, so a missing HISTORY_EVENT_TYPES would throw
+ *   a TypeError after the skill write had already happened, aborting
+ *   the rest of advanceLearning's post-write work.
  *
  * DEPENDENCIES
  *
@@ -163,7 +178,7 @@
  *
  *   Required for specific commands:
  *     - CharacterCommands    (student enrollment / graduation / withdrawal /
- *                             subject progress / literacy)
+ *                             subject progress / literacy / removeEducationRecord)
  *     - RoleCommands         (graduation role grant; role skill progression)
  *     - RoleQueries          (role-teacher eligibility, hard requirement)
  *     - HouseholdEconomy     (tuition payment, hard requirement when a
@@ -173,25 +188,33 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Split role reads into _getRoleById (lenient, display-only) and
- *       _requireRoleForWrite (strict, write paths). Prior revisions used
- *       a single lenient helper everywhere, which silently dropped role
- *       data from write paths (notably graduateStudent's role grant).
- *       See ROLE READS in the header.
- *     - deleteInstitution now sweeps character-side education records
- *       for this institution's student and teacher IDs even when
- *       cascade is false. Prior revisions left orphaned
- *       character.education[institutionId] entries after a non-cascade
- *       delete. The sweep requires
- *       CharacterCommands.removeEducationRecord; if that method is
- *       missing, the sweep is skipped (with a warning) rather than
- *       failing the delete. See ORPHAN CLEANUP ON DELETE.
- *     - updateInstitution's tuitionPerYear branch and updateTuition's
- *       customTuition branch now skip the tuitionHistory push when the
- *       current year already has an entry with the same newAmount.
- *       Prior revisions produced two history entries per modal save.
- *       See TUITION HISTORY.
- *     - No other behavioural change.
+ *     - enrollStudent reorders the household debit AFTER the character-side
+ *       enrollment write. If the character-side write fails, the household
+ *       is never debited. If the household debit fails after the character-
+ *       side write succeeds, the character-side enrollment is rolled back
+ *       via recordEducationWithdrawal and the roster entry is removed. This
+ *       closes the "Household wealth rollback" deferral in
+ *       education-doc.txt §10. See ENROLLMENT TRANSACTION ORDER.
+ *     - deleteInstitution now sweeps character-side education records for
+ *       this institution's student IDs regardless of the cascade flag, via
+ *       CharacterCommands.removeEducationRecord. The return envelope gains
+ *       orphanSweepAttempted and orphanSweepSucceeded. See ORPHAN CLEANUP
+ *       ON DELETE.
+ *     - advanceLearning's STUDENT_BECAME_LITERATE history emission now
+ *       guards against a missing window.HISTORY_EVENT_TYPES: the event is
+ *       skipped with a console.warn rather than throwing a TypeError after
+ *       the skill write. See HISTORY EVENT TYPES.
+ *     - graduateStudent's curriculum proficiency cap loop now logs and
+ *       continues on individual failures rather than aborting the whole
+ *       loop. Graduation has already been recorded by that point; a single
+ *       failed cap should not prevent the rest. See GRADUATION PROGRESS CAP.
+ *     - TUITION HISTORY section added (the tuition-dedup behaviour was
+ *       introduced in the previous revision; this adds the header
+ *       documentation).
+ *     - ROLE READS section added (the _getRoleById / _requireRoleForWrite
+ *       split was introduced in the previous revision; this adds the
+ *       header documentation).
+ *     - No behavioural change to any other command.
  * =============================================================================
  */
 
@@ -266,16 +289,6 @@
     // =========================================================================
     // 2. PERSISTENCE BOUNDARY
     // =========================================================================
-    //
-    // EducationState already wrote the canonical institutions into
-    // masterData on every mutation and marked the data dirty. persist()
-    // is the FLUSH: it drives the debounced save to run immediately and
-    // synchronously.
-    //
-    // persist() does NOT copy state into masterData. If it did, the
-    // previous revision's silent-data-loss bug would reappear in a
-    // different form: state would be serialized fresh each time even
-    // though the state-to-masterData sync had failed.
 
     function _persist() {
         if (typeof window.saveMasterData !== 'function') {
@@ -283,10 +296,6 @@
         }
         var ok = window.saveMasterData();
         if (ok === true) return true;
-        // saveMasterData returns boolean; false means the write failed.
-        // We surface the failure through the current error mechanism
-        // (getLastSaveError) so callers can read it, matching the
-        // DOMAIN PERSIST CONTRACT in storage.js.
         if (typeof window.getLastSaveError === 'function') {
             var err = window.getLastSaveError();
             if (err) {
@@ -324,26 +333,16 @@
     }
 
     /**
-     * Best-effort orphan cleanup helper. Removes this institution's
-     * education record from a character, if CharacterCommands exposes
-     * removeEducationRecord. Returns true on success (or when the method
-     * is not present — the sweep is best-effort). Returns false only when
-     * the method exists and threw or returned a failure.
-     *
-     * See ORPHAN CLEANUP ON DELETE in the header.
+     * Best-effort orphan cleanup. Removes this institution's education
+     * record from a character. Returns true on success (or when the
+     * method is not present — the sweep is best-effort). Returns false
+     * only when the method exists and threw or returned a failure.
      */
     function _removeCharacterEducationRecord(characterId, institutionId) {
-        if (typeof window.CharacterCommands === 'undefined') return true;
+        if (typeof window.CharacterCommands === 'undefined') return false;
         if (typeof window.CharacterCommands.removeEducationRecord !== 'function') {
-            // Method not available: sweep is skipped. Log once.
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn(
-                    'education-commands.js: CharacterCommands.removeEducationRecord ' +
-                    'is not available; character-side orphan records may remain ' +
-                    'for institution ' + institutionId + '.'
-                );
-            }
-            return true;
+            // Method not available: sweep is skipped. Caller logs once.
+            return null;
         }
         try {
             var result = window.CharacterCommands.removeEducationRecord(
@@ -395,9 +394,8 @@
     }
 
     /**
-     * LENIENT role read. Used for display-name resolution only.
-     * Returns the role record (clone from RoleState) or null.
-     * Callers must tolerate null. See ROLE READS in the header.
+     * LENIENT role read. Display-name resolution only.
+     * See ROLE READS in the header.
      */
     function _getRoleById(id) {
         if (!id) return null;
@@ -412,8 +410,7 @@
     }
 
     /**
-     * STRICT role read. Used by write paths that must have the role.
-     * Throws when the role is missing or no reader is available.
+     * STRICT role read. Write paths that must have the role.
      * See ROLE READS in the header.
      */
     function _requireRoleForWrite(id) {
@@ -940,9 +937,6 @@
             patch.isSpecialized = !!cat && roles.length > 0;
         }
 
-        // Tuition history: skip the push if the current year already has
-        // an entry with the same newAmount. This deduplicates the modal's
-        // updateInstitution + updateTuition sequence. See TUITION HISTORY.
         if (patch.tuitionPerYear !== undefined &&
             patch.tuitionPerYear !== inst.tuitionPerYear) {
             var bounded = Math.max(0, patch.tuitionPerYear);
@@ -975,8 +969,7 @@
         var inst = _state()._getInstitutionCanonical(institutionId);
         if (!inst) return _fail('Institution not found');
 
-        // Snapshot student and teacher IDs for the orphan sweep BEFORE
-        // removing the institution. See ORPHAN CLEANUP ON DELETE.
+        // Snapshot student and teacher IDs before removing the institution.
         var studentIds = [];
         var teacherIds = [];
         if (Array.isArray(inst.students)) {
@@ -1009,26 +1002,35 @@
         }
 
         // Orphan sweep: regardless of cascade, drop character-side
-        // education records for this institution. When cascade=true, the
-        // withdraw/fire path above already wrote proper history and
-        // removed character.education entries via recordEducationWithdrawal;
-        // the sweep is a no-op for those characters. When cascade=false,
-        // this is the only cleanup. See ORPHAN CLEANUP ON DELETE.
+        // education records for this institution's student and teacher
+        // IDs. When cascade=true, the withdraw/fire path above already
+        // wrote proper history and removed character.education entries
+        // via recordEducationWithdrawal; the sweep is a no-op for those
+        // characters. When cascade=false, this is the only cleanup.
+        // See ORPHAN CLEANUP ON DELETE.
         var sweepAttempted = 0;
         var sweepSucceeded = 0;
-        for (var si = 0; si < studentIds.length; si++) {
-            sweepAttempted++;
-            if (_removeCharacterEducationRecord(studentIds[si], institutionId)) {
-                sweepSucceeded++;
+        var sweepAvailable = _removeCharacterEducationRecord('__probe__', '__probe__');
+        var methodMissing = (sweepAvailable === null);
+
+        if (methodMissing) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'education-commands.js: CharacterCommands.removeEducationRecord ' +
+                    'is not available; character-side orphan records may remain ' +
+                    'for institution ' + institutionId + '.'
+                );
             }
-        }
-        for (var ti = 0; ti < teacherIds.length; ti++) {
-            // Teachers do not own an education record on the character
-            // side today, but they may in the future (e.g. employment
-            // history). Calling the sweep is harmless and forward-safe.
-            sweepAttempted++;
-            if (_removeCharacterEducationRecord(teacherIds[ti], institutionId)) {
-                sweepSucceeded++;
+        } else {
+            for (var si = 0; si < studentIds.length; si++) {
+                sweepAttempted++;
+                var okS = _removeCharacterEducationRecord(studentIds[si], institutionId);
+                if (okS === true) sweepSucceeded++;
+            }
+            for (var ti = 0; ti < teacherIds.length; ti++) {
+                sweepAttempted++;
+                var okT = _removeCharacterEducationRecord(teacherIds[ti], institutionId);
+                if (okT === true) sweepSucceeded++;
             }
         }
 
@@ -1164,6 +1166,10 @@
     // 7. STUDENT MANAGEMENT
     // =========================================================================
 
+    /**
+     * Enrolls a student. See ENROLLMENT TRANSACTION ORDER in the header
+     * for the write ordering and rollback behaviour.
+     */
     function enrollStudent(institutionId, studentId, startYear) {
         if (!institutionId || !studentId) {
             return _fail('institutionId and studentId are required');
@@ -1187,26 +1193,24 @@
 
         var year = startYear !== undefined ? startYear : _getCurrentYear();
 
+        // Step 1: validate affordability (read-only).
         var tuitionResult = _calculateTuition(inst, year);
         var tuitionPaid = 0;
+        var household = null;
         if (tuitionResult.success && tuitionResult.tuition > 0) {
-            var household = _getCharacterHousehold(studentId);
+            household = _getCharacterHousehold(studentId);
             if (household) {
                 var wealth = _getHouseholdWealth(household.id);
                 if (wealth < tuitionResult.tuition) {
                     return _fail('Household cannot afford tuition (' +
                         tuitionResult.tuition + ' gold)');
                 }
-                _updateHouseholdWealth(household.id, -tuitionResult.tuition,
-                    'Tuition for ' + inst.name + ' - ' + student.name);
-                _trackTuitionExpense(
-                    household.id, tuitionResult.tuition, institutionId, studentId
-                );
-                tuitionPaid = tuitionResult.tuition;
             }
         }
 
-        var students = (inst.students || []).slice();
+        // Step 2: push the student into the institution roster.
+        var previousStudents = (inst.students || []).slice();
+        var students = previousStudents.slice();
         students.push({
             studentId: studentId,
             studentName: student.name,
@@ -1216,23 +1220,71 @@
             graduationYear: null,
             attendance: 100,
             notes: '',
-            tuitionPaid: tuitionPaid,
+            tuitionPaid: tuitionResult.success ? tuitionResult.tuition : 0,
             tuitionYear: year,
             tuitionWaived: inst.waiveTuition === true ||
                 inst.ownershipType === 'public'
         });
         _state()._updateInstitution(institutionId, { students: students });
 
+        // Step 3: character-side enrollment write.
         var recordResult = _cc('recordEducationEnrollment')(studentId, institutionId, {
             institutionName: inst.name,
             institutionType: inst.type,
             enrolledYear: year
         });
         if (!recordResult || recordResult.success !== true) {
+            // Roll back step 2.
+            _state()._updateInstitution(institutionId, { students: previousStudents });
             return _fail('Failed to record enrollment on character: ' +
                 (recordResult && recordResult.reason
                     ? recordResult.reason
                     : 'unknown error'));
+        }
+
+        // Step 4: debit the household.
+        if (tuitionResult.success && tuitionResult.tuition > 0 && household) {
+            var debitOk = false;
+            try {
+                var debitResult = _updateHouseholdWealth(
+                    household.id, -tuitionResult.tuition,
+                    'Tuition for ' + inst.name + ' - ' + student.name
+                );
+                debitOk = (debitResult !== false);
+            } catch (e) {
+                debitOk = false;
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error(
+                        'education-commands.js: household debit failed for ' +
+                        'household ' + household.id + ' on enrollment of ' +
+                        studentId + ':', e
+                    );
+                }
+            }
+
+            if (!debitOk) {
+                // Roll back step 3 then step 2.
+                try {
+                    _cc('recordEducationWithdrawal')(studentId, institutionId, {
+                        reason: 'Enrollment rolled back: household debit failed',
+                        year: year
+                    });
+                } catch (e2) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'education-commands.js: rollback withdrawal failed for ' +
+                            'student ' + studentId + ': ', e2
+                        );
+                    }
+                }
+                _state()._updateInstitution(institutionId, { students: previousStudents });
+                return _fail('Household debit failed; enrollment rolled back');
+            }
+
+            _trackTuitionExpense(
+                household.id, tuitionResult.tuition, institutionId, studentId
+            );
+            tuitionPaid = tuitionResult.tuition;
         }
 
         _history().recordStudentEnrolled(institutionId, studentId, year, 'Enrolled');
@@ -1282,7 +1334,6 @@
 
         var roleGrantError = null;
         if (roleToGrant) {
-            // Strict read for the write path. See ROLE READS.
             var grantRole = null;
             try {
                 grantRole = _requireRoleForWrite(roleToGrant);
@@ -1375,14 +1426,27 @@
                     : 'unknown error'));
         }
 
+        // Curriculum proficiency cap. See GRADUATION PROGRESS CAP in the
+        // header: individual failures log and continue; the loop does not
+        // abort mid-way.
         if (inst.curriculum) {
             for (var k = 0; k < inst.curriculum.length; k++) {
-                var key = _rules().progressKeyFor(inst.curriculum[k]);
-                _cc('updateSubjectProgress')(studentId, key, { level: 100 });
+                try {
+                    var key = _rules().progressKeyFor(inst.curriculum[k]);
+                    _cc('updateSubjectProgress')(studentId, key, { level: 100 });
+                } catch (capErr) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'education-commands.js: proficiency cap failed for ' +
+                            'student ' + studentId + ', curriculum item ' +
+                            (inst.curriculum[k] && inst.curriculum[k].id) +
+                            ': ', capErr
+                        );
+                    }
+                }
             }
         }
 
-        // Lenient role read for display in the history reason. See ROLE READS.
         var grantedRoleName = '';
         if (roleToGrant) {
             var displayRole = _getRoleById(roleToGrant);
@@ -1523,22 +1587,37 @@
             var nowLiterate = _rules().isLiterateAtLevel(result.newLevel);
             if (nowLiterate && !wasLiterate) {
                 _cc('setLiterate')(characterId, true);
-                var institutions = _state()._getAllInstitutionsCanonical();
-                for (var i = 0; i < institutions.length; i++) {
-                    var inst = institutions[i];
-                    if (!inst.students) continue;
-                    for (var j = 0; j < inst.students.length; j++) {
-                        if (inst.students[j].studentId === characterId &&
-                            !inst.students[j].graduated) {
-                            _history().addEvent(inst.id, {
-                                type: window.HISTORY_EVENT_TYPES.STUDENT_BECAME_LITERATE,
-                                year: _getCurrentYear(),
-                                entityId: characterId,
-                                entityName: character.name +
-                                    (character.surname ? ' ' + character.surname : ''),
-                                details: 'Became literate at ' + inst.name
-                            });
-                            break;
+
+                // Emit STUDENT_BECAME_LITERATE only if HISTORY_EVENT_TYPES
+                // is available. See HISTORY EVENT TYPES in the header.
+                var HT = window.HISTORY_EVENT_TYPES;
+                if (!HT) {
+                    if (typeof console !== 'undefined' && console.warn) {
+                        console.warn(
+                            'education-commands.js: HISTORY_EVENT_TYPES is not ' +
+                            'loaded; skipping STUDENT_BECAME_LITERATE event for ' +
+                            'character ' + characterId + '. The literacy flag ' +
+                            'write has already succeeded.'
+                        );
+                    }
+                } else {
+                    var institutions = _state()._getAllInstitutionsCanonical();
+                    for (var i = 0; i < institutions.length; i++) {
+                        var inst = institutions[i];
+                        if (!inst.students) continue;
+                        for (var j = 0; j < inst.students.length; j++) {
+                            if (inst.students[j].studentId === characterId &&
+                                !inst.students[j].graduated) {
+                                _history().addEvent(inst.id, {
+                                    type: HT.STUDENT_BECAME_LITERATE,
+                                    year: _getCurrentYear(),
+                                    entityId: characterId,
+                                    entityName: character.name +
+                                        (character.surname ? ' ' + character.surname : ''),
+                                    details: 'Became literate at ' + inst.name
+                                });
+                                break;
+                            }
                         }
                     }
                 }
@@ -1650,9 +1729,6 @@
             : inst.tuitionPerYear;
 
         var year = _getCurrentYear();
-        // Skip the history push if the current year already has an entry
-        // with the same newAmount. Deduplicates the modal's
-        // updateInstitution + updateTuition sequence. See TUITION HISTORY.
         if (!_hasTuitionHistoryEntry(inst, year, bounded)) {
             var history = (inst.tuitionHistory || []).slice();
             history.push({
@@ -2337,14 +2413,6 @@
     // =========================================================================
     // 15. PERSISTENCE BOUNDARY
     // =========================================================================
-    //
-    // EducationState has already written the institutions into
-    // masterData on every mutation and marked the data dirty. persist()
-    // is the FLUSH that forces the debounced save to run synchronously.
-    //
-    // It does NOT copy state into masterData. That would re-introduce the
-    // silent-data-loss pattern from earlier revisions (state and
-    // masterData drifting apart because the copy step was skipped).
 
     function persist() {
         return _persist();
