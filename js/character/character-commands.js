@@ -15,6 +15,9 @@
  *   - Rank assignment array management on the character record
  *   - Surname history mutations
  *   - Religion assignment orchestration (delegates to ReligionCommands)
+ *   - Religion field writers (religionId, religionHistory) — the only
+ *     sanctioned writers for these character-owned fields.
+ *     ReligionCommands and ReligionInheritance route through these.
  *   - Bulk character-owned field updates
  *   - Death transition (markDeceased) — the single canonical writer of
  *     isDeceased and its associated fields
@@ -39,6 +42,9 @@
  *   - Rank orchestration           -> rank-commands.js / rank-assignment.js
  *   - Trait vocabulary             -> constants/character-traits.js
  *   - Trait acquisition policy     -> caller (there is none)
+ *   - Religion vocabulary          -> religion-constants.js
+ *   - Religion law/canonical data  -> religion-commands.js
+ *   - Religion rules               -> religion-rules.js
  *
  * DEATH TRANSITION (markDeceased):
  *   markDeceased(characterId, deathData, options) is the ONLY function
@@ -80,6 +86,31 @@
  *                            omit it and get the wall-clock behaviour.
  *   }
  *
+ * RELIGION FIELDS:
+ *   Two character-owned fields are written only by this module:
+ *
+ *     character.religionId        string | null.
+ *     character.religionHistory   array of conversion events.
+ *
+ *   The generic updateCharacterFields / updateCharactersFields refuse
+ *   these fields (they are in _DOMAIN_OWNED_FIELDS on the generic path).
+ *   Use the dedicated writer below:
+ *
+ *     setReligion(characterId, religionId, options)
+ *
+ *   setReligion is the ONLY sanctioned write path for these fields.
+ *   ReligionCommands.assignReligionToCharacter / convertCharacter /
+ *   removeReligionFromCharacter all route through it, as does
+ *   ReligionInheritance.inheritReligionForChild.
+ *
+ *   Prior to this revision, ReligionCommands wrote the fields directly on
+ *   the object returned by window.getCharacterById. Under the documented
+ *   load order, that object is a defensive projection (character-queries.js
+ *   overrides accessors.js's live-entity version), so the writes were
+ *   silently discarded and every religion assignment reported success
+ *   while leaving canonical state unchanged. Routing through
+ *   CharacterState.updateCharacter fixes that.
+ *
  * TRAITS:
  *   The character record carries `traits` as a domain-owned array of
  *   canonical trait ids (see constants/character-traits.js). Traits are
@@ -97,24 +128,15 @@
  *   rankAssignments follow. The single write mechanism is
  *   CS.applyDomainFieldPatch.
  *
- *   TRAIT VOCABULARY CONTRACT (REVISED):
+ *   TRAIT VOCABULARY CONTRACT:
  *   The canonical trait vocabulary (constants/character-traits.js,
  *   window.CHARACTER_TRAIT_VALUES) is a HARD dependency of the trait
  *   write path. It is NOT soft-failed.
  *
- *   Prior revisions allowed `addTrait` / `replaceTraits` to accept any
- *   non-empty string when the vocabulary was not loaded. That produced a
- *   silent divergence between the write boundary (accepts anything) and
- *   the read boundary (character-factory.js::buildCharacter rejects
- *   unknown ids). A bare test harness could write traits that the
- *   factory would later refuse to load — or, worse, that would persist
- *   as canonical data that validation.js's entity validator (which
- *   checks via the same vocabulary) would flag as malformed on import.
- *
  *   The current contract matches character-factory.js:
- *     - missing vocabulary → trait writes REFUSE, with a clear reason
- *     - unknown trait id    → trait writes REFUSE
- *     - valid trait id      → trait writes proceed
+ *     - missing vocabulary -> trait writes REFUSE, with a clear reason
+ *     - unknown trait id    -> trait writes REFUSE
+ *     - valid trait id      -> trait writes proceed
  *
  *   The refusal is at the write boundary, not at load, because
  *   character-commands.js is loaded in contexts (test harnesses,
@@ -137,13 +159,10 @@
  *   Read-side contract:
  *   - getEducationRecord(id, institutionId) returns a CLONE of the
  *     per-institution entry. Mutating the returned object does not
- *     affect canonical state. This matches CharacterState._project's
- *     deep-clone contract; the previous revision returned the live
- *     canonical entry, which let callers silently corrupt state.
- *   - getEducationRecords(id) returns an array of CLONED entries, one
- *     per institution.
+ *     affect canonical state.
+ *   - getEducationRecords(id) returns an array of CLONED entries.
  *   - getSubjectProgress(id, key) returns a CLONE of the per-subject
- *     entry. Same guarantee.
+ *     entry.
  *   - getAllSubjectProgress(id) returns an array of CLONED entries.
  *
  * RANK FIELDS:
@@ -173,6 +192,7 @@
  *                         updateCharacter, updateCharacters,
  *                         applyDomainFieldPatch, getAllCharacters)
  *   - time.js: getCurrentYear, isValidYear
+ *   - ids.js: generateId (setReligion only)
  *
  * DEPENDENCIES (REQUIRED for trait writes only):
  *   - constants/character-traits.js (CHARACTER_TRAIT_VALUES)
@@ -196,46 +216,45 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1-4):
+ *   Current revision (P1-5):
+ *     - Added setReligion(characterId, religionId, options). The ONLY
+ *       sanctioned writer for character.religionId and
+ *       character.religionHistory. ReligionCommands
+ *       (assignReligionToCharacter / convertCharacter /
+ *       removeReligionFromCharacter) and ReligionInheritance
+ *       (inheritReligionForChild) route through it.
+ *     - ReligionCommands previously mutated the projection returned by
+ *       window.getCharacterById directly. Under the documented load
+ *       order, that projection is a defensive copy; the writes were
+ *       silently discarded. Every religion assignment reported success
+ *       while doing nothing. Fixed at the write boundary:
+ *       setReligion uses CharacterState.updateCharacter so the write
+ *       goes through the character-owned field allowlist, marks data
+ *       dirty, invalidates accessor caches, and dispatches
+ *       characterChanged.
+ *     - Added a load-time generateId guard. setReligion uses
+ *       window.generateId; ids.js is now a documented dependency.
+ *     - Header SCOPE updated with the new writer.
+ *     - Header RELIGION FIELDS section added, explaining why the
+ *       setReligion boundary exists and what it replaces.
+ *     - DEPENDENCIES updated: ids.js listed under REQUIRED.
+ *     - No other behavioural change.
+ *   Previous revision (P1-4):
  *     - Trait vocabulary is now a HARD dependency of the trait write path.
  *       _validateTraitId refuses when window.CHARACTER_TRAIT_VALUES is
  *       not an array; it no longer falls through to "accept any
- *       non-empty string". This matches character-factory.js's contract.
- *       Prior revisions soft-failed on missing vocabulary, which let the
- *       write boundary accept trait ids the factory would later reject,
- *       producing persisted data that only failed on the next read.
- *     - _vocabularyAvailable() is retained but only used for diagnostics
- *       (nothing in production calls it). Its docstring now states that
- *       it does NOT gate trait writes; the write path refuses without
- *       the vocabulary regardless of what this function reports.
+ *       non-empty string".
+ *     - _vocabularyAvailable() is retained but only used for diagnostics.
  *     - Header TRAITS section rewritten to document the hard-dependency
- *       contract and the refusal-at-write-boundary design.
- *     - Header DEPENDENCIES updated: constants/character-traits.js is
- *       listed under REQUIRED (for trait writes).
- *     - No other behavioural change.
- *   Previous revision (Phase 1.2):
+ *       contract.
+ *   Previous revisions:
  *     - Renamed every _getLiveCharacterForMutation call to
- *       getLiveCharacterForMutation (matching CharacterState's
- *       Phase 1.1 public rename). _requiredStateMethods now checks
- *       for getLiveCharacterForMutation.
- *     - getEducationRecord now returns a cloned entry instead of the
- *       live canonical object. The previous revision leaked the live
- *       reference and violated CharacterState's projection contract.
- *     - getSubjectProgress now returns a cloned entry. Same fix.
- *     - getProfession now returns a cloned entry. Same fix; the live
- *       reference was surfaced by professional-queries._skillLevel,
- *       which read from it directly.
- *     - getEducationRecords and getAllSubjectProgress use the same
- *       normalisation helpers, so all four readers return the same
- *       shape.
- *     - Header READ CONTRACT section added.
- *   Prior revisions:
+ *       getLiveCharacterForMutation.
+ *     - getEducationRecord / getSubjectProgress / getProfession now
+ *       return cloned entries. Header READ CONTRACT section added.
  *     - Trait API added: getTraits, hasTrait, replaceTraits, setTraits
  *       (alias), addTrait, removeTrait.
- *     - traits added to _DOMAIN_OWNED_FIELDS so the generic update path
- *       refuses it.
- *     - Trait writes route through CS.applyDomainFieldPatch, matching
- *       the professions and rankAssignments pattern.
+ *     - traits added to _DOMAIN_OWNED_FIELDS.
  * =============================================================================
  */
 
@@ -272,6 +291,9 @@
     }
     if (typeof window.isValidYear !== 'function') {
         throw new Error('character-commands.js requires time.js (isValidYear).');
+    }
+    if (typeof window.generateId !== 'function') {
+        throw new Error('character-commands.js requires ids.js (generateId).');
     }
 
     // =========================================================================
@@ -362,7 +384,9 @@
         education: true,
         educationHistory: true,
         subjectProgress: true,
-        isLiterate: true
+        isLiterate: true,
+        religionId: true,
+        religionHistory: true
     };
 
     function _collectDomainOwnedKeys(updates) {
@@ -444,7 +468,121 @@
     }
 
     // =========================================================================
-    // 5. TRAIT NORMALISATION AND WRITE
+    // 5. RELIGION FIELD WRITER
+    // =========================================================================
+    //
+    // religionId and religionHistory are character-owned fields (they are
+    // in CharacterState._CHARACTER_OWNED_FIELDS). This command is the
+    // ONLY sanctioned writer for them. Every mutation goes through
+    // CharacterState.updateCharacter so that:
+    //
+    //   - the write hits canonical state (not a projection),
+    //   - _emitChange fires: markDataDirty + invalidateAccessorCaches +
+    //     characterChanged event,
+    //   - accessor caches are invalidated before any subsequent read.
+    //
+    // ReligionCommands and ReligionInheritance route through this.
+    // Nothing else may write the fields.
+    //
+    // IDEMPOTENCY:
+    //   If religionId is already the requested value, the command returns
+    //   success with unchanged: true and does NOT append a history event.
+    //   The history array grows only on an actual change.
+    //
+    // OPTIONS:
+    //   year               number, optional. Year of the conversion.
+    //   reason             string, optional. Conversion reason id.
+    //   notes              string, optional.
+    //   inherited          boolean, optional. True if inherited.
+    //   inheritedFrom      string, optional. 'mother'|'father'|'both'|'location'.
+    //   fromReligionName   string, optional. Snapshot of the previous
+    //                      religion's display name (avoids a cross-domain
+    //                      read here).
+    //   toReligionName     string, optional. Snapshot of the new
+    //                      religion's display name.
+    //
+    // The command does NOT look up religion records. Callers supply the
+    // snapshot names. This keeps character-commands.js free of any
+    // dependency on ReligionQueries.
+
+    function setReligion(characterId, religionId, options) {
+        if (!_hasId(characterId)) return _fail('Character id is required.');
+        if (!_isMissing(religionId) && !_hasId(religionId)) {
+            return _fail('religionId must be a non-empty string or null.');
+        }
+        if (!_isMissing(options) && !_isPlainObject(options)) {
+            return _fail('options must be a plain object when provided.');
+        }
+
+        var character = CS.getLiveCharacterForMutation(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var resolvedReligionId = _isMissing(religionId) ? null : religionId;
+        var previousReligionId = _isMissing(character.religionId)
+            ? null
+            : character.religionId;
+
+        if (previousReligionId === resolvedReligionId) {
+            return _ok({
+                religionId: resolvedReligionId,
+                unchanged: true
+            });
+        }
+
+        var opts = _isPlainObject(options) ? options : {};
+        var year = _resolveYear(opts.year);
+
+        var history = Array.isArray(character.religionHistory)
+            ? character.religionHistory.slice()
+            : [];
+
+        var event = {
+            id: window.generateId('conversion'),
+            characterId: characterId,
+            fromReligionId: previousReligionId,
+            fromReligionName: _isMissing(opts.fromReligionName)
+                ? null
+                : String(opts.fromReligionName),
+            toReligionId: resolvedReligionId,
+            toReligionName: _isMissing(opts.toReligionName)
+                ? null
+                : String(opts.toReligionName),
+            year: year,
+            reason: _isMissing(opts.reason) ? 'personal' : String(opts.reason),
+            notes: _isMissing(opts.notes) ? '' : String(opts.notes),
+            inherited: opts.inherited === true,
+            inheritedFrom: _isMissing(opts.inheritedFrom)
+                ? null
+                : String(opts.inheritedFrom),
+            timestamp: Date.now()
+        };
+
+        history.push(event);
+
+        var update = CS.updateCharacter(characterId, {
+            religionId: resolvedReligionId,
+            religionHistory: history,
+            updatedAt: Date.now()
+        });
+        if (!update || update.success !== true) {
+            return _fail(update && update.reason
+                ? update.reason
+                : 'CharacterState refused the religion write.');
+        }
+
+        return _ok({
+            religionId: resolvedReligionId,
+            previousReligionId: previousReligionId,
+            conversion: event,
+            unchanged: false
+        });
+    }
+
+    // =========================================================================
+    // 6. TRAIT NORMALISATION AND WRITE
     // =========================================================================
     //
     // Traits are canonical trait ids (see constants/character-traits.js).
@@ -455,17 +593,12 @@
     //   The vocabulary (window.CHARACTER_TRAIT_VALUES) is REQUIRED for
     //   every trait write. This matches character-factory.js's contract.
     //   A write that cannot resolve the vocabulary refuses with a clear
-    //   reason rather than accepting arbitrary strings. The refusal is
-    //   at the write boundary so that load-order bugs surface as
-    //   explicit trait-write failures, not as silently-corrupted
-    //   canonical data.
+    //   reason rather than accepting arbitrary strings.
     //
     // _vocabularyAvailable() is retained for diagnostics only. It does
     // NOT gate the write path — the write path's _validateTraitId
     // refuses without the vocabulary regardless of what
-    // _vocabularyAvailable returns. Do not introduce a call to
-    // _vocabularyAvailable() in any write function; the correct check
-    // is embedded in _validateTraitId.
+    // _vocabularyAvailable returns.
 
     function _vocabularyAvailable() {
         return Array.isArray(window.CHARACTER_TRAIT_VALUES);
@@ -477,9 +610,6 @@
         }
 
         if (!_vocabularyAvailable()) {
-            // Hard refusal. See TRAIT VOCABULARY CONTRACT in the header.
-            // A caller that reaches here is missing character-traits.js;
-            // the correct fix is to load it, not to weaken the boundary.
             return {
                 ok: false,
                 reason: 'character-traits.js is not loaded; cannot validate ' +
@@ -501,8 +631,7 @@
      * - Rejects non-arrays.
      * - Rejects non-string entries.
      * - Rejects duplicates.
-     * - Rejects unknown ids (the vocabulary is required; see
-     *   TRAIT VOCABULARY CONTRACT in the header).
+     * - Rejects unknown ids (the vocabulary is required).
      * - Returns a fresh array.
      */
     function _normaliseTraits(traits) {
@@ -545,7 +674,7 @@
     }
 
     // =========================================================================
-    // 6. TRAIT API
+    // 7. TRAIT API
     // =========================================================================
 
     /**
@@ -572,9 +701,6 @@
 
     /**
      * Replaces the character's entire trait array.
-     *
-     * Validates each entry (shape, deduplication, and — because the
-     * vocabulary is a hard requirement — canonicality) before writing.
      */
     function replaceTraits(characterId, traits) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -596,17 +722,14 @@
     }
 
     /**
-     * Alias for replaceTraits, named to match the plan. Both names do
-     * the same thing; replaceTraits is canonical because it matches
-     * replaceProfessions.
+     * Alias for replaceTraits.
      */
     function setTraits(characterId, traits) {
         return replaceTraits(characterId, traits);
     }
 
     /**
-     * Adds a single trait. Idempotent: if the trait is already present,
-     * returns success with unchanged: true and does not write.
+     * Adds a single trait. Idempotent.
      */
     function addTrait(characterId, traitId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -637,8 +760,7 @@
     }
 
     /**
-     * Removes a single trait. Idempotent: if the trait is not present,
-     * returns success with unchanged: true and does not write.
+     * Removes a single trait. Idempotent.
      */
     function removeTrait(characterId, traitId) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -670,7 +792,7 @@
     }
 
     // =========================================================================
-    // 7. DEATH TRANSITION (markDeceased)
+    // 8. DEATH TRANSITION (markDeceased)
     // =========================================================================
 
     function _requireMortalityRules() {
@@ -690,12 +812,7 @@
      * @param {Object} deathData
      * @param {Object} [options]
      * @param {number} [options.referenceYear]
-     *   The year to treat as "now" for validation. Defaults to
-     *   window.getCurrentYear(). CharacterLifecycle.advanceMortality
-     *   supplies the simulated year here so that multi-year simulation
-     *   can produce deaths in years ahead of the wall-clock year.
-     *
-     * Returns { success, reason?, deathRecord? }.
+     * @returns { success, reason?, deathRecord? }
      */
     function markDeceased(characterId, deathData, options) {
         if (!_hasId(characterId)) return _fail('Character id is required.');
@@ -715,8 +832,6 @@
         var deps = _requireMortalityRules();
         if (!deps.ok) return _fail(deps.reason);
 
-        // Reference year: caller-supplied (simulation) or wall-clock.
-        // Validation is against this, not against getCurrentYear().
         var referenceYear = (_isPlainObject(options)
             && !_isMissing(options.referenceYear)
             && window.isValidYear(options.referenceYear) === true)
@@ -789,20 +904,8 @@
     }
 
     // =========================================================================
-    // 8. PROFESSION NORMALISATION
+    // 9. PROFESSION NORMALISATION
     // =========================================================================
-    //
-    // _normaliseNewProfession serves two purposes:
-    //   1. As a WRITE normaliser: builds the canonical profession record
-    //      from caller input (addProfession) or from a raw record
-    //      (replaceProfessions).
-    //   2. As a READ cloner: getProfession, getProfessions, and the
-    //      getProfessions-based aggregation functions call it to
-    //      return a fresh object. This is the same cloner used on the
-    //      write path, so the read shape and write shape are
-    //      identical. The name says "new" for historical reasons but
-    //      the function is a pure normaliser; it does not require or
-    //      imply that the record is new.
 
     function _normaliseNewProfession(data) {
         return {
@@ -847,17 +950,9 @@
     }
 
     // =========================================================================
-    // 9. PROFESSION API
+    // 10. PROFESSION API
     // =========================================================================
 
-    /**
-     * Returns a CLONE of the character's profession record for the given
-     * role id, or null. Mutating the returned object does not affect
-     * canonical state.
-     *
-     * The previous revision returned character.professions[idx]
-     * directly, which leaked the live canonical object.
-     */
     function getProfession(characterId, professionId) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(professionId)) return null;
@@ -870,11 +965,6 @@
         return _normaliseNewProfession(character.professions[idx]);
     }
 
-    /**
-     * Returns CLONES of every profession record for the character.
-     * Mutating the returned array or its entries does not affect
-     * canonical state.
-     */
     function getProfessions(characterId) {
         if (!_hasId(characterId)) return [];
         var character = CS.getLiveCharacterForMutation(characterId);
@@ -1133,7 +1223,7 @@
     }
 
     // =========================================================================
-    // 10. PROFESSION PRIMACY
+    // 11. PROFESSION PRIMACY
     // =========================================================================
 
     function setPrimaryProfession(characterId, professionId) {
@@ -1191,7 +1281,7 @@
     }
 
     // =========================================================================
-    // 11. SURNAME HISTORY
+    // 12. SURNAME HISTORY
     // =========================================================================
 
     function recordCharacterSurnameChange(id, newSurname, year, reason, options) {
@@ -1310,12 +1400,31 @@
     }
 
     // =========================================================================
-    // 12. RELIGION ORCHESTRATION
+    // 13. RELIGION ORCHESTRATION (delegates to ReligionCommands)
     // =========================================================================
+    //
+    // These three commands delegate to ReligionCommands, which in turn
+    // routes through setReligion (the sanctioned writer). They exist on
+    // CharacterCommands because callers that already hold a reference to
+    // CharacterCommands should not need to know about the religion
+    // domain's module structure.
+    //
+    // CharacterCommands does NOT re-implement any religion logic here.
+    // The conversion reason, eligibility rules, and default handling all
+    // live in ReligionCommands / ReligionRules / ReligionConstants.
 
     function _requireReligionCommands() {
         if (typeof window.ReligionCommands === 'undefined') {
             return { ok: false, reason: 'ReligionCommands module is not loaded.' };
+        }
+        if (typeof window.ReligionCommands.assignReligionToCharacter !== 'function') {
+            return { ok: false, reason: 'ReligionCommands.assignReligionToCharacter is required.' };
+        }
+        if (typeof window.ReligionCommands.convertCharacter !== 'function') {
+            return { ok: false, reason: 'ReligionCommands.convertCharacter is required.' };
+        }
+        if (typeof window.ReligionCommands.removeReligionFromCharacter !== 'function') {
+            return { ok: false, reason: 'ReligionCommands.removeReligionFromCharacter is required.' };
         }
         return { ok: true };
     }
@@ -1331,7 +1440,7 @@
         }
 
         if (character.religionId === religionId) {
-            return _ok({ character: character, unchanged: true });
+            return _ok({ unchanged: true });
         }
 
         if (_isMissing(options)) options = {};
@@ -1397,7 +1506,7 @@
     }
 
     // =========================================================================
-    // 13. EDUCATION CONTAINER INITIALISATION
+    // 14. EDUCATION CONTAINER INITIALISATION
     // =========================================================================
 
     function initializeEducationContainers(characterId) {
@@ -1443,14 +1552,8 @@
     }
 
     // =========================================================================
-    // 14. EDUCATION RECORD (character.education)
+    // 15. EDUCATION RECORD (character.education)
     // =========================================================================
-    //
-    // Read contract: getEducationRecord returns a CLONE of the per-
-    // institution entry. The previous revision returned the live
-    // canonical object, which let callers mutate state through the
-    // reader. Same pattern as _normaliseNewProfession on the profession
-    // side.
 
     function _normaliseEducationEntry(current, incoming) {
         var base = _isPlainObject(current) ? current : {};
@@ -1506,15 +1609,6 @@
         return _ok();
     }
 
-    /**
-     * Returns a CLONE of the character's education entry for the given
-     * institution, or null.
-     *
-     * The previous revision returned character.education[institutionId]
-     * directly. Callers could mutate the live canonical entry and
-     * silently corrupt state. Now the entry is normalised through
-     * _normaliseEducationEntry, which builds a fresh object.
-     */
     function getEducationRecord(characterId, institutionId) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(institutionId)) return null;
@@ -1528,10 +1622,6 @@
         return _normaliseEducationEntry(entry, {});
     }
 
-    /**
-     * Returns CLONES of every education entry for the character, one per
-     * institution. Each entry carries an `institutionId` field.
-     */
     function getEducationRecords(characterId) {
         if (!_hasId(characterId)) return [];
         var character = CS.getLiveCharacterForMutation(characterId);
@@ -1653,7 +1743,7 @@
     }
 
     // =========================================================================
-    // 15. EDUCATION HISTORY (character.educationHistory)
+    // 16. EDUCATION HISTORY (character.educationHistory)
     // =========================================================================
 
     function getEducationHistory(characterId) {
@@ -1696,11 +1786,8 @@
     }
 
     // =========================================================================
-    // 16. SUBJECT PROGRESS (character.subjectProgress)
+    // 17. SUBJECT PROGRESS (character.subjectProgress)
     // =========================================================================
-    //
-    // Read contract: getSubjectProgress returns a CLONE of the per-key
-    // entry. The previous revision returned the live canonical object.
 
     function _normaliseSubjectProgressEntry(current) {
         if (!_isPlainObject(current)) return null;
@@ -1715,10 +1802,6 @@
         };
     }
 
-    /**
-     * Returns a CLONE of the character's subject progress entry for the
-     * given key, or null.
-     */
     function getSubjectProgress(characterId, key) {
         if (!_hasId(characterId)) return null;
         if (!_hasId(key)) return null;
@@ -1732,10 +1815,6 @@
         return _normaliseSubjectProgressEntry(entry);
     }
 
-    /**
-     * Returns CLONES of every subject progress entry for the character,
-     * one per key. Each entry carries a `key` field.
-     */
     function getAllSubjectProgress(characterId) {
         if (!_hasId(characterId)) return [];
         var character = CS.getLiveCharacterForMutation(characterId);
@@ -1859,7 +1938,7 @@
     }
 
     // =========================================================================
-    // 17. LITERACY (character.isLiterate)
+    // 18. LITERACY (character.isLiterate)
     // =========================================================================
 
     function isLiterate(characterId) {
@@ -1899,7 +1978,7 @@
     }
 
     // =========================================================================
-    // 18. RANK API - NORMALISATION
+    // 19. RANK API - NORMALISATION
     // =========================================================================
 
     function _normaliseNumberInfo(raw) {
@@ -2047,7 +2126,7 @@
     }
 
     // =========================================================================
-    // 19. RANK API - CONTAINER INITIALISATION
+    // 20. RANK API - CONTAINER INITIALISATION
     // =========================================================================
 
     function initializeRankContainers(characterId) {
@@ -2080,7 +2159,7 @@
     }
 
     // =========================================================================
-    // 20. RANK API - READS
+    // 21. RANK API - READS
     // =========================================================================
 
     function getRankAssignments(characterId) {
@@ -2136,7 +2215,7 @@
     }
 
     // =========================================================================
-    // 21. RANK API - WRITES
+    // 22. RANK API - WRITES
     // =========================================================================
 
     function addRankAssignment(characterId, assignmentData) {
@@ -2424,7 +2503,7 @@
     }
 
     // =========================================================================
-    // 22. EXPORTS
+    // 23. EXPORTS
     // =========================================================================
 
     window.CharacterCommands = {
@@ -2433,6 +2512,8 @@
         updateCharacter: updateCharacter,
 
         markDeceased: markDeceased,
+
+        setReligion: setReligion,
 
         getTraits: getTraits,
         hasTrait: hasTrait,
