@@ -1,5 +1,10 @@
 /**
+ * =============================================================================
  * STILL WATERS - EDUCATION QUERIES
+ * =============================================================================
+ *
+ * LOCATION: js/systems/education/education-queries.js
+ *
  * All semantic reads for education. Returns frozen projections, never live
  * records. Reads through the public EducationState surface only — never the
  * internal _getInstitutionCanonical / _getAllInstitutionsCanonical accessors,
@@ -15,6 +20,51 @@
  *   threshold predicate is the only place the boundary is interpreted.
  *   character.isLiterate (read via CharacterCommands.isLiterate) is a cache
  *   for fast reads, kept in sync by EducationCommands.advanceLearning.
+ *
+ * LOCATION RESOLUTION
+ *
+ *   _getCurrentLocation and _getLocationPopulationCount are provided by
+ *   world.js, not accessors.js. Prior revisions looked them up on
+ *   window.getCurrentLocation and window.getLocationPopulationCount
+ *   respectively; neither global exists, so every demographic query threw
+ *   "requires getCurrentLocation" the first time it ran.
+ *
+ *   world.js exports:
+ *     getCurrentPlace(character)      → place record | null
+ *     getCurrentLocationId(character) → string | null
+ *
+ *   _getCurrentLocation resolves through getCurrentPlace and returns the
+ *   place id (the shape the rest of this module compares against
+ *   character.locationId values). Callers that need the full place record
+ *   should use world.getCurrentPlace directly.
+ *
+ *   world.js has no getLocationPopulationCount. This module requires one
+ *   (getEducationHealthScore, recommendNewSchoolLocations,
+ *   getEducationDemandBySettlement). The wrapper below is a hard dependency
+ *   on window.getLocationPopulationCount and fails loudly if it is absent.
+ *   The function must be added to world.js (or a dedicated population
+ *   module) before the health/recommendation/density queries can be called.
+ *   Returning a fabricated zero would hide the missing primitive.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear now calls window.getCurrentYear directly. The
+ *       deprecated getCurrentYearSafe alias is no longer referenced.
+ *       education-doc.txt §10 claimed this migration was complete; it was
+ *       not. Fixed.
+ *     - _getCurrentLocation now resolves through world.js's
+ *       getCurrentPlace (returns place.id). Prior revisions required
+ *       window.getCurrentLocation, which does not exist in accessors.js
+ *       or anywhere else in the tree.
+ *     - _getLocationPopulationCount now throws when the provider is
+ *       missing instead of relying on a non-existent accessor. world.js
+ *       does not currently export getLocationPopulationCount; the caller
+ *       must add it before the health/recommendation/density queries can
+ *       run. This is a deliberate fail-loud choice — see LOCATION
+ *       RESOLUTION above.
+ *     - No other behavioural change to any query.
+ * =============================================================================
  */
 
 (function() {
@@ -69,25 +119,54 @@
         return window.getChildPlaces(id, recursive);
     }
 
+    /**
+     * Resolves the current place id for a character via world.js.
+     * Returns null when the character has no resolvable location.
+     *
+     * See LOCATION RESOLUTION in the header. accessors.js does NOT export
+     * getCurrentLocation; world.js's getCurrentPlace is the canonical
+     * resolver.
+     */
+    function _getCurrentLocation(character) {
+        if (typeof window.getCurrentPlace !== 'function') {
+            throw new Error(
+                'education-queries.js requires world.js (getCurrentPlace) ' +
+                'to resolve current locations.'
+            );
+        }
+        var place = window.getCurrentPlace(character);
+        return place ? place.id : null;
+    }
+
+    /**
+     * Population for a location id.
+     *
+     * world.js does NOT currently export this. The hard dependency here
+     * is deliberate: getEducationHealthScore, recommendNewSchoolLocations,
+     * and getEducationDemandBySettlement all need a real population
+     * figure, and returning 0 would make every settlement look "empty"
+     * instead of surfacing the missing primitive.
+     */
     function _getLocationPopulationCount(id) {
         if (typeof window.getLocationPopulationCount !== 'function') {
-            throw new Error('education-queries.js requires getLocationPopulationCount');
+            throw new Error(
+                'education-queries.js requires getLocationPopulationCount. ' +
+                'world.js does not currently export this function; add it ' +
+                '(or a dedicated population module) before calling the ' +
+                'health, recommendation, or density queries.'
+            );
         }
         return window.getLocationPopulationCount(id);
     }
 
-    function _getCurrentLocation(character) {
-        if (typeof window.getCurrentLocation !== 'function') {
-            throw new Error('education-queries.js requires getCurrentLocation');
-        }
-        return window.getCurrentLocation(character);
-    }
-
+    /**
+     * Canonical current year. time.js is required.
+     */
     function _getCurrentYear() {
-        if (typeof window.getCurrentYearSafe !== 'function') {
-            throw new Error('education-queries.js requires getCurrentYearSafe');
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error('education-queries.js requires getCurrentYear');
         }
-        return window.getCurrentYearSafe();
+        return window.getCurrentYear();
     }
 
     function _calculateAge(birthYear, isDeceased, deathYear) {
@@ -914,6 +993,11 @@
     // =====================================================================
     // Demographic / learning queries
     // =====================================================================
+    //
+    // _getSchoolAgeResidents uses _getCurrentLocation (world.js-backed) to
+    // resolve each character's current place id. It compares the resolved
+    // id against the caller's locationId. See LOCATION RESOLUTION in the
+    // header.
 
     function _getSchoolAgeResidents(locationId, minAge, maxAge) {
         var place = _getPlaceById(locationId);
