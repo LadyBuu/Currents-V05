@@ -39,30 +39,64 @@
  *   Uses window.getCurrentYear from js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used and is NOT verified.
  *
- * LOCATION-RESOLUTION DEPENDENCIES:
- *   The religion domain resolves character locations through
- *   LocationQueries.getCurrentLocationId (semantic) with a fallback to
- *   CharacterQueries.getCurrentLocationId (raw field). See
- *   religion-queries.js's LOCATION-RESOLUTION CONTRACT.
+ * VERIFICATION TIERS:
+ *   The bootstrap distinguishes three tiers of dependency. The distinction
+ *   is deliberate and is what the individual verification passes encode.
  *
- *   Those two are REQUIRED AT CALL TIME, not at load time. The bootstrap
- *   does NOT verify them, because:
+ *     1. REQUIRED MODULES (hard): missing → throw at load.
+ *          ReligionConstants, ReligionFormat, ReligionValidation,
+ *          ReligionState, ReligionQueries, ReligionRules,
+ *          ReligionCommands, ReligionLaws, ReligionInheritance,
+ *          ReligionViewModels, ReligionRender, ReligionUIState.
+ *          See _REQUIRED_MODULES in section 1.
  *
- *     - Loading religion-queries.js in isolation (a bare harness) must
- *       not fail on location modules it may never call.
+ *     2. REQUIRED GLOBALS (hard): missing → throw at load.
+ *          generateId, markDataDirty, saveMasterData, getCurrentYear,
+ *          getCharacterById, getCharacters, getPlaceById.
+ *          See _REQUIRED_GLOBALS in section 2.
  *
- *     - Under the documented load order (character → location →
- *       religion), both are always present at call time, so a runtime
- *       failure means the caller's load order is broken. The call-time
- *       guards in religion-queries.js throw a clear error in that case.
+ *     3. OPTIONAL MODULES (warn-only): missing → warn, skip.
+ *          ReligionModals (the modals bundle is heavier than the domain
+ *          bundle and not every page needs it).
+ *          See _OPTIONAL_MODULES in section 1.
  *
- *   Prior revisions of the bootstrap verified the phantom
- *   `getCharactersByLocation` global (which no module exports), which
- *   meant the bootstrap failed at load on any page that loaded the
- *   religion domain. That check has been removed. If a future
- *   religion module reintroduces a hard load-time dependency on a
- *   location-query surface, add the check here WITH a comment naming
- *   the calling module.
+ *   The individual religion modules also enforce their own load-time
+ *   dependency guards. A page that loads the bootstrap against a
+ *   partial religion bundle will fail at the individual module's load
+ *   guard BEFORE the bootstrap runs. That is the intended failure mode:
+ *   the missing module names itself, rather than the bootstrap reporting
+ *   a downstream consequence.
+ *
+ * CROSS-DOMAIN VERIFICATION (warn-only):
+ *   Religion reads from the character and location domains at runtime.
+ *   The character globals required in section 2 (getCharacterById,
+ *   getCharacters) go through accessors.js. The character command
+ *   surface (CharacterCommands) is loaded by religion-commands.js at
+ *   its own load time.
+ *
+ *   The namespace-based query modules below (CharacterQueries,
+ *   PlaceQueries) are OPTIONAL from the bootstrap's point of view:
+ *
+ *     - religion-commands.js uses accessors.getCharacterById and
+ *       accessors.getPlaceById (the globals verified in section 2),
+ *       not CharacterQueries.getCharacterById / PlaceQueries.getPlaceById.
+ *       A page that ships religion + accessors but not the namespace
+ *       query modules can still run the religion commands.
+ *
+ *     - religion-queries.js and modals-religion.js DO require
+ *       CharacterQueries (they call getAllCharacters, getCharacterById
+ *       for bulk enumeration, etc.). Those modules enforce their own
+ *       load-time guards. If a page loads them without CharacterQueries,
+ *       the guard fires at that module's load, with a clear message
+ *       naming CharacterQueries.
+ *
+ *   Prior revisions of religion-docs.txt §3.13 described
+ *   CharacterQueries and PlaceQueries as "required". That was
+ *   inaccurate: the bootstrap does not require them, and cannot,
+ *   without breaking the documented reduced-harness use case. The doc
+ *   has been corrected to describe them as warn-only (missing →
+ *   warning, not throw), matching what the code does. See
+ *   religion-docs.txt §3.13 for the updated description.
  *
  * LOAD ORDER
  * ----------
@@ -95,27 +129,26 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (A2):
- *     - Removed the phantom `getCharactersByLocation` from
- *       _REQUIRED_GLOBALS. No module exports that global; every page
- *       that loaded the religion domain failed at bootstrap. The
- *       location resolution now goes through
- *       LocationQueries.getCurrentLocationId (see A1 in
- *       religion-queries.js) with a CharacterQueries fallback, both
- *       called at runtime and guarded at call time.
- *     - Removed `getCurrentLocationId` and `getCharactersByLocation`
- *       from _REQUIRED_GLOBALS. The former is genuinely overloaded
- *       (character-queries.js exports an id-taking version,
- *       world.js exports a character-taking version) and the winner
- *       depends on load order; religion code that needs a location
- *       goes through LocationQueries.getCurrentLocationId, not the
- *       window-global alias. The latter does not exist anywhere.
- *     - Header LOCATION-RESOLUTION DEPENDENCIES section added,
- *       documenting why the bootstrap does not verify location
- *       modules at load time.
- *     - No other verification surface changed. Every other global,
- *       module, and cross-domain method the bootstrap requires is
- *       verified exactly as before.
+ *   Current revision (C4):
+ *     - Header VERIFICATION TIERS section added, documenting the
+ *       three-tier policy (required modules, required globals, optional
+ *       modules) that the individual verification passes enforce.
+ *     - Header CROSS-DOMAIN VERIFICATION section added, documenting
+ *       why CharacterQueries and PlaceQueries are warn-only (commands
+ *       use accessors; queries/modals have their own load-time
+ *       guards) and correcting the prior religion-docs.txt §3.13
+ *       claim that they were "required".
+ *     - No behavioural change. The verification code is byte-identical
+ *       to A2. The docstring for _verifyCrossDomain already explained
+ *       the reasoning; the header now surfaces it prominently so
+ *       future maintainers editing the doc or the code have a single
+ *       canonical statement to reference.
+ *   Previous revision (A2):
+ *     - Removed phantom getCharactersByLocation from _REQUIRED_GLOBALS.
+ *     - Removed getCurrentLocationId from _REQUIRED_GLOBALS (overloaded
+ *       alias, no religion caller uses it; resolution goes through
+ *       LocationQueries.getCurrentLocationId with a CharacterQueries
+ *       fallback).
  *   Previous revision (Phase 7):
  *     - Extracted from the ad-hoc initialization in
  *       religion-state.js and the informal script-tag-order assumption
@@ -130,8 +163,10 @@
     // 1. MODULE VERIFICATION
     // =========================================================================
     //
-    // Every module the religion subsystem exports. Missing module means a
-    // script tag is absent or misordered.
+    // See VERIFICATION TIERS in the module header. Every module listed in
+    // _REQUIRED_MODULES must be present at load time; missing one throws.
+    // Every module listed in _OPTIONAL_MODULES is checked and warned
+    // about but does not throw — the domain functions without it.
     //
 
     var _REQUIRED_MODULES = [
@@ -205,9 +240,8 @@
     // =========================================================================
     //
     // Globals the religion domain reads at runtime. Only globals that
-    // religion code actually calls belong here. See LOCATION-RESOLUTION
-    // DEPENDENCIES in the header for why location-related globals are
-    // NOT in this list.
+    // religion code actually calls belong here. See VERIFICATION TIERS
+    // in the header for the policy.
     //
     // `getCurrentLocationId` and `getCharactersByLocation` are
     // deliberately omitted:
@@ -259,29 +293,25 @@
     // 3. CROSS-DOMAIN VERIFICATION
     // =========================================================================
     //
-    // Religion reads from the character and location domains at runtime.
-    // The character globals above cover the character reads that go
-    // through accessors.js. The namespace-based queries below are checked
-    // here for completeness — but as warnings, not errors.
+    // See CROSS-DOMAIN VERIFICATION in the header. Summary:
     //
-    // Why warn-only:
+    //   CharacterQueries and PlaceQueries are warn-only here because:
     //
-    //   - ReligionCommands uses accessors.getCharacterById (verified in
-    //     section 2), not CharacterQueries.getCharacterById. A page
-    //     that ships only accessors.js can still run the religion
-    //     commands.
+    //     - ReligionCommands uses accessors.getCharacterById /
+    //       accessors.getPlaceById (verified in section 2), not the
+    //       namespace query methods. A reduced harness that ships only
+    //       accessors can still run the commands.
     //
-    //   - ReligionQueries uses LocationQueries.getCurrentLocationId
-    //     (semantic resolution) with a CharacterQueries fallback. Both
-    //     are call-time guards inside religion-queries.js. Verifying
-    //     them at bootstrap would turn a degradation (raw-field
-    //     resolution) into a boot failure on any page that shipped
-    //     religion without the location domain.
+    //     - ReligionQueries and modals-religion.js DO require
+    //       CharacterQueries; they enforce it at their own load. If a
+    //       page loads them without it, the module-specific guard
+    //       throws with a clear message. The bootstrap does not
+    //       duplicate that check.
     //
-    // The documented load order ships all of these. The warn-only
-    // posture exists so a bare harness can load the religion domain
-    // for testing and get clear call-time errors, not load-time ones.
-    //
+    // The documented production load order ships all of these. The
+    // warn-only posture exists so a bare harness can load the religion
+    // domain for testing and get clear module-specific errors, not a
+    // boot-time throw from the domain bootstrap.
 
     var _CROSS_DOMAIN = [
         // namespace           methods used by religion
