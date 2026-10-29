@@ -27,13 +27,48 @@
  *   { success: false, reason: string, code?: string }
  *
  * COMMIT TAIL (_commit):
- *   1. CrimeState.hydrateFromMasterData()   — rebuild indexes over mutations
- *   2. markDataDirty()                      — flag for the next save
- *   3. CrimeState.publish()                 — in-process subscribers
- *   4. dispatchEvent(CustomEvent)           — cross-domain consumers
+ *   1. CrimeState.hydrateFromMasterData(true)   — rebuild indexes over mutations
+ *   2. markDataDirty()                          — flag for the next save
+ *   3. CrimeState.publish()                     — in-process subscribers
+ *   4. dispatchEvent(CustomEvent)               — cross-domain consumers
  *
  *   No saveMasterData inside a command. Persistence is CrimeCommands.persist(),
  *   called by the UI once per modal action.
+ *
+ * DEATH SIGNATURE CONTRACT:
+ *   This module is a KILL CHARACTER CALLER. It calls
+ *   window.killCharacter — the global exported by
+ *   js/character/character-lifecycle.js. That function's signature is:
+ *
+ *     killCharacter(characterId, deathData)
+ *
+ *   where deathData is the markDeceased payload documented in
+ *   character-commands.js (deathYear, deathCause, deathCauseDetail,
+ *   deathNotes, isMurder, killerId, murderMotive, murderMethod,
+ *   isExecution, executionReason, executionMethod, executionLocation).
+ *
+ *   The pre-refactor signature killCharacter(character, year, cause,
+ *   options) is NOT supported. character-system.js's DELETED ALIASES
+ *   section explicitly states that callers passing the old signature
+ *   must migrate; the shim does not silently transform it. Prior
+ *   revisions of this file called killCharacter with the old signature,
+ *   which passed a character object in the characterId slot — the call
+ *   failed with 'characterId is required.' on every invocation, the
+ *   crime record was rolled back, and every triggerMurder /
+ *   triggerExecution returned { success: false, reason: 'Failed to
+ *   kill victim: characterId is required.' }. Fixed at all call sites.
+ *
+ * PERSISTENCE CONTRACT:
+ *   persist() inspects the boolean return value of
+ *   window.saveMasterData(). saveMasterData does NOT throw on write
+ *   failure — it returns false and records the failure for
+ *   getLastSaveError(). Prior revisions of persist() called
+ *   saveMasterData() inside a try/catch and returned success
+ *   unconditionally, which reported { success: true } on every failed
+ *   save (quota exceeded, localStorage disabled, JSON serialization
+ *   failure). This is Pattern C in storage.js's DOMAIN PERSIST
+ *   CONTRACT. The current persist() uses Pattern A: it inspects the
+ *   return value and surfaces the recorded error via getLastSaveError().
  *
  * OWNERSHIP:
  *   - triggerMurder, triggerExecution, escalateVendetta, createBloodFeud
@@ -66,6 +101,51 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (P1-8):
+ *     - triggerMurder now calls window.killCharacter(victim.id,
+ *       deathData) — the correct signature. Prior revisions called
+ *       window.killCharacter(victim, year, 'Murdered', {...}), which
+ *       passed a character object in the characterId slot; every
+ *       invocation returned { success: false, reason: 'characterId is
+ *       required.' } and triggerMurder rolled back the crime record
+ *       and returned _fail. The death data now passes deathCause:
+ *       'murder', isMurder: true, killerId, and the (optional)
+ *       murderMotive / murderMethod fields that markDeceased writes
+ *       to the character record. mortality-rules.js::validateDeath
+ *       requires killerId when isMurder === true; crime supplies it
+ *       from the resolved killer.
+ *     - triggerExecution now calls window.killCharacter(condemned.id,
+ *       deathData) — the correct signature. Same class of failure as
+ *       triggerMurder before the fix. Death data now passes
+ *       deathCause: 'execution', isExecution: true, executionReason,
+ *       executionMethod, and (optional) executionLocation.
+ *       mortality-rules.js::validateDeath requires executionReason
+ *       when isExecution === true; crime supplies it from the resolved
+ *       reason.
+ *     - persist() now inspects the boolean return value of
+ *       window.saveMasterData(). Prior revisions called
+ *       saveMasterData() inside a try/catch and returned
+ *       { success: true } unconditionally, which reported success on
+ *       every failed save. This is Pattern C in storage.js's DOMAIN
+ *       PERSIST CONTRACT. The current persist() uses Pattern A: it
+ *       returns { success: true } only when saveMasterData returned
+ *       true, and reads getLastSaveError() to surface the failure
+ *       reason otherwise. Matches culture-commands.js::persist and
+ *       religion-commands.js::persist.
+ *     - Header DEATH SIGNATURE CONTRACT and PERSISTENCE CONTRACT
+ *       sections added, documenting the two classes of bug fixed
+ *       and pointing future maintainers at the correct contracts.
+ *     - Header REFACTOR HISTORY entry added.
+ *     - No behavioural change to _executeConsequence,
+ *       escalateVendetta, createBloodFeud, the commit tail, the
+ *       household side-effect helpers, the settlement side-effect
+ *       helper, the violation summarisers, or the random helpers.
+ *   Previous revision:
+ *     - escalateVendetta added as a first-class command.
+ *     - createBloodFeud, escalateVendetta, and the rest of the
+ *       orchestration wired to the current State surface.
  * =============================================================================
  */
 
@@ -113,9 +193,6 @@
     }
 
     // HouseholdCommands.apply* are hard requirements under the refactor.
-    // If these are missing, the load fails. The bootstrap verifies the
-    // same surface, but this local check ensures the module is unusable
-    // if loaded without them, regardless of whether bootstrap ran.
     if (typeof window.HouseholdCommands === 'undefined') {
         throw new Error('crime-commands.js requires HouseholdCommands');
     }
@@ -180,9 +257,17 @@
     // in-process event, and dispatches a CustomEvent for cross-domain
     // consumers.
     //
-    // Note: this is the transaction boundary. It does NOT save. Callers
-    // that need persistence call CrimeCommands.persist() once after the
-    // command returns.
+    // CrimeState._markDirty now syncs the in-memory indexes back to
+    // masterData.data.crimes / masterData.data.vendettas before flagging
+    // dirty (see crime-state.js). So the hydrateFromMasterData(true) call
+    // below reads the just-written canonical arrays and rebuilds indexes
+    // identically. Prior revisions of crime-state.js did not perform that
+    // sync, and hydrateFromMasterData(true) silently discarded the
+    // mutation by rebuilding from the pre-mutation canonical arrays.
+    //
+    // This is the transaction boundary. It does NOT save. Callers that
+    // need persistence call CrimeCommands.persist() once after the command
+    // returns.
 
     function _commit(eventName, payload) {
         State.hydrateFromMasterData(true);
@@ -206,14 +291,41 @@
     // =========================================================================
     // 3. PERSISTENCE BOUNDARY
     // =========================================================================
+    //
+    // See PERSISTENCE CONTRACT in the header. Pattern A from storage.js's
+    // DOMAIN PERSIST CONTRACT: inspect the boolean return value; on
+    // failure, read getLastSaveError() for the reason.
+    //
+    // The historical error to avoid:
+    //
+    //   try {
+    //       window.saveMasterData();   // return value discarded
+    //       return _ok(null);          // always "success"
+    //   } catch (e) { ... }            // unreachable: saveMasterData
+    //                                  // does not throw on write failure
+    //
+    // That pattern reports success on every failed save. saveMasterData
+    // returns true only when the write succeeded, false otherwise.
 
     function persist() {
         if (typeof window.saveMasterData !== 'function') {
             return _fail('saveMasterData unavailable', C.CODES.PERSIST_FAILED);
         }
+
         try {
-            window.saveMasterData();
-            return _ok(null);
+            var ok = window.saveMasterData();
+            if (ok === true) {
+                return _ok(null);
+            }
+
+            var err = (typeof window.getLastSaveError === 'function')
+                ? window.getLastSaveError()
+                : null;
+
+            return _fail(
+                (err && err.message) ? err.message : 'saveMasterData returned false',
+                C.CODES.PERSIST_FAILED
+            );
         } catch (e) {
             return _fail(e.message || String(e), C.CODES.PERSIST_FAILED);
         }
@@ -254,10 +366,6 @@
     // =========================================================================
     // 6. HOUSEHOLD SIDE EFFECTS
     // =========================================================================
-    //
-    // Every household effect goes through HouseholdCommands. No fallback to
-    // HouseholdState. If HouseholdCommands is missing, the load failed
-    // earlier and this code never runs.
 
     function _applyPerpetratorHouseholdEffects(householdId, params) {
         if (!householdId) return;
@@ -294,12 +402,6 @@
     // =========================================================================
     // 8. CONSEQUENCE EXECUTION
     // =========================================================================
-    //
-    // Executes a single legal consequence produced by
-    // CrimeLawIntegration.evaluateAction().
-    //
-    // Unknown consequence types are returned as { applied: false } and
-    // surfaced to the caller. They are not guessed at.
 
     function _executeConsequence(consequence, ctx) {
         if (!consequence || !consequence.type) {
@@ -357,6 +459,12 @@
 
     /**
      * Triggers a murder with full law evaluation.
+     *
+     * DEATH SIGNATURE:
+     *   Calls window.killCharacter(victim.id, deathData) — the two-argument
+     *   form documented in DEATH SIGNATURE CONTRACT. Prior revisions
+     *   called the pre-refactor four-argument form, which every invocation
+     *   failed with 'characterId is required.'.
      *
      * @param {string} victimId
      * @param {string} killerId
@@ -444,11 +552,30 @@
             }
 
             // ---- Kill victim -------------------------------------------
-            var killResult = window.killCharacter(victim, year, 'Murdered', {
-                killer: killer,
-                murderReason: reason,
-                killerGotAway: killerGotAway,
-                notes: options.notes || null
+            // CORRECT SIGNATURE (see DEATH SIGNATURE CONTRACT):
+            //   killCharacter(characterId, deathData)
+            //
+            // The old signature was killCharacter(victim, year, 'Murdered', {...}),
+            // which passed a character object in the characterId slot and a
+            // year number in the deathData slot. Every invocation returned
+            // { success: false, reason: 'characterId is required.' }, causing
+            // the crime record to be rolled back and the murder to fail.
+            //
+            // deathData uses the markDeceased contract documented in
+            // character-commands.js. isMurder requires killerId (validated by
+            // mortality-rules.js::validateDeath). murderMotive and murderMethod
+            // are optional; the crime modal does not currently collect a
+            // method, so 'unknown' is passed as a placeholder. Callers that
+            // have a specific method should pass options.murderMethod.
+            var killResult = window.killCharacter(victim.id, {
+                deathYear: year,
+                deathCause: 'murder',
+                deathCauseDetail: reason,
+                deathNotes: options.notes || '',
+                isMurder: true,
+                killerId: killer.id,
+                murderMotive: options.murderMotive || reason,
+                murderMethod: options.murderMethod || 'unknown'
             });
 
             if (!killResult || killResult.success === false) {
@@ -579,6 +706,12 @@
      * Triggers an execution with law evaluation. Records the crime unsolved,
      * solves it immediately (the outcome is legally determined), then kills
      * the condemned.
+     *
+     * DEATH SIGNATURE:
+     *   Calls window.killCharacter(condemned.id, deathData) — the two-argument
+     *   form documented in DEATH SIGNATURE CONTRACT. Prior revisions used the
+     *   old four-argument form; every invocation failed with 'characterId is
+     *   required.' and the crime record was rolled back.
      */
     function triggerExecution(condemnedId, options) {
         options = _normaliseOptions(options);
@@ -663,11 +796,27 @@
             crime = solveResult.data;
 
             // ---- Kill condemned ----------------------------------------
-            var killResult = window.killCharacter(condemned, year, 'Executed: ' + reason, {
+            // CORRECT SIGNATURE (see DEATH SIGNATURE CONTRACT):
+            //   killCharacter(characterId, deathData)
+            //
+            // deathData uses the markDeceased contract documented in
+            // character-commands.js. isExecution requires executionReason
+            // (validated by mortality-rules.js::validateDeath). The crime
+            // reason (from options.reason) is passed as executionReason.
+            // executionMethod and executionLocation are optional; both are
+            // populated from the resolved method and options.
+            //
+            // executionerId is not a markDeceased field — it is recorded
+            // only in the crime record's metadata (already captured above).
+            var killResult = window.killCharacter(condemned.id, {
+                deathYear: year,
+                deathCause: 'execution',
+                deathCauseDetail: method,
+                deathNotes: options.notes || '',
+                isExecution: true,
                 executionReason: reason,
                 executionMethod: method,
-                executionerId: executionerId,
-                notes: options.notes || null
+                executionLocation: options.executionLocation || null
             });
 
             if (!killResult || killResult.success === false) {
@@ -752,22 +901,7 @@
     }
 
     /**
-     * Explicitly escalates a vendetta. Escalation normally happens
-     * automatically inside recordVendettaDeath when the death count reaches
-     * C.VENDETTA_ESCALATION_THRESHOLD. This command is the explicit override:
-     *
-     *   - Without options.force, it succeeds only if the vendetta has already
-     *     reached the threshold. This is a retry path for automatic escalation
-     *     that somehow didn't fire.
-     *   - With options.force === true and options.reason, it escalates
-     *     regardless of the death count. Requires a reason for audit trail.
-     *
-     * Returns { success: true, data: { vendetta, escalated } } where
-     * `escalated` is true if this call transitioned the vendetta from ACTIVE
-     * to ESCALATED, false if it was already ESCALATED.
-     *
-     * @param {string} vendettaId
-     * @param {Object} [options]  { force, reason, year }
+     * Explicitly escalates a vendetta. See header for details.
      */
     function escalateVendetta(vendettaId, options) {
         options = _normaliseOptions(options);
@@ -949,7 +1083,7 @@
     }
 
     // =========================================================================
-    // 10. VIOLATION SUMMARISATION (shape contract for crime records)
+    // 10. VIOLATION SUMMARISATION
     // =========================================================================
 
     function _summariseViolationItem(violation) {
