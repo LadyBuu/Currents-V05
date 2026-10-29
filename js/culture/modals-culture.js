@@ -40,10 +40,30 @@
  * That contract is documented here because it is the sole determinant of
  * whether the modal stays open after a command failure.
  *
- * If openModal's contract ever changes (e.g. it always closes, or it
- * requires an explicit close()), every onConfirm callback in this file
- * needs to be updated. The callbacks return boolean; they do not call
- * close themselves.
+ * MODAL INFRASTRUCTURE KEYS
+ * -------------------------
+ * js/core/modals-core.js::openModal accepts:
+ *
+ *   titleHtml        trusted HTML for the modal title
+ *   contentHtml      trusted HTML for the modal body
+ *   confirmText      string
+ *   cancelText       string ('' hides the cancel button)
+ *   onMount          fn(root) — called after DOM insertion
+ *   onConfirm        fn(root) — called on confirm; return false to keep open
+ *   closeOnOverlay   boolean (default true)
+ *   showCloseButton  boolean (default true)
+ *   size             'small' | 'medium' | 'large'
+ *
+ * The keys `title` and `content` are SILENTLY IGNORED by openModal. A
+ * modal that passes `title: 'X'` and `content: '<p>...</p>'` renders
+ * with the default title ('Modal') and an empty body. Every call site
+ * in this file uses `titleHtml:` and `contentHtml:`. Do not reintroduce
+ * the old keys.
+ *
+ * The return value of openModal is `{ element, close }`. Event
+ * delegation must attach to `result.element`, not `result.content`.
+ * This file never inspects the return value; it relies on onMount /
+ * onConfirm callbacks and the modal's own close semantics.
  *
  * The modal layer does NOT:
  *   - validate domain rules              (CultureValidation)
@@ -55,6 +75,39 @@
  *   - mutate anything                    (CultureCommands)
  *   - detect recursion                   (nothing here recurses)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision (K3):
+ *     - Every openModal call site now passes `titleHtml:` and
+ *       `contentHtml:` instead of `title:` and `content:`.
+ *     - js/core/modals-core.js::openModal accepts only titleHtml and
+ *       contentHtml; the old keys are silently ignored. Prior revisions
+ *       of this file passed title and content, which meant every modal
+ *       rendered with the default title 'Modal' and an empty body. The
+ *       confirm handlers still fired (the confirm button is always
+ *       present when onConfirm is provided), so attempting to create or
+ *       edit a culture surfaced a toast like 'Name is required'
+ *       regardless of what the user typed — because the form fields did
+ *       not exist in the DOM. Three call sites affected:
+ *         - openCreateCultureModal
+ *         - openEditCultureModal
+ *         - openCultureDetailsModal
+ *       confirmDeleteCulture uses window.confirmDialog, which wraps
+ *       openModal internally and is not affected by this class of bug.
+ *     - Header MODAL INFRASTRUCTURE KEYS section added, documenting
+ *       the accepted keys and explicitly naming `title` and `content`
+ *       as silent no-ops.
+ *     - No behavioural change to _handleCommandResult, _formGroup,
+ *       _textInput, _textarea, _iconSelect, _multiSelect, _readText,
+ *       _readRawText, _readMultiSelect, _placeOptions,
+ *       _religionOptions, openCreateCultureModal's onConfirm logic,
+ *       openEditCultureModal's onConfirm logic,
+ *       confirmDeleteCulture's confirmDialog wiring, or
+ *       openCultureDetailsModal's DOM construction.
+ *   Previous revision:
+ *     - Modal split out of culture-ui-list.js. One file per concern.
+ *   Earlier revisions:
+ *     - Initial modal implementation.
  * =============================================================================
  */
 
@@ -256,11 +309,6 @@
     // =========================================================================
     // 3. LOCATION / RELIGION OPTIONS
     // =========================================================================
-    //
-    // These are options for the association multi-selects. They are NOT
-    // resolution of culture.locations — that already happened in the view
-    // model. Here we just need the full pool of things the user can pick.
-    //
 
     function _placeOptions() {
         var placeQueries = _requirePlaceQueries();
@@ -301,12 +349,7 @@
      * On failure: toast, return false.
      *
      * The return value is the modal's close signal: true closes the modal,
-     * false keeps it open. This depends on openModal's close-on-truthy
-     * contract (see header).
-     *
-     * Persistence: the modal is the save owner. persist() is called once
-     * per successful command. A failed persist is a toast, not a thrown
-     * error — the canonical data is already updated.
+     * false keeps it open.
      */
     function _handleCommandResult(result, successMessage, failurePrefix, onSuccess) {
         var toast = _requireToast();
@@ -361,8 +404,8 @@
         ].join('');
 
         modals.open({
-            title: 'Create Culture',
-            content: content,
+            titleHtml: 'Create Culture',
+            contentHtml: content,
             confirmText: 'Create',
             cancelText: 'Cancel',
             onConfirm: function() {
@@ -410,7 +453,6 @@
             return;
         }
 
-        // Association pools for the multi-selects.
         var placeOptions = _placeOptions();
         var religionOptions = _religionOptions();
 
@@ -454,8 +496,8 @@
         ].join('');
 
         modals.open({
-            title: 'Edit Culture: ' + (culture.displayName || culture.name),
-            content: content,
+            titleHtml: 'Edit Culture: ' + (culture.displayName || culture.name),
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: function() {
@@ -512,8 +554,7 @@
         if (typeof window.confirmDialog !== 'function') {
             // No confirmation infrastructure. Toast and return rather than
             // throw: a UI entry point throwing in a click handler shows the
-            // user nothing. Load-time verification can catch this earlier
-            // if the caller chooses.
+            // user nothing.
             toast('Confirmation dialog unavailable', 'error');
             return;
         }
@@ -645,8 +686,8 @@
         parts.push('</div>');
 
         modals.open({
-            title: 'Culture: ' + vm.label,
-            content: parts.join(''),
+            titleHtml: 'Culture: ' + vm.label,
+            contentHtml: parts.join(''),
             confirmText: 'Close',
             cancelText: '',
             onConfirm: function() { /* nothing */ }
@@ -676,11 +717,10 @@
     //     modal. The lazy _require*() checks remain in the edit path.
     //
     //   - confirmDialog is checked at the call site in confirmDeleteCulture
-    //     and degrades to a toast. Hard-requiring it at load would break
-    //     pages that only use create/edit/details.
+    //     and degrades to a toast.
     //
     //   - getIconOptions already has a documented fallback to a free-text
-    //     field. Not a hard dependency.
+    //     field.
     //
 
     (function _verifyLoadTimeDependencies() {
@@ -735,7 +775,7 @@
         if (!hasToast) {
             throw new Error(
                 'culture-modals.js loaded but no showToast/_showToast is available. ' +
-                'Check script tag order (modals-core.js must load first).'
+                'Check script tag order (ui.js must load first).'
             );
         }
     })();
