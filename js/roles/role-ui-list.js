@@ -3,7 +3,7 @@
  * STILL WATERS - ROLE UI LIST (role-ui-list.js)
  * =============================================================================
  *
- * LOCATION: js/roles/role-ui-list.js
+ * LOCATION: js/systems/roles/role-ui-list.js
  *
  * Renders:
  *   - the role detail panel (view + edit)
@@ -15,8 +15,9 @@
  *   - Reads via RoleQueries. Writes via RoleCommands.
  *   - Never mutates role or character state directly.
  *   - Never scans every character to answer a role question. Uses
- *     RoleQueries statistics. (Statistics is itself O(characters); it is
- *     called at most ONCE per role per render, never twice.)
+ *     RoleQueries statistics. Statistics is itself O(characters); it is
+ *     called AT MOST ONCE per render pass (via getRoleStatisticsBatch),
+ *     never once per role row.
  *   - Never hardcodes skill thresholds. Uses SkillUtils.
  *   - Never invents its own skill taxonomy, literacy vocabulary, or salary
  *     defaults. Uses SkillUtils and RoleConstants.
@@ -26,6 +27,46 @@
  *   - No global document.querySelectorAll. All queries are scoped to the
  *     container passed in by the caller.
  *   - Does not sort arrays it does not own.
+ *
+ * STATISTICS BATCHING
+ *
+ *   RoleQueries.getRoleStatistics(roleId) costs O(characters × avg
+ *   professions) per call. Calling it once per role row is
+ *   O(roles × characters × avg professions) — quadratic in the worst
+ *   case. To avoid that, every multi-role render in this file calls
+ *   RoleQueries.getRoleStatisticsBatch([...roleIds]) exactly once, then
+ *   reads the per-role entries from the returned map.
+ *
+ *   renderRoleCard accepts options.stats so a caller rendering N cards
+ *   can share the batch with renderRoleList. Without options.stats,
+ *   renderRoleCard falls back to a single getRoleStatistics call for
+ *   the one role it renders, which is the correct cost for a
+ *   standalone card.
+ *
+ *   renderRoleDetailPanel batches its stats call and its
+ *   getCharactersWithRoleDetails call. The current RoleQueries API does
+ *   not expose a combined query, so the detail panel makes two passes;
+ *   the batch version at least makes the stats pass a single scan
+ *   (instead of the two scans the pre-refactor version made — one for
+ *   stats, one for detail).
+ *
+ * ICON LOOKUP
+ *
+ *   Icons come from window.Icons[name] via _icon (strict: throws on
+ *   unknown name). Callers that pass role.icon use `role.icon ||
+ *   'CIRCLE'` so an absent icon resolves to the CIRCLE fallback before
+ *   _icon is called. _iconSpan does not silently fall back; a typo in
+ *   a role's icon field surfaces as a render-time error rather than an
+ *   empty span.
+ *
+ * MASTER FILTER LABEL
+ *
+ *   renderMasterFilterToggle's default label reads the Master tier
+ *   name from SkillUtils. If SkillUtils is missing (should not happen
+ *   under the documented load order, but the check costs nothing),
+ *   the label falls back to the literal 'Masters'. Prior revisions
+ *   called SU.getTier(...) unguarded and would throw on a SkillUtils
+ *   load-order regression.
  *
  * DEPENDENCIES (must be loaded first):
  *   - formatting.js      (_escapeHtml)
@@ -37,6 +78,32 @@
  *   - role-queries.js    (RoleQueries)
  *   - role-commands.js   (RoleCommands)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - renderRoleList now uses RoleQueries.getRoleStatisticsBatch once
+ *       per render instead of calling getRoleStatistics once per role
+ *       via the removed _createStatsCache. This changes the cost from
+ *       O(roles × characters × avg professions) to O(characters × avg
+ *       professions) per render. See STATISTICS BATCHING in the header.
+ *     - renderRoleDetailPanel uses getRoleStatisticsBatch for its stats
+ *       pass. It still makes a separate getCharactersWithRoleDetails
+ *       call because RoleQueries does not expose a combined query; the
+ *       two scans are unavoidable without an API change.
+ *     - renderRoleCard accepts options.stats (per-role statistics
+ *       object) so callers with a batch result can share it. Without
+ *       options.stats, renderRoleCard still calls getRoleStatistics for
+ *       its single role — that's the correct cost for one card.
+ *     - renderMasterFilterToggle's default label now reads the Master
+ *       tier name via a guarded _masterTierName helper that returns
+ *       'Masters' when SkillUtils is missing, instead of calling
+ *       SU.getTier(...).name unguarded. Prior revisions threw on a
+ *       SkillUtils load-order regression.
+ *     - Header STATISTICS BATCHING, ICON LOOKUP, and MASTER FILTER
+ *       LABEL sections added.
+ *     - No other behavioural change. Every rendered output is identical
+ *       when the underlying data is identical; only the scan count and
+ *       the missing-SkillUtils fallback differ.
  * =============================================================================
  */
 
@@ -119,6 +186,25 @@
         return 'Both genders';
     }
 
+    /**
+     * Master-tier display name. Falls back to the literal 'Masters' when
+     * SkillUtils is unavailable. See MASTER FILTER LABEL in the header.
+     */
+    function _masterTierName() {
+        if (typeof SU !== 'undefined' &&
+            typeof SU.getThresholds === 'function' &&
+            typeof SU.getTier === 'function') {
+            var t = SU.getThresholds();
+            if (t && typeof t.MASTER === 'number') {
+                var tier = SU.getTier(t.MASTER);
+                if (tier && typeof tier.name === 'string' && tier.name.length > 0) {
+                    return tier.name;
+                }
+            }
+        }
+        return 'Masters';
+    }
+
     // =========================================================================
     // 3. SHARED BUILDERS
     // =========================================================================
@@ -183,20 +269,24 @@
     }
 
     // =========================================================================
-    // 4. STATISTICS CACHE (per render)
+    // 4. STATISTICS BATCH HELPER
     // =========================================================================
     //
-    // getRoleStatistics is O(characters). For a list of N roles, we do NOT
-    // want to call it twice per row. This cache holds one lookup per role
-    // id for the duration of a single render pass.
+    // Every multi-role render in this file funnels stats through this
+    // helper. It calls RoleQueries.getRoleStatisticsBatch exactly once
+    // for the full id set, then returns a per-id accessor. Callers that
+    // already have the batch map (e.g. renderRoleCard with options.stats)
+    // do not use this; they pass the map entry directly.
+    //
+    // See STATISTICS BATCHING in the header.
 
-    function _createStatsCache() {
-        var cache = Object.create(null);
+    function _statsBatchFor(roleIds) {
+        var batch = RQ.getRoleStatisticsBatch(roleIds);
         return function (roleId) {
-            if (cache[roleId] === undefined) {
-                cache[roleId] = RQ.getRoleStatistics(roleId);
-            }
-            return cache[roleId];
+            var entry = batch[roleId];
+            return entry !== undefined
+                ? entry
+                : RQ.getRoleStatistics(roleId);
         };
     }
 
@@ -303,7 +393,14 @@
         options = options || {};
         var mastersOnly = options.mastersOnly === true;
 
-        var stats = RQ.getRoleStatistics(roleId);
+        // Single batch call for stats. Detail entries are a separate scan
+        // (RoleQueries does not expose a combined query). See
+        // STATISTICS BATCHING in the header.
+        var statsBatch = RQ.getRoleStatisticsBatch([roleId]);
+        var stats = statsBatch[roleId] !== undefined
+            ? statsBatch[roleId]
+            : RQ.getRoleStatistics(roleId);
+
         var detailEntries = mastersOnly
             ? RQ.getCharactersWithRoleDetails(roleId, { mastersOnly: true })
             : RQ.getCharactersWithRoleDetails(roleId);
@@ -587,18 +684,26 @@
             return (a.name || '').localeCompare(b.name || '');
         });
 
-        // One statistics lookup per role, for the duration of this render.
-        var statsFor = _createStatsCache();
+        // One statistics batch for the whole render. See STATISTICS
+        // BATCHING in the header.
+        var statsFor = null;
+        if (showStats) {
+            var roleIds = [];
+            for (var si = 0; si < roles.length; si++) {
+                if (roles[si] && roles[si].id) roleIds.push(roles[si].id);
+            }
+            statsFor = _statsBatchFor(roleIds);
+        }
 
         var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
         for (var i = 0; i < roles.length; i++) {
             var role = roles[i];
             var isSelected = selectedId === role.id;
-            var stats = statsFor(role.id);
-            var holderCount = stats.totalCharacters;
+            var stats = statsFor ? statsFor(role.id) : null;
+            var holderCount = stats ? stats.totalCharacters : 0;
 
             var statsHtml = '';
-            if (showStats) {
+            if (showStats && stats) {
                 statsHtml =
                     '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:12px;margin-top:4px;">' +
                         '<span>Avg skill: ' + stats.averageSkill + '</span>' +
@@ -635,7 +740,9 @@
                         '</div>' +
                     '</div>' +
                     '<div style="display:flex;align-items:center;gap:12px;">' +
-                        '<span style="font-size:0.6rem;color:var(--accent);">' + holderCount + ' holder(s)</span>' +
+                        (showStats
+                            ? '<span style="font-size:0.6rem;color:var(--accent);">' + holderCount + ' holder(s)</span>'
+                            : '') +
                         actionsHtml +
                     '</div>' +
                 '</div>' +
@@ -692,6 +799,16 @@
     // 9. ROLE CARD
     // =========================================================================
 
+    /**
+     * Renders a single role card.
+     *
+     * options.stats, if supplied, is the per-role statistics object from
+     * RoleQueries.getRoleStatisticsBatch. Callers rendering N cards can
+     * pay the batch cost once and pass each card its entry. Without
+     * options.stats, renderRoleCard falls back to a single
+     * getRoleStatistics call for its one role (correct cost for a
+     * standalone card). See STATISTICS BATCHING in the header.
+     */
     function renderRoleCard(role, options) {
         if (!role) return '';
         options = options || {};
@@ -699,11 +816,13 @@
         var showStats = options.showStats === true;
         var showActions = options.showActions !== false;
 
-        var stats = RQ.getRoleStatistics(role.id);
-        var holderCount = stats.totalCharacters;
+        var stats = options.stats !== undefined
+            ? options.stats
+            : (showStats ? RQ.getRoleStatistics(role.id) : null);
+        var holderCount = stats ? stats.totalCharacters : 0;
 
         var statsHtml = '';
-        if (showStats) {
+        if (showStats && stats) {
             statsHtml =
                 '<div style="font-size:0.55rem;color:var(--dim);display:flex;gap:12px;margin-top:8px;">' +
                     '<span>Avg skill: ' + stats.averageSkill + '</span>' +
@@ -745,7 +864,9 @@
                     statsHtml +
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:12px;flex-shrink:0;">' +
-                    '<span style="font-size:0.6rem;color:var(--accent);">' + holderCount + ' holder(s)</span>' +
+                    (showStats
+                        ? '<span style="font-size:0.6rem;color:var(--accent);">' + holderCount + ' holder(s)</span>'
+                        : '') +
                     actionsHtml +
                 '</div>' +
             '</div>' +
@@ -760,13 +881,17 @@
     // "Expert and above", it should pass labelText: 'Show Experts and Above'
     // and the query should use expertsAndUp. This renderer does not decide
     // semantics; it only displays them.
+    //
+    // The default label reads the Master tier name from SkillUtils via
+    // _masterTierName, which falls back to 'Masters' if SkillUtils is
+    // unavailable. See MASTER FILTER LABEL in the header.
 
     function renderMasterFilterToggle(containerId, mastersOnly, onChange, labelText) {
         var container = document.getElementById(containerId);
         if (!container) return false;
 
         var label = labelText || (
-            'Show ' + SU.getTier(SU.getThresholds().MASTER).name + 's only'
+            'Show ' + _masterTierName() + 's only'
         );
 
         container.innerHTML =
