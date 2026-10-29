@@ -28,9 +28,17 @@
  *   - ids                 (generateId)
  *   - time                (getCurrentYear)
  *
+ * Depends on (checked at call time):
+ *   - LocationQueries     (transitively, via LocationHierarchy.validateHierarchy,
+ *                          which resolves LocationQueries at call time per
+ *                          location-hierarchy.js's documented load order)
+ *   - World               (getCurrentLocationId, semantic resolution for
+ *                          character cleanup — see CHARACTER CLEANUP below)
+ *
  * Note on LocationQueries:
- *   This module does NOT depend on LocationQueries. Commands only needs
- *   primitive reads available directly on LocationState.
+ *   This module does not call LocationQueries directly. LocationHierarchy's
+ *   validateHierarchy (called from updatePlace) resolves LocationQueries at
+ *   call time. See B3 in the refactor history.
  *
  * Note on time helpers:
  *   Uses the canonical window.getCurrentYear from js/core/time.js. The
@@ -70,13 +78,22 @@
  *   Pattern C (the historical broken pattern that silently reported
  *   success on every failed save) must not be reintroduced.
  *
- * HOUSEHOLD RECONCILIATION ON PLACE DELETE:
- *   deletePlace performs THREE cleanups in sequence:
+ * CHARACTER CLEANUP ON PLACE DELETE:
+ *   deletePlace dispatches four cleanups, in order:
  *
- *     1. Character cleanup — nulls character.currentLocationId for every
- *        character whose current location is being removed. Uses
- *        CharacterCommands.updateCharacters (the batch API) so that the
- *        whole sweep is ONE commit to the character subsystem, not N.
+ *     1. Character cleanup — resolves each character's CURRENT location
+ *        (via World.getCurrentLocationId, semantic resolution through
+ *        explicit field / moves / birthplace), and for characters whose
+ *        resolved current location is being removed, clears
+ *        currentLocationId. Additionally, clears any move record whose
+ *        locationId points at a place being removed — otherwise
+ *        World.getCurrentLocationId would return a dangling id after the
+ *        delete, and downstream consumers (religion, culture, population)
+ *        would read stale references.
+ *
+ *        Batched through CharacterCommands.updateCharacters (the character
+ *        subsystem's batch API). One commit for the whole sweep.
+ *        See CHARACTER CLEANUP BATCH SEMANTICS below.
  *
  *     2. Household cleanup — clears household.locationId for every
  *        household whose location points at the removed place. Delegated
@@ -91,17 +108,32 @@
  *        wants residences removed too, that is a separate orchestration
  *        above this command.
  *
- *   All three cleanups are best-effort from the command's point of view.
- *   The place is removed regardless; the cleanup report is returned in the
- *   result envelope so the caller can surface failures. A failed cleanup
- *   means the domain's own data still references a now-deleted place id;
- *   that is a bug in the domain, not a reason to refuse the delete.
+ *   Household cleanup is best-effort. Character cleanup is required
+ *   (CharacterCommands is a load-time dependency). See HOUSEHOLD
+ *   RECONCILIATION in the header for the household side.
  *
- *   HouseholdCommands is OPTIONAL for this module. If it is not loaded,
- *   the household cleanup step is skipped and reported as
- *   householdReconciliation: 'unavailable'. Character cleanup requires
- *   CharacterCommands, which is a load-time dependency of this module
- *   and cannot be missing.
+ * CHARACTER CLEANUP SEMANTIC RESOLUTION:
+ *   Prior revisions of _cleanupCharactersAtPlaces read the raw
+ *   currentLocationId field via CharacterQueries.getCurrentLocationId(c.id).
+ *   Two consequences:
+ *
+ *     - A character placed only by a move record (currentLocationId
+ *       null, latest move at the removed place) was not detected. The
+ *       character's currentLocationId stayed null, and the character's
+ *       moves array still contained a dangling reference to the
+ *       removed place. Every consumer that resolves through
+ *       World.getCurrentLocationId then returned the dangling id.
+ *
+ *     - A character whose currentLocationId pointed elsewhere but
+ *       whose moves array had entries pointing at the removed place
+ *       kept those entries. Same dangling-reference problem, different
+ *       field.
+ *
+ *   The current implementation resolves through World.getCurrentLocationId
+ *   (semantic) with CharacterQueries.getCurrentLocationId (raw field) as
+ *   a fallback, and cleans BOTH currentLocationId (when the resolved
+ *   location is being removed) AND any move entries pointing at removed
+ *   places. See CHARACTER CLEANUP below for the implementation.
  *
  * CHARACTER CLEANUP BATCH SEMANTICS (P3-2):
  *   Prior revisions cleaned up characters one by one, calling
@@ -111,12 +143,12 @@
  *   markDataDirty, invalidateAccessorCaches, and a characterChanged
  *   CustomEvent. Under a large cascade, this produced thousands of
  *   commits for what is one logical operation.
-
+ *
  *   The current revision batches the whole sweep through
  *   CharacterCommands.updateCharacters, which is the character
  *   subsystem's batch API. One call, one commit, one event, one cache
  *   invalidation.
-
+ *
  *   Failure semantics: CharacterState.updateCharacters is all-or-nothing
  *   at the batch level. If the batch is refused (e.g. a character was
  *   hard-deleted mid-cascade between enumeration and commit), the whole
@@ -127,11 +159,6 @@
  *   count in the rare failure case without meaningfully improving the
  *   user-visible outcome (the place is being deleted regardless; the
  *   caller already treats failed > 0 as "surface the failure").
- *
- *   Idempotency: the sweep is a read-filter-write. Re-running against
- *   an already-cleaned place set finds no characters in the removeSet
- *   and commits nothing. Same idempotency contract as before, only
- *   cheaper to re-run.
  *
  * RESULT ENVELOPE `success` FIELD:
  *   _ok() always returns { success: true, ...payload }, and it REFUSES
@@ -147,48 +174,52 @@
  *   items" must use a non-colliding name (succeededList, succeededItems,
  *   okList). See bulkRecordMoves below, which uses `succeededList`.
  *
- *   If you are adding a new command and reaching for `_ok({ success: ... })`,
- *   stop. Use a distinct key. The whole reason _ok has a guard is to
- *   make that mistake impossible to ship.
- *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P3-2):
+ *   Current revision (B1):
+ *     - _cleanupCharactersAtPlaces now resolves each character's
+ *       current location via World.getCurrentLocationId (semantic),
+ *       with CharacterQueries.getCurrentLocationId as a raw-field
+ *       fallback. Prior revisions read the raw field only, missing
+ *       characters placed exclusively via moves.
+ *     - _cleanupCharactersAtPlaces now also clears character.moves
+ *       entries whose locationId points at any place being removed.
+ *       Prior revisions cleared only currentLocationId, leaving
+ *       dangling move references that World.getCurrentLocationId would
+ *       return after the delete. Downstream consumers (religion,
+ *       culture, population) then read stale ids.
+ *     - Batch update path (CharacterCommands.updateCharacters) now
+ *       includes both currentLocationId and moves updates per
+ *       character where applicable. Same single-commit semantics as
+ *       P3-2; only the number of updates per character grew.
+ *     - _hasBatchCharacterUpdate, the per-character fallback path,
+ *       and the failure reporting shape are unchanged.
+ *     - Header CHARACTER CLEANUP, CHARACTER CLEANUP SEMANTIC
+ *       RESOLUTION, and expanded CHARACTER CLEANUP BATCH SEMANTICS
+ *       sections added.
+ *     - No behavioural change to any other command. No public API
+ *       change, no return-shape change.
+ *   Previous revision (B3):
+ *     - Header note added: updatePlace transitively requires
+ *       LocationQueries at runtime through
+ *       LocationHierarchy.validateHierarchy. Safe in the documented
+ *       load order because user flows run after full page load. Not a
+ *       load-time dependency of this module; document the constraint
+ *       rather than tightening the load-time check.
+ *   Previous revision (P3-2):
  *     - _cleanupCharactersAtPlaces now batches the whole sweep through
  *       CharacterCommands.updateCharacters instead of calling
  *       updateCharacterFields per character. For a cascade delete of N
  *       places with M characters at those places, this reduces M
- *       commits to 1. The failure semantics are documented in
- *       CHARACTER CLEANUP BATCH SEMANTICS in the header.
- *     - _requiredCharacterCommandMethods now includes 'updateCharacters'
- *       alongside 'updateCharacterFields'. Load-time check updated.
- *     - The call to CharacterCommands.updateCharacters is guarded: if
- *       the loaded CharacterCommands is an older build without the
- *       batch API, the cleanup falls back to per-character updates and
- *       logs a one-time console warning. Production builds ship the
- *       batch API; this fallback exists so an out-of-date bundle does
- *       not silently skip character cleanup.
- *     - No behavioural change to any other command. All single-record
- *       commands still call updateCharacterFields; only the deletePlace
- *       cleanup path uses the batch API.
+ *       commits to 1.
  *   Previous revision (P0-1):
- *     - _ok() now skips any payload key named 'success'. Prior revision
- *       copied the payload verbatim, so a payload key 'success' would
- *       silently overwrite the { success: true } guard. This was the
- *       actual bug in bulkRecordMoves (below).
+ *     - _ok() now skips any payload key named 'success'.
  *     - bulkRecordMoves payload key renamed from `success` to
- *       `succeededList`. The previous shape returned
- *       { success: <array>, ... } which the _runCommand guard in
- *       modals-moves.js treated as a failure. Every successful bulk
- *       move reported an error toast, did not close the modal, and
- *       invited duplicate submissions.
- *     - Header RESULT ENVELOPE `success` FIELD section added explaining
- *       the guard and the historical bug it prevents.
+ *       `succeededList`.
  *   Earlier revisions:
  *     - deletePlace dispatches HouseholdCommands.clearLocationReferences
  *       after character cleanup.
- *     - persist() reads getLastSaveError() on failure (Pattern A from
- *       storage.js DOMAIN PERSIST CONTRACT).
+ *     - persist() reads getLastSaveError() on failure.
  * =============================================================================
  */
 
@@ -245,10 +276,9 @@
 
     // updateCharacterFields is used by every single-record command.
     // updateCharacters is used by deletePlace's character-cleanup sweep.
-    // Both are required by this module. The load-time check for
-    // updateCharacters is below; if an out-of-date build lacks it,
-    // _cleanupCharactersAtPlaces falls back to per-character updates
-    // (documented in the header, one warning per session).
+    // Both are required by this module. If an out-of-date character-commands.js
+    // is loaded, _cleanupCharactersAtPlaces falls back to per-character
+    // updates (documented in the header, one warning per session).
     var _requiredCharacterCommandMethods = [
         'updateCharacterFields'
     ];
@@ -262,11 +292,6 @@
         }
     }
 
-    // CharacterCommands.updateCharacters is the batch API. It is
-    // required for the batched character cleanup. If absent, the
-    // cleanup falls back to per-character updates (and logs a one-time
-    // warning). The fallback is defensive against out-of-date
-    // character-commands.js, not against a first-class build.
     var _hasBatchCharacterUpdate = (
         typeof window.CharacterCommands.updateCharacters === 'function'
     );
@@ -309,8 +334,7 @@
     // order household-commands.js loads before this file, so the
     // dependency is available. But call-time resolution means this
     // module is loadable in a reduced environment (e.g. a location-only
-    // test harness) where HouseholdCommands is absent, without
-    // precluding the character cleanup path (which does not need it).
+    // test harness) where HouseholdCommands is absent.
     function _householdCommands() {
         return (typeof window.HouseholdCommands !== 'undefined'
                 && window.HouseholdCommands !== null)
@@ -322,30 +346,6 @@
     // 2. RESULT HELPERS
     // =========================================================================
 
-    /**
-     * Builds a success envelope.
-     *
-     * The `success: true` guard is ALWAYS present and ALWAYS a boolean.
-     * Payload keys are copied onto the result except the key `success`,
-     * which is skipped to prevent shadowing.
-     *
-     * Why the skip:
-     *   Prior revisions let payload keys overwrite the guard. bulkRecordMoves
-     *   returned { success: <array of moved records> }, the copy loop
-     *   overwrote the boolean true, and every downstream
-     *   `result.success === true` check failed. The bulk-move modal
-     *   therefore reported every successful batch as a failure, left the
-     *   modal open, and invited duplicate submissions.
-     *
-     *   This guard makes that class of bug structurally impossible: any
-     *   caller passing { success: ... } gets its key silently dropped,
-     *   keeping the guard intact. Callers that need a "list of successful
-     *   items" key must name it something else (succeededList,
-     *   succeededItems, okList, etc.).
-     *
-     * @param {Object} [data] - optional payload; keys spread onto result
-     * @returns {{success: true, [key: string]: *}}
-     */
     function _ok(data) {
         var result = { success: true };
         if (data) {
@@ -397,21 +397,6 @@
     // 5. PERSISTENCE BOUNDARY
     // =========================================================================
 
-    /**
-     * Persists the current canonical state.
-     *
-     * The ONLY place in this module that calls saveMasterData. Every
-     * command leaves canonical data dirty; the caller decides when to
-     * save.
-     *
-     * Uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
-     * saveMasterData() returns a boolean and does NOT throw on write
-     * failure. On false, getLastSaveError() provides the underlying
-     * failure message (quota exceeded, serialization failure, storage
-     * disabled).
-     *
-     * Returns { success, reason? }. Does not throw.
-     */
     function persist() {
         try {
             var ok = window.saveMasterData();
@@ -719,26 +704,91 @@
         });
     }
 
+    // =========================================================================
+    // 9a. CHARACTER CLEANUP ON PLACE DELETE
+    // =========================================================================
+    //
+    // See CHARACTER CLEANUP and CHARACTER CLEANUP SEMANTIC RESOLUTION in
+    // the module header. Two passes per character:
+    //
+    //   1. currentLocationId: cleared when the character's RESOLVED
+    //      current location is being removed. Resolution goes through
+    //      World.getCurrentLocationId (semantic) with
+    //      CharacterQueries.getCurrentLocationId (raw field) as the
+    //      fallback. Prior revisions read only the raw field, missing
+    //      characters placed only by a move record.
+    //
+    //   2. moves: any entry whose locationId points at a place being
+    //      removed is dropped. Prior revisions left these in place,
+    //      causing World.getCurrentLocationId to return a dangling id
+    //      after the delete, and downstream consumers (religion,
+    //      culture, population) to read stale references.
+    //
+    // Both updates are batched through CharacterCommands.updateCharacters
+    // when available. See CHARACTER CLEANUP BATCH SEMANTICS in the header.
+
+    /**
+     * Resolve a character's current location. Precedence:
+     *   1. World.getCurrentLocationId(character) — semantic
+     *   2. CharacterQueries.getCurrentLocationId(character.id) — raw field
+     *   3. null
+     *
+     * Matches the resolution pattern used by religion-queries.js and
+     * culture-queries.js (see their LOCATION-RESOLUTION CONTRACT sections).
+     * Do NOT use window.getCurrentLocationId directly: the name is
+     * overloaded (character-queries.js takes an id, world.js takes a
+     * character object), and the winner depends on load order.
+     *
+     * @private
+     * @param {Object} character
+     * @returns {string|null}
+     */
+    function _resolveCurrentLocationId(character) {
+        if (!character || !character.id) return null;
+
+        if (typeof window.getCurrentLocationId === 'function') {
+            try {
+                var resolved = window.getCurrentLocationId(character);
+                // World.getCurrentLocationId returns string|null. A null
+                // result is a legitimate "no location resolved" — do not
+                // fall through to the weaker resolver, which would
+                // silently substitute the raw field for a character
+                // whose only location signal was a stale move pointing
+                // at a deleted place.
+                if (resolved === null) return null;
+                if (typeof resolved === 'string' && resolved.length > 0) {
+                    return resolved;
+                }
+            } catch (e) {
+                // fall through to CharacterQueries
+            }
+        }
+
+        if (typeof CQ.getCurrentLocationId === 'function') {
+            try {
+                return CQ.getCurrentLocationId(character.id);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
     /**
      * Character cleanup on place delete.
      *
-     * For every character whose CURRENT location is in `removeSet`, nulls
-     * the currentLocationId via CharacterCommands. When the batch API is
-     * available (the normal case), the whole sweep is ONE call to
-     * updateCharacters. When the batch API is absent (defensive: an
-     * out-of-date character-commands.js), the sweep falls back to
-     * per-character updateCharacterFields calls, with a one-time warning
-     * logged at load.
+     * For every character:
+     *   - whose RESOLVED current location is in `removeSet` → clears
+     *     currentLocationId.
+     *   - whose moves array contains any entry pointing at a place in
+     *     `removeSet` → drops the stale move entries.
+     *
+     * The two updates are independent: a character may need only one,
+     * or both. When both apply, they are combined into a single updates
+     * object so the batch sends one update per character.
      *
      * Returns { reconciled, failed, failedIds }. Does not throw.
-     *
-     * Batch semantics (see CHARACTER CLEANUP BATCH SEMANTICS in the
-     * header): CharacterState.updateCharacters is all-or-nothing at the
-     * batch level. If the batch is refused, the helper reports
-     * failed: changes.length and reconciled: 0. The caller already
-     * treats failed > 0 as "surface the failure, don't refuse the
-     * delete," so the outcome for the caller is identical to the
-     * per-character path.
      *
      * @private
      * @param {Object} removeSet - id -> true
@@ -759,26 +809,53 @@
             return { reconciled: 0, failed: 0, failedIds: [] };
         }
 
-        // Collect the characters that need cleanup. This is a pure read
-        // pass — no mutation, no commits, no invalidations.
+        // Collect the characters that need cleanup. Pure read pass —
+        // no mutation, no commits, no invalidations.
         var changes = [];
         for (var i = 0; i < allCharacters.length; i++) {
             var c = allCharacters[i];
             if (!c || !c.id) continue;
 
-            var locId;
-            try {
-                locId = CQ.getCurrentLocationId(c.id);
-            } catch (e) {
-                continue;
-            }
-            if (!locId) continue;
-            if (!removeSet[locId]) continue;
+            var updates = null;
 
-            changes.push({
-                id: c.id,
-                updates: { currentLocationId: null }
-            });
+            // Pass 1: resolved current location.
+            var locId = _resolveCurrentLocationId(c);
+            if (locId && removeSet[locId]) {
+                updates = updates || {};
+                updates.currentLocationId = null;
+            }
+
+            // Pass 2: moves pointing at any removed place.
+            var moves = Array.isArray(c.moves) ? c.moves : [];
+            var hasStaleMoves = false;
+            for (var m = 0; m < moves.length; m++) {
+                if (!moves[m]) continue;
+                if (!_validId(moves[m].locationId)) continue;
+                if (removeSet[moves[m].locationId]) {
+                    hasStaleMoves = true;
+                    break;
+                }
+            }
+            if (hasStaleMoves) {
+                var cleanedMoves = [];
+                for (var n = 0; n < moves.length; n++) {
+                    if (!moves[n]) continue;
+                    if (_validId(moves[n].locationId)
+                        && removeSet[moves[n].locationId]) {
+                        continue;   // drop stale move
+                    }
+                    cleanedMoves.push(moves[n]);
+                }
+                updates = updates || {};
+                updates.moves = cleanedMoves;
+            }
+
+            if (updates) {
+                changes.push({
+                    id: c.id,
+                    updates: updates
+                });
+            }
         }
 
         if (changes.length === 0) {
@@ -806,9 +883,8 @@
             }
 
             // Batch refused. Report the whole batch as failed. The caller
-            // gets a nonzero failure count and the full id list; no
-            // partial-commit state has been left behind by
-            // updateCharacters (it is all-or-nothing).
+            // already treats failed > 0 as "surface the failure, don't
+            // refuse the delete," so the outcome is unchanged.
             failed = changes.length;
             for (var f = 0; f < changes.length; f++) {
                 failedIds.push(changes[f].id);
@@ -837,50 +913,8 @@
     }
 
     /**
-     * Household cleanup on place delete.
-     *
-     * For every place being removed, dispatches
-     * HouseholdCommands.clearLocationReferences(placeId). The household
-     * command is a batch sweep across every household whose locationId
-     * matches; it emits one commit and returns { clearedCount, households }.
-     *
-     * Returns:
-     *   {
-     *     status: 'applied' | 'unavailable' | 'failed' | 'skipped',
-     *     clearedCount: number,
-     *     households: Array,
-     *     reason?: string,
-     *     perPlace: Array<{ placeId, status, clearedCount, reason? }>
-     *   }
-     *
-     * Status semantics:
-     *   'skipped'     — nothing was removed from toRemove (unreachable in
-     *                   practice, but defensive; deletePlace always has at
-     *                   least one id).
-     *   'unavailable' — HouseholdCommands is not loaded. The place is
-     *                   still removed; household.locationId may dangle.
-     *                   See HOUSEHOLD RECONCILIATION ON PLACE DELETE in
-     *                   the module header.
-     *   'failed'      — at least one per-place dispatch returned failure
-     *                   or threw. perPlace carries the per-place outcome.
-     *   'applied'     — every per-place dispatch succeeded.
-     *
-     * Design notes:
-     *   - Iterates toRemove, not the child chain. For cascade, this means
-     *     every descendant place is cleared from households independently.
-     *     Because a household can only have ONE locationId at a time,
-     *     clearing the ancestor covers the descendant case (a household
-     *     at a descendant is at a place in the same cascade; the specific
-     *     descendant's id is what the household.locationId points at, so
-     *     we dispatch per-id, not per-ancestor).
-     *   - The household-side clearLocationReferences commits once per
-     *     call (per placeId). For a cascade of N places, this fires N
-     *     household commits. That is consistent with deletePlace emitting
-     *     N place removals inside one command — each place removal is
-     *     its own reconciliation action.
-     *   - Idempotent by construction: clearLocationReferences returns
-     *     { clearedCount: 0 } without committing for places no household
-     *     references.
+     * Household cleanup on place delete. See HOUSEHOLD RECONCILIATION
+     * in the module header for the full design.
      *
      * @private
      * @param {Object} removeSet - id -> true
@@ -944,8 +978,6 @@
                 continue;
             }
 
-            // clearLocationReferences returns { success: true, data: { clearedCount, households } }
-            // per household-commands.js's _ok shape. Read from data.
             var data = result.data || {};
             var cleared = typeof data.clearedCount === 'number'
                 ? data.clearedCount
@@ -1173,33 +1205,6 @@
         });
     }
 
-    /**
-     * Records multiple moves in one batch.
-     *
-     * Each move is applied via CharacterCommands.updateCharacterFields.
-     * The final result envelope contains:
-     *
-     *   succeededList: Array<{ characterId, locationId, year }>
-     *                  Successfully written move records, in input order.
-     *                  (Previously named `success`, which collided with
-     *                  the _ok guard and broke every downstream check.)
-     *   failed:        Array<{ index, error }>
-     *                  Failed entries, with the input index and reason.
-     *   total:         number
-     *                  Total input entries.
-     *   succeeded:     number
-     *                  Count of succeededList (kept for callers that only
-     *                  need the count).
-     *   failedCount:   number
-     *                  Count of failed.
-     *
-     * Calls _commit once if at least one move succeeded. Persistence is
-     * the caller's responsibility via LocationCommands.persist() — this
-     * function does NOT call saveMasterData.
-     *
-     * @param {Array<{characterId, locationId, year?, note?, fromLocationId?, isBirthMove?}>} moves
-     * @returns {Object} result envelope
-     */
     function bulkRecordMoves(moves) {
         if (!Array.isArray(moves)) {
             return _fail('bulkRecordMoves: moves must be an array');
@@ -1257,9 +1262,6 @@
             });
         }
 
-        // Guard: _ok skips a payload key named 'success', but use a
-        // non-colliding key anyway. `succeededList` is the array; the
-        // result's `success` stays true.
         return _ok({
             succeededList: succeededList,
             failed: failed,
