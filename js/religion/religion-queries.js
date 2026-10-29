@@ -12,6 +12,11 @@
  * owned by the character domain and must not be cloned here — cloning would
  * create a false impression that mutation was safe.
  *
+ * More precisely, getFollowers* returns DEFENSIVE PROJECTIONS of character
+ * records (as cloned by character-state.js::_project), not the live
+ * canonical records themselves. See CHARACTER PROJECTIONS in section 8
+ * below for the full contract.
+ *
  * No fallbacks. Missing dependencies throw at load time, not at call time.
  * Missing canonical data throws at call time (except for the legitimate
  * empty-array case where masterData.data.religions is absent).
@@ -111,43 +116,44 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (C1):
+ *   Current revision (C5):
+ *     - getFollowers*, getFollowerCount, and getFollowersByLocation
+ *       docstrings clarified. The section 8 header previously said
+ *       the returns were "live character records"; the actual return
+ *       is a DEFENSIVE PROJECTION of the character record (as cloned
+ *       by character-state.js::_project). The distinction matters for
+ *       callers: mutating the returned object does NOT affect
+ *       canonical state, and the returned object does not share
+ *       array/object references with canonical character records.
+ *     - Section 8 header expanded into a CHARACTER PROJECTIONS
+ *       subsection explaining what the projection contains, what it
+ *       does not contain (live references, mutation paths), and why
+ *       a caller that genuinely needs the live record must use
+ *       CharacterState.getLiveCharacterForMutation.
+ *     - Top-of-header paragraph updated to reflect the projection
+ *       semantics rather than "character records."
+ *     - No behavioural change. Every query's output is byte-identical;
+ *       only the documentation of what that output is changed.
+ *   Previous revision (C1):
  *     - isReligiouslyPermitted stubbed. Prior revisions looked for a
  *       law whose crimeMapping.crimeType was 'interfaith_marriage',
- *       which crime-constants.js::CRIME_TYPES does not contain. The
- *       check always returned { permitted: true } because no law could
- *       carry the phantom type. Stub returns { permitted: true,
- *       reason: '<not yet implemented>' } and defers the real
- *       implementation to the relationship domain (which owns
- *       marriage-eligibility rules). Matches the isCulturallyCompatible
- *       stub pattern immediately above it.
- *     - _findInterfaithRestriction removed entirely. It existed only to
- *       serve the phantom check and had no other callers.
- *     - Header COMPATIBILITY QUERIES section added, documenting both
- *       stubs and the migration path.
- *     - No behavioural change to any other function. getFollowersByLocation,
- *       getDominantReligion, getReligiousBreakdown, and
- *       _resolveCurrentLocationId are unchanged from A1.
+ *       which crime-constants.js::CRIME_TYPES does not contain. Stub
+ *       returns { permitted: true, reason: '<not yet implemented>' }
+ *       and defers the real implementation to the relationship
+ *       domain. Matches the isCulturallyCompatible stub.
+ *     - _findInterfaithRestriction removed entirely.
  *   Previous revision (A1):
- *     - Added _resolveCurrentLocationId helper with LocationQueries →
- *       CharacterQueries → null precedence. Fixes the alias-race bug
- *       described in LOCATION-RESOLUTION CONTRACT.
+ *     - Added _resolveCurrentLocationId helper.
  *     - getFollowersByLocation, getDominantReligion, and
  *       getReligiousBreakdown rewritten to resolve location
  *       semantically and to enumerate characters at the location
  *       rather than religions that declare it.
- *     - Header LOCATION-RESOLUTION CONTRACT section added.
- *     - Header DEPENDENCIES section clarified: location-queries.js and
- *       character-queries.js are call-time (not load-time) requirements
- *       for the location-resolving functions.
  *   Previous revisions:
  *     - Phase 0: recursion guard removal.
  *     - Phase 3: reads State indexes + canonical data; range-based
  *       growth queries; year-zero preserved.
- *     - Phase 5: absorbed inheritance summary/statistics queries;
- *       deleted getApplicableLaws stub; structured isReligiouslyPermitted.
- *     - Phase 7: converges to reference pattern (State accessors,
- *       clones, fallback paths removed, load-time verification).
+ *     - Phase 5: absorbed inheritance summary/statistics queries.
+ *     - Phase 7: converges to reference pattern.
  * =============================================================================
  */
 
@@ -426,11 +432,70 @@
     // 8. FOLLOWER QUERIES
     // =========================================================================
     //
-    // NOTE: getFollowers / getFollowerCount / getFollowersByLocation return
-    // character projections (as cloned by CharacterState._project).
-    // Character records are owned by the character domain; callers that
-    // want a detached snapshot must deep-clone themselves.
+    // CHARACTER PROJECTIONS:
+    //   getFollowers, getFollowerCount, and getFollowersByLocation
+    //   return character PROJECTIONS, not live character records.
+    //   Every projection is the object produced by
+    //   character-state.js::_project — a defensive clone whose nested
+    //   arrays and objects are themselves cloned. Specifically:
+    //
+    //     - Scalar fields (id, name, surname, gender, birthYear,
+    //       isDeceased, deathYear, religionId, currentLocationId, ...)
+    //       are copied by value.
+    //     - Embedded containers (moves, professions, rankAssignments,
+    //       education, subjectProgress, religionHistory, ...) are
+    //       deep-cloned. The projection's arrays and objects do not
+    //       share references with the canonical character record.
+    //
+    //   Callers can therefore:
+    //     - read any field safely,
+    //     - mutate the returned object WITHOUT affecting canonical
+    //       state (which is the projection's point),
+    //     - pass the projection to other code that expects
+    //       projections (the same shape CharacterState.getCharacter
+    //       returns).
+    //
+    //   Callers MUST NOT:
+    //     - expect mutations to the returned object to stick (they
+    //       do not; the projection is a copy),
+    //     - expect the projection to reflect mutations made by other
+    //       code after the query returned (it does not; refresh the
+    //       query to see fresh state).
+    //
+    //   Callers that genuinely need a live reference (authorized
+    //   mutation code) must use
+    //   CharacterState.getLiveCharacterForMutation(id) directly. The
+    //   religion domain never does; it does not own character state
+    //   and must not reach into the canonical record. Character
+    //   mutations belong to CharacterCommands.
+    //
+    // WHY NOT DEEP-CLONE THE PROJECTION HERE:
+    //   The projection is already a defensive clone. Cloning it again
+    //   in this module would produce a second defensive copy — more
+    //   waste than defense. The one place a second clone would matter
+    //   is if a caller mutated the projection and then passed it back
+    //   into a character-domain command, which would trigger the
+    //   command's own validation and either accept the mutation (if
+    //   the caller used the projection as if it were canonical, which
+    //   it is not) or reject it (if the command detects the caller is
+    //   working from stale state). Neither outcome is the religion
+    //   domain's to prevent; the command layer owns that check.
 
+    /**
+     * Returns the followers of a religion, as character PROJECTIONS.
+     *
+     * Each element is a defensive clone of the canonical character
+     * record. Mutating the returned object does NOT affect canonical
+     * state. To mutate a character's religion, use CharacterCommands
+     * (via ReligionCommands.assignReligionToCharacter / convertCharacter
+     * / removeReligionFromCharacter, which route through
+     * CharacterCommands.setReligion).
+     *
+     * @param {string} religionId
+     * @param {Object} [options]
+     * @param {boolean} [options.includeDeceased] - default false
+     * @returns {Array<Object>}
+     */
     function getFollowers(religionId, options) {
         options = options || {};
         var includeDeceased = options.includeDeceased === true;
@@ -451,6 +516,12 @@
         return living;
     }
 
+    /**
+     * Counts living followers of a religion.
+     *
+     * @param {string} religionId
+     * @returns {number}
+     */
     function getFollowerCount(religionId) {
         var followers = _getState().getFollowersByReligion(religionId);
         var count = 0;
@@ -468,7 +539,15 @@
      * fallback. Prior revisions used the raw field, missing followers
      * placed only by moves.
      *
+     * Each element is a character PROJECTION (see CHARACTER PROJECTIONS
+     * above). Mutating the returned object does NOT affect canonical
+     * state.
+     *
      * Deceased followers are excluded.
+     *
+     * @param {string} religionId
+     * @param {string} locationId
+     * @returns {Array<Object>}
      */
     function getFollowersByLocation(religionId, locationId) {
         if (!religionId || !locationId) return [];
@@ -492,8 +571,9 @@
      * The religion with the most living followers at a location.
      *
      * Enumerates characters at the location (via _resolveCurrentLocationId)
-     * and buckets by religionId. Returns the religion with the most
-     * followers, or null when no character at the location has a religion.
+     * and buckets by religionId. Returns a CLONE of the religion record
+     * (via getReligion), or null when no character at the location has a
+     * religion.
      *
      * Prior revisions iterated religions whose `locations` array declares
      * the location, missing every religion whose followers moved in but
@@ -531,17 +611,16 @@
      * Per-religion follower counts at a location, plus the unaffiliated
      * bucket.
      *
+     * Returns a plain object whose keys are religion ids plus the literal
+     * key 'unaffiliated'. Each value is { name: string, count: number }.
+     * The name is looked up from the religion record (or 'Unknown' if the
+     * religion no longer exists); the count is the number of living
+     * characters whose resolved current location is `locationId` and whose
+     * religionId matches the key (or is null/empty, for 'unaffiliated').
+     *
      * Enumerates characters at the location once and buckets by
-     * religionId. The 'unaffiliated' key accumulates characters whose
-     * religionId is null or empty.
-     *
-     * Deceased characters are excluded (consistent with
+     * religionId. Deceased characters are excluded (consistent with
      * getFollowersByLocation and getFollowerCount).
-     *
-     * Prior revisions called a phantom window.getCharactersByLocation
-     * (which no module exports) and getFollowersByLocation (which always
-     * returned [] due to the alias-race bug), so the whole breakdown was
-     * zeros. Fixed at the algorithm level.
      */
     function getReligiousBreakdown(locationId) {
         if (!locationId) return {};
