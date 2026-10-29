@@ -27,36 +27,14 @@
  * SEMANTIC RULES:
  *   - markDataDirty() marks the data dirty AND schedules a debounced
  *     save. This is the single persistence trigger for every domain
- *     that writes to masterData.data. Domains do not need to call
- *     scheduleSave() themselves; they call markDataDirty() and the
- *     debounce fires automatically.
+ *     that writes to masterData.data.
  *
  *   - saveMasterData() is the canonical synchronous persistence
  *     operation. It returns true ONLY if the write actually succeeded.
  *     It clears any pending debounced save (the write just happened).
  *
  *   - saveMasterDataOrThrow() is a wrapper for callers that prefer
- *     throw-on-failure semantics. The underlying saveMasterData() does
- *     NOT throw on write failure; it returns false. Domain persist()
- *     implementations that return { success, reason } MUST inspect the
- *     boolean return value; they must not assume that a caught
- *     exception means "save failed." See DOMAIN PERSIST CONTRACT below.
- *
- *   - scheduleSave() is exposed for callers that want to schedule a
- *     save without marking dirty (rare; the debounce is normally
- *     driven by markDataDirty). It does not claim the save succeeded.
- *
- *   - flushPendingSave() flushes any pending debounced save
- *     synchronously and reports whether the resulting state is
- *     persisted. It returns true if no pending save existed AND the
- *     current state is clean, or if a pending save was flushed
- *     successfully. It returns false if the flush failed OR unsaved
- *     changes remain.
- *
- *   - getLastSaveError() returns the Error from the most recent failed
- *     save, or null if the last save succeeded (or no save has been
- *     attempted). Callers that want to report a save failure reason
- *     read this after saveMasterData() returns false.
+ *     throw-on-failure semantics.
  *
  *   - load: no entry -> defaults; valid entry -> load; corrupt entry ->
  *     signal failure without replacing window.masterData.
@@ -64,23 +42,61 @@
  *   - import: does not report success if validation or save failed.
  *
  *   - reset: does not delete the storage key before attempting to save
- *     defaults. A failed save leaves the previously persisted value intact.
+ *     defaults.
  *
  *   - cross-tab: does not silently overwrite unsaved local changes, but
- *     also does not prevent a later overwrite. See CROSS-TAB CONFLICT.
+ *     also does not prevent a later overwrite.
+ *
+ * LEGACY SAVE MARKERS
+ *
+ *   The load path can produce three envelope-level markers:
+ *
+ *     _legacyEnvelopeLess
+ *       Set when the persisted blob had no envelope wrapper (a save
+ *       predating the current envelope format). The envelope is
+ *       wrapped with the current STORAGE_SCHEMA_VERSION, but the label
+ *       is synthetic — migration tooling (database.js) reads this
+ *       marker to know the declared version is a guess.
+ *
+ *     _yearCoerced
+ *       Set when the persisted currentYear was present but invalid and
+ *       normalizeMasterData replaced it with TIME_CONSTANTS.DEFAULT_YEAR.
+ *       Surfaced in loadMasterData's result.warnings; also preserved
+ *       on window.masterData until the next save.
+ *
+ *     _preservedUnknownTopLevel
+ *       Set when the caller of normalizeMasterData opts in via
+ *       _preserveUnknownTopLevel on the input envelope. storage.js does
+ *       not currently opt in (it does not want to enumerate unknown
+ *       fields on every load); the marker exists for migration tooling.
+ *
+ *   _performSave strips all three markers from the serialized envelope.
+ *   The in-memory window.masterData keeps them (so subsequent reads of
+ *   window.masterData see the load-time state), but the persisted form
+ *   does not. Without this stripping, a marker set on load would
+ *   reappear on every subsequent load forever, even after the
+ *   underlying issue (envelope-less save, coerced year) was resolved.
+ *
+ * WARNINGS ON LOAD
+ *
+ *   loadMasterData's result object carries a `warnings: string[]` field
+ *   that summarizes any lossy normalization that occurred. Empty when
+ *   nothing lossy happened. Populated from _yearCoerced. Callers that
+ *   want to surface this to the user (e.g. "your current year was
+ *   corrupt and got reset to the default") read result.warnings.
  *
  * DOMAIN PERSIST CONTRACT (IMPORTANT):
  *   Domain persist() functions (name-commands.js, rank-commands.js,
  *   education-commands.js, etc.) return { success, reason? }. They MUST
  *   use one of these two patterns:
  *
- *     Pattern A (recommended, used by rank-commands.js):
+ *     Pattern A (recommended):
  *       var ok = window.saveMasterData();
  *       if (ok === true) return { success: true };
  *       var err = window.getLastSaveError();
  *       return { success: false, reason: err ? err.message : 'unknown' };
  *
- *     Pattern B (used by nothing today, but supported):
+ *     Pattern B:
  *       try {
  *           window.saveMasterDataOrThrow();
  *           return { success: true };
@@ -95,7 +111,7 @@
  *       } catch (e) { ... }
  *
  *   Pattern C silently reports success on every failed save. Do not
- *   reintroduce it. The name-commands.js bug was exactly this pattern.
+ *   reintroduce it.
  *
  * CROSS-TAB CONFLICT:
  *   The policy is: "do not automatically discard unsaved local changes."
@@ -114,28 +130,9 @@
  *   do NOT need their own invalidation call; doing so is redundant but
  *   harmless.
  *
- *   This invalidation is the storage module's responsibility, not the
- *   domain's, because storage owns the "reload" operation. It is the
- *   only place where a reload can originate (cross-tab, import, reset
- *   with force), and every reload path must go through it.
- *
  * PERSISTENCE TRIGGER (IMPORTANT):
  *   Every domain that mutates canonical data calls window.markDataDirty().
- *   That call schedules a debounced save. The result:
- *
- *     - CharacterState._emitChange  -> markDataDirty -> scheduled save
- *     - FamilyCommands._commit      -> markDataDirty -> scheduled save
- *     - ChildrenCommands._commit    -> markDataDirty -> scheduled save
- *     - RelationshipState._markDirty -> markDataDirty -> scheduled save
- *     - RoleState._syncToMasterData -> markDataDirty -> scheduled save
- *
- *   The role domain additionally calls RoleCommands.persist(), which
- *   invokes saveMasterData() synchronously after user actions (modal
- *   confirms). That is an immediate-flush override, not a replacement
- *   for the debounce.
- *
- *   Callers who need synchronous durability should call saveMasterData()
- *   directly (or flushPendingSave() to flush a pending debounced save).
+ *   That call schedules a debounced save.
  *
  * SCHEMA OWNERSHIP:
  *   storage.js owns BYTES. It does not own schema meaning.
@@ -164,26 +161,29 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1 + P2 from the rank module plan):
- *     - saveMasterDataOrThrow() wrapper added. saveMasterData() continues
- *       to return a boolean and NOT throw on write failure. The DOMAIN
- *       PERSIST CONTRACT section documents the correct and incorrect
- *       patterns for domain persist() implementations.
- *     - Cross-tab reload now calls window.invalidateAccessorCaches()
- *       before dispatching masterDataUpdated. This fixes the stale
- *       accessor cache that every hydrating domain was inheriting.
- *     - _processImport now wraps validateImportData() in try/catch.
- *       A validator that throws is now treated as a validation failure,
- *       not as an uncaught exception that leaves masterData half-swapped.
- *     - _processImport now calls invalidateAccessorCaches() after a
- *       successful save, matching the cross-tab reload path.
- *     - resetMasterData() now calls invalidateAccessorCaches() after a
- *       successful save, matching the cross-tab reload path.
- *     - Header documentation expanded with DOMAIN PERSIST CONTRACT and
- *       CROSS-TAB CACHE INVALIDATION sections.
- *     - No other behavioural change. The load path, save path, debounce
- *       timing, and import pipeline are unchanged except for the added
- *       cache invalidation and try/catch.
+ *   Current revision:
+ *     - _isEnvelopeLessDataBlob path now sets _legacyEnvelopeLess: true
+ *       on the synthetic envelope before calling normalizeMasterData.
+ *       Prior revisions wrapped the blob with the current schemaVersion
+ *       without any marker, so migration tooling could not distinguish
+ *       "legacy save that was wrapped" from "save actually written at
+ *       the current version". See LEGACY SAVE MARKERS.
+ *     - _performSave now strips _legacyEnvelopeLess, _yearCoerced, and
+ *       _preservedUnknownTopLevel from the serialized envelope before
+ *       JSON.stringify. The in-memory window.masterData keeps them (so
+ *       post-load inspection sees the load-time state), but the
+ *       persisted form does not. See LEGACY SAVE MARKERS.
+ *     - loadMasterData's result gains a warnings: string[] field
+ *       surfacing _yearCoerced. Empty when nothing lossy happened.
+ *       Existing callers reading { ok, source, error } are unaffected.
+ *       See WARNINGS ON LOAD.
+ *     - _handleMasterDataUpdated now clears _lastSaveError after a
+ *       successful reload, so getLastSaveError() reflects the most
+ *       recent storage-touching operation (which was the reload, not
+ *       some prior failed save).
+ *     - Header LEGACY SAVE MARKERS and WARNINGS ON LOAD sections added.
+ *     - No behavioural change to the load path, save path, debounce
+ *       timing, import pipeline, or cross-tab conflict policy.
  * =============================================================================
  */
 
@@ -237,6 +237,14 @@
         CROSS_TAB_SYNC_MS: 100
     });
 
+    // Envelope-level markers that _performSave strips before serializing.
+    // See LEGACY SAVE MARKERS in the header.
+    var _MARKER_KEYS = [
+        '_legacyEnvelopeLess',
+        '_yearCoerced',
+        '_preservedUnknownTopLevel'
+    ];
+
     // =========================================================================
     // 2. MODULE STATE
     // =========================================================================
@@ -246,15 +254,9 @@
     var _saveTimeout = null;
     var _forceReloading = false;
 
-    // Tracks whether the current in-memory data has unsaved changes.
-    // Set true by markDataDirty(); cleared after a successful save.
     var _isDirty = false;
-
-    // The Error from the most recent failed save, or null.
-    // Read via getLastSaveError() after saveMasterData() returns false.
     var _lastSaveError = null;
 
-    // Cross-tab coordination
     var _storageListenerAdded = false;
     var _syncTimeout = null;
 
@@ -262,12 +264,6 @@
     // 3. DEFAULT FACTORY
     // =========================================================================
 
-    /**
-     * Creates a fresh default masterData structure via the schema layer.
-     * storage.js does NOT define the shape itself.
-     *
-     * @returns {Object}
-     */
     function createDefaultMasterData() {
         _requireTime();
         _requireSchema();
@@ -278,10 +274,6 @@
     // 4. VALIDATION HELPERS
     // =========================================================================
 
-    /**
-     * Returns true if the given value looks like a masterData envelope.
-     * @private
-     */
     function _isMasterDataEnvelope(value) {
         if (!value || typeof value !== 'object') return false;
         if (!value.data || typeof value.data !== 'object') return false;
@@ -289,15 +281,36 @@
         return true;
     }
 
-    /**
-     * Returns true if the given value looks like a bare data blob (no
-     * envelope wrapper). This is the historical "legacy" form: current
-     * shape, missing outer wrapper. It is NOT an older schema version.
-     * @private
-     */
     function _isEnvelopeLessDataBlob(value) {
         if (!value || typeof value !== 'object') return false;
         return Array.isArray(value.characters) && Array.isArray(value.places);
+    }
+
+    /**
+     * Extracts the load warnings from a normalized envelope. Reads
+     * _yearCoerced (and any future lossy-normalization marker that the
+     * load path decides to surface). See WARNINGS ON LOAD in the header.
+     *
+     * @private
+     * @param {Object} envelope
+     * @returns {string[]}
+     */
+    function _collectLoadWarnings(envelope) {
+        var warnings = [];
+        if (!envelope || typeof envelope !== 'object') return warnings;
+        if (envelope._yearCoerced === true) {
+            warnings.push(
+                'currentYear was invalid and has been reset to the default.'
+            );
+        }
+        if (Array.isArray(envelope._preservedUnknownTopLevel)
+            && envelope._preservedUnknownTopLevel.length > 0) {
+            warnings.push(
+                'Save carries unknown top-level fields: ' +
+                envelope._preservedUnknownTopLevel.join(', ') + '.'
+            );
+        }
+        return warnings;
     }
 
     // =========================================================================
@@ -308,18 +321,19 @@
      * Loads masterData from localStorage.
      *
      * Outcomes:
-     *   { ok: true, source: 'defaults' }  — no storage entry; defaults installed
-     *   { ok: true, source: 'storage' }   — valid data loaded
-     *   { ok: false, error: 'corrupt' }   — persisted data could not be parsed
-     *   { ok: false, error: 'schema' }    — persisted data shape was not recognized
-     *   { ok: false, error: 'version' }   — persisted schema version is newer
-     *                                        than this build supports (migration
-     *                                        cannot safely go backwards)
+     *   { ok: true, source: 'defaults', warnings: [] }  — no storage entry;
+     *                                                     defaults installed
+     *   { ok: true, source: 'storage', warnings: [...] } — valid data loaded
+     *   { ok: false, error: 'corrupt' }                 — parse failure
+     *   { ok: false, error: 'schema' }                  — unrecognized shape
+     *   { ok: false, error: 'version' }                 — persisted schema
+     *                                                     newer than this build
+     *   { ok: false, error: 'unknown' }                 — unexpected throw
      *
-     * On failure, window.masterData is NOT replaced. The caller decides how
-     * to recover.
+     * On failure, window.masterData is NOT replaced. The caller decides
+     * how to recover.
      *
-     * @returns {{ ok: boolean, source?: string, error?: string }}
+     * @returns {{ ok: boolean, source?: string, error?: string, warnings?: string[] }}
      */
     function loadMasterData() {
         if (_isLoading) return { ok: false, error: 'in-progress' };
@@ -332,7 +346,7 @@
                 window.masterData = createDefaultMasterData();
                 _isDirty = false;
                 _lastSaveError = null;
-                return { ok: true, source: 'defaults' };
+                return { ok: true, source: 'defaults', warnings: [] };
             }
 
             var parsed;
@@ -343,24 +357,22 @@
                 return { ok: false, error: 'corrupt' };
             }
 
-            // Identify the incoming shape. The schemaVersion we record is
-            // whatever the envelope declares (or SCHEMA_VERSION for bare
-            // blobs that predate envelope wrapping at the current schema).
-            // We do NOT relabel data whose declared version differs from
-            // the current version; that is migration's job.
+            // Identify the incoming shape.
             var envelope;
+            var isLegacyEnvelopeLess = false;
             if (_isMasterDataEnvelope(parsed)) {
                 envelope = parsed;
             } else if (_isEnvelopeLessDataBlob(parsed)) {
-                // Envelope-less blob. Assume current schema (no way to know
-                // otherwise); the schema layer will validate fields during
-                // normalization. If your persisted data ever went through a
-                // versioned schema, the version belongs in the envelope.
+                // Envelope-less blob. Assume current schema for the
+                // synthetic label, but MARK it so migration tooling knows
+                // the label is a guess. See LEGACY SAVE MARKERS.
+                isLegacyEnvelopeLess = true;
                 envelope = {
                     schemaVersion: window.STORAGE_SCHEMA_VERSION,
                     data: parsed
                 };
             } else if (_isMasterDataEnvelope({ data: parsed })) {
+                isLegacyEnvelopeLess = true;
                 envelope = {
                     schemaVersion: window.STORAGE_SCHEMA_VERSION,
                     data: parsed
@@ -371,8 +383,6 @@
             }
 
             // Reject data from a newer schema than this build understands.
-            // Migration to an older build is a downgrade, which storage does
-            // not attempt.
             if (typeof envelope.schemaVersion === 'number'
                 && envelope.schemaVersion > window.STORAGE_SCHEMA_VERSION) {
                 console.error(
@@ -383,13 +393,22 @@
                 return { ok: false, error: 'version' };
             }
 
+            if (isLegacyEnvelopeLess) {
+                envelope._legacyEnvelopeLess = true;
+            }
+
             // Normalize via the schema layer.
             envelope = window.normalizeMasterData(envelope);
 
             window.masterData = envelope;
             _isDirty = false;
             _lastSaveError = null;
-            return { ok: true, source: 'storage' };
+
+            return {
+                ok: true,
+                source: 'storage',
+                warnings: _collectLoadWarnings(envelope)
+            };
         } catch (e) {
             console.error('storage.js: load failed:', e);
             return { ok: false, error: 'unknown' };
@@ -403,15 +422,32 @@
     // =========================================================================
 
     /**
+     * Serializes the envelope without its load-time markers. Returns the
+     * JSON string. Does not mutate the input.
+     *
+     * See LEGACY SAVE MARKERS in the header.
+     *
+     * @private
+     * @param {Object} envelope
+     * @returns {string}
+     */
+    function _serializeWithoutMarkers(envelope) {
+        // Shallow clone the envelope. We do NOT clone the data object;
+        // JSON.stringify will handle it. The clone is only to avoid
+        // mutating window.masterData when we delete the marker keys.
+        var clone = {};
+        for (var k in envelope) {
+            if (!Object.prototype.hasOwnProperty.call(envelope, k)) continue;
+            clone[k] = envelope[k];
+        }
+        for (var i = 0; i < _MARKER_KEYS.length; i++) {
+            delete clone[_MARKER_KEYS[i]];
+        }
+        return JSON.stringify(clone);
+    }
+
+    /**
      * Performs the synchronous write to localStorage.
-     *
-     * Called by saveMasterData() and by the debounce flush. Sets savedAt
-     * metadata; does NOT modify schemaVersion (that is schema layer's
-     * concern).
-     *
-     * Records the failure reason in _lastSaveError so callers can read it
-     * via getLastSaveError() after saveMasterData() returns false.
-     *
      * @private
      * @returns {{ ok: boolean, error?: Error }}
      */
@@ -421,12 +457,15 @@
                 return { ok: false, error: new Error('masterData not initialized') };
             }
 
+            // Write savedAt onto the live object so subsequent reads of
+            // window.masterData see the timestamp. The serialized form
+            // includes savedAt (it is not a marker) but strips the
+            // load-time markers.
             window.masterData.savedAt = new Date().toISOString();
 
-            localStorage.setItem(
-                STORAGE_CONFIG.STORAGE_KEY,
-                JSON.stringify(window.masterData)
-            );
+            var serialized = _serializeWithoutMarkers(window.masterData);
+
+            localStorage.setItem(STORAGE_CONFIG.STORAGE_KEY, serialized);
             return { ok: true };
         } catch (e) {
             return { ok: false, error: e };
@@ -437,14 +476,10 @@
      * Saves masterData to localStorage immediately.
      *
      * Returns true ONLY if the write to localStorage actually succeeded.
-     * This is the canonical persistence operation. If a debounced save
-     * was pending, it is cancelled (the write just happened synchronously).
+     * Cancels any pending debounced save.
      *
      * Does NOT throw on write failure. Returns false and records the
-     * failure in _lastSaveError. See DOMAIN PERSIST CONTRACT in the header
-     * for the correct and incorrect patterns for domain persist() wrappers.
-     *
-     * On failure, getLastSaveError() returns the underlying Error.
+     * failure in _lastSaveError.
      *
      * @returns {boolean}
      */
@@ -455,8 +490,6 @@
         }
 
         if (_isSaving) {
-            // localStorage.setItem is synchronous, so this should be
-            // unreachable. Guard against reentrancy anyway.
             return false;
         }
         _isSaving = true;
@@ -473,34 +506,11 @@
         return false;
     }
 
-    /**
-     * Saves masterData to localStorage immediately, throwing on failure.
-     *
-     * Wrapper around saveMasterData() for callers that prefer
-     * throw-on-failure semantics. Use this when the caller's error
-     * handling is try/catch-based. Do NOT use this as a substitute for
-     * saveMasterData() in a domain persist() that must inspect the boolean
-     * return — both patterns work, but the boolean pattern is preferred
-     * for its explicitness.
-     *
-     * @throws {Error} if the save fails
-     * @returns {true}
-     */
     function saveMasterDataOrThrow() {
         if (saveMasterData()) return true;
         throw _lastSaveError || new Error('saveMasterData failed');
     }
 
-    /**
-     * Schedules a debounced save. Does NOT claim the save succeeded.
-     * The eventual result is observable via hasUnsavedChanges() and
-     * getLastSaveError().
-     *
-     * Callers normally do not need to call this directly — markDataDirty()
-     * calls it. It is exposed for callers that need to defer a save
-     * without marking dirty (rare; usually for re-scheduling after a
-     * cross-tab merge).
-     */
     function scheduleSave() {
         if (_saveTimeout !== null) clearTimeout(_saveTimeout);
         _saveTimeout = setTimeout(function() {
@@ -509,21 +519,6 @@
         }, STORAGE_CONFIG.SAVE_DEBOUNCE_MS);
     }
 
-    /**
-     * Flushes any pending debounced save synchronously and reports whether
-     * the state is now persisted.
-     *
-     * Returns true if:
-     *   - a pending save was flushed successfully, OR
-     *   - no pending save existed AND the state is clean.
-     *
-     * Returns false if:
-     *   - a pending save existed and its flush failed, OR
-     *   - no pending save existed AND unsaved changes remain (dirty but
-     *     not scheduled — should not happen, but guarded).
-     *
-     * @returns {boolean}
-     */
     function flushPendingSave() {
         if (_saveTimeout === null) {
             return !_isDirty;
@@ -531,39 +526,15 @@
         return saveMasterData();
     }
 
-    /**
-     * Marks the current in-memory data as having unsaved changes AND
-     * schedules a debounced save. This is the single persistence trigger
-     * for every domain that mutates masterData.data.
-     *
-     * The debounce is intentional: rapid mutations (e.g. a bulk character
-     * update that touches 100 records) do not trigger 100 localStorage
-     * writes. The 100ms debounce coalesces them into a single write.
-     *
-     * Callers that need immediate durability call saveMasterData()
-     * directly (or flushPendingSave()).
-     */
     function markDataDirty() {
         _isDirty = true;
         scheduleSave();
     }
 
-    /**
-     * Returns true if there are unsaved changes.
-     * @returns {boolean}
-     */
     function hasUnsavedChanges() {
         return _isDirty === true;
     }
 
-    /**
-     * Returns the Error from the most recent failed save, or null.
-     * Use this after saveMasterData() returns false to surface the
-     * actual failure reason (e.g. quota exceeded, JSON serialization
-     * failure, localStorage disabled).
-     *
-     * @returns {Error|null}
-     */
     function getLastSaveError() {
         return _lastSaveError;
     }
@@ -572,12 +543,6 @@
     // 7. RELOAD
     // =========================================================================
 
-    /**
-     * Reloads data from localStorage, discarding in-memory changes.
-     *
-     * @param {boolean} [force] - if true, ignores unsaved-changes guard
-     * @returns {{ ok: boolean, source?: string, error?: string }}
-     */
     function reloadMasterData(force) {
         if (_forceReloading) return { ok: false, error: 'in-progress' };
         if (_isDirty && force !== true) {
@@ -592,9 +557,6 @@
         }
     }
 
-    /**
-     * @deprecated Use reloadMasterData(true) instead.
-     */
     function forceReloadData() {
         return reloadMasterData(true);
     }
@@ -603,24 +565,6 @@
     // 8. IMPORT
     // =========================================================================
 
-    /**
-     * Opens a file picker, reads JSON, validates, replaces masterData,
-     * saves.
-     *
-     * Pipeline:
-     *   parse -> recognize format -> normalize -> validate -> install -> save
-     *
-     * Does NOT report success if validation or save failed. On save
-     * failure, the prior in-memory state is restored.
-     *
-     * A validator that throws is treated as a validation failure (not an
-     * uncaught exception). This prevents a broken validation.js from
-     * leaving masterData half-swapped between the old and new payload.
-     *
-     * @param {Function} [onComplete] - callback(result):
-     *   { ok: true, charCount }
-     *   { ok: false, error, message }
-     */
     function importData(onComplete) {
         onComplete = (typeof onComplete === 'function') ? onComplete : function() {};
 
@@ -638,8 +582,6 @@
             var reader = new FileReader();
 
             reader.onload = function(ev) {
-                // Wrap the whole pipeline in an error boundary so
-                // onComplete is always called.
                 var result;
                 try {
                     result = _processImport(ev.target.result);
@@ -668,11 +610,6 @@
         input.click();
     }
 
-    /**
-     * @private
-     * The import pipeline: parse, recognize, normalize, validate, install, save.
-     * Returns a result object suitable for onComplete.
-     */
     function _processImport(text) {
         var parsed;
         try {
@@ -681,7 +618,6 @@
             return { ok: false, error: 'invalid-json', message: err.message };
         }
 
-        // Recognize format.
         var sourceData = null;
         if (parsed && parsed.type === 'master' && parsed.data) {
             sourceData = parsed.data;
@@ -699,7 +635,6 @@
             };
         }
 
-        // Build envelope and normalize.
         var envelope = {
             schemaVersion: window.STORAGE_SCHEMA_VERSION,
             savedAt: new Date().toISOString(),
@@ -707,17 +642,11 @@
         };
         envelope = window.normalizeMasterData(envelope);
 
-        // Canonical validation before install.
-        // If validation.js isn't loaded, reject rather than installing
-        // unvalidated data.
         if (typeof window.validateImportData === 'function') {
             var validation;
             try {
                 validation = window.validateImportData(envelope);
             } catch (validatorError) {
-                // A throwing validator is a validation failure, not an
-                // uncaught exception. Do not let it escape the pipeline
-                // and leave masterData half-swapped.
                 return {
                     ok: false,
                     error: 'validation-failed',
@@ -747,7 +676,6 @@
             };
         }
 
-        // Install candidate and attempt save.
         var prior = window.masterData;
         window.masterData = envelope;
         _isDirty = true;
@@ -767,12 +695,6 @@
             };
         }
 
-        // Successful import: the accessor cache is stale because
-        // masterData.data was replaced wholesale. Invalidate it so every
-        // domain reads fresh data. Domains that subscribe to
-        // masterDataUpdated will also rehydrate; the invalidate is
-        // performed here so the cache is consistent even before the
-        // event fires.
         _invalidateAccessorCaches();
 
         var charCount = Array.isArray(envelope.data.characters)
@@ -786,16 +708,6 @@
     // 9. RESET
     // =========================================================================
 
-    /**
-     * Resets all data to defaults and persists.
-     *
-     * Does NOT delete the storage key before saving. A successful setItem
-     * of the default envelope replaces the existing value atomically. If
-     * the save fails, the previously persisted value remains intact and
-     * the prior in-memory state is restored.
-     *
-     * @returns {{ ok: boolean, error?: string }}
-     */
     function resetMasterData() {
         var prior = window.masterData;
 
@@ -815,9 +727,6 @@
                 };
             }
 
-            // Successful reset: masterData.data was replaced wholesale.
-            // Invalidate the accessor cache so every domain reads fresh
-            // data.
             _invalidateAccessorCaches();
 
             return { ok: true };
@@ -845,7 +754,6 @@
             _syncTimeout = setTimeout(function() {
                 _syncTimeout = null;
 
-                // Do not clobber unsaved local changes.
                 if (_isDirty) {
                     console.warn(
                         'storage.js: another tab updated storage while this tab ' +
@@ -857,22 +765,19 @@
 
                 var result = loadMasterData();
                 if (result.ok) {
-                    // The in-memory masterData is now the freshly-loaded
-                    // payload. The accessor cache still holds records
-                    // from the pre-reload payload, so it is stale.
-                    //
-                    // Invalidate BEFORE dispatching masterDataUpdated so
-                    // that every domain that hydrates from the event
-                    // (character-state, family-state, children-state,
-                    // rank-state, etc.) sees a fresh accessor cache.
-                    //
-                    // Domains do NOT need their own invalidation call.
-                    // Doing so is redundant but harmless.
                     _invalidateAccessorCaches();
+
+                    // The reload touched storage and succeeded; the last
+                    // storage-touching operation is a success, not a
+                    // failure. Clear any stale error from a prior save.
+                    _lastSaveError = null;
 
                     try {
                         window.dispatchEvent(new CustomEvent('masterDataUpdated', {
-                            detail: { source: 'cross-tab' }
+                            detail: {
+                                source: 'cross-tab',
+                                warnings: result.warnings || []
+                            }
                         }));
                     } catch (evtErr) { /* ignore */ }
                 } else {
@@ -886,23 +791,6 @@
     // 11. CACHE INVALIDATION HELPER
     // =========================================================================
 
-    /**
-     * Invalidates the accessor cache (accessors.js), if present.
-     *
-     * Called at every reload boundary:
-     *   - successful cross-tab reload
-     *   - successful import
-     *   - successful reset
-     *
-     * Failure to invalidate means accessors.getCharacterById (and every
-     * other getXById) returns records from the pre-reload payload.
-     * Downstream consumers read stale data.
-     *
-     * Defensive: if accessors.js is not loaded, the call is a no-op. In
-     * that case there is no cache to invalidate.
-     *
-     * @private
-     */
     function _invalidateAccessorCaches() {
         if (typeof window.invalidateAccessorCaches === 'function') {
             window.invalidateAccessorCaches();
@@ -912,10 +800,6 @@
     // =========================================================================
     // 12. INITIALIZATION
     // =========================================================================
-    //
-    // Dependencies are required. If they aren't loaded, we throw. The
-    // bootstrap layer is responsible for ensuring script order; a missing
-    // dependency here is a load-order bug, not a recoverable condition.
 
     function initialize() {
         _requireAll();
@@ -941,7 +825,7 @@
     window.flushPendingSave = flushPendingSave;
 
     // Dirty state
-    window.markDataDirty = markDataDirty;     // marks dirty + schedules
+    window.markDataDirty = markDataDirty;
     window.hasUnsavedChanges = hasUnsavedChanges;
     window.getLastSaveError = getLastSaveError;
 
@@ -949,8 +833,7 @@
     window.importData = importData;
     window.resetMasterData = resetMasterData;
 
-    // Explicit initialization entry point. Callers (bootstrap) should
-    // invoke this after all dependencies are loaded.
+    // Explicit initialization entry point.
     window.initializeStorage = initialize;
 
 })();
