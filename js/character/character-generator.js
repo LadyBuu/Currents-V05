@@ -48,6 +48,24 @@
  *   - A character without any resolvable given name fails generation
  *     with a structured reason. It does not fabricate one.
  *
+ * CULTURE-QUERY METHOD NAMES (K2):
+ *   This module calls CultureQueries to resolve culture for appearance
+ *   generation. Prior revisions called CultureQueries.getCultureByLocation,
+ *   which does not exist on the current culture-queries.js surface. That
+ *   method was renamed to getPrimaryCultureForLocation when the primary-
+ *   culture relationship was moved to place.cultureId (see culture-docs
+ *   §3.4 and §4.1). The guard `typeof ... !== 'function'` silently
+ *   returned null on every call, so culture was never resolved, and the
+ *   downstream CultureGeneration.generateAppearance call received a null
+ *   cultureId and threw "Culture not found: null". Character generation
+ *   failed at the appearance step for every character.
+ *
+ *   The current code calls CultureQueries.getPrimaryCultureForLocation.
+ *   The shape returned by that method is a culture record or null; the
+ *   downstream code passes culture.id to CultureGeneration, which now
+ *   resolves through the window.randomness provider (see randomness.js
+ *   P2-6) without requiring an explicit rng argument.
+ *
  * TRAITS:
  *   The generator picks 1–3 unique traits from the canonical vocabulary
  *   (constants/character-traits.js). The count is fixed at generation
@@ -94,33 +112,42 @@
  *
  * DEPENDENCIES (OPTIONAL, feature-gated):
  *   - religion-queries.js  (ReligionQueries)   — for religion selection
- *   - culture-queries.js   (CultureQueries)    — for culture resolution
+ *   - culture-queries.js   (CultureQueries)    — for culture resolution.
+ *                             Method used: getPrimaryCultureForLocation.
+ *                             See CULTURE-QUERY METHOD NAMES above.
  *   - culture-generation.js (CultureGeneration) — for appearance generation
  *
  * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 1.5):
- *     - world.js is now a HARD load-time dependency. getPlaceScope and
- *       getLocationTypeScope are required at load time.
- *     - _getCountryFromLocation uses window.getPlaceScope
- *       unconditionally. The previous else-if fallback to
- *       getLocationTypeScope was dead code that hid the world.js
- *       dependency.
- *     - _getRandomCountryWithNameData uses window.getPlaceScope
- *       unconditionally. Same fallback removed.
- *     - character-traits.js is now a HARD load-time dependency.
- *       _selectTraits no longer soft-fails on missing vocabulary.
- *     - Header DEPENDENCIES updated: world.js and
- *       constants/character-traits.js are REQUIRED.
- *     - Header TRAITS section rewritten to state the hard-require
- *       contract.
- *     - No other behavioural change.
+ *   Current revision (K2):
+ *     - _resolveCultureForLocation now calls
+ *       CultureQueries.getPrimaryCultureForLocation, not
+ *       CultureQueries.getCultureByLocation. The latter does not exist
+ *       on the current culture-queries.js surface; the guard
+ *       `typeof CultureQueries.getCultureByLocation !== 'function'`
+ *       returned null on every call, so culture was never resolved and
+ *       the downstream CultureGeneration.generateAppearance threw
+ *       "Culture not found: null". Character generation failed at the
+ *       appearance step for every character.
+ *     - Header CULTURE-QUERY METHOD NAMES section added.
+ *     - DEPENDENCIES list updated: culture-queries.js dependency
+ *       names the specific method (getPrimaryCultureForLocation).
+ *     - No behavioural change to _selectTraits, _generateAge,
+ *       _generateGivenName, _generateSurname, _selectReligion,
+ *       _generateAppearance, _selectProfession,
+ *       generateRandomCharacterData, or any other function.
  *   Previous revision:
+ *     - world.js and constants/character-traits.js became HARD load-time
+ *       dependencies. _getCountryFromLocation and
+ *       _getRandomCountryWithNameData use window.getPlaceScope
+ *       unconditionally. _selectTraits no longer soft-fails on missing
+ *       vocabulary.
+ *   Earlier revisions:
  *     - Random trait selection added: 1–3 unique traits picked from
  *       CHARACTER_TRAIT_VALUES via the shared RNG stream.
- *     - traits added to the assembled data object.
+ *     - Initial implementation.
  * =============================================================================
  */
 
@@ -517,13 +544,28 @@
     // =========================================================================
     // 8. CULTURE AND APPEARANCE
     // =========================================================================
+    //
+    // Culture resolution calls CultureQueries.getPrimaryCultureForLocation,
+    // NOT CultureQueries.getCultureByLocation. The latter does not exist
+    // on the current culture-queries.js surface; the primary-culture
+    // relationship lives on place.cultureId and is resolved by walking
+    // the hierarchy in culture-queries.js. See CULTURE-QUERY METHOD
+    // NAMES in the module header.
+    //
+    // Both functions are feature-gated: when CultureQueries or
+    // CultureGeneration is absent, the corresponding field is left
+    // absent from the generated data. The factory defaults appearance
+    // to {} and cultureId to null. Callers that need real appearance
+    // must load the culture domain.
 
     function _resolveCultureForLocation(locationId) {
         if (!_hasId(locationId)) return null;
         if (typeof window.CultureQueries === 'undefined') return null;
-        if (typeof window.CultureQueries.getCultureByLocation !== 'function') return null;
+        if (typeof window.CultureQueries.getPrimaryCultureForLocation !== 'function') {
+            return null;
+        }
 
-        var culture = window.CultureQueries.getCultureByLocation(locationId);
+        var culture = window.CultureQueries.getPrimaryCultureForLocation(locationId);
         if (!culture || !_hasId(culture.id)) return null;
         return culture.id;
     }
@@ -532,6 +574,10 @@
         if (typeof window.CultureGeneration === 'undefined') return {};
         if (typeof window.CultureGeneration.generateAppearance !== 'function') return {};
 
+        // CultureGeneration.generateAppearance(cultureId, gender, options, rng)
+        // The rng argument is optional; when omitted, the module resolves
+        // window.randomness (which randomness.js exposes as a frozen
+        // provider). No explicit rng argument is needed.
         var appearance = window.CultureGeneration.generateAppearance(cultureId, gender);
         if (!appearance || typeof appearance !== 'object' || Array.isArray(appearance)) {
             return {};
