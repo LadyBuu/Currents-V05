@@ -33,9 +33,37 @@
  *   Role reads go through RoleState.getRole, which returns clones.
  *   There is no fallback to accessors' window.getRoleById at call time —
  *   RoleState is the canonical runtime owner of the role catalogue and
- *   is required at load (see §1). Reading through a fallback would make
- *   queries observe different role shapes than commands and the rest of
- *   the codebase.
+ *   is required at load (see §1).
+ *
+ *   Note: after role-system.js loads, window.getRoleById is aliased to
+ *   RoleState.getRole (also clones), so even if a caller inside this
+ *   module reached for window.getRoleById by accident, it would get the
+ *   canonical clone. The module does not, and the aliasing is a
+ *   compatibility shim, not a dependency.
+ *
+ * CHARACTER PROJECTION CONTRACT
+ *
+ *   Several functions here read window.getCharacterById and access
+ *   fields off the result:
+ *
+ *     projectApprenticeship       reads master.name, master.surname,
+ *                                 apprentice.name, apprentice.surname
+ *     getTeachableSkills          reads nothing off the character record
+ *                                 (uses CharacterCommands.getProfessions)
+ *     findPotentialMasters        passes the entry through unchanged; the
+ *                                 caller (modal) reads entry.character
+ *
+ *   Under the documented load order, window.getCharacterById resolves
+ *   to the projection installed by character-queries.js / the shim, not
+ *   the live entity from accessors.js. The projection includes `name`
+ *   and `surname` (scalar base fields), so the reads here work
+ *   identically against the projection and the live entity.
+ *
+ *   This module does NOT depend on any projection field beyond `id`,
+ *   `name`, and `surname`. If character-queries.js ever drops one of
+ *   those from the projection, the reads here break silently; that is
+ *   the contract this note exists to enforce. See names.js's
+ *   CHARACTER LOOKUP CONTRACT section for the same pattern.
  *
  * ROLEID CONTRACT
  *
@@ -47,8 +75,25 @@
  *   Callers that do not know the role should use
  *   `getOngoingApprenticeships(masterId, apprenticeId)`, which returns
  *   an array, or `getOngoingApprenticeship(masterId, apprenticeId)`,
- *   which returns the single result and fails loudly if the pair has
- *   more than one.
+ *   which returns the single result and throws if the pair has more
+ *   than one.
+ *
+ * DETAILS INCLUDING ENDED RECORDS
+ *
+ *   `getApprenticeshipDetails(masterId, apprenticeId, roleId)` returns
+ *   the ongoing projection only, preserving prior behaviour. Callers
+ *   that need to display a completed or terminated apprenticeship must
+ *   either:
+ *
+ *     - pass { includeEnded: true } to getApprenticeshipDetails, which
+ *       then matches by role regardless of status; or
+ *     - call getApprenticeshipDetailsById(id) with the raw id, which
+ *       returns the projection for any status.
+ *
+ *   Prior revisions returned null for ended records even when asked by
+ *   role id, which made the details modal unable to display completed
+ *   or terminated apprenticeships. See DETAILS INCLUDING ENDED RECORDS
+ *   in REFACTOR HISTORY.
  *
  * EDGE SOURCE
  *
@@ -59,6 +104,16 @@
  *   RelationshipState records so that projectApprenticeship can
  *   assemble the domain-specific view. The raw records come from
  *   RelationshipQueries, which is the canonical edge reader.
+ *
+ * COMPLEXITY NOTES
+ *
+ *   getApprenticeshipsByRole iterates RQ.getByType(APPRENTICESHIP) and
+ *   filters by metadata.roleId. That is O(apprenticeships) per call.
+ *   It is called from apprenticeship-commands.js::_handleRoleDeleted,
+ *   which runs on every roleDeleted event; if the apprenticeship
+ *   catalogue grows large, role deletion becomes visibly slow. The fix,
+ *   if it ever matters, is a role-index in RelationshipQueries (out of
+ *   scope for this module).
  *
  * DEPENDENCIES (required, checked at load):
  *   - RelationshipQueries       (edge reads)
@@ -72,6 +127,31 @@
  * DEPENDENCIES (required for findPotentialMasters only):
  *   - SettlementQueries         (getSettlementMastersByRole)
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getApprenticeshipDetails accepts { includeEnded: true } to
+ *       return completed/terminated apprenticeships. Prior revisions
+ *       always returned null for ended records, which prevented the
+ *       details modal from displaying them. getApprenticeshipDetailsById(id)
+ *       added for callers that already have the raw id.
+ *     - Header CHARACTER PROJECTION CONTRACT section added: documents
+ *       that projectApprenticeship reads only `id`, `name`, `surname`
+ *       off the getCharacterById result, and that those fields are
+ *       present on both the projection and the live entity.
+ *     - Header ROLE READS updated to note that after role-system.js
+ *       loads, window.getRoleById aliases to RoleState.getRole (clones),
+ *       so the "no accessor fallback" claim is doubly true — the code
+ *       doesn't fall back, and the fallback alias returns clones anyway.
+ *     - findPotentialMasters JSDoc now names the entry shape
+ *       { character, skillLevel, apprenticeCount } and documents the
+ *       pass-through behaviour for entries without skillLevel.
+ *     - getTeachableSkills JSDoc now names TEACHING_CONSTANTS.MIN_MASTER_SKILL
+ *       as the threshold source.
+ *     - Header COMPLEXITY NOTES section added for getApprenticeshipsByRole.
+ *     - No other behavioural change. Every projection's shape is
+ *       unchanged; every non-details function's return value is
+ *       unchanged.
  * =============================================================================
  */
 
@@ -255,6 +335,53 @@
     }
 
     /**
+     * Any apprenticeship (ongoing or ended) for (master, apprentice,
+     * roleId). Used by getApprenticeshipDetails when includeEnded is
+     * true. Returns the MOST RECENT match if multiple exist (a pair
+     * could have multiple terminated apprenticeships for the same role
+     * over time).
+     */
+    function _getAnyApprenticeship(masterId, apprenticeId, roleId) {
+        if (!roleId) return null;
+        if (typeof masterId !== 'string' || typeof apprenticeId !== 'string') {
+            return null;
+        }
+        if (masterId === apprenticeId) return null;
+
+        var records = getApprenticeshipRelationships(masterId, apprenticeId);
+        var best = null;
+        var bestStart = -Infinity;
+        for (var i = 0; i < records.length; i++) {
+            var rel = records[i];
+            if (!rel.metadata) continue;
+            if (rel.metadata.roleId !== roleId) continue;
+            if (rel.participantA !== masterId) continue;
+            if (rel.participantB !== apprenticeId) continue;
+
+            // Prefer ongoing records; among same-status, prefer the most
+            // recent startYear.
+            var isOngoing = rel.status === STATUS.ONGOING;
+            var start = typeof rel.startYear === 'number' ? rel.startYear : -Infinity;
+            if (!best) {
+                best = rel;
+                bestStart = start;
+                continue;
+            }
+            var bestOngoing = best.status === STATUS.ONGOING;
+            if (isOngoing && !bestOngoing) {
+                best = rel;
+                bestStart = start;
+                continue;
+            }
+            if (isOngoing === bestOngoing && start > bestStart) {
+                best = rel;
+                bestStart = start;
+            }
+        }
+        return best;
+    }
+
+    /**
      * All ongoing apprenticeships for (master, apprentice), across all
      * roles. Returns raw records.
      *
@@ -325,6 +452,10 @@
      *   specializations,     // from profession record
      *   completed
      * }
+     *
+     * Reads `id`, `name`, `surname` off window.getCharacterById results.
+     * Those fields are present on both the projection and the live
+     * entity. See CHARACTER PROJECTION CONTRACT in the module header.
      */
     function projectApprenticeship(rel) {
         if (!rel) return null;
@@ -384,8 +515,41 @@
         };
     }
 
-    function getApprenticeshipDetails(masterId, apprenticeId, roleId) {
-        var rel = getApprenticeship(masterId, apprenticeId, roleId);
+    /**
+     * The apprenticeship projection for (master, apprentice, roleId).
+     *
+     * By default, returns the ONGOING record only (preserving prior
+     * behaviour). Pass { includeEnded: true } to return the most recent
+     * match regardless of status — the most recent ongoing if one exists,
+     * otherwise the most recent ended. See DETAILS INCLUDING ENDED
+     * RECORDS in the module header.
+     *
+     * @param {string} masterId
+     * @param {string} apprenticeId
+     * @param {string} roleId
+     * @param {Object} [options]
+     * @param {boolean} [options.includeEnded=false]
+     * @returns {Object|null}
+     */
+    function getApprenticeshipDetails(masterId, apprenticeId, roleId, options) {
+        var includeEnded = options && options.includeEnded === true;
+        var rel = includeEnded
+            ? _getAnyApprenticeship(masterId, apprenticeId, roleId)
+            : getApprenticeship(masterId, apprenticeId, roleId);
+        if (!rel) return null;
+        return projectApprenticeship(rel);
+    }
+
+    /**
+     * The apprenticeship projection for a raw id, regardless of status.
+     * Useful for callers that already have the id (modal detail views,
+     * batch projections).
+     *
+     * @param {string} id
+     * @returns {Object|null}
+     */
+    function getApprenticeshipDetailsById(id) {
+        var rel = getApprenticeshipById(id);
         if (!rel) return null;
         return projectApprenticeship(rel);
     }
@@ -492,6 +656,14 @@
         return getApprenticeshipDetails(masterId, apprenticeId, roleId);
     }
 
+    /**
+     * Returns projections of every apprenticeship (any status) whose
+     * metadata.roleId matches roleId.
+     *
+     * COMPLEXITY: O(apprenticeships) per call — iterates the full
+     * apprenticeship set and filters. See COMPLEXITY NOTES in the module
+     * header.
+     */
     function getApprenticeshipsByRole(roleId) {
         var records = RQ.getByType(APPRENTICESHIP);
         var results = [];
@@ -509,8 +681,9 @@
     // =========================================================================
 
     /**
-     * Returns the master's professions whose skill reaches the teaching
-     * threshold, as { id, name, skillLevel } projections.
+     * Returns the master's professions whose skill reaches
+     * TEACHING_CONSTANTS.MIN_MASTER_SKILL, as { id, name, skillLevel }
+     * projections.
      *
      * Reads through CharacterCommands.getProfessions, which is the
      * canonical profession reader. Does NOT reach into
@@ -550,10 +723,32 @@
     }
 
     /**
-     * Finds characters who could serve as masters for a role at a location.
+     * Finds characters who could serve as masters for a role at a
+     * location.
      *
-     * SettlementQueries is required. Silent empty results hide load-order
-     * problems; a missing dependency should be visible.
+     * SettlementQueries is required. Silent empty results hide
+     * load-order problems; a missing dependency should be visible.
+     *
+     * ENTRY SHAPE: the entries from
+     * SettlementQueries.getSettlementMastersByRole are expected to be:
+     *
+     *   {
+     *     character:     character projection,
+     *     skillLevel:    number,   // optional; see below
+     *     apprenticeCount: number  // optional
+     *   }
+     *
+     * The `skillLevel` field is filtered here against minSkillLevel.
+     * Entries WITHOUT skillLevel pass through unchanged (the settlement
+     * query is permitted to omit it, and this module does not invent a
+     * default). Callers that need the threshold enforced are expected to
+     * use the settlement query that provides skillLevel.
+     *
+     * @param {string} roleId
+     * @param {string} locationId
+     * @param {number} [minSkillLevel]  defaults to
+     *                                  TEACHING_CONSTANTS.MIN_MASTER_SKILL
+     * @returns {Array<{character: Object, skillLevel?: number, apprenticeCount?: number}>}
      */
     function findPotentialMasters(roleId, locationId, minSkillLevel) {
         if (typeof window.SettlementQueries === 'undefined' ||
@@ -614,6 +809,7 @@
 
         // projections
         getApprenticeshipDetails: getApprenticeshipDetails,
+        getApprenticeshipDetailsById: getApprenticeshipDetailsById,
         projectApprenticeship: projectApprenticeship,
 
         // character-centric
