@@ -29,8 +29,8 @@
  *
  *   Transient location UI state (selected place, expanded nodes, filters,
  *   view mode) is owned by `window.LocationUIState`
- *   (js/location/location-ui-state.js). This facade reads from LocationUIState,
- *   not LocationState.
+ *   (js/core/state/location-ui-state.js). This facade reads from
+ *   LocationUIState, not LocationState.
  *
  *   LocationUIState exposes the historical compatibility names
  *   (selectedPlaceId, currentPlaceId, collapsedNodes, setSelectedPlace,
@@ -61,6 +61,61 @@
  *   MatchmakerState.selectedPolygynyManId). Legacy names are preserved
  *   here for compatibility but should not propagate to new code.
  *
+ * THROTTLED WARNINGS
+ *
+ *   The two deprecated globals (householdCurrentYear, loadingOverlay)
+ *   emit a one-shot console.warn per process, not per read. A hot loop
+ *   that reads them would otherwise flood the console. The cadence
+ *   matches accessors.js's out-of-sync warning (throttled, not per
+ *   call) and education-learning.js's missing-accessor warning.
+ *
+ *   householdCurrentYear: warns only when time.js is loaded (i.e. when
+ *   the delegation can actually run). If time.js is missing, throws
+ *   immediately with no warning — the throw is the diagnostic.
+ *
+ *   loadingOverlay: warns once on first read, then returns null
+ *   silently. Reads are always null; the getter is not a use case, it
+ *   is a compatibility stub so legacy code that referenced the global
+ *   does not silently operate on undefined.
+ *
+ * READONLY COLLECTION VIEW CACHE
+ *
+ *   _readOnlyCollectionView caches one wrapper per underlying Set via a
+ *   WeakMap. The wrapper delegates to the live Set, so it remains valid
+ *   as long as the Set instance is the same. MatchmakerState.reset()
+ *   calls .clear() on the Sets (not replacement), so the same instance
+ *   persists across resets and the cached wrapper is reused — which is
+ *   correct because the wrapper is stateless.
+ *
+ *   If a future revision of MatchmakerState replaces the Sets instead
+ *   of clearing them, the WeakMap cache will key on the new instances
+ *   and produce fresh wrappers. Also correct.
+ *
+ *   Do not change the wrapper to hold a snapshot of the Set's contents.
+ *   That would freeze the view at the time of creation and break the
+ *   "read-only delegation" contract.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Deprecated warning for window.loadingOverlay is now throttled to
+ *       one console.warn per process. Prior revisions warned on every
+ *       read, which flooded the console in hot loops. See THROTTLED
+ *       WARNINGS.
+ *     - window.householdCurrentYear now only warns when time.js is
+ *       present. Prior revisions warned unconditionally, which meant a
+ *       missing time.js produced a warning followed by a throw with no
+ *       way to tell which was the cause. Now: time.js present → warn +
+ *       delegate (one-shot). time.js absent → throw immediately. See
+ *       THROTTLED WARNINGS.
+ *     - REQUIRED_MODULES error message now distinguishes LocationUIState
+ *       (js/core/state/location-ui-state.js) from the domain's
+ *       LocationState (js/location/location-state.js), so a reader
+ *       hitting the error is not sent grepping for the wrong file.
+ *     - Header THROTTLED WARNINGS and READONLY COLLECTION VIEW CACHE
+ *       sections added.
+ *     - No behavioural change to StillWatersState, the _globalBindings
+ *       table, clearAllRuntimeState, or any non-deprecated global.
  * =============================================================================
  */
 
@@ -71,29 +126,36 @@
     // 0. DEPENDENCY GUARDS
     // =========================================================================
 
+    // REQUIRED_MODULES entries carry a canonical path so a reader hitting
+    // the load-order error knows exactly which file to load. LocationUIState
+    // in particular has a confusing name: it is js/core/state/location-ui-state.js,
+    // NOT js/location/location-state.js. See COMPATIBILITY NOTE in the header.
     var REQUIRED_MODULES = [
-        'CharacterState',
-        'LocationUIState',
-        'MatchmakerState',
-        'CensusState',
-        'HouseholdState',
-        'RoleState',
-        'RankState',
-        'NamesState',
-        'MiscState'
+        ['CharacterState',   'js/character/character-state.js'],
+        ['LocationUIState',  'js/core/state/location-ui-state.js ' +
+                             '(NOT js/location/location-state.js)'],
+        ['MatchmakerState',  'js/systems/matchmaker/matchmaker-state.js'],
+        ['CensusState',      'js/systems/census/census-state.js'],
+        ['HouseholdState',   'js/systems/household/household-state.js'],
+        ['RoleState',        'js/systems/roles/role-state.js'],
+        ['RankState',        'js/systems/ranks/rank-state.js'],
+        ['NamesState',       'js/systems/names/names-state.js'],
+        ['MiscState',        'js/core/state/misc-state.js']
     ];
 
     function _requireFeatureModules() {
         var missing = [];
         for (var i = 0; i < REQUIRED_MODULES.length; i++) {
-            if (typeof window[REQUIRED_MODULES[i]] === 'undefined') {
-                missing.push(REQUIRED_MODULES[i]);
+            if (typeof window[REQUIRED_MODULES[i][0]] === 'undefined') {
+                missing.push(
+                    REQUIRED_MODULES[i][0] + ' (' + REQUIRED_MODULES[i][1] + ')'
+                );
             }
         }
         if (missing.length > 0) {
             throw new Error(
-                'state.js: missing feature state modules: ' + missing.join(', ') +
-                '. Each must load before state.js.'
+                'state.js: missing feature state modules. Each must load ' +
+                'before state.js. Missing:\n  ' + missing.join('\n  ')
             );
         }
     }
@@ -112,6 +174,12 @@
      *   function does not guarantee, encode, or rely on any specific reset
      *   order. A reset() implementation must not assume another feature's
      *   state has already been cleared.
+     *
+     * NOT A CANONICAL-DATA RESET:
+     *   clearAllRuntimeState clears UI selection, filter, and view state.
+     *   It does NOT clear canonical data (characters, roles, institutions).
+     *   Education and apprenticeship have no reset() because they own
+     *   canonical data, not runtime UI state. That is deliberate.
      */
     function clearAllRuntimeState() {
         window.CharacterState.reset();
@@ -166,9 +234,6 @@
         set roleSearchTerm(v) { window.RoleState.roleSearchTerm = v; },
 
         // ===== Matchmaker =====
-        // Collections are read-only at the property level. Mutation must go
-        // through MatchmakerState's explicit methods (addRomanceCharacter,
-        // removeRomanceCharacter, etc.). See _readOnlyCollectionView.
         get selectedRomanceCharacters() {
             return _readOnlyCollectionView(window.MatchmakerState.selectedRomanceCharacterIds);
         },
@@ -255,10 +320,16 @@
     // delegate to the live Set. The returned object is frozen: no new
     // properties can be added, and its methods cannot be replaced.
     //
-    // NOTE: this is intentionally minimal. It is not a full Set proxy; it
-    // exposes the read surface legacy callers commonly used. If a caller
-    // needs the underlying Set, they should call the feature module and
-    // accept that they are bypassing the facade's contract.
+    // The wrapper is cached per underlying Set via a WeakMap. Because the
+    // wrapper is STATELESS (it delegates to the live Set on every call),
+    // the cache is safe as long as the Set instance is the same.
+    // MatchmakerState.reset() calls .clear() on the Sets (does not replace
+    // them), so the same instance persists across resets and the cached
+    // wrapper is reused. See READONLY COLLECTION VIEW CACHE in the header.
+    //
+    // Do NOT change the wrapper to hold a snapshot of the Set's contents.
+    // That would freeze the view at the time of creation and break the
+    // "read-only delegation" contract.
 
     var _readOnlyViewCache = new WeakMap();
 
@@ -287,7 +358,6 @@
             values: function() { return liveSet.values(); },
             keys: function() { return liveSet.keys(); },
             entries: function() { return liveSet.entries(); },
-            // Iteration protocol: delegate to liveSet's iterator.
             [Symbol.iterator]: function() { return liveSet[Symbol.iterator](); }
         };
 
@@ -299,13 +369,6 @@
     // =========================================================================
     // 4. GLOBAL BINDINGS
     // =========================================================================
-    //
-    // Declarative table. Each entry is:
-    //   [globalName, getter, setter|null]
-    //
-    // A null setter means the binding is read-only. Assignment throws.
-    // Keep this table small; new code should use StillWatersState or the
-    // feature module directly.
 
     function _defineGlobal(name, getter, setter) {
         Object.defineProperty(window, name, {
@@ -360,13 +423,6 @@
             function(v) { window.RoleState.roleSearchTerm = v; }],
 
         // --- Matchmaker ---
-        // Read-only collections: the getter returns a frozen view, so
-        // legacy callers cannot push/delete through the facade.
-        // Scalar ids remain writable.
-        //
-        // LEGACY NAMES: selectedPolygynyMan / selectedPolygynyWoman here map
-        // to MatchmakerState.selectedPolygynyManId / selectedPolygynyWomanId.
-        // New code should use the _Id-suffixed names via the feature module.
         ['selectedRomanceCharacters',
             function() { return _readOnlyCollectionView(window.MatchmakerState.selectedRomanceCharacterIds); },
             null],
@@ -444,9 +500,6 @@
     // =========================================================================
     // 5. GLOBAL FUNCTIONS
     // =========================================================================
-    //
-    // These mirror the StillWatersState methods as standalone functions for
-    // callers that historically used window.foo() rather than the facade.
 
     window.clearAllRuntimeState = clearAllRuntimeState;
     window.clearAdoptionCache = function() { window.CharacterState.clearAdoptionCache(); };
@@ -480,18 +533,35 @@
     // They do NOT reimplement behaviour. They do NOT invent fallback
     // constants. In particular: no magic year 1250 — time.js owns the
     // current year and state.js will not guess on its behalf.
+    //
+    // WARNING CADENCE: both deprecated globals below are throttled to one
+    // console.warn per process. A hot loop reading them (e.g.
+    // `if (window.loadingOverlay) ...`) would otherwise flood the
+    // console. See THROTTLED WARNINGS in the header.
+
+    var _warnedHouseholdCurrentYear = false;
+    var _warnedLoadingOverlay = false;
 
     Object.defineProperty(window, 'householdCurrentYear', {
         get: function() {
-            console.warn(
-                'state.js: window.householdCurrentYear is deprecated. ' +
-                'Use window.getCurrentYear() from time.js.'
-            );
+            // time.js is required for the delegation. If it is missing,
+            // throw immediately — no warning, because the throw IS the
+            // diagnostic. If it is present, warn once and delegate.
             if (typeof window.getCurrentYear !== 'function') {
                 throw new Error(
                     'state.js: householdCurrentYear requires time.js ' +
                     '(getCurrentYear missing).'
                 );
+            }
+            if (!_warnedHouseholdCurrentYear) {
+                _warnedHouseholdCurrentYear = true;
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'state.js: window.householdCurrentYear is deprecated. ' +
+                        'Use window.getCurrentYear() from time.js. ' +
+                        '(This warning fires once per process.)'
+                    );
+                }
             }
             return window.getCurrentYear();
         },
@@ -504,18 +574,19 @@
         configurable: true
     });
 
-    // loadingOverlay: the DOM reference is owned by ui.js. This shim exists
-    // only so legacy code that referenced the global does not silently
-    // operate on undefined. The getter exposes an explicit compatibility
-    // value (null). The setter throws: an assignment here cannot possibly
-    // have an effect, and pretending it did is the failure mode we are
-    // eliminating.
     Object.defineProperty(window, 'loadingOverlay', {
         get: function() {
-            console.warn(
-                'state.js: window.loadingOverlay is deprecated. ' +
-                'ui.js owns its own DOM reference.'
-            );
+            if (!_warnedLoadingOverlay) {
+                _warnedLoadingOverlay = true;
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'state.js: window.loadingOverlay is deprecated. ' +
+                        'ui.js owns its own DOM reference. ' +
+                        'Reads return null. (This warning fires once per ' +
+                        'process.)'
+                    );
+                }
+            }
             return null;
         },
         set: function() {
