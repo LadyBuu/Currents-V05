@@ -55,25 +55,35 @@
  *   undefined; the dialog appears and closes but the callback never
  *   fires. The three-argument form is correct.
  *
- * LOCATION RESOLUTION
+ * CHARACTER PROJECTION CONTRACT
  *
- *   _getCurrentLocationOrNull resolves a character's current place id
- *   through world.js. Prior revisions required window.getCurrentLocation,
- *   which accessors.js does not export; the location filter in the assign
- *   modal was effectively dead. See LOCATION RESOLUTION in REFACTOR
- *   HISTORY.
+ *   This modal reads character fields off the projections returned by
+ *   window.getCharacterById and CharacterState.getAllCharacters.
+ *   Under the documented load order, those resolve to the projection
+ *   installed by character-queries.js / the shim. The fields this
+ *   file reads are:
  *
- *   world.js exports:
- *     getCurrentPlace(character)      → place record | null
- *     getCurrentLocationId(character) → string | null
+ *     id           string
+ *     name         string
+ *     surname      string | null
+ *     gender       'male' | 'female' | 'unknown'
+ *     birthYear    number | null
+ *     isDeceased   boolean
  *
- *   _getCurrentLocationOrNull prefers getCurrentPlace (returns the place
- *   id); falls back to getCurrentLocationId (returns the id directly);
- *   returns null when neither is available. A null return from the
- *   resolver causes RoleQueries.getOccupiedLocationIds and
- *   getEligibleCharactersForRole to skip location filtering for that
- *   character, which is the correct degradation when the resolver
- *   cannot resolve a location.
+ *   All six are guaranteed projection fields per
+ *   character-queries.js::CHARACTER PROJECTION CONTRACT. If any is
+ *   removed from the projection, the reads here break silently; that
+ *   is the contract this section exists to enforce.
+ *
+ *   NOT read off the projection:
+ *
+ *     professions   → read via CharacterQueries.getCharacterProfessions
+ *                     (which delegates to CharacterCommands.getProfessions)
+ *                     in _openAssignModal's renderCard. Prior revisions
+ *                     read character.professions directly; the projection
+ *                     does not guarantee that field, so the role count
+ *                     on assign-modal cards was silently wrong whenever
+ *                     the projection stripped professions.
  *
  * CATEGORY SOURCE
  *
@@ -92,6 +102,11 @@
  *   back to CIRCLE; that is a different module with a different
  *   tolerance policy, documented there.)
  *
+ * LOCATION RESOLUTION
+ *
+ *   _getCurrentLocationOrNull resolves a character's current place id
+ *   through world.js. See LOCATION RESOLUTION in REFACTOR HISTORY.
+ *
  * DEPENDENCIES (must be loaded first):
  *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
  *   - formatting.js         (escapeHtml)
@@ -102,6 +117,7 @@
  *   - role-state.js         (RoleState)
  *   - role-queries.js       (RoleQueries)
  *   - role-commands.js      (RoleCommands)
+ *   - character-queries.js  (CharacterQueries) — for getCharacterProfessions
  *   - accessors.js          (getCharacterById, getCharacters)
  *   - time.js               (getCurrentYear, calculateAge)
  *   - world.js              (getCurrentPlace / getCurrentLocationId —
@@ -110,32 +126,25 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - _getCurrentLocationOrNull rewritten to use world.js
- *       (getCurrentPlace / getCurrentLocationId) instead of the
- *       non-existent window.getCurrentLocation. Prior revisions returned
- *       null unconditionally, so the assign-modal location filter was
- *       dead. See LOCATION RESOLUTION in the header.
+ *     - _openAssignModal's renderCard no longer reads
+ *       character.professions off the projection. It reads via
+ *       CharacterQueries.getCharacterProfessions(character.id), which
+ *       delegates to CharacterCommands.getProfessions. Prior revisions
+ *       read the projection field directly, which is out of contract
+ *       and produced a silently-wrong role count when the projection
+ *       stripped professions. See CHARACTER PROJECTION CONTRACT.
+ *     - CharacterQueries added to the required dependencies for
+ *       getCharacterProfessions.
+ *     - Header CHARACTER PROJECTION CONTRACT section added.
+ *     - No other behavioural change. Every other character read in
+ *       this file already used only contract-guaranteed fields.
+ *   Previous revisions (summarised):
+ *     - _getCurrentLocationOrNull rewritten to use world.js.
  *     - All category-dropdown builders route through
- *       _getCategoriesOrEmpty(), which returns {} if
- *       RoleState.getCategories() throws (not yet initialised). Prior
- *       revisions called RS.getCategories() directly and would fail the
- *       modal open if role state was not yet initialised.
- *     - openViewCharactersWithRoleModal now uses
- *       RoleQueries.getRoleStatisticsBatch([roleId]) for the stats half
- *       of its two-scan pattern. The detail half still requires a
- *       separate getCharactersWithRoleDetails call (RoleQueries does not
- *       expose a combined query). See STATISTICS BATCHING in
- *       role-ui-list.js for the same tradeoff.
- *     - openCategoryManagerModal no longer uses window.prompt for
- *       add/rename. Both flows now render an inline text input inside
- *       the modal. window.prompt is synchronous, blocking, and
- *       inconsistent with every other role modal. The delete flow still
- *       uses _confirmThen (the confirmation text is short enough that
- *       window.confirmDialog's dialog is correct).
- *     - Header LOCATION RESOLUTION, CATEGORY SOURCE, and ICON POLICY
- *       sections added.
- *     - No other behavioural change. Every modal's rendered output is
- *       identical when the underlying data and load order are identical.
+ *       _getCategoriesOrEmpty().
+ *     - openViewCharactersWithRoleModal uses
+ *       RoleQueries.getRoleStatisticsBatch([roleId]).
+ *     - openCategoryManagerModal no longer uses window.prompt.
  * =============================================================================
  */
 
@@ -156,6 +165,7 @@
         ['RoleState',         'role-state.js'],
         ['RoleQueries',       'role-queries.js'],
         ['RoleCommands',      'role-commands.js'],
+        ['CharacterQueries',  'character-queries.js'],
         ['getCharacterById',  'accessors.js'],
         ['getCharacters',     'accessors.js']
     ];
@@ -336,6 +346,22 @@
         } else if (window.confirm(message)) {
             onConfirm();
         }
+    }
+
+    /**
+     * Returns the character's profession count via the canonical reader.
+     * See CHARACTER PROJECTION CONTRACT: professions is NOT a projection
+     * field, so it must go through CharacterQueries.getCharacterProfessions
+     * (which delegates to CharacterCommands.getProfessions).
+     */
+    function _professionCountFor(character) {
+        if (!character || typeof character.id !== 'string') return 0;
+        if (typeof window.CharacterQueries === 'undefined'
+            || typeof window.CharacterQueries.getCharacterProfessions !== 'function') {
+            return 0;
+        }
+        var profs = window.CharacterQueries.getCharacterProfessions(character.id);
+        return Array.isArray(profs) ? profs.length : 0;
     }
 
     // =========================================================================
@@ -769,9 +795,10 @@
             var selected = isSelected(character.id);
             var age = _calculateAgeOrNull(character.birthYear);
             var location = _getCurrentLocationOrNull(character);
-            var roleCount = Array.isArray(character.professions)
-                ? character.professions.length
-                : 0;
+
+            // Do NOT read character.professions from the projection.
+            // See CHARACTER PROJECTION CONTRACT in the header.
+            var roleCount = _professionCountFor(character);
 
             var checkbox = '';
             if (mode === 'bulk') {
@@ -1014,9 +1041,6 @@
                     // bulkAssignRole returns
                     //   { success: boolean, assignedCount, failedCount, errors }
                     // assignedCount === 0 is the "nothing succeeded" check.
-                    // bulk.success tells us whether every assignment
-                    // succeeded; we use assignedCount for the toast because
-                    // it tells the user how many actually landed.
                     if (bulk.assignedCount === 0) {
                         _showToast('No assignments succeeded', 'error');
                         return false;
@@ -1055,8 +1079,6 @@
 
         var details = RQ.getCharactersWithRoleDetails(roleId);
 
-        // One batch call for the stats half. See STATISTICS BATCHING in
-        // role-ui-list.js for the same reasoning.
         var statsBatch = RQ.getRoleStatisticsBatch([roleId]);
         var stats = statsBatch[roleId] !== undefined
             ? statsBatch[roleId]
@@ -1284,12 +1306,9 @@
     // =========================================================================
 
     function openCategoryManagerModal(onSuccess) {
-        // Inline sub-state for the add/rename form. Replaces the previous
-        // window.prompt calls, which were synchronous and inconsistent with
-        // the rest of the role modal surface.
         var formState = {
-            mode: null,     // null | 'add' | 'rename'
-            catId: null,    // rename target only
+            mode: null,
+            catId: null,
             currentName: ''
         };
 
