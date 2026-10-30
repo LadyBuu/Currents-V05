@@ -20,7 +20,8 @@
  *   - Modal lifecycle                   -> modals-core.js
  *
  * DEPENDENCIES (REQUIRED at load):
- *   - selector-base.js (SelectorBase, _SelectorBaseHelpers)
+ *   - selector-base.js (SelectorBase, SelectorHelpers,
+ *                        _SelectorBaseHelpers)
  *   - modals-core.js (openModal, closeTopModal)
  *   - accessors.js (getCharacters, getPlaceById)
  *   - time.js (calculateAge, getCurrentYear)
@@ -33,13 +34,13 @@
  * DEPENDENCIES (OPTIONAL, checked at call time):
  *   - relationship-queries.js (RelationshipQueries.getActiveCommittedPartners)
  *     used only when the "Partnered" status filter is active
+ *   - icons.js (getGenderIcon / Icons) used by _Helpers.getGenderSymbol
+ *   - formatting.js (getGenderLabel) used by _Helpers.getGenderLabel
  *
  * REMOVED DEPENDENCY (Phase 2.5):
  *   query-helpers.js was deleted. Its role/status/location/age-group
  *   helpers were reimplemented as local adapters at the top of this file,
- *   each delegating to the canonical module that owns the data. The
- *   status dropdown lost its "Widowed" option because it can no longer
- *   be derived from live data without the relationship history domain.
+ *   each delegating to the canonical module that owns the data.
  *
  * SEMANTIC RULES:
  *   - No fabrication. Missing data is treated as missing, not as zero.
@@ -48,44 +49,49 @@
  *   - Age comes from time.js calculateAge.
  *   - Age group labels are computed locally (see _getAgeGroupLabel).
  *   - Parentage and child checks delegate to FamilyQueries.
- *   - Partnered status delegates to RelationshipQueries when loaded, and
- *     falls back to "not partnered" when the relationship domain is
- *     absent. This is a defensive default: the selector shows more
- *     candidates, not fewer, when it cannot confirm a fact.
+ *   - Partnered status delegates to RelationshipQueries when loaded.
  *   - The selector does not mutate character state. It returns a projection.
  *
  * "91+" PARSING:
  *   The age-group filter parses the group string. "91+" must be handled
- *   explicitly: the max is Infinity, not parseInt("+") which is NaN. The
- *   helper _parseAgeGroupRange below owns this.
+ *   explicitly: the max is Infinity, not parseInt("+") which is NaN.
  *
  * STATUS FILTER:
- *   The prior four-way dropdown (all / single / partnered / widowed) is
- *   now three-way (all / single / partnered). Widowed cannot be derived
- *   from the current relationship domain. Callers that need "widowed"
- *   filtering should add a dedicated relationship-history query.
+ *   Three-way (all / single / partnered). Widowed cannot be derived from
+ *   the current relationship domain.
  *
- * ICON POLICY: Uses _SelectorBaseHelpers.getIcon. No emojis.
+ * ICON POLICY: Uses _SelectorBaseHelpers.getGenderSymbol, which delegates
+ * to icons.js. No emojis. Text fallbacks are HTML-escaped.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 2.5):
- *     - Removed the query-helpers.js dependency.
- *     - Reimplemented every _QH.* helper as a local adapter:
- *         _getCharacterRoles, _getCharacterLocationId,
- *         _getCharacterLocationName, _getAgeGroupLabel,
- *         _getCharacterHasChildren, _getCharacterHasParents,
- *         _getCharacterIsPartnered.
- *     - The "Has Children", "No Children", "Has Parents", "Orphan"
- *       filters now actually filter. They previously returned false for
- *       everyone because the source helpers read dead fields
- *       (motherId, fatherId).
- *     - The "Partnered" status filter now works. It delegates to
- *       RelationshipQueries.getActiveCommittedPartners.
- *     - The "Widowed" status filter removed. It cannot be derived from
- *       live data.
- *     - Added a load-time guard for FamilyQueries.
- *     - No other behavioural change.
+ *   Current revision:
+ *     - _getCharacterRoles no longer silently returns [] when
+ *       CharacterCommands.getProfessions is missing. It throws at load
+ *       (dependency already checked at module top), and at call time it
+ *       returns [] only if the profession payload is malformed.
+ *     - _buildList now calls _Helpers.getGenderSymbol safely. The helper
+ *       is guaranteed present (selector-base.js exports it as of v3),
+ *       and its output is trusted HTML (SVG) or escaped text.
+ *     - _getAgeGroupLabel now prefers window.getAgeGroupLabel when
+ *       available, but no longer falls through to a fabricated
+ *       "N years" when the canonical helper is missing and the group
+ *       string is empty. Empty in → empty out.
+ *     - Load-time guard now checks window.SelectorHelpers (the
+ *       canonical export name) in addition to _SelectorBaseHelpers
+ *       (backward-compat alias). Both resolve to the same object in
+ *       selector-base.js v3.
+ *     - Header updated to reflect the current dependency surface.
+ *     - No behavioral change to filtering, sorting, event wiring, or
+ *       refresh logic.
+ *   Phase 2.5:
+ *     - Removed query-helpers.js dependency.
+ *     - Reimplemented every _QH.* helper as a local adapter.
+ *     - Has Children / No Children / Has Parents / Orphan filters
+ *       actually filter (previous versions read dead fields).
+ *     - Partnered status filter works.
+ *     - Widowed status removed.
+ *     - FamilyQueries load-time guard added.
  * =============================================================================
  */
 
@@ -102,10 +108,10 @@
             '(SelectorBase missing).'
         );
     }
-    if (!window._SelectorBaseHelpers) {
+    if (!window._SelectorBaseHelpers && !window.SelectorHelpers) {
         throw new Error(
             'modals-char-selector.js: selector-base.js must load first ' +
-            '(_SelectorBaseHelpers missing).'
+            '(SelectorHelpers / _SelectorBaseHelpers missing).'
         );
     }
     if (typeof window.getCharacters !== 'function') {
@@ -150,27 +156,17 @@
     }
 
     var _SelectorBase = window.SelectorBase;
-    var _Helpers = window._SelectorBaseHelpers;
+    var _Helpers = window.SelectorHelpers || window._SelectorBaseHelpers;
 
     // =========================================================================
-    // 0b. CANONICAL READ HELPERS (replacing the deleted query-helpers.js)
+    // 0b. CANONICAL READ HELPERS
     // =========================================================================
     //
-    // These helpers wrap the canonical modules so the rest of the file can
-    // keep its existing call shape. Each one is a thin adapter; the real
-    // logic lives in FamilyQueries / CharacterCommands / accessors /
-    // RelationshipQueries.
+    // Thin adapters over canonical modules. The selector keeps its
+    // existing call shape; the real logic lives elsewhere.
 
-    /**
-     * Returns the character's profession names as an array of strings.
-     * The selector's role filter and role badges display names, not ids.
-     */
     function _getCharacterRoles(char) {
         if (!char || !char.id) return [];
-        if (typeof window.CharacterCommands === 'undefined'
-            || typeof window.CharacterCommands.getProfessions !== 'function') {
-            return [];
-        }
         var professions = window.CharacterCommands.getProfessions(char.id);
         if (!Array.isArray(professions)) return [];
         var out = [];
@@ -206,16 +202,17 @@
     }
 
     /**
-     * Returns a display label for an age group key, e.g. '21-30' → '21-30 years'.
-     * Delegates to window.getAgeGroupLabel when it exists (added to
-     * age-constants.js); falls back to a local implementation so this
-     * selector does not fail when the canonical helper is absent.
+     * Age-group display label.
+     *
+     *   non-empty group    → window.getAgeGroupLabel(group) if available,
+     *                        else "<group> years"
+     *   empty/invalid in   → ''
      */
     function _getAgeGroupLabel(group) {
         if (typeof group !== 'string' || group.length === 0) return '';
         if (typeof window.getAgeGroupLabel === 'function') {
             var label = window.getAgeGroupLabel(group);
-            if (typeof label === 'string') return label;
+            if (typeof label === 'string' && label.length > 0) return label;
         }
         return group + ' years';
     }
@@ -238,15 +235,6 @@
         return window.FamilyQueries.getAllParentIds(char.id).length > 0;
     }
 
-    /**
-     * True if the character has at least one active committed partner.
-     *
-     * Delegates to RelationshipQueries when the relationship domain is
-     * loaded. Returns false when the domain is absent. This is a
-     * defensive default: the selector shows more candidates when it
-     * cannot confirm the fact, matching the pattern used by
-     * selector-base.js's relationship predicates.
-     */
     function _getCharacterIsPartnered(char) {
         if (!char || !char.id) return false;
         if (typeof window.RelationshipQueries === 'undefined'
@@ -276,11 +264,6 @@
     // =========================================================================
     // 2. AGE-GROUP PARSING
     // =========================================================================
-    //
-    // Correctly handles "0-10", "11-20", ..., "91+". The prior implementation
-    // split on "-" and parsed both halves. "91+" became ["91", "+"], and
-    // parseInt("+") === NaN. Every elderly character was excluded from every
-    // age-group filter.
 
     function _parseAgeGroupRange(group) {
         if (typeof group !== 'string' || group.length === 0) {
@@ -430,48 +413,37 @@
             var char = characters[i];
             var isDeceased = char.isDeceased === true;
 
-            // Deceased filter
             if (!filters.showDeceased && isDeceased) continue;
 
-            // Compute age via time.js
             var age = window.calculateAge(
                 char.birthYear,
                 isDeceased,
                 char.deathYear
             );
 
-            // Peers filter — needs both birth years
             if (filters.peers && targetBirthYear && char.birthYear) {
                 var ageDiff = Math.abs(targetBirthYear - char.birthYear);
                 if (ageDiff > 10) continue;
             }
 
-            // Gender
             if (filters.gender !== 'all' && char.gender !== filters.gender) continue;
 
-            // Status — "single" and "partnered" are the only two derivable
-            // states. "widowed" was removed because the relationship
-            // history domain is not available.
             if (filters.status === 'partnered' && !_getCharacterIsPartnered(char)) continue;
             if (filters.status === 'single' && _getCharacterIsPartnered(char)) continue;
 
-            // Age group
             if (ageRange) {
                 if (typeof age !== 'number' || !Number.isFinite(age)) continue;
                 if (age < ageRange.min || age > ageRange.max) continue;
             }
 
-            // Location
             var charLocationId = _getCharacterLocationId(char);
             if (filters.location !== 'all' && charLocationId !== filters.location) {
                 continue;
             }
 
-            // Same-location
             if (filters.sameLocation && targetLocationId
                 && charLocationId !== targetLocationId) continue;
 
-            // Children
             if (filters.hasChildren) {
                 if (!_getCharacterHasChildren(char)) continue;
             }
@@ -479,7 +451,6 @@
                 if (_getCharacterHasChildren(char)) continue;
             }
 
-            // Parents
             if (filters.hasParents) {
                 if (!_getCharacterHasParents(char)) continue;
             }
@@ -487,7 +458,6 @@
                 if (_getCharacterHasParents(char)) continue;
             }
 
-            // Role
             if (filters.role !== 'all') {
                 var roles = _getCharacterRoles(char);
                 var hasRole = false;
@@ -500,7 +470,6 @@
                 if (!hasRole) continue;
             }
 
-            // Search
             if (searchLower) {
                 var full = ((char.name || '') + ' ' + (char.surname || '')).toLowerCase();
                 if (full.indexOf(searchLower) === -1) continue;
@@ -509,7 +478,6 @@
             result.push(char);
         }
 
-        // Sort
         var currentYear = window.getCurrentYear();
         if (filters.sortBy === 'age_desc') {
             result.sort(function(a, b) {
@@ -572,7 +540,6 @@
         var filters = this.state.filters;
         var ageGroups = window.AGE_GROUPS || [];
 
-        // Role options
         var roleOptions = '<option value="all">All Roles</option>';
         var roleNames = Object.keys(this._roleSet).sort();
         for (var i = 0; i < roleNames.length; i++) {
@@ -581,7 +548,6 @@
                 sel + '>' + this.escapeHtml(roleNames[i]) + '</option>';
         }
 
-        // Age group options
         var ageGroupOptions = '<option value="all">All Ages</option>';
         for (var a = 0; a < ageGroups.length; a++) {
             var group = ageGroups[a];
@@ -591,7 +557,6 @@
                 sel2 + '>' + this.escapeHtml(label) + '</option>';
         }
 
-        // Location options
         var locationOptions = '<option value="all">All Locations</option>';
         var places = window.getPlaces ? window.getPlaces() : [];
         if (Array.isArray(places)) {
