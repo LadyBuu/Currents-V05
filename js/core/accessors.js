@@ -40,6 +40,19 @@
  *     entities. Mutation belongs to domain command modules, which must
  *     call invalidateAccessorCaches() after modifying canonical data.
  *
+ * SETTLEMENT DATA:
+ *   `masterData.data.settlementData` is a top-level object keyed by
+ *   locationId. It is NOT indexed by any accessor cache in this module
+ *   and no getSettlementData* accessor exists here. SettlementQueries
+ *   reads it directly from masterData. Because no cache is built for
+ *   it, no invalidation is required after settlement writes.
+ *
+ *   Settlements are keyed by locationId, not by an `id` field on a
+ *   record. This means the standard _buildIdMap contract (index by
+ *   `item.id`) does not apply. If a future revision adds a settlement
+ *   accessor, it must be a keyed-object accessor, not an id-map
+ *   accessor.
+ *
  * CACHE CONSISTENCY CONTRACT:
  *   Every ID-map cache is paired with a canonical collection in
  *   masterData.data. The cache size must match the canonical array length
@@ -143,6 +156,11 @@
  *                                    isDeceased.
  *     modals-apprenticeship.js       reads name, surname, birthYear,
  *                                    isDeceased, deathYear.
+ *     settlement-prosperity-queries.js
+ *                                    reads traits (via
+ *                                    CharacterQueries.getCharacterById
+ *                                    for the government-leader modifier;
+ *                                    see its LEADER TRAITS header).
  *
  *   If character-queries.js ever drops one of the listed fields from
  *   the projection, the modules that read it break silently. The
@@ -186,6 +204,22 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Header SETTLEMENT DATA section added, documenting that
+ *       masterData.data.settlementData is NOT indexed by any accessor
+ *       cache in this module, that no cache invalidation is required
+ *       after settlement writes, and that the standard _buildIdMap
+ *       contract does not apply to settlementData (keyed by locationId,
+ *       not by an `id` field).
+ *     - Header CONCRETE DEPENDENCY GRAPH updated to name
+ *       settlement-prosperity-queries.js as a consumer of the
+ *       character projection (reads `traits` via
+ *       CharacterQueries.getCharacterById for the government-leader
+ *       modifier). The character-queries.js projection is required to
+ *       carry `traits` for the modifier to be non-zero; this is now
+ *       documented alongside the other projection consumers.
+ *     - No behavioural change to any accessor's return value, to the
+ *       out-of-sync warning throttle, or to the cache rebuild logic.
+ *   Previous revision:
  *     - _ACCESSOR_DEFINITIONS array added. Cache variables, warning
  *       flags, builder functions, invalidateAccessorCaches, and
  *       refreshCaches are all driven from it. Prior revisions listed
@@ -281,6 +315,11 @@ function _buildIdMap(items) {
 // can hold references to them. Order matters: the variables must exist
 // before the definitions reference them, so the definitions are built as
 // a function that returns the array after the variables are declared.
+//
+// SETTLEMENT DATA IS NOT AN ACCESSOR CACHE. It is keyed by locationId,
+// not by an `id` field on a record, so _buildIdMap does not apply. It is
+// read directly from masterData by SettlementQueries. See SETTLEMENT
+// DATA in the header.
 
 var _characterMap = null;
 var _placeMap = null;
@@ -565,6 +604,10 @@ function _getHouseholdMap() {
  * caller has (by calling this function) honored the cache contract; if
  * a future mutation forgets again, that's a new violation and warrants
  * a fresh warning.
+ *
+ * SETTLEMENT DATA IS NOT AFFECTED: settlementData is not an accessor
+ * cache. Settlement writes do not need to call this function. See
+ * SETTLEMENT DATA in the header.
  */
 function invalidateAccessorCaches() {
     for (var i = 0; i < _ACCESSOR_DEFINITIONS.length; i++) {
