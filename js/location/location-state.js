@@ -28,10 +28,22 @@
  * Acceptance test:
  *   Delete every index. Hydrate from masterData. App behaves identically.
  *
- * Public reads return clones. Callers cannot mutate state through a returned
- * object. Commands use _getPlaceCanonical / _getLocationTypeCanonical during a
- * transaction and then write through _addPlace / _removePlace / _addLocationType
- * / _removeLocationType.
+ * Public reads return DEEP CLONES. Callers cannot mutate state through a
+ * returned object, including nested arrays (leaderAssignments,
+ * demolitionHistory, etc.). Commands use _getPlaceCanonical /
+ * _getLocationTypeCanonical during a transaction and then write through
+ * _addPlace / _removePlace / _addLocationType / _removeLocationType.
+ *
+ * CLONE STRATEGY:
+ *   Public reads return window.deepClone(record) from collections.js.
+ *   collections.js is a HARD load-time dependency of this module. The
+ *   prior revision provided a local fallback clone that was one-level
+ *   shallow for nested objects — a caller that mutated
+ *   place.leaderAssignments[0] through a public read corrupted
+ *   canonical data. That fallback is removed. If collections.js is not
+ *   loaded, this module fails loudly at load. The "Public reads return
+ *   clones" contract is not negotiable; it is the only thing standing
+ *   between a UI module and the canonical array.
  *
  * PERSISTENCE:
  *   Mutation primitives call window.markDataDirty() after a successful write.
@@ -87,16 +99,30 @@
  *     window.LocationUIState (js/location/location-ui-state.js). If a prior
  *     module already bound window.LocationState without the domain surface
  *     below, that is a load-order collision; see the guard in section 2.
- *   - Cloning delegates to window.deepClone from core/collections.js when
- *     present, and falls back to a local shallow-deep clone otherwise.
- *     The fallback preserves the current caller-observable surface without
- *     making collections.js a hard dependency of this file.
+ *   - Cloning delegates to window.deepClone from core/collections.js.
+ *     collections.js is a HARD dependency. A missing collections.js is a
+ *     load-order bug, not a recoverable condition.
  *   - window.markDataDirty (core/storage.js) is required. A missing module is
  *     a load-order bug, not a recoverable condition.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _cloneValue fallback removed. Public reads now call
+ *       window.deepClone directly. collections.js is a hard load-time
+ *       dependency. The prior fallback was one-level shallow for nested
+ *       objects: a caller that mutated a nested field
+ *       (leaderAssignments[0].endYear) through a public read corrupted
+ *       canonical data, violating the documented "Public reads return
+ *       clones" contract. See CLONE STRATEGY in the module header.
+ *     - Header CLONE STRATEGY section added.
+ *     - Header COMPATIBILITY (core layer) updated: collections.js is now
+ *       a hard dependency, not an optional optimization.
+ *     - No public signature change. getAllPlaceIds / getPlacesByParentId
+ *       / getPlacesByTypeId / getPlaceById / getLocationTypeById return
+ *       the same shapes; only the depth of the returned clone changed
+ *       (one-level → full deep).
+ *   Previous revision:
  *     - Added 'masterDataUpdated' listener. Closes the only remaining
  *       correctness gap: a cross-tab reload previously left the location
  *       indexes pointing at the pre-reload canonical arrays. Now the
@@ -135,6 +161,15 @@
             'location-state.js requires storage.js (markDataDirty) to load first.'
         );
     }
+    if (typeof window.deepClone !== 'function') {
+        throw new Error(
+            'location-state.js requires collections.js (deepClone) to load ' +
+            'first. Public reads return deep clones of canonical records; ' +
+            'without deepClone, mutating a nested field through a public ' +
+            'read would corrupt canonical data. See CLONE STRATEGY in the ' +
+            'module header.'
+        );
+    }
 
     // -------------------------------------------------------------------------
     // 2. COLLISION GUARD (load time)
@@ -165,50 +200,21 @@
     }
 
     // -------------------------------------------------------------------------
-    // 3. CLONE STRATEGY
+    // 3. CLONE HELPERS
     // -------------------------------------------------------------------------
     //
-    // Prefer core deepClone. Fall back to a local shallow-deep clone so this
-    // file does not hard-require collections.js. The fallback is intentionally
-    // one-level shallow for nested objects so behavior matches the previous
-    // implementation in the absence of collections.js. It is not a substitute
-    // for deepClone; it is a load-safety net.
-
-    function _cloneValue(value) {
-        if (typeof window.deepClone === 'function') {
-            return window.deepClone(value);
-        }
-        if (value === null || typeof value !== 'object') return value;
-        if (Array.isArray(value)) return value.slice();
-        var copy = {};
-        for (var k in value) {
-            if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
-            var v = value[k];
-            if (Array.isArray(v)) {
-                copy[k] = v.slice();
-            } else if (v && typeof v === 'object') {
-                var nested = {};
-                for (var nk in v) {
-                    if (Object.prototype.hasOwnProperty.call(v, nk)) {
-                        nested[nk] = v[nk];
-                    }
-                }
-                copy[k] = nested;
-            } else {
-                copy[k] = v;
-            }
-        }
-        return copy;
-    }
+    // See CLONE STRATEGY in the module header. Every public read returns
+    // a deep clone via window.deepClone. There is no local fallback; the
+    // contract is enforced by the load-time guard above.
 
     function _clonePlace(place) {
         if (!place) return null;
-        return _cloneValue(place);
+        return window.deepClone(place);
     }
 
     function _cloneLocationType(type) {
         if (!type) return null;
-        return _cloneValue(type);
+        return window.deepClone(type);
     }
 
     // -------------------------------------------------------------------------
@@ -382,7 +388,7 @@
     }
 
     // -------------------------------------------------------------------------
-    // 10. PUBLIC READ ACCESSORS (clones)
+    // 10. PUBLIC READ ACCESSORS (deep clones)
     // -------------------------------------------------------------------------
 
     function getPlaceById(placeId) {
@@ -621,7 +627,7 @@
         hydrateFromMasterData: hydrateFromMasterData,
         refresh: refresh,
 
-        // Public reads (clones)
+        // Public reads (deep clones)
         getPlaceById: getPlaceById,
         getLocationTypeById: getLocationTypeById,
         getPlacesByParentId: getPlacesByParentId,
