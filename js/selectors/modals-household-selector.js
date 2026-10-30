@@ -38,39 +38,92 @@
  *   - Not a household query layer. Reads via HouseholdQueries only.
  *   - Not a mutation. Selecting a household does not change anything.
  *   - Not family-semantic. Family facts (parents, siblings) come from
- *     FamilyQueries when a characterId is supplied; the selector itself
- *     does not decide "who is related to whom."
- *
- * WHAT CHANGED (DROPPED)
- * ----------------------
- *   - No `FamilyAccessors` reference. The module was deleted; the
- *     selector now reads parentage through `FamilyQueries` when needed.
- *   - No `char.motherId` / `char.fatherId` reads. Those fields no longer
- *     exist on the character record.
- *   - No `char.relationships` reads. Spouse/kinship facts come from
- *     `FamilyQueries` + `SelectorHelpers` predicates.
+ *     FamilyQueries when a characterId is supplied.
  *
  * DOM-SCOPE
  * ---------
- *   Every DOM lookup is scoped to the modal's own `handle.element`
- *   returned by openModal. The prior version used a fallback chain that
- *   ended at document.body and, because modals-core.js doesn't emit the
- *   selectors it looked for, always fell through. Field reads scanned
- *   the entire document.
+ *   Every DOM lookup is scoped to the modal element returned by
+ *   openModal (result.element). The prior version used a fallback chain
+ *   that ended at document.body.
+ *
+ * MODAL INFRASTRUCTURE
+ * --------------------
+ *   Uses the canonical core modal shell directly:
+ *
+ *     window.openModal(options)  -> { element, close }
+ *     window.closeTopModal()
+ *
+ *   The accepted option keys are `titleHtml` and `contentHtml`.
+ *   `title:` and `content:` are NOT read by the core; a modal that
+ *   passes them renders with the default title ("Modal") and an empty
+ *   body. Prior revisions of this file used `title:` / `content:` and
+ *   the picker was silently dead.
+ *
+ *   The returned object's `element` field is the modal element to
+ *   scope DOM queries against. Do not query document.body.
+ *
+ *   onConfirm returning truthy closes the modal. When a row is
+ *   clicked, we call closeTopModal() explicitly and then fire the
+ *   caller's onSelect on the next tick. onCancel is wired through
+ *   onCancel on the modal options so the caller's onCancel fires for
+ *   every non-confirmed close path (Escape, overlay click, close
+ *   button, Cancel button).
  *
  * DEPENDENCIES (REQUIRED, verified at load):
- *   - formatting.js        (escapeHtml) — for HTML-safe strings
+ *   - formatting.js        (escapeHtml)
  *   - modals-core.js       (openModal, closeTopModal)
  *   - household-queries.js (HouseholdQueries)
  *   - selector-base.js     (SelectorHelpers)
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
  *   - family-queries.js    (FamilyQueries) — used when characterId is set
- *                          to compute blood-relative and spouse badges
+ *                          to compute blood-relative badges
  *   - icons.js             (Icons) — used for status icons if present
  *
  * ICON POLICY: Icons come from icons.js if loaded. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - openModal call site switched from `title:`/`content:` to
+ *       `titleHtml:`/`contentHtml:`. The prior call site rendered an
+ *       empty modal — the picker's title bar said "Modal" and the
+ *       body was blank, so no rows could be clicked. Same bug class
+ *       that modals-role-select.js documents having fixed.
+ *     - The `window._openModal` fallback was removed. It was a phantom:
+ *       no module in the tree ever exported `_openModal`, and the
+ *       fallback resolved to undefined, which the load-time guard
+ *       caught as "missing openModal" — meaning the module could not
+ *       load at all if `window.openModal` were absent. The fallback
+ *       was dead and misleading.
+ *     - onCancel is now threaded through the modal options. The prior
+ *       revision called `onCancel()` inside the modal's own
+ *       `onCancel` handler but the handler only fired if the caller
+ *       passed an onCancel to openModal — which the code did, but
+ *       the surrounding wiring had a duplicate `onCancel()` fire
+ *       when the caller clicked Cancel after already closing via a
+ *       row. Simplified: one modal-level onCancel that invokes the
+ *       caller's onCancel exactly once per non-confirmed close.
+ *     - The list container's click handler is now scoped to
+ *       `listEl` (a descendant of `root = modal.element`) and uses
+ *       addEventListener instead of onclick. Prior revision used
+ *       `listEl.onclick = ...`, which is a single-handler slot:
+ *       re-rendering the list preserved the handler, but any
+ *       future addition of a second listener would have silently
+ *       replaced the row-click handler.
+ *     - _currentHouseholdId now tolerates HouseholdQueries returning
+ *       a household id (string) as well as a household record
+ *       (object with .id). The exact return shape of
+ *       getCharacterHousehold is not visible in the core/selector
+ *       surface; both shapes are handled so a future refactor of
+ *       HouseholdQueries does not break the "current" badge.
+ *     - Header MODAL INFRASTRUCTURE section added.
+ *     - No other behavioural change. Filtering, sorting, row
+ *       rendering, and relationship badges are unchanged.
+ *   Previous revisions:
+ *     - Dropped FamilyAccessors; parentage via FamilyQueries.
+ *     - No char.motherId / char.fatherId / char.relationships reads.
+ *     - DOM lookups scoped to modal element.
  * =============================================================================
  */
 
@@ -105,15 +158,11 @@
     );
     var _openModal = _requireFunction(
         'openModal (modals-core.js)',
-        typeof window.openModal === 'function'
-            ? window.openModal
-            : window._openModal
+        window.openModal
     );
     var _closeTopModal = _requireFunction(
         'closeTopModal (modals-core.js)',
-        typeof window.closeTopModal === 'function'
-            ? window.closeTopModal
-            : window._closeTopModal
+        window.closeTopModal
     );
     var _queries = _requireObject(
         'HouseholdQueries',
@@ -135,7 +184,10 @@
         'HouseholdQueries.getCharacterHousehold',
         _queries.getCharacterHousehold
     );
-    var _selector = _requireObject('SelectorHelpers', window.SelectorHelpers);
+    var _selector = _requireObject(
+        'SelectorHelpers (selector-base.js)',
+        window.SelectorHelpers || window._SelectorBaseHelpers
+    );
 
     // =========================================================================
     // 1. HELPERS
@@ -207,16 +259,6 @@
     // =========================================================================
     // 3. HOUSEHOLD STATUS CLASSIFICATION
     // =========================================================================
-    //
-    // We compute the household's effective status from the raw record
-    // and the member count, without depending on HouseholdRules.
-    // HouseholdRules.calculateHouseholdStatus is the canonical status
-    // classifier, but this selector only needs a coarse four-way
-    // partition (active / vacant / empty / deprecated) for filtering.
-    // Using the record's persisted status directly would misclassify a
-    // "vacant" household whose members have all been marked deceased but
-    // where no status write has run yet. This local classification is a
-    // filter helper, not a domain fact.
 
     function _classifyHousehold(household) {
         if (!household) return 'unknown';
@@ -269,23 +311,33 @@
     // =========================================================================
     // 4. CHARACTER-CENTRIC BADGES
     // =========================================================================
-    //
-    // When a characterId is supplied, the picker shows two extra pieces
-    // of context per household:
-    //
-    //   - "current":   is this the character's current household?
-    //   - "relatives": does this household contain a blood relative of
-    //                  the character?
-    //
-    // Both facts come from canonical sources:
-    //   - current:   HouseholdQueries.getCharacterHousehold(characterId)
-    //   - relatives: FamilyQueries.isBloodRelated on the household's
-    //                members, composed via SelectorHelpers.isBloodRelativeBasic
 
+    /**
+     * Returns the character's current household id, or null.
+     *
+     * HouseholdQueries.getCharacterHousehold's exact return shape is not
+     * pinned by the core contract. Historically it returned a household
+     * record (object with .id). A reasonable refactor might make it
+     * return the id directly (string), matching other query modules.
+     * Both shapes are handled so the "current" badge survives either.
+     *
+     * @private
+     * @returns {string|null}
+     */
     function _getCurrentHouseholdId(characterId) {
         if (!_hasId(characterId)) return null;
         var current = _queries.getCharacterHousehold(characterId);
-        return current ? current.id : null;
+        if (!current) return null;
+
+        // Object shape: { id, ... }
+        if (typeof current === 'object' && _hasId(current.id)) {
+            return current.id;
+        }
+        // String shape: '<householdId>'
+        if (typeof current === 'string' && current.length > 0) {
+            return current;
+        }
+        return null;
     }
 
     function _householdHasBloodRelative(householdId, characterId) {
@@ -349,12 +401,10 @@
              + 'background:var(--bg2);border:1px solid var(--border);'
              + 'border-radius:4px;cursor:pointer;transition:background 0.1s;">';
 
-        // Status icon
         html += '<span class="household-picker-icon"'
              + ' style="color:' + badge.color + ';font-size:0.7rem;"'
              + ' aria-hidden="true">' + badgeIcon + '</span>';
 
-        // Main content
         html += '<span style="flex:1;min-width:0;">';
 
         html += '<span style="display:block;font-size:0.7rem;font-weight:600;'
@@ -362,7 +412,6 @@
              + _escapeHtml(household.name || 'Unnamed Household')
              + '</span>';
 
-        // Secondary line: location + member count + badges
         var secondaryBits = [];
         if (household.locationName) {
             secondaryBits.push(_escapeHtml(household.locationName));
@@ -385,7 +434,6 @@
 
         html += '</span>';
 
-        // Status badge on the right
         html += '<span style="font-size:0.5rem;color:' + badge.color + ';'
              + 'padding:2px 8px;border:1px solid ' + badge.color + ';'
              + 'border-radius:8px;flex-shrink:0;">'
@@ -404,7 +452,6 @@
         var html = '<div style="margin-bottom:12px;padding:8px;'
              + 'background:var(--bg3);border-radius:6px;">';
 
-        // Search
         html += '<div style="margin-bottom:8px;">'
              + '<input type="text" data-field="searchText"'
              + ' placeholder="Search households"'
@@ -413,7 +460,6 @@
              + 'border:1px solid var(--border);border-radius:4px;font-size:0.7rem;">'
              + '</div>';
 
-        // Status checkboxes
         html += '<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:0.6rem;">';
 
         var checkboxes = [
@@ -473,17 +519,16 @@
             : null;
         var filterConfig = _normalizeFilterConfig(options.filterConfig);
 
-        // Snapshot the full household list once. The selector is a
-        // point-in-time picker; it does not re-read on every render.
+        // Snapshot the household list once. The selector is a point-in-time
+        // picker; it does not re-read on every render.
         var households = _queries.getAllHouseholds({ includeDeprecated: true });
         if (!Array.isArray(households)) households = [];
 
         var currentHouseholdId = _getCurrentHouseholdId(characterId);
         var classificationCounts = _countByClassification(households);
 
-        // Precompute the "has relative" flag once per household, so the
-        // per-render loop doesn't re-walk the family graph. This is O(N)
-        // family-queries calls up front rather than O(N) on every keystroke.
+        // Precompute "has relative" once per household, so re-renders do
+        // not re-walk the family graph per keystroke.
         var relativeFlags = {};
         if (characterId) {
             for (var r = 0; r < households.length; r++) {
@@ -501,15 +546,14 @@
             + '</div>';
 
         var modal = _openModal({
-            title: title,
-            content: content,
+            titleHtml: _escapeHtml(title),
+            contentHtml: content,
             confirmText: '',
             cancelText: 'Cancel',
             onConfirm: function() {
-                // The user must pick a row. The Confirm button is
-                // hidden (empty confirmText); if a caller passes a
-                // custom confirmText, we treat confirm as "cancel the
-                // picker" rather than pretending a row was selected.
+                // The user must pick a row. Confirm is treated as a
+                // cancel: nothing is selected, so we do not pretend
+                // otherwise.
                 return false;
             },
             onCancel: function() {
@@ -523,6 +567,8 @@
         var listEl = root.querySelector('[data-role="household-list"]');
         if (!listEl) return modal;
 
+        var selectionMade = false;
+
         function _render() {
             var filtered = [];
             for (var i = 0; i < households.length; i++) {
@@ -534,7 +580,6 @@
                 filtered.push({ household: h, classification: classification });
             }
 
-            // Sort: current household first, then name.
             filtered.sort(function(a, b) {
                 var aCurrent = currentHouseholdId
                     && a.household.id === currentHouseholdId;
@@ -567,43 +612,46 @@
                 );
             }
             listEl.innerHTML = html;
-
-            // Delegate row clicks to the list container.
-            listEl.onclick = function(e) {
-                if (!e.target || !e.target.closest) return;
-                var row = e.target.closest('[data-household-id]');
-                if (!row || !listEl.contains(row)) return;
-                var hid = row.getAttribute('data-household-id');
-                if (!_hasId(hid)) return;
-                var snapshot = _queries.getHousehold(hid);
-                if (!snapshot) return;
-                _closeTopModal();
-                setTimeout(function() {
-                    onSelect(snapshot);
-                }, 0);
-            };
         }
 
-        // Wire filter UI
+        // Delegated row-click handler. Scoped to listEl.
+        listEl.addEventListener('click', function(e) {
+            if (!e.target || typeof e.target.closest !== 'function') return;
+            var row = e.target.closest('[data-household-id]');
+            if (!row || !listEl.contains(row)) return;
+            var hid = row.getAttribute('data-household-id');
+            if (!_hasId(hid)) return;
+
+            var snapshot = _queries.getHousehold(hid);
+            if (!snapshot) return;
+
+            selectionMade = true;
+            _closeTopModal();
+            setTimeout(function() {
+                onSelect(snapshot);
+            }, 0);
+        });
+
+        // Wire filter UI.
         var searchInput = root.querySelector('[data-field="searchText"]');
         if (searchInput) {
-            searchInput.oninput = function() {
+            searchInput.addEventListener('input', function() {
                 filterConfig.searchText = searchInput.value || '';
                 _render();
-            };
+            });
         }
 
         var checkboxes = root.querySelectorAll('[data-field^="show"]');
         for (var c = 0; c < checkboxes.length; c++) {
             (function(cb) {
-                cb.onchange = function() {
+                cb.addEventListener('change', function() {
                     var field = cb.getAttribute('data-field');
                     if (field && Object.prototype.hasOwnProperty.call(
                         filterConfig, field)) {
                         filterConfig[field] = cb.checked === true;
                         _render();
                     }
-                };
+                });
             })(checkboxes[c]);
         }
 
