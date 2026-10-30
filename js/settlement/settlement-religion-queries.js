@@ -9,63 +9,69 @@
  * Read-only queries about religion within a settlement.
  *
  * Location hierarchy:
- *   Owned by LocationQueries. Corrected from
- *   LocationState.getAllSubLocationIds to
- *   LocationQueries.getAllSubLocationIds.
+ *   Owned by LocationQueries. The settlement's location subtree is
+ *   enumerated via LocationQueries.getAllSubLocationIds, matching the
+ *   pattern used by settlement-education-queries.js and
+ *   settlement-prosperity-queries.js.
+ *
+ * BREAKDOWN SHAPE CONTRACT:
+ *   Settlement needs the per-religion counts across a location SUBTREE.
+ *   That aggregation is owned by ReligionQueries:
+ *
+ *     ReligionQueries.getReligiousBreakdownForLocations(locationIds)
+ *       -> { byReligion: { [religionId]: { count: number } },
+ *            unaffiliated: number,
+ *            total: number }
+ *
+ *   Settlement does NOT call ReligionQueries.getReligiousBreakdown
+ *   (the single-location variant returning the flat per-religion map
+ *   with `unaffiliated: { name, count }`). The flat map is a
+ *   religion-side convenience shape; it does not aggregate across a
+ *   subtree, and its unaffiliated bucket is an object, not a number.
+ *   Prior revisions of this module called a phantom
+ *   getReligiousBreakdownForLocations that did not exist on
+ *   ReligionQueries; every settlement religious-unity query threw
+ *   TypeError on first call. The religion-queries.js current revision
+ *   exports the function with the shape this module expects.
+ *
+ *   _normalizeBreakdown validates the shape strictly. A missing or
+ *   malformed breakdown is reported as unavailable (reason:
+ *   'no_breakdown'), never coerced into a fabricated zero.
  *
  * MISSING-VALUE SEMANTICS:
- *   Three distinct states are now distinguished and exposed separately:
+ *   Three distinct states, exposed separately:
  *
  *     'available'         the calculation produced a meaningful result
- *     'no_population'     the settlement has zero counted population —
- *                         unity and dominant religion are undefined,
- *                         not fabricated. Unity returns null; dominant
- *                         religion returns null.
- *     'no_breakdown'      ReligionQueries returned no breakdown object —
- *                         the religion domain is unavailable or the
- *                         breakdown could not be composed. Unity returns
- *                         null; dominant religion returns null.
+ *     'no_population'     the settlement's subtree has zero counted
+ *                         population. Unity and dominant religion are
+ *                         undefined, not fabricated.
+ *     'no_breakdown'      ReligionQueries returned no usable breakdown
+ *                         object. Unity and dominant religion are
+ *                         undefined.
  *
- *   The prior revision returned 50 for unity when total === 0, which
- *   fabricated a domain value. It collapsed "zero population" and
- *   "breakdown unavailable" into the same number, and the fabricated
- *   50 flowed into SettlementProsperityQueries.modifiers.religiousUnity
- *   as a neutral reading that looked correct but was meaningless.
- *
- *   Per settlement-docs.txt §4 and §19, missing data is not converted
- *   into a domain fact. Unity and dominant religion now return null
- *   when the inputs are unavailable, and the caller distinguishes the
- *   two states by reading the corresponding *Status query.
+ *   Prior revisions returned 50 for unity when total === 0, which
+ *   fabricated a domain value. That is prohibited by
+ *   settlement-docs.txt §4 (MISSING-VALUE SEMANTICS). Unity and
+ *   dominant religion now return null in the unavailable cases, and
+ *   the reason code tells the caller which case it was.
  *
  * RELIGIOUS UNITY DEFINITION:
- *   Unity measures how religiously homogeneous a settlement is.
- *
- *     unity = 50 + (dominantProportion * 50)
+ *   unity = 50 + (dominantProportion * 50)
  *
  *   where dominantProportion is the fraction of the population
  *   belonging to the largest religion (including unaffiliated if it
- *   is the largest single group).
- *
- *   Two penalties apply on top of the base:
+ *   is the largest single group). Two penalties/bonuses on the base:
  *     - unaffiliated population: -min(10, unaffiliated / 10)
  *     - small dominant group bonus: +2 if the dominant group has > 10
- *       members (a small absolute number is treated as evidence that
- *       the settlement is still forming).
+ *       members
  *
- *   The result is clamped to [0, 100] and rounded. The two bonuses
- *   are preserved from the prior revision; only the "no population"
- *   and "no breakdown" cases change.
+ *   Clamped to [0, 100], rounded.
  *
  * DOMINANT RELIGION DEFINITION:
- *   The dominant religion is the single religion with the highest
- *   member count, IF that count is strictly greater than the
- *   unaffiliated count. If unaffiliated membership is at least as
- *   large as any religion, there is no dominant religion (the
- *   settlement is majority unaffiliated).
- *
- *   The prior revision returned null in both the "no religions" case
- *   and the "unaffiliated majority" case. Those are now distinguished
- *   by the reason code on the status query.
+ *   The single religion with the highest member count, IF that count
+ *   is strictly greater than the unaffiliated count. If unaffiliated
+ *   is at least as large as the largest religion, there is no
+ *   dominant religion (majority unaffiliated).
  *
  * DEPENDENCIES (REQUIRED at load):
  *   - SettlementQueries
@@ -76,29 +82,31 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - getReligiousUnity no longer returns 50 when total === 0 or
- *       when the breakdown is missing. It returns null for both, and
- *       the two are distinguished via the new getReligiousUnityStatus
- *       helper.
- *     - getDominantReligion no longer returns null for both "no
- *       religions" and "unaffiliated majority". getDominantReligionStatus
- *       exposes the reason.
- *     - getReligiousBreakdown now validates the shape returned by
- *       ReligionQueries.getReligiousBreakdownForLocations and returns
- *       null for a malformed or missing breakdown instead of letting
- *       the wrong shape flow into getReligiousUnity.
- *     - Header MISSING-VALUE SEMANTICS, RELIGIOUS UNITY DEFINITION, and
- *       DOMINANT RELIGION DEFINITION sections added.
- *     - No public signature change to any existing function. The
- *       existing functions getReligiousUnity and getDominantReligion
- *       keep their names and continue to return number|null and
- *       Object|null respectively; the only behavioral change is the
- *       replacement of the fabricated 50 with null in the two
- *       unavailable cases.
+ *     - getReligiousBreakdown now calls
+ *       ReligionQueries.getReligiousBreakdownForLocations(locationIds)
+ *       (plural, array) and returns the aggregate shape
+ *       { byReligion, unaffiliated, total }. Prior revisions called the
+ *       same name but religion-queries.js did not export it, so every
+ *       call threw TypeError.
+ *     - _normalizeBreakdown now validates the aggregate shape strictly:
+ *       byReligion must be a non-null object, unaffiliated and total
+ *       must be finite non-negative numbers. A malformed shape is
+ *       reported as null (→ reason 'no_breakdown'), not coerced.
+ *     - getReligiousUnityStatus and getDominantReligionStatus now
+ *       distinguish 'no_population' (total === 0 with a valid
+ *       breakdown) from 'no_breakdown' (breakdown itself unavailable).
+ *       Prior revisions collapsed both into a single null value.
+ *     - Header BREAKDOWN SHAPE CONTRACT section added, documenting why
+ *       settlement uses the plural aggregate form and not the flat
+ *       single-location form.
+ *     - No behavioral change to getPlacesOfWorship,
+ *       getPlaceOfWorshipCount, or getActivePlaceOfWorshipCount.
  *   Previous revisions:
+ *     - getReligiousUnity / getDominantReligion stopped returning a
+ *       fabricated 50 for zero-population.
+ *     - _normalizeBreakdown validation added.
  *     - Corrected from LocationState.getAllSubLocationIds to
  *       LocationQueries.getAllSubLocationIds.
- *     - Initial implementation.
  * =============================================================================
  */
 
@@ -140,10 +148,17 @@
         return place.isActive !== false;
     }
 
+    function _isFiniteNumber(v) {
+        return typeof v === 'number' && isFinite(v);
+    }
+
+    function _isFiniteNonNegativeNumber(v) {
+        return _isFiniteNumber(v) && v >= 0;
+    }
+
     /**
-     * Normalizes a breakdown object returned by
-     * ReligionQueries.getReligiousBreakdownForLocations into the shape
-     * this module expects:
+     * Validates the aggregate breakdown shape returned by
+     * ReligionQueries.getReligiousBreakdownForLocations:
      *
      *   {
      *     byReligion: { [religionId]: { count: number } },
@@ -151,9 +166,17 @@
      *     total: number
      *   }
      *
-     * Returns null when the input is malformed. Callers treat null as
-     * "breakdown unavailable" and return null from the corresponding
-     * query — they do not fabricate a value.
+     * Returns the normalized object, or null when the shape is malformed
+     * or missing. Callers treat null as "breakdown unavailable" (reason
+     * 'no_breakdown') and do NOT fabricate a value.
+     *
+     * Strict rules:
+     *   - raw must be a non-null, non-array object
+     *   - raw.byReligion must be a non-null, non-array object
+     *   - each entry must be an object with a finite non-negative count
+     *   - raw.unaffiliated must be a finite non-negative number
+     *   - raw.total must be a finite non-negative number
+     *   - raw.unaffiliated <= raw.total
      *
      * @private
      * @param {*} raw
@@ -162,19 +185,31 @@
     function _normalizeBreakdown(raw) {
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 
-        var byReligion = raw.byReligion;
+        var byReligionRaw = raw.byReligion;
+        if (!byReligionRaw || typeof byReligionRaw !== 'object'
+            || Array.isArray(byReligionRaw)) {
+            return null;
+        }
+
+        var byReligion = {};
+        for (var religionId in byReligionRaw) {
+            if (!Object.prototype.hasOwnProperty.call(byReligionRaw, religionId)) {
+                continue;
+            }
+            var entry = byReligionRaw[religionId];
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return null;
+            }
+            var count = entry.count;
+            if (!_isFiniteNonNegativeNumber(count)) return null;
+            byReligion[religionId] = { count: count };
+        }
+
         var unaffiliated = raw.unaffiliated;
         var total = raw.total;
-
-        if (typeof unaffiliated !== 'number' || !isFinite(unaffiliated) || unaffiliated < 0) {
-            return null;
-        }
-        if (typeof total !== 'number' || !isFinite(total) || total < 0) {
-            return null;
-        }
-        if (!byReligion || typeof byReligion !== 'object' || Array.isArray(byReligion)) {
-            return null;
-        }
+        if (!_isFiniteNonNegativeNumber(unaffiliated)) return null;
+        if (!_isFiniteNonNegativeNumber(total)) return null;
+        if (unaffiliated > total) return null;
 
         return {
             byReligion: byReligion,
@@ -185,8 +220,8 @@
 
     /**
      * Returns the religion id and count of the largest religion entry
-     * in the breakdown. Does not consider unaffiliated. Returns
-     * { id: null, count: 0 } when there are no religions.
+     * in the breakdown. Does not consider unaffiliated.
+     * Returns { id: null, count: 0 } when there are no religions.
      *
      * @private
      */
@@ -198,7 +233,7 @@
         for (var religionId in byReligion) {
             if (!Object.prototype.hasOwnProperty.call(byReligion, religionId)) continue;
             var entry = byReligion[religionId];
-            var count = entry && typeof entry.count === 'number' ? entry.count : 0;
+            var count = entry && _isFiniteNumber(entry.count) ? entry.count : 0;
             if (count > maxCount) {
                 maxCount = count;
                 dominantId = religionId;
@@ -247,21 +282,20 @@
     }
 
     // =========================================================================
-    // 4. RELIGIOUS BREAKDOWN
+    // 4. RELIGIOUS BREAKDOWN (aggregate across subtree)
     // =========================================================================
 
     /**
-     * Returns the religious breakdown for a settlement, or null when
-     * the settlement does not exist or the breakdown is unavailable.
+     * Returns the religious breakdown for a settlement's location
+     * subtree, or null when the settlement does not exist or the
+     * breakdown is unavailable/malformed.
      *
-     * The returned object has the shape:
-     *   { byReligion: { [religionId]: { count: number } },
+     * Shape (see BREAKDOWN SHAPE CONTRACT in the header):
+     *   {
+     *     byReligion: { [religionId]: { count: number } },
      *     unaffiliated: number,
-     *     total: number }
-     *
-     * Returns null when the raw breakdown from ReligionQueries is
-     * missing or malformed. See MISSING-VALUE SEMANTICS in the module
-     * header.
+     *     total: number
+     *   }
      *
      * @param {string} locationId
      * @returns {Object|null}
@@ -271,7 +305,23 @@
         if (!settlement) return null;
 
         var locationIds = _getLocationIdsForSettlement(locationId);
-        var raw = _getReligionQueries().getReligiousBreakdownForLocations(locationIds);
+        var religionQueries = _getReligionQueries();
+
+        if (typeof religionQueries.getReligiousBreakdownForLocations !== 'function') {
+            // The religion module is loaded but does not expose the
+            // aggregate function. That is a load-order or version
+            // mismatch; report as unavailable rather than throw.
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'settlement-religion-queries: ' +
+                    'ReligionQueries.getReligiousBreakdownForLocations is missing. ' +
+                    'Check religion-queries.js version.'
+                );
+            }
+            return null;
+        }
+
+        var raw = religionQueries.getReligiousBreakdownForLocations(locationIds);
         return _normalizeBreakdown(raw);
     }
 
@@ -279,18 +329,6 @@
     // 5. DOMINANT RELIGION (DERIVED)
     // =========================================================================
 
-    /**
-     * Returns the dominant religion as a full religion record, or null
-     * when no dominant religion exists (either no population, no
-     * religions, or unaffiliated majority), or when the settlement does
-     * not exist.
-     *
-     * Callers that need to distinguish the reasons read
-     * getDominantReligionStatus.
-     *
-     * @param {string} locationId
-     * @returns {Object|null}
-     */
     function getDominantReligion(locationId) {
         var status = getDominantReligionStatus(locationId);
         return status.religion;
@@ -309,24 +347,8 @@
      *             'settlement_not_found'
      *   }
      *
-     *   'available'             a dominant religion was resolved
-     *   'no_population'         the settlement has zero counted
-     *                           population; there is no dominant group
-     *   'no_breakdown'          the breakdown is unavailable; cannot
-     *                           determine a dominant religion
-     *   'unaffiliated_majority' unaffiliated is >= the largest
-     *                           religion's count; no religion is
-     *                           dominant
-     *   'no_religions'          there are no religions in the
-     *                           breakdown at all
-     *   'settlement_not_found'  the settlement itself does not exist
-     *
      * @param {string} locationId
-     * @returns {{
-     *   religion: Object|null,
-     *   religionId: string|null,
-     *   reason: string
-     * }}
+     * @returns {{ religion: Object|null, religionId: string|null, reason: string }}
      */
     function getDominantReligionStatus(locationId) {
         var settlement = _getSettlementQueries().getSettlementData(locationId);
@@ -355,9 +377,9 @@
         var religionQueries = _getReligionQueries();
         var religion = religionQueries.getReligion(largest.id);
         if (!religion) {
-            // The breakdown named a religion id, but ReligionQueries could
-            // not resolve it. That is a data integrity problem; treat as
-            // unavailable rather than reporting a null-id success.
+            // Breakdown named a religion id, but ReligionQueries could
+            // not resolve it. Data integrity issue; treat as unavailable
+            // rather than reporting a null-id success.
             return { religion: null, religionId: null, reason: 'no_breakdown' };
         }
 
@@ -368,20 +390,6 @@
     // 6. RELIGIOUS UNITY (DERIVED)
     // =========================================================================
 
-    /**
-     * Returns the religious unity of a settlement as a number in
-     * [0, 100], or null when the unity cannot be determined (zero
-     * population or breakdown unavailable).
-     *
-     * See RELIGIOUS UNITY DEFINITION in the module header for the
-     * calculation. See MISSING-VALUE SEMANTICS for the null cases.
-     *
-     * Callers that need to distinguish the reasons read
-     * getReligiousUnityStatus.
-     *
-     * @param {string} locationId
-     * @returns {number|null}
-     */
     function getReligiousUnity(locationId) {
         var status = getReligiousUnityStatus(locationId);
         return status.unity;
@@ -416,14 +424,9 @@
             return { unity: null, reason: 'no_population' };
         }
 
-        var byReligion = breakdown.byReligion;
         var total = breakdown.total;
         var unaffiliated = breakdown.unaffiliated;
 
-        // Find the largest single group. Unaffiliated competes with the
-        // largest religion for "dominant group" status for the purposes
-        // of the unity calculation, matching the prior revision's
-        // behavior.
         var largest = _largestReligion(breakdown);
         var maxCount = largest.count;
 
