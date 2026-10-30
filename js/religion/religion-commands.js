@@ -13,7 +13,7 @@
  *       → check rule (ReligionRules)
  *       → clone candidate
  *       → mutate via ReligionState primitives
- *       → _commit (hydrate → markDirty → publish → dispatch)
+ *       → _commit (markDirty → publish → dispatch)
  *
  * Persistence is NOT part of that shape. Commands do not call saveMasterData
  * directly. The modal (or the caller) calls ReligionCommands.persist() once
@@ -30,33 +30,44 @@
  *   for these fields. See CharacterCommands::setReligion and the
  *   RELIGION FIELDS section in character-commands.js.
  *
- *   Prior to this revision, assignReligionToCharacter /
- *   convertCharacter / removeReligionFromCharacter mutated the object
- *   returned by window.getCharacterById directly. Under the documented
- *   load order, that object is a defensive projection created by
- *   character-queries.js (which overrides accessors.js's live-entity
- *   version). Mutating a projection does not affect canonical state.
- *   Every religion assignment reported { success: true } while leaving
- *   the character's canonical religionId unchanged. The bug affected:
+ * RETURN SHAPE:
+ *   Every command returns { success, data?, reason? }. On success, `data`
+ *   is a DETACHED CLONE of the record that was written. Callers may
+ *   mutate `data` freely without affecting canonical state. On failure,
+ *   `reason` is a human-readable string; no `data` field is present.
  *
- *     - ReligionCommands.assignReligionToCharacter
- *     - ReligionCommands.convertCharacter
- *     - ReligionCommands.removeReligionFromCharacter
- *     - ReligionInheritance.inheritReligionForChild (delegates to
- *       assignReligionToCharacter)
- *     - CharacterCommands.assignCharacterReligion (delegates to
- *       assignReligionToCharacter / convertCharacter)
- *     - CharacterCommands.removeCharacterReligion (delegates to
- *       removeReligionFromCharacter)
+ *   Prior revisions returned the same object reference that was pushed
+ *   into masterData.data.religions, so a caller mutating `result.data`
+ *   corrupted canonical state silently.
  *
- *   The current code routes through CharacterCommands.setReligion.
- *   Every write now goes through CharacterState.updateCharacter, which:
- *     - writes canonical state (not a projection),
- *     - fires _emitChange: markDataDirty + invalidateAccessorCaches +
- *       characterChanged.
- *   The religion domain's _commit still fires afterward to publish the
- *   cross-domain CustomEvent (characterReligionAssigned /
- *   characterReligionConverted / characterReligionRemoved).
+ * LAW ENUM SOURCE:
+ *   Law vocabulary (type / category / domain / severity / crimeType) is
+ *   owned by the settlement-law-definitions.js and crime-constants.js
+ *   modules. The current tree does not expose those enums as flat
+ *   window.LAW_TYPES / window.CRIME_TYPES globals; they live on:
+ *
+ *     window.SettlementLawDefinitions.LAW_TYPES
+ *     window.SettlementLawDefinitions.LAW_CATEGORIES
+ *     window.SettlementLawDefinitions.LAW_DOMAINS
+ *     window.SettlementLawDefinitions.LAW_SEVERITIES
+ *     window.CrimeConstants.CRIME_TYPES
+ *
+ *   _readLawEnums() below resolves those namespaced sources and returns
+ *   a flat object for the rest of the module. When a fallback source is
+ *   missing, the returned enum is null (not {}), so callers can detect
+ *   "not available" instead of silently treating every value as invalid.
+ *   This is the bug class settlement-review #8 flagged (hardcoded
+ *   fallback list used even when the canonical enum was present). The
+ *   current implementation does not fabricate defaults for missing
+ *   enums.
+ *
+ * PERSISTENCE TRUTH:
+ *   _save() inspects the boolean return of saveMasterData() and throws
+ *   on false, using getLastSaveError() to surface the underlying reason.
+ *   This is Pattern A from storage.js's DOMAIN PERSIST CONTRACT; the
+ *   prior revision used Pattern C (discard the boolean, report success
+ *   unconditionally). Pattern C is prohibited by storage.js and was
+ *   already fixed in settlement-command-commit.js.
  *
  * TIME CONTRACT:
  *   Uses window.getCurrentYear from js/core/time.js. The deprecated
@@ -72,43 +83,45 @@
  *   - accessors.js            (getCharacterById, getPlaceById)
  *   - ids.js                  (generateId)
  *   - time.js                 (getCurrentYear)
- *   - storage.js              (saveMasterData — via persist only)
+ *   - storage.js              (saveMasterData, getLastSaveError — via
+ *                              persist only)
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (R1):
- *     - assignReligionToCharacter, convertCharacter, and
- *       removeReligionFromCharacter now route through
- *       CharacterCommands.setReligion. Prior revisions called a local
- *       _setCharacterReligionField helper that mutated the projection
- *       returned by window.getCharacterById. Under the documented load
- *       order, that projection is a defensive copy from
- *       character-queries.js; the writes were silently discarded.
- *       Every religion assignment reported { success: true } while
- *       canonical state was unchanged.
- *     - The local _setCharacterReligionField helper is gone. It was
- *       the sole reason these commands appeared to work while doing
- *       nothing. All writes now go through CharacterState.updateCharacter
- *       via CharacterCommands.setReligion, which fires markDataDirty,
- *       invalidateAccessorCaches, and characterChanged.
- *     - The TODO comment about routing through CharacterCommands.setReligion
- *       is resolved and removed.
- *     - CharacterCommands.setReligion was added to the load-time
- *       dependency check.
- *     - Header CHARACTER-RELIGION WRITES section added, documenting the
- *       boundary and the historical bug.
- *     - Header REFACTOR HISTORY entry added.
- *     - No behavioural change to the religion-state mutations,
- *       religion-laws wiring, or any non-character-facing command.
- *   Previous revision (Phase 7):
- *     - _commit no longer saves; persist() is the single save site.
- *     - Mutations route through ReligionState primitives.
+ *   Current revision:
+ *     - _save() now inspects saveMasterData()'s boolean return and
+ *       throws on false, using getLastSaveError() for the underlying
+ *       reason. Prior revisions used the Pattern C bug documented in
+ *       storage.js's DOMAIN PERSIST CONTRACT: every failed persist was
+ *       silently reported as success, so a quota-exhausted save
+ *       looked identical to a durable one.
+ *     - createReligion, updateReligion, addGod, updateGod, addLaw,
+ *       updateLaw now return a DETACHED CLONE of the record as `data`.
+ *       Prior revisions returned the same object reference that had
+ *       been pushed into masterData.data.religions, so a caller
+ *       mutating result.data corrupted canonical state silently.
+ *     - _readLawEnums() added. addLaw / updateLaw no longer read flat
+ *       window.LAW_* globals (which do not exist in the current tree);
+ *       they read the namespaced canonical sources
+ *       (SettlementLawDefinitions.* and CrimeConstants.CRIME_TYPES).
+ *       When the canonical source is missing, the enum is reported as
+ *       null and validation fails loudly, rather than the enum being
+ *       fabricated as {} (which made every value "invalid").
+ *     - _commit no longer calls hydrateFromMasterData(); the State
+ *       primitive already re-hydrates after each write. Prior revisions
+ *       hydrated twice per mutation. Behaviour is unchanged; the
+ *       duplicate scan is gone.
+ *     - No other behavioural change. Assign / convert / remove paths
+ *       already routed through CharacterCommands.setReligion in the
+ *       previous revision.
+ *   Previous revisions:
+ *     - R1: character-religion writes routed through
+ *       CharacterCommands.setReligion.
+ *     - Phase 7: _commit no longer saves; persist() is the single save
+ *       site. Mutations route through ReligionState primitives.
  *     - Law mutations absorbed from religion-laws.js.
- *     - Field allowlist on updateReligion.
- *     - CustomEvent dispatch for cross-domain.
- *     - Load-time verification.
  * =============================================================================
  */
 
@@ -118,10 +131,6 @@
     // =========================================================================
     // 1. FIELD ALLOWLIST
     // =========================================================================
-    //
-    // updateReligion only accepts these fields. Anything else is rejected
-    // with a specific message. isDeprecated and deprecatedYear are NOT in
-    // this list — they go through deprecateReligion / reactivateReligion.
 
     var _ALLOWED_UPDATE_FIELDS = {
         name: true,
@@ -212,26 +221,89 @@
         return window.getCurrentYear();
     }
 
-    function _save() {
-        if (typeof window.saveMasterData !== 'function') {
-            throw new Error('ReligionCommands requires storage.saveMasterData.');
+    // =========================================================================
+    // 3. LAW ENUM SOURCE
+    // =========================================================================
+    //
+    // Law vocabulary is owned by settlement-law-definitions.js and
+    // crime-constants.js. The current tree exposes the enum through
+    // namespaces, not flat window.* globals. This helper resolves the
+    // canonical source.
+    //
+    // Each returned enum is either a plain object (populated) or null
+    // (source not loaded / malformed). A null enum is caught by
+    // validation, which fails loudly rather than silently treating
+    // every value as invalid (the bug settlement-review #8 flagged).
+
+    function _readLawEnums() {
+        var out = {
+            types: null,
+            categories: null,
+            domains: null,
+            severities: null,
+            crimeTypes: null
+        };
+
+        // Settlement law definitions (authoritative for law taxonomy).
+        if (typeof window.SettlementLawDefinitions !== 'undefined'
+            && window.SettlementLawDefinitions) {
+            var sld = window.SettlementLawDefinitions;
+
+            if (sld.LAW_TYPES && typeof sld.LAW_TYPES === 'object') {
+                out.types = sld.LAW_TYPES;
+            }
+            if (sld.LAW_CATEGORIES && typeof sld.LAW_CATEGORIES === 'object') {
+                out.categories = sld.LAW_CATEGORIES;
+            }
+            if (sld.LAW_DOMAINS && typeof sld.LAW_DOMAINS === 'object') {
+                out.domains = sld.LAW_DOMAINS;
+            }
+            if (sld.LAW_SEVERITIES && typeof sld.LAW_SEVERITIES === 'object') {
+                out.severities = sld.LAW_SEVERITIES;
+            }
         }
-        window.saveMasterData();
+
+        // Crime types (authoritative for crime taxonomy).
+        if (typeof window.CrimeConstants !== 'undefined'
+            && window.CrimeConstants
+            && window.CrimeConstants.CRIME_TYPES
+            && typeof window.CrimeConstants.CRIME_TYPES === 'object') {
+            out.crimeTypes = window.CrimeConstants.CRIME_TYPES;
+        }
+
+        return out;
+    }
+
+    function _enumValues(enumObj) {
+        if (!enumObj || typeof enumObj !== 'object') return null;
+        var vals = [];
+        for (var k in enumObj) {
+            if (!Object.prototype.hasOwnProperty.call(enumObj, k)) continue;
+            var v = enumObj[k];
+            if (typeof v === 'string' && v.length > 0) {
+                vals.push(v);
+            }
+        }
+        return vals;
+    }
+
+    function _pickDefault(enumObj, preferredKey, fallbackLiteral) {
+        if (enumObj && typeof enumObj === 'object') {
+            var v = enumObj[preferredKey];
+            if (typeof v === 'string' && v.length > 0) return v;
+        }
+        return fallbackLiteral;
     }
 
     // =========================================================================
-    // 3. TRANSACTION BOUNDARY
+    // 4. TRANSACTION BOUNDARY
     // =========================================================================
     //
     // Called after the State primitive has already written the canonical
-    // change. Re-hydrates indexes, marks dirty, publishes in-process, and
-    // dispatches the cross-domain CustomEvent.
-    //
-    // Does NOT save. Save is persist().
+    // change AND re-hydrated indexes. This function does NOT re-hydrate;
+    // doing so was a duplicate scan per mutation. Behavioural change: none.
 
     function _commit(eventName, payload) {
-        _state().hydrateFromMasterData();
-
         if (typeof window.markDataDirty === 'function') {
             try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
         }
@@ -246,35 +318,53 @@
                 detail: { religion: payload }
             }));
         } catch (e) {
-            // CustomEvent unavailable or dispatch failed. Non-fatal: the
-            // in-process publish already fired, and other domains that
-            // require the event will fail loudly on their own.
+            // CustomEvent unavailable or dispatch failed. Non-fatal.
         }
     }
 
     // =========================================================================
-    // 4. PERSIST
+    // 5. PERSIST (truthful)
     // =========================================================================
+    //
+    // The ONLY place in this module that calls saveMasterData. Inspects
+    // the boolean return (Pattern A from storage.js). On false, reads
+    // getLastSaveError() and throws with the underlying reason.
+    //
+    // Prior revisions used Pattern C: discarded the boolean, reported
+    // success unconditionally. storage.js explicitly prohibits Pattern C.
+    //
+    // persist() catches the throw and converts it into a structured
+    // failure so callers (modals) can toast without throwing.
 
-    /**
-     * Persists current canonical state.
-     *
-     * The ONLY place in this module that calls saveMasterData. Every command
-     * leaves canonical data dirty; the caller decides when to save.
-     *
-     * Returns { success, reason? }. Does not throw.
-     */
     function persist() {
         try {
-            _save();
-            return { success: true };
+            if (typeof window.saveMasterData !== 'function') {
+                throw new Error('saveMasterData is not available');
+            }
+
+            var ok = window.saveMasterData();
+            if (ok === true) {
+                return { success: true };
+            }
+
+            var reason = 'saveMasterData returned false';
+            if (typeof window.getLastSaveError === 'function') {
+                var lastError = window.getLastSaveError();
+                if (lastError && lastError.message) {
+                    reason = lastError.message;
+                }
+            }
+            return { success: false, reason: reason };
         } catch (e) {
-            return { success: false, reason: e.message || 'saveMasterData threw' };
+            return {
+                success: false,
+                reason: e && e.message ? e.message : 'saveMasterData threw'
+            };
         }
     }
 
     // =========================================================================
-    // 5. RESULT HELPERS
+    // 6. RESULT HELPERS
     // =========================================================================
 
     function _deny(reason) {
@@ -290,8 +380,11 @@
     }
 
     // =========================================================================
-    // 6. RELIGION CRUD
+    // 7. RELIGION CRUD
     // =========================================================================
+    //
+    // Every success path returns { success: true, data: <clone>, reason }.
+    // `data` is always detached from canonical state.
 
     function createReligion(data) {
         var validation = _validation().validateReligionCreate(data);
@@ -344,7 +437,11 @@
 
         _commit('religionCreated', religion);
 
-        return { success: true, data: religion, reason: 'Religion created successfully' };
+        return {
+            success: true,
+            data: _clone(religion),
+            reason: 'Religion created successfully'
+        };
     }
 
     function updateReligion(religionId, updates) {
@@ -372,7 +469,6 @@
             return _denyFromValidation(validation.errors);
         }
 
-        // Clone the canonical record. Apply allowlisted fields.
         var candidate = _clone(canonical);
 
         if (updates.name !== undefined) candidate.name = updates.name.trim();
@@ -405,7 +501,11 @@
 
         _commit('religionUpdated', candidate);
 
-        return { success: true, data: candidate, reason: 'Religion updated successfully' };
+        return {
+            success: true,
+            data: _clone(candidate),
+            reason: 'Religion updated successfully'
+        };
     }
 
     function deleteReligion(religionId) {
@@ -429,7 +529,11 @@
 
         _commit('religionDeleted', snapshot);
 
-        return { success: true, data: snapshot, reason: 'Religion deleted successfully' };
+        return {
+            success: true,
+            data: snapshot,
+            reason: 'Religion deleted successfully'
+        };
     }
 
     function deprecateReligion(religionId, year) {
@@ -458,7 +562,11 @@
 
         _commit('religionDeprecated', candidate);
 
-        return { success: true, data: candidate, reason: 'Religion deprecated successfully' };
+        return {
+            success: true,
+            data: _clone(candidate),
+            reason: 'Religion deprecated successfully'
+        };
     }
 
     function reactivateReligion(religionId) {
@@ -485,11 +593,15 @@
 
         _commit('religionReactivated', candidate);
 
-        return { success: true, data: candidate, reason: 'Religion reactivated successfully' };
+        return {
+            success: true,
+            data: _clone(candidate),
+            reason: 'Religion reactivated successfully'
+        };
     }
 
     // =========================================================================
-    // 7. LEADERSHIP
+    // 8. LEADERSHIP
     // =========================================================================
 
     function setReligionLeader(religionId, characterId, options) {
@@ -515,7 +627,6 @@
 
         var candidate = _clone(canonical);
 
-        // Clone leader history before mutating.
         var leaderHistory = Array.isArray(candidate.leaderHistory)
             ? candidate.leaderHistory.slice()
             : [];
@@ -561,7 +672,10 @@
 
         return {
             success: true,
-            data: { religion: candidate, leader: newLeader },
+            data: {
+                religion: _clone(candidate),
+                leader: _clone(newLeader)
+            },
             reason: 'Religious leader appointed successfully'
         };
     }
@@ -612,13 +726,13 @@
 
         return {
             success: true,
-            data: candidate,
+            data: _clone(candidate),
             reason: 'Religious leader term ended successfully'
         };
     }
 
     // =========================================================================
-    // 8. GODS
+    // 9. GODS
     // =========================================================================
 
     function addGod(religionId, godData) {
@@ -658,7 +772,11 @@
 
         _commit('religionGodAdded', { religionId: religionId, god: god });
 
-        return { success: true, data: god, reason: 'God added successfully' };
+        return {
+            success: true,
+            data: _clone(god),
+            reason: 'God added successfully'
+        };
     }
 
     function updateGod(godId, updates) {
@@ -709,7 +827,11 @@
 
         _commit('religionGodUpdated', { religionId: owner.id, god: updated });
 
-        return { success: true, data: updated, reason: 'God updated successfully' };
+        return {
+            success: true,
+            data: _clone(updated),
+            reason: 'God updated successfully'
+        };
     }
 
     function removeGod(religionId, godId) {
@@ -745,7 +867,10 @@
 
         _commit('religionGodRemoved', { religionId: religionId, godId: godId });
 
-        return { success: true, reason: 'God removed successfully' };
+        return {
+            success: true,
+            reason: 'God removed successfully'
+        };
     }
 
     function _findOwnerReligionByGodId(godId) {
@@ -763,8 +888,14 @@
     }
 
     // =========================================================================
-    // 9. LAWS (absorbed from religion-laws.js)
+    // 10. LAWS
     // =========================================================================
+    //
+    // Law enum sources are resolved via _readLawEnums(). When the
+    // canonical source is missing, the enum is null and validation
+    // fails loudly. When present, defaults come from the canonical
+    // enum (not from a hardcoded literal), so a reorder or rename in
+    // the canonical source is respected.
 
     function addLaw(religionId, lawData) {
         var canonical = _state()._getReligionCanonical(religionId);
@@ -772,24 +903,27 @@
             return _deny('Religion not found');
         }
 
-        var validation = _validation().validateLawInput(lawData, { requireName: true });
+        var enums = _readLawEnums();
+        var lawValidationContext = {
+            enums: enums
+        };
+
+        var validation = _validation().validateLawInput(lawData, {
+            requireName: true,
+            enums: enums
+        });
         if (!validation.valid) {
             return _denyFromValidation(validation.errors);
         }
 
-        var types = window.LAW_TYPES || {};
-        var categories = window.LAW_CATEGORIES || {};
-        var domains = window.LAW_DOMAINS || {};
-        var severities = window.LAW_SEVERITY || {};
-
         var law = {
             id: _generateId('law'),
             name: lawData.name.trim(),
-            type: lawData.type || types.LAW || 'law',
-            lawCategory: lawData.lawCategory || categories.RELIGIOUS || 'religious',
-            domain: lawData.domain || domains.BEHAVIOR || 'behavior',
+            type: lawData.type || _pickDefault(enums.types, 'LAW', 'law'),
+            lawCategory: lawData.lawCategory || _pickDefault(enums.categories, 'RELIGIOUS', 'religious'),
+            domain: lawData.domain || _pickDefault(enums.domains, 'BEHAVIOR', 'behavior'),
             description: lawData.description || '',
-            severity: lawData.severity || severities.MINOR || 'minor',
+            severity: lawData.severity || _pickDefault(enums.severities, 'MINOR', 'minor'),
             crimeMapping: {
                 crimeType: lawData.crimeType || null,
                 crimeSeverity: lawData.crimeSeverity || null,
@@ -816,7 +950,11 @@
 
         _commit('religionLawAdded', { religionId: religionId, law: law });
 
-        return { success: true, data: law, reason: 'Law added successfully' };
+        return {
+            success: true,
+            data: _clone(law),
+            reason: 'Law added successfully'
+        };
     }
 
     function updateLaw(lawId, updates) {
@@ -830,7 +968,12 @@
             return _deny('Law not found in any religion');
         }
 
-        var validation = _validation().validateLawInput(updates, { requireName: false });
+        var enums = _readLawEnums();
+
+        var validation = _validation().validateLawInput(updates, {
+            requireName: false,
+            enums: enums
+        });
         if (!validation.valid) {
             return _denyFromValidation(validation.errors);
         }
@@ -873,7 +1016,11 @@
 
         _commit('religionLawUpdated', { religionId: owner.id, law: updated });
 
-        return { success: true, data: updated, reason: 'Law updated successfully' };
+        return {
+            success: true,
+            data: _clone(updated),
+            reason: 'Law updated successfully'
+        };
     }
 
     function removeLaw(religionId, lawId) {
@@ -909,7 +1056,10 @@
 
         _commit('religionLawRemoved', { religionId: religionId, lawId: lawId });
 
-        return { success: true, reason: 'Law removed successfully' };
+        return {
+            success: true,
+            reason: 'Law removed successfully'
+        };
     }
 
     function _mergeCrimeMapping(original, updates) {
@@ -955,7 +1105,7 @@
     }
 
     // =========================================================================
-    // 10. LOCATIONS
+    // 11. LOCATIONS
     // =========================================================================
 
     function addReligionLocation(religionId, locationId) {
@@ -986,7 +1136,11 @@
 
         _commit('religionLocationAdded', { religionId: religionId, locationId: locationId });
 
-        return { success: true, data: candidate, reason: 'Location added to religion successfully' };
+        return {
+            success: true,
+            data: _clone(candidate),
+            reason: 'Location added to religion successfully'
+        };
     }
 
     function removeReligionLocation(religionId, locationId) {
@@ -1013,27 +1167,23 @@
 
         _commit('religionLocationRemoved', { religionId: religionId, locationId: locationId });
 
-        return { success: true, data: candidate, reason: 'Location removed from religion successfully' };
+        return {
+            success: true,
+            data: _clone(candidate),
+            reason: 'Location removed from religion successfully'
+        };
     }
 
     // =========================================================================
-    // 11. CHARACTER ASSIGNMENT (cross-domain)
+    // 12. CHARACTER ASSIGNMENT (cross-domain)
     // =========================================================================
     //
-    // See CHARACTER-RELIGION WRITES in the module header. All three
-    // functions route through CharacterCommands.setReligion, which is the
-    // ONLY sanctioned writer for character.religionId / religionHistory.
-    //
-    // The write goes through CharacterState.updateCharacter, which fires
-    // markDataDirty, invalidateAccessorCaches, and characterChanged. This
-    // module's _commit still fires afterward to publish the cross-domain
-    // CustomEvent (characterReligionAssigned / Converted / Removed).
-    //
-    // SNAPSHOT NAMES:
-    //   setReligion accepts optional fromReligionName / toReligionName
-    //   fields for the conversion event's historical snapshot. This
-    //   module supplies them from ReligionQueries, so the character
-    //   domain does not need any religion queries dependency.
+    // All three functions route through CharacterCommands.setReligion,
+    // which is the ONLY sanctioned writer for character.religionId /
+    // religionHistory. The write goes through CharacterState.updateCharacter,
+    // firing markDataDirty + invalidateAccessorCaches + characterChanged.
+    // This module's _commit fires afterward to publish the cross-domain
+    // CustomEvent.
 
     function assignReligionToCharacter(characterId, religionId, options) {
         var existing = _getCharacterById(characterId);
@@ -1041,8 +1191,6 @@
             return _deny('Character not found');
         }
 
-        // If the character already has a religion, this is a conversion.
-        // Route through convertCharacter so rules apply uniformly.
         if (existing.religionId) {
             return convertCharacter(characterId, religionId, options);
         }
@@ -1060,11 +1208,6 @@
         var optionsObj = options || {};
         var year = _resolveYear(optionsObj.year, _getCurrentYear());
 
-        // Delegate to the sanctioned character-domain writer. setReligion
-        // creates the conversion event internally (generateId, from/to
-        // religion names, reason, notes, inherited fields, timestamp),
-        // writes canonical state, and fires markDataDirty +
-        // invalidateAccessorCaches + characterChanged.
         var writeResult = _characterCommands().setReligion(characterId, religionId, {
             year: year,
             reason: optionsObj.reason || (optionsObj.inherited ? 'inheritance' : 'personal'),
@@ -1081,9 +1224,6 @@
                 : 'CharacterState refused the religion assignment.');
         }
 
-        // The follower index is derived from character records. The
-        // character write already fired characterChanged, but the religion
-        // domain's followers index is its own cache and needs refresh.
         _state().invalidateFollowerIndex();
 
         _commit('characterReligionAssigned', {
@@ -1205,9 +1345,9 @@
     }
 
     // =========================================================================
-    // 12. PLACES OF WORSHIP
+    // 13. PLACES OF WORSHIP
     // =========================================================================
-    // Still partial: place records are not canonically stored. ADR Decision 2
+    // Partial: place records are not canonically stored. ADR Decision 2
     // resolves this in a future phase. Operations documented as partial.
 
     function createPlaceOfWorship(data) {
@@ -1267,7 +1407,11 @@
             placeId: place.id
         });
 
-        return { success: true, data: place, reason: 'Place of worship created successfully' };
+        return {
+            success: true,
+            data: _clone(place),
+            reason: 'Place of worship created successfully'
+        };
     }
 
     function updatePlaceOfWorship(placeId, updates) {
@@ -1283,10 +1427,11 @@
 
         // Partial: updates cannot be applied until places have a canonical
         // store. See ADR Decision 2.
-        canonical.updatedAt = Date.now();
+        var candidate = _clone(canonical);
+        candidate.updatedAt = Date.now();
 
         try {
-            _state()._updateReligion(canonical.id, canonical);
+            _state()._updateReligion(canonical.id, candidate);
         } catch (e) {
             return _deny(e.message);
         }
@@ -1296,7 +1441,11 @@
             placeId: placeId
         });
 
-        return { success: true, data: canonical, reason: 'Place of worship updated successfully' };
+        return {
+            success: true,
+            data: _clone(candidate),
+            reason: 'Place of worship updated successfully'
+        };
     }
 
     function deletePlaceOfWorship(placeId) {
@@ -1333,7 +1482,10 @@
             placeId: placeId
         });
 
-        return { success: true, reason: 'Place of worship deleted successfully' };
+        return {
+            success: true,
+            reason: 'Place of worship deleted successfully'
+        };
     }
 
     function calculateTitheIncome(placeId) {
@@ -1356,7 +1508,7 @@
     }
 
     // =========================================================================
-    // 13. HELPERS
+    // 14. HELPERS
     // =========================================================================
 
     function _clone(value) {
@@ -1391,7 +1543,7 @@
     }
 
     // =========================================================================
-    // 14. LOAD-TIME VERIFICATION
+    // 15. LOAD-TIME VERIFICATION
     // =========================================================================
 
     (function _verifyLoadTimeDependencies() {
@@ -1460,7 +1612,7 @@
     })();
 
     // =========================================================================
-    // 15. PUBLIC API
+    // 16. PUBLIC API
     // =========================================================================
 
     window.ReligionCommands = {
@@ -1480,7 +1632,7 @@
         updateGod: updateGod,
         removeGod: removeGod,
 
-        // Laws (absorbed from religion-laws.js)
+        // Laws
         addLaw: addLaw,
         updateLaw: updateLaw,
         removeLaw: removeLaw,
@@ -1502,7 +1654,11 @@
         collectTithes: collectTithes,
 
         // Persistence
-        persist: persist
+        persist: persist,
+
+        // Law enum introspection (for callers that need to know which
+        // enums are currently resolvable, e.g. modals that build dropdowns)
+        getLawEnums: _readLawEnums
     };
 
     if (typeof module !== 'undefined' && module.exports) {
