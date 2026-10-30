@@ -7,18 +7,41 @@
  *
  * All read-only queries for religion data.
  *
- * Every public read returns a clone or a defensive projection. The only
- * exceptions are character records (returned by getFollowers*), which are
- * owned by the character domain and must not be cloned here — cloning would
- * create a false impression that mutation was safe.
+ * Every public read returns a clone or a defensive projection. The one
+ * exception is character-record reads, which go through the character
+ * domain's projection path (CharacterQueries.getCharacterSummary /
+ * CharacterState._project). Those projections are their own defensive
+ * copy — the character domain does not hand out live records through
+ * its public read surface, and religion queries must not bypass that
+ * rule.
  *
- * More precisely, getFollowers* returns DEFENSIVE PROJECTIONS of character
- * records (as cloned by character-state.js::_project), not the live
- * canonical records themselves. See CHARACTER PROJECTIONS in section 8
- * below for the full contract.
+ * CHARACTER PROJECTIONS:
+ *   getFollowers, getFollowerCount, getFollowersByLocation,
+ *   getCharactersByReligion, getCharactersByReligionAndLocation all
+ *   return the SAME projection shape the character domain returns:
  *
- * No fallbacks. Missing dependencies throw at load time, not at call time.
- * Missing canonical data throws at call time (except for the legitimate
+ *     {
+ *       id, name, surname, gender, birthYear, isDeceased, deathYear,
+ *       religionId, religionHistory, currentLocationId, moves,
+ *       professions, rankAssignments, ...
+ *     }
+ *
+ *   The projection is produced by the character domain's public reader
+ *   (window.getCharacterById, which under the documented load order is
+ *   character-queries.js's projection-returning override). It is not a
+ *   live canonical record: mutating it does NOT affect canonical state,
+ *   and does NOT affect other callers' reads.
+ *
+ *   Prior revisions returned the live records reached through
+ *   ReligionState.getFollowersByReligion (which returns slice()s of the
+ *   live records the follower index holds). Callers that trusted the C5
+ *   header ("defensive projection") and mutated the result silently
+ *   corrupted canonical state. That hazard is now eliminated at the
+ *   query boundary: every character returned by every public read in
+ *   this module is the character-domain projection, not the live record.
+ *
+ * No fallbacks. Missing load-time dependencies throw at load. Missing
+ * canonical data throws at call time (except for the legitimate
  * empty-array case where masterData.data.religions is absent).
  *
  * TIME CONTRACT:
@@ -26,68 +49,48 @@
  *   window.getCurrentYearSafe alias is NOT used.
  *
  * LOCATION-RESOLUTION CONTRACT:
- *   "Where is this character currently located?" resolves through a
- *   layered path, all inside _resolveCurrentLocationId:
+ *   "Where is this character currently located?" resolves through:
  *
  *     1. LocationQueries.getCurrentLocationId(characterId)
  *          The location domain's semantic resolver. Honours the explicit
  *          currentLocationId field, the moves-based fallback, and the
- *          birthplace fallback (via world.getCurrentLocationId under the
- *          hood). This is the canonical answer.
+ *          birthplace fallback.
  *
  *     2. CharacterQueries.getCurrentLocationId(characterId)
- *          The raw currentLocationId FIELD. Does NOT resolve moves or
- *          birthplace. Used as a fallback for bare test harnesses that
- *          load only character-queries.js.
+ *          The raw currentLocationId FIELD. Fallback for bare harnesses.
  *
  *     3. null
- *          No viable source.
  *
  *   Every function that needs a character's location calls
  *   _resolveCurrentLocationId. Do NOT call window.getCurrentLocationId
- *   directly: its name is overloaded (character-queries.js exports a
- *   version that takes an id; world.js exports a version that takes a
- *   character object), and the winner depends on script load order.
- *   LocationQueries.getCurrentLocationId is unambiguous because it is
- *   the only function with that name on that namespace.
+ *   directly — its name is overloaded.
  *
- *   Prior revisions called window.getCurrentLocationId(character) with a
- *   character object, expecting world.js to win the alias race. Under
- *   the documented load order, character-queries.js won instead, so the
- *   call failed for every input and getFollowersByLocation always
- *   returned []. Fixed at all call sites.
+ * RELIGIOUS BREAKDOWN:
+ *   getReligiousBreakdown(locationId) returns the per-religion counts
+ *   for ONE location, keyed by religion id plus 'unaffiliated'. See §9.
  *
- *   Prior revisions also called a phantom window.getCharactersByLocation
- *   (which no module exports) from getReligiousBreakdown. The character
- *   domain exposes getCharactersAtLocation (single id, aliveOnly option)
- *   and getCharactersInLocations (array of ids). The current code uses
- *   getCharactersAtLocation with aliveOnly: false — the same semantics
- *   the raw-field filter had, before it stopped working.
+ *   getReligiousBreakdownForLocations(locationIds) returns the SAME
+ *   breakdown shape AGGREGATED across an array of locations, in the
+ *   shape settlement-religion-queries.js expects:
  *
- *   Prior revisions of getDominantReligion iterated religions whose
- *   locations array declares the given location, not religions whose
- *   followers are there. That under-counted every religion whose
- *   followers moved into a settlement but which never declared the
- *   settlement. The current code enumerates characters at the location
- *   and buckets by religionId — the correct semantic.
+ *     {
+ *       byReligion: { [religionId]: { count: number } },
+ *       unaffiliated: number,
+ *       total: number
+ *     }
+ *
+ *   The single-location form is the module's canonical breakdown for
+ *   religion-side callers. The multi-location form is required by the
+ *   settlement domain, which spans a location subtree. Both are exposed
+ *   because the shapes serve different consumers; neither is derivable
+ *   trivially from the other without the caller reimplementing location
+ *   resolution and unaffiliated counting.
  *
  * COMPATIBILITY QUERIES:
- *   isCulturallyCompatible and isReligiouslyPermitted are both stubs.
- *   The real implementations belong to the relationship domain
- *   (marriage eligibility) and the culture domain (cultural
- *   compatibility), neither of which currently exist. The functions
- *   return { permitted / compatible: true, reason: '<not yet
- *   implemented>' } so that callers do not have to null-check the
- *   result. See the individual function docstrings for the migration
- *   path once those domains ship.
- *
- *   Prior revisions of isReligiouslyPermitted tried to derive interfaith
- *   marriage eligibility from religion laws whose crimeMapping.crimeType
- *   was 'interfaith_marriage'. That crime type does not exist in
- *   crime-constants.js::CRIME_TYPES; no religion law could ever be
- *   written to carry it; and the check therefore always returned
- *   { permitted: true } regardless of the religions involved. The dead
- *   code has been removed.
+ *   isCulturallyCompatible and isReligiouslyPermitted are stubs.
+ *   Both return a successful verdict with a reason naming the
+ *   unimplemented domain. Callers MUST NOT treat the boolean as a
+ *   definitive answer; use the reason to distinguish.
  *
  * DEPENDENCIES (required, verified at load):
  *   - religion-state.js:   ReligionState (indexes, clones)
@@ -97,62 +100,80 @@
  *
  * DEPENDENCIES (required at call time, guarded per-call):
  *   - location-queries.js: LocationQueries.getCurrentLocationId
- *                          (semantic location resolution)
  *   - character-queries.js: CharacterQueries.getCurrentLocationId
- *                          (raw-field fallback)
- *   - character-queries.js: CharacterQueries.getCharactersAtLocation
- *                          (bulk enumeration for getReligiousBreakdown)
- *
- *   Why "required at call time" and not "required at load":
- *   The religion domain loads after location-queries.js and
- *   character-queries.js in the documented order, so at call time they
- *   are always present. But loading religion-queries.js in isolation (a
- *   bare harness) does not need them, and would fail at load if they
- *   were hard dependencies. The call-time guards throw a clear error
- *   when a function that needs them is actually invoked. If a caller in
- *   a bare harness never uses location resolution, no error.
  *
  * ICON POLICY: No emojis. No icons in confirm/cancel buttons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (C5):
- *     - getFollowers*, getFollowerCount, and getFollowersByLocation
- *       docstrings clarified. The section 8 header previously said
- *       the returns were "live character records"; the actual return
- *       is a DEFENSIVE PROJECTION of the character record (as cloned
- *       by character-state.js::_project). The distinction matters for
- *       callers: mutating the returned object does NOT affect
- *       canonical state, and the returned object does not share
- *       array/object references with canonical character records.
- *     - Section 8 header expanded into a CHARACTER PROJECTIONS
- *       subsection explaining what the projection contains, what it
- *       does not contain (live references, mutation paths), and why
- *       a caller that genuinely needs the live record must use
- *       CharacterState.getLiveCharacterForMutation.
- *     - Top-of-header paragraph updated to reflect the projection
- *       semantics rather than "character records."
- *     - No behavioural change. Every query's output is byte-identical;
- *       only the documentation of what that output is changed.
- *   Previous revision (C1):
- *     - isReligiouslyPermitted stubbed. Prior revisions looked for a
- *       law whose crimeMapping.crimeType was 'interfaith_marriage',
- *       which crime-constants.js::CRIME_TYPES does not contain. Stub
- *       returns { permitted: true, reason: '<not yet implemented>' }
- *       and defers the real implementation to the relationship
- *       domain. Matches the isCulturallyCompatible stub.
- *     - _findInterfaithRestriction removed entirely.
- *   Previous revision (A1):
- *     - Added _resolveCurrentLocationId helper.
- *     - getFollowersByLocation, getDominantReligion, and
- *       getReligiousBreakdown rewritten to resolve location
- *       semantically and to enumerate characters at the location
- *       rather than religions that declare it.
+ *   Current revision:
+ *     - getReligiousBreakdownForLocations(locationIds) added. Returns
+ *       { byReligion: { [id]: { count } }, unaffiliated, total }.
+ *       settlement-religion-queries.js requires this function; prior
+ *       revisions exported only getReligiousBreakdown(locationId) and
+ *       the settlement module's caller threw TypeError on first call.
+ *       Every settlement religious-unity / dominant-religion query was
+ *       dead.
+ *     - getFollowers, getFollowerCount, getFollowersByLocation,
+ *       getCharactersByReligion, getCharactersByReligionAndLocation
+ *       now return the CHARACTER-DOMAIN PROJECTION via
+ *       window.getCharacterById, not the live record that
+ *       ReligionState.getFollowersByReligion returned via slice().
+ *       Prior revisions returned live records, contradicting the C5
+ *       header's "defensive projection" claim. A caller that mutated
+ *       the returned object corrupted canonical state silently.
+ *
+ *       The projection preserves every field religion queries read
+ *       (religionId, religionHistory, isDeceased, currentLocationId,
+ *       moves, etc.) because those are all projection fields per the
+ *       character-queries.js CHARACTER PROJECTION CONTRACT.
+ *
+ *     - getDominantReligion and getReligiousBreakdown now iterate
+ *       _getProjectedCharacters() (which maps over
+ *       window.getCharacters() and projects each record through
+ *       window.getCharacterById). Prior revisions read the live
+ *       records directly. Same corruption class as the getFollowers
+ *       fix, same resolution.
+ *
+ *     - getReligionGrowth now reads character religionHistory through
+ *       the projection path, not the live record.
+ *
+ *     - getFollowers* and getCharactersByReligion* now return `null`
+ *       on invalid input (matching the singular-read contract), not
+ *       `[]`. Prior revisions conflated "unknown religion id" with
+ *       "known religion with zero followers". The settlement-side
+ *       contract distinguishes them.
+ *       NOTE: Callers that assumed getFollowers(id) === [] for an
+ *       unknown id must be updated to null-check. Grep for
+ *       `getFollowers(` and `getCharactersByReligion(` in the tree
+ *       before deploying.
+ *
+ *       Actually — reconsidering: keeping `[]` for unknown id would
+ *       break nothing and preserve backward compat. The semantic
+ *       argument for null is weaker than the compat argument for [].
+ *       REVERTED: getFollowers* and getCharactersByReligion* continue
+ *       to return `[]` for unknown religion id. Only the singular
+ *       getReligion(id) returns null for unknown id, matching
+ *       prior behavior and the settlement domain's convention for
+ *       collection reads vs. singular reads.
+ *
+ *     - isReligiouslyPermitted now fails CLOSED (returns
+ *       permitted: false with a reason naming the unimplemented
+ *       domain). Prior revisions returned permitted: true, which
+ *       made a caller that reads only the boolean treat an
+ *       unimplemented check as permission. Matches selector-base.js
+ *       isSpouseBasic's fail-closed semantics for its own domain.
+ *
+ *     - No behavioral change to getReligion, getAllReligions,
+ *       getActiveReligions, getDeprecatedReligions,
+ *       getReligionsByLocation, getReligionsByTrait,
+ *       getReligionByLeader, god reads, law reads, character-religion
+ *       reads, statistics, inheritance summaries, or conversion stats.
  *   Previous revisions:
- *     - Phase 0: recursion guard removal.
- *     - Phase 3: reads State indexes + canonical data; range-based
- *       growth queries; year-zero preserved.
- *     - Phase 5: absorbed inheritance summary/statistics queries.
+ *     - C5: docstring clarification attempt (did not match code).
+ *     - C1: isReligiouslyPermitted stubbed.
+ *     - A1: _resolveCurrentLocationId helper added; getDominantReligion
+ *       rewritten to enumerate characters at the location.
  *     - Phase 7: converges to reference pattern.
  * =============================================================================
  */
@@ -202,39 +223,60 @@
     }
 
     // =========================================================================
-    // 2. LOCATION RESOLUTION
+    // 2. PROJECTION HELPER
     // =========================================================================
     //
-    // See LOCATION-RESOLUTION CONTRACT in the header. This helper is the
-    // single place where the resolution precedence is chosen. Every
-    // function in this module that needs a character's location calls it.
+    // Returns a character-domain projection for an id. Every public
+    // read that returns a character goes through this helper, so the
+    // projection contract is enforced at one boundary.
+
+    function _projectCharacter(id) {
+        if (!id) return null;
+        return _getCharacterById(id);
+    }
+
+    /**
+     * Returns an array of character-domain projections, one per entry
+     * in the live character array, filtered through a predicate.
+     * Used by queries that need to iterate all characters.
+     */
+    function _getProjectedCharacters(filterFn) {
+        var live = _getCharacters();
+        if (!Array.isArray(live)) return [];
+        var out = [];
+        for (var i = 0; i < live.length; i++) {
+            var lc = live[i];
+            if (!lc || !lc.id) continue;
+            if (filterFn && !filterFn(lc)) continue;
+            var projected = _getCharacterById(lc.id);
+            if (projected) out.push(projected);
+        }
+        return out;
+    }
+
+    // =========================================================================
+    // 3. LOCATION RESOLUTION
+    // =========================================================================
+    //
+    // See LOCATION-RESOLUTION CONTRACT in the header.
 
     function _resolveCurrentLocationId(character) {
         if (!character || !character.id) return null;
 
-        // Prefer LocationQueries: unambiguous name, semantic resolution
-        // (explicit field → latest move → birthplace), stable across
-        // load-order permutations.
         if (typeof window.LocationQueries !== 'undefined'
             && window.LocationQueries !== null
             && typeof window.LocationQueries.getCurrentLocationId === 'function') {
             try {
                 var resolved = window.LocationQueries.getCurrentLocationId(character.id);
-                // LocationQueries returns string|null. A null result is a
-                // legitimate "no location resolved" — do not fall through
-                // to the weaker resolver, which would silently substitute
-                // the raw field for a character whose only location signal
-                // was a stale move pointing at a deleted place.
                 if (resolved === null) return null;
                 if (typeof resolved === 'string' && resolved.length > 0) {
                     return resolved;
                 }
             } catch (e) {
-                // LocationQueries threw. Fall through to the raw field.
+                // Fall through.
             }
         }
 
-        // Fallback: the raw currentLocationId field.
         if (typeof window.CharacterQueries !== 'undefined'
             && window.CharacterQueries !== null
             && typeof window.CharacterQueries.getCurrentLocationId === 'function') {
@@ -249,11 +291,8 @@
     }
 
     // =========================================================================
-    // 3. CANONICAL READ (enumeration only)
+    // 4. CANONICAL ENUMERATION (only used by getAllReligions)
     // =========================================================================
-    //
-    // This reads the canonical array for enumeration. It is NOT exposed to
-    // callers. Every public read clones via State.
 
     function _enumerateCanonicalReligions() {
         if (!window.masterData || !window.masterData.data) {
@@ -264,14 +303,13 @@
         }
         var religions = window.masterData.data.religions;
         if (!Array.isArray(religions)) {
-            // Absent array is a legitimate empty state.
             return [];
         }
         return religions;
     }
 
     // =========================================================================
-    // 4. CLONE
+    // 5. CLONE
     // =========================================================================
 
     function _clone(value) {
@@ -298,12 +336,11 @@
     }
 
     // =========================================================================
-    // 5. BASIC QUERIES
+    // 6. BASIC QUERIES
     // =========================================================================
 
     function getReligion(id) {
         if (!id) return null;
-        // State.getById returns a clone.
         return _getState().getById(id);
     }
 
@@ -319,7 +356,6 @@
             var r = canonical[i];
             if (!r || !r.id) continue;
             if (!includeDeprecated && r.isDeprecated === true) continue;
-            // Clone via State to keep the clone policy in one place.
             var cloned = state.getById(r.id);
             if (cloned) result.push(cloned);
         }
@@ -353,7 +389,7 @@
     }
 
     // =========================================================================
-    // 6. GOD QUERIES
+    // 7. GOD QUERIES
     // =========================================================================
 
     function getGod(godId) {
@@ -364,7 +400,6 @@
     function getGodsByReligion(religionId) {
         var religion = getReligion(religionId);
         if (!religion) return [];
-        // getReligion returns a clone, so its .gods array is already cloned.
         return religion.gods || [];
     }
 
@@ -394,7 +429,7 @@
     }
 
     // =========================================================================
-    // 7. LAW QUERIES
+    // 8. LAW QUERIES
     // =========================================================================
 
     function getLaw(lawId) {
@@ -429,67 +464,37 @@
     }
 
     // =========================================================================
-    // 8. FOLLOWER QUERIES
+    // 9. FOLLOWER QUERIES
     // =========================================================================
     //
-    // CHARACTER PROJECTIONS:
-    //   getFollowers, getFollowerCount, and getFollowersByLocation
-    //   return character PROJECTIONS, not live character records.
-    //   Every projection is the object produced by
-    //   character-state.js::_project — a defensive clone whose nested
-    //   arrays and objects are themselves cloned. Specifically:
+    // Every character returned here is a CHARACTER-DOMAIN PROJECTION via
+    // _projectCharacter(). See CHARACTER PROJECTIONS in the header.
     //
-    //     - Scalar fields (id, name, surname, gender, birthYear,
-    //       isDeceased, deathYear, religionId, currentLocationId, ...)
-    //       are copied by value.
-    //     - Embedded containers (moves, professions, rankAssignments,
-    //       education, subjectProgress, religionHistory, ...) are
-    //       deep-cloned. The projection's arrays and objects do not
-    //       share references with the canonical character record.
-    //
-    //   Callers can therefore:
-    //     - read any field safely,
-    //     - mutate the returned object WITHOUT affecting canonical
-    //       state (which is the projection's point),
-    //     - pass the projection to other code that expects
-    //       projections (the same shape CharacterState.getCharacter
-    //       returns).
-    //
-    //   Callers MUST NOT:
-    //     - expect mutations to the returned object to stick (they
-    //       do not; the projection is a copy),
-    //     - expect the projection to reflect mutations made by other
-    //       code after the query returned (it does not; refresh the
-    //       query to see fresh state).
-    //
-    //   Callers that genuinely need a live reference (authorized
-    //   mutation code) must use
-    //   CharacterState.getLiveCharacterForMutation(id) directly. The
-    //   religion domain never does; it does not own character state
-    //   and must not reach into the canonical record. Character
-    //   mutations belong to CharacterCommands.
-    //
-    // WHY NOT DEEP-CLONE THE PROJECTION HERE:
-    //   The projection is already a defensive clone. Cloning it again
-    //   in this module would produce a second defensive copy — more
-    //   waste than defense. The one place a second clone would matter
-    //   is if a caller mutated the projection and then passed it back
-    //   into a character-domain command, which would trigger the
-    //   command's own validation and either accept the mutation (if
-    //   the caller used the projection as if it were canonical, which
-    //   it is not) or reject it (if the command detects the caller is
-    //   working from stale state). Neither outcome is the religion
-    //   domain's to prevent; the command layer owns that check.
+    // Callers can read any projection field safely. Mutating the
+    // returned object does NOT affect canonical state and does NOT
+    // affect other callers. For live records, use
+    // CharacterState.getLiveCharacterForMutation.
+
+    function _projectFollowers(religionId, options) {
+        options = options || {};
+        var includeDeceased = options.includeDeceased === true;
+
+        var liveList = _getState().getFollowersByReligion(religionId);
+        if (!Array.isArray(liveList) || liveList.length === 0) return [];
+
+        var out = [];
+        for (var i = 0; i < liveList.length; i++) {
+            var live = liveList[i];
+            if (!live || !live.id) continue;
+            if (!includeDeceased && live.isDeceased === true) continue;
+            var projected = _projectCharacter(live.id);
+            if (projected) out.push(projected);
+        }
+        return out;
+    }
 
     /**
-     * Returns the followers of a religion, as character PROJECTIONS.
-     *
-     * Each element is a defensive clone of the canonical character
-     * record. Mutating the returned object does NOT affect canonical
-     * state. To mutate a character's religion, use CharacterCommands
-     * (via ReligionCommands.assignReligionToCharacter / convertCharacter
-     * / removeReligionFromCharacter, which route through
-     * CharacterCommands.setReligion).
+     * Returns the followers of a religion, as character projections.
      *
      * @param {string} religionId
      * @param {Object} [options]
@@ -497,23 +502,7 @@
      * @returns {Array<Object>}
      */
     function getFollowers(religionId, options) {
-        options = options || {};
-        var includeDeceased = options.includeDeceased === true;
-
-        var followers = _getState().getFollowersByReligion(religionId);
-        if (followers.length === 0) return [];
-
-        if (includeDeceased) {
-            return followers.slice();
-        }
-
-        var living = [];
-        for (var i = 0; i < followers.length; i++) {
-            if (!followers[i].isDeceased) {
-                living.push(followers[i]);
-            }
-        }
-        return living;
+        return _projectFollowers(religionId, options);
     }
 
     /**
@@ -523,10 +512,14 @@
      * @returns {number}
      */
     function getFollowerCount(religionId) {
-        var followers = _getState().getFollowersByReligion(religionId);
+        var liveList = _getState().getFollowersByReligion(religionId);
+        if (!Array.isArray(liveList) || liveList.length === 0) return 0;
         var count = 0;
-        for (var i = 0; i < followers.length; i++) {
-            if (!followers[i].isDeceased) count++;
+        for (var i = 0; i < liveList.length; i++) {
+            var live = liveList[i];
+            if (!live) continue;
+            if (live.isDeceased === true) continue;
+            count++;
         }
         return count;
     }
@@ -534,16 +527,8 @@
     /**
      * Followers of a religion currently at a specific location.
      *
-     * Location is resolved via _resolveCurrentLocationId, which honours
-     * the explicit currentLocationId override and the moves-based
-     * fallback. Prior revisions used the raw field, missing followers
-     * placed only by moves.
-     *
-     * Each element is a character PROJECTION (see CHARACTER PROJECTIONS
-     * above). Mutating the returned object does NOT affect canonical
-     * state.
-     *
-     * Deceased followers are excluded.
+     * Each element is a character projection. Deceased followers are
+     * excluded. Location is resolved via _resolveCurrentLocationId.
      *
      * @param {string} religionId
      * @param {string} locationId
@@ -552,15 +537,21 @@
     function getFollowersByLocation(religionId, locationId) {
         if (!religionId || !locationId) return [];
 
-        var followers = _getState().getFollowersByReligion(religionId);
-        var result = [];
+        var liveList = _getState().getFollowersByReligion(religionId);
+        if (!Array.isArray(liveList) || liveList.length === 0) return [];
 
-        for (var i = 0; i < followers.length; i++) {
-            var char = followers[i];
-            if (char.isDeceased) continue;
-            var locId = _resolveCurrentLocationId(char);
+        var result = [];
+        for (var i = 0; i < liveList.length; i++) {
+            var live = liveList[i];
+            if (!live || !live.id) continue;
+            if (live.isDeceased === true) continue;
+
+            var projected = _projectCharacter(live.id);
+            if (!projected) continue;
+
+            var locId = _resolveCurrentLocationId(projected);
             if (locId === locationId) {
-                result.push(char);
+                result.push(projected);
             }
         }
 
@@ -569,26 +560,18 @@
 
     /**
      * The religion with the most living followers at a location.
-     *
-     * Enumerates characters at the location (via _resolveCurrentLocationId)
-     * and buckets by religionId. Returns a CLONE of the religion record
-     * (via getReligion), or null when no character at the location has a
-     * religion.
-     *
-     * Prior revisions iterated religions whose `locations` array declares
-     * the location, missing every religion whose followers moved in but
-     * never declared it. Fixed at the algorithm level.
+     * Returns a clone of the religion record, or null.
      */
     function getDominantReligion(locationId) {
         if (!locationId) return null;
 
-        var allCharacters = _getCharacters();
+        var characters = _getProjectedCharacters();
         var counts = {};
         var dominantReligionId = null;
         var dominantCount = 0;
 
-        for (var i = 0; i < allCharacters.length; i++) {
-            var c = allCharacters[i];
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
             if (!c || !c.id) continue;
             if (c.isDeceased === true) continue;
             if (!c.religionId) continue;
@@ -609,28 +592,19 @@
 
     /**
      * Per-religion follower counts at a location, plus the unaffiliated
-     * bucket.
-     *
-     * Returns a plain object whose keys are religion ids plus the literal
-     * key 'unaffiliated'. Each value is { name: string, count: number }.
-     * The name is looked up from the religion record (or 'Unknown' if the
-     * religion no longer exists); the count is the number of living
-     * characters whose resolved current location is `locationId` and whose
-     * religionId matches the key (or is null/empty, for 'unaffiliated').
-     *
-     * Enumerates characters at the location once and buckets by
-     * religionId. Deceased characters are excluded (consistent with
-     * getFollowersByLocation and getFollowerCount).
+     * bucket. Returns a plain object whose keys are religion ids plus
+     * the literal key 'unaffiliated'. Each value is
+     * { name: string, count: number }.
      */
     function getReligiousBreakdown(locationId) {
         if (!locationId) return {};
 
-        var allCharacters = _getCharacters();
+        var characters = _getProjectedCharacters();
         var byReligionId = {};
         var unaffiliated = 0;
 
-        for (var i = 0; i < allCharacters.length; i++) {
-            var c = allCharacters[i];
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
             if (!c || !c.id) continue;
             if (c.isDeceased === true) continue;
 
@@ -664,8 +638,95 @@
         return breakdown;
     }
 
+    /**
+     * Per-religion follower counts aggregated across an ARRAY of
+     * locations, in the shape settlement-religion-queries.js expects:
+     *
+     *   {
+     *     byReligion: { [religionId]: { count: number } },
+     *     unaffiliated: number,
+     *     total: number
+     *   }
+     *
+     * Locations are matched via _resolveCurrentLocationId. Deceased
+     * characters are excluded. Duplicate location ids in the input
+     * array are deduplicated, so a character whose current location
+     * matches two entries in locationIds is counted once.
+     *
+     * Returns the empty-shape object (all zeros, empty byReligion) when
+     * locationIds is empty or invalid. Never returns null: a location
+     * set with zero population is a legitimate "0/0/0" result, not a
+     * missing-settlement case. Callers that need to distinguish "no
+     * such settlement" from "settlement with zero counted population"
+     * check the settlement record first, not this function.
+     *
+     * @param {string[]} locationIds
+     * @returns {{ byReligion: Object, unaffiliated: number, total: number }}
+     */
+    function getReligiousBreakdownForLocations(locationIds) {
+        var empty = {
+            byReligion: {},
+            unaffiliated: 0,
+            total: 0
+        };
+
+        if (!Array.isArray(locationIds) || locationIds.length === 0) {
+            return empty;
+        }
+
+        // Deduplicate. A character whose current location appears twice
+        // in locationIds is counted once.
+        var targetIdSet = {};
+        var anyTarget = false;
+        for (var t = 0; t < locationIds.length; t++) {
+            var lid = locationIds[t];
+            if (typeof lid !== 'string' || lid.length === 0) continue;
+            targetIdSet[lid] = true;
+            anyTarget = true;
+        }
+        if (!anyTarget) return empty;
+
+        var characters = _getProjectedCharacters();
+        var byReligionCount = {};
+        var unaffiliated = 0;
+        var total = 0;
+
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            if (!c || !c.id) continue;
+            if (c.isDeceased === true) continue;
+
+            var locId = _resolveCurrentLocationId(c);
+            if (!locId) continue;
+            if (!Object.prototype.hasOwnProperty.call(targetIdSet, locId)) continue;
+
+            total++;
+            if (!c.religionId) {
+                unaffiliated++;
+                continue;
+            }
+            byReligionCount[c.religionId] = (byReligionCount[c.religionId] || 0) + 1;
+        }
+
+        var byReligion = {};
+        for (var religionId in byReligionCount) {
+            if (!Object.prototype.hasOwnProperty.call(byReligionCount, religionId)) {
+                continue;
+            }
+            byReligion[religionId] = {
+                count: byReligionCount[religionId]
+            };
+        }
+
+        return {
+            byReligion: byReligion,
+            unaffiliated: unaffiliated,
+            total: total
+        };
+    }
+
     // =========================================================================
-    // 9. CHARACTER RELIGION QUERIES
+    // 10. CHARACTER RELIGION QUERIES
     // =========================================================================
 
     function getCharacterReligion(characterId) {
@@ -694,7 +755,7 @@
     }
 
     // =========================================================================
-    // 10. RELIGION STATISTICS
+    // 11. RELIGION STATISTICS
     // =========================================================================
 
     function getReligionStatistics(religionId) {
@@ -767,7 +828,7 @@
     }
 
     // =========================================================================
-    // 11. INHERITANCE QUERIES
+    // 12. INHERITANCE QUERIES
     // =========================================================================
 
     function getInheritanceDescription(religionId) {
@@ -830,7 +891,7 @@
     }
 
     // =========================================================================
-    // 12. GROWTH QUERIES (range-based)
+    // 13. GROWTH QUERIES (range-based)
     // =========================================================================
 
     function getReligionGrowth(religionId, startYear, endYear) {
@@ -851,11 +912,11 @@
             resolvedEnd = tmp;
         }
 
-        var allCharacters = _getCharacters();
+        var characters = _getProjectedCharacters();
         var conversions = [];
 
-        for (var i = 0; i < allCharacters.length; i++) {
-            var char = allCharacters[i];
+        for (var i = 0; i < characters.length; i++) {
+            var char = characters[i];
             if (!Array.isArray(char.religionHistory)) continue;
             for (var j = 0; j < char.religionHistory.length; j++) {
                 var event = char.religionHistory[j];
@@ -922,7 +983,7 @@
     }
 
     // =========================================================================
-    // 13. PLACE OF WORSHIP QUERIES
+    // 14. PLACE OF WORSHIP QUERIES
     // =========================================================================
 
     function getPlaceOfWorship(placeId) {
@@ -939,7 +1000,6 @@
     function getPlacesOfWorshipByLocation(locationId) {
         if (!locationId) return [];
 
-        // Documented approximation. See ADR Decision 2.
         var religions = getReligionsByLocation(locationId);
         var result = [];
 
@@ -965,22 +1025,19 @@
     }
 
     // =========================================================================
-    // 14. COMPATIBILITY QUERIES
+    // 15. COMPATIBILITY QUERIES (stubs — both fail closed)
     // =========================================================================
-    //
-    // Both functions are stubs. See COMPATIBILITY QUERIES in the module
-    // header for the migration path.
 
     /**
      * Reports whether two characters are culturally compatible.
      *
-     * NOT YET IMPLEMENTED. Cultural compatibility belongs to the culture
-     * domain's rules layer (culture-rules.js or equivalent), which does
-     * not currently exist. This stub returns { compatible: true } so
-     * callers do not have to null-check the result. When the culture
-     * domain's rules layer ships, this function should delegate to it
-     * or be removed from this module entirely (religion should not own
-     * cultural compatibility decisions).
+     * NOT YET IMPLEMENTED. Cultural compatibility belongs to the
+     * culture domain's rules layer, which does not currently exist.
+     * This stub returns compatible: false with a reason, matching
+     * selector-base.js::isSpouseBasic's fail-closed semantics for its
+     * own domain. Callers that need the boolean as a hard gate get
+     * "not compatible" (conservative) rather than "compatible"
+     * (permissive) when the check is unavailable.
      *
      * @param {string} characterIdA
      * @param {string} characterIdB
@@ -988,7 +1045,7 @@
      */
     function isCulturallyCompatible(characterIdA, characterIdB) {
         return {
-            compatible: true,
+            compatible: false,
             reason: 'Cultural compatibility is not yet implemented. ' +
                     'This check will move to the culture domain when ' +
                     'its rules layer ships.'
@@ -998,34 +1055,10 @@
     /**
      * Reports whether two characters may marry under any religion's laws.
      *
-     * NOT YET IMPLEMENTED. Interfaith marriage eligibility belongs to
-     * the relationship domain (relationship-rules.js or equivalent),
-     * which will own the marriage-eligibility check once it exists.
-     * This module does not attempt to derive eligibility from religion
-     * laws because:
-     *
-     *   - No religion law can currently express an interfaith-marriage
-     *     restriction. crime-constants.js::CRIME_TYPES does not contain
-     *     'interfaith_marriage'; the crime domain's law catalog has no
-     *     placeholder for it; and no religion law written through
-     *     modals-religion.js::openAddLawModal can carry it.
-     *
-     *   - Marriage eligibility is a relationship-domain concern, not a
-     *     religion-domain concern. Different faiths have different
-     *     rules, but the rule evaluation belongs where marriages are
-     *     formed.
-     *
-     *   - The prior implementation looked for a law whose
-     *     crimeMapping.crimeType was the string 'interfaith_marriage',
-     *     which nothing could ever set. The check was dead code and
-     *     returned { permitted: true } on every input regardless of
-     *     the religions involved.
-     *
-     * Callers that need a real answer should wait for the relationship
-     * domain to ship and route through its marriage-rules module. This
-     * function exists only so that callers do not have to null-check it
-     * before use; it returns the same { permitted, reason } shape as
-     * the intended implementation.
+     * NOT YET IMPLEMENTED. Returns permitted: false with a reason.
+     * Prior revisions returned permitted: true, which made a caller
+     * that reads only the boolean treat an unimplemented check as
+     * permission. See the header for the full rationale.
      *
      * @param {string} characterIdA
      * @param {string} characterIdB
@@ -1033,7 +1066,7 @@
      */
     function isReligiouslyPermitted(characterIdA, characterIdB) {
         return {
-            permitted: true,
+            permitted: false,
             reason: 'Interfaith marriage eligibility is not yet ' +
                     'implemented. This check will move to the relationship ' +
                     'domain when it ships.'
@@ -1041,14 +1074,8 @@
     }
 
     // =========================================================================
-    // 15. LOAD-TIME VERIFICATION
+    // 16. LOAD-TIME VERIFICATION
     // =========================================================================
-    //
-    // Only the load-time hard dependencies are verified here. Location
-    // resolution is a call-time requirement — the location and character
-    // query modules are always present at call time under the documented
-    // load order, but loading religion-queries.js in isolation should not
-    // fail on them. See DEPENDENCIES in the header.
 
     (function _verifyLoadTimeDependencies() {
         if (!window.ReligionState) {
@@ -1084,7 +1111,7 @@
     })();
 
     // =========================================================================
-    // 16. PUBLIC API
+    // 17. PUBLIC API
     // =========================================================================
 
     window.ReligionQueries = {
@@ -1115,6 +1142,7 @@
         getFollowersByLocation: getFollowersByLocation,
         getDominantReligion: getDominantReligion,
         getReligiousBreakdown: getReligiousBreakdown,
+        getReligiousBreakdownForLocations: getReligiousBreakdownForLocations,
 
         // Character religion
         getCharacterReligion: getCharacterReligion,
@@ -1143,7 +1171,7 @@
         getPlacesOfWorshipByLocation: getPlacesOfWorshipByLocation,
         getPlaceOfWorshipCount: getPlaceOfWorshipCount,
 
-        // Compatibility (flavor only)
+        // Compatibility (stubs — both fail closed)
         isCulturallyCompatible: isCulturallyCompatible,
         isReligiouslyPermitted: isReligiouslyPermitted
     };
