@@ -24,59 +24,50 @@
  *     Relationship semantics live in the relationship domain.
  *   - Not a mutation boundary. Everything here is a read.
  *
- * RELATIONSHIP PREDICATES (REVISED)
- * ---------------------------------
- *   The on-disk version's `isBloodRelativeBasic` and `isSpouseBasic`
- *   read `char.motherId`, `char.fatherId`, and `char.relationships` —
- *   all dead fields. The character record no longer carries any of
- *   them:
+ * RELATIONSHIP PREDICATES
+ * -----------------------
+ *   isBloodRelativeBasic(aId, bId)
+ *     → FamilyQueries.isBloodRelated(aId, bId)
+ *     Fails closed (returns false) when FamilyQueries isn't loaded.
  *
- *     - Parentage lives in `parentChildEdges` (FamilyState).
- *     - Spousal / romantic links live in the relationship domain.
- *
- *   So both predicates returned `false` for every pair on any dataset
- *   created with the current factory. The behaviour was silently wrong:
- *   selector UIs that filtered out blood relatives or spouses
- *   (e.g., the matchmaker's "exclude relatives" filter) silently stopped
- *   filtering.
- *
- *   This rewrite delegates:
- *
- *     isBloodRelativeBasic(aId, bId)
- *       → FamilyQueries.isBloodRelated(aId, bId)
- *       Falls back to `false` when FamilyQueries isn't loaded. Family
- *       is a required dependency in the current tree; the fallback
- *       exists so this module can be loaded and tested before
- *       family-queries.js.
- *
- *     isSpouseBasic(aId, bId)
- *       → RelationshipQueries.getRelationshipBetween(aId, bId)
- *         filtered to `type === 'marriage' && status === 'ongoing'`.
- *       Returns `false` when the relationship domain isn't loaded. Also
- *       returns `false` when the two characters have no relationship
- *       at all — the common case in selectors.
- *
- *   Both predicates keep their "Basic" suffix: they are one-hop checks
- *   used inside list filters. `isBloodRelativeBasic` is one-hop in the
- *   sense that it delegates to `FamilyQueries.isBloodRelated`, which
- *   itself does bounded traversal via `FamilyRules.classifyKinship`.
- *   Neither predicate is a "deep kinship" check — see
- *   `FamilyQueries.classifyKinship` for that.
+ *   isSpouseBasic(aId, bId)
+ *     → RelationshipQueries.getRelationshipBetween(aId, bId)
+ *       filtered to `type === 'marriage' && status === 'ongoing'`.
+ *     Fails closed when the relationship domain isn't loaded.
  *
  * DEPENDENCIES (REQUIRED at load):
- *   - None. Every dependency is checked at call time so this module
- *     can load first in the selector block.
+ *   - accessors.js: getCharacterById
  *
  * DEPENDENCIES (checked at call time):
- *   - accessors.js:        getCharacterById, getPlaceById, getCharacters
- *   - query-helpers.js:    (not used here — kept out of the dependency graph)
+ *   - accessors.js:        getCharacters, getPlaceById
  *   - family-queries.js:   isBloodRelated (for isBloodRelativeBasic)
  *   - relationship domain: getRelationshipBetween (for isSpouseBasic)
- *   - time.js:             getCurrentYearSafe (for age display and filters)
- *   - formatting.js:       (not used here — display strings are plain)
+ *   - time.js:             getCurrentYear (via getCurrentYearSafe alias fallback)
+ *   - icons.js:            getGenderIcon (optional; used by getGenderSymbol)
  *
- * ICON POLICY: No emojis. No icons.
+ * ICON POLICY: No emojis. Icons come from icons.js via window.getGenderIcon
+ * or window.Icons if available. Text glyph fallbacks are prohibited.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getGenderSymbol(gender) RESTORED. It was removed in a prior
+ *       refactor, and modals-char-selector.js's _buildList still calls
+ *       it via _Helpers.getGenderSymbol(char.gender). The selector
+ *       threw TypeError on first character row render. Fixed by
+ *       delegating to icons.js::getGenderIcon when available; falls
+ *       back to a plain-text label from formatting.js::getGenderLabel
+ *       otherwise.
+ *     - getGenderLabel(gender) added for symmetry. Delegates to
+ *       formatting.js::getGenderLabel when available; falls back to
+ *       the same local classifier.
+ *     - _currentYear() now prefers window.getCurrentYear (canonical)
+ *       over window.getCurrentYearSafe (deprecated alias). Prior
+ *       revisions called the deprecated alias only.
+ *   Previous revisions:
+ *     - Relationship predicates rewritten to delegate to
+ *       FamilyQueries / RelationshipQueries (dead-field bug fix).
+ *     - Flat globals aliased onto SelectorHelpers.
  * =============================================================================
  */
 
@@ -107,6 +98,11 @@
     }
 
     function _currentYear() {
+        // Prefer the canonical accessor. The deprecated alias is used
+        // only if the canonical accessor is not exposed.
+        if (typeof window.getCurrentYear === 'function') {
+            return window.getCurrentYear();
+        }
         if (typeof window.getCurrentYearSafe === 'function') {
             return window.getCurrentYearSafe();
         }
@@ -131,25 +127,18 @@
     // =========================================================================
     // 2. FILTER DEFAULTS AND NORMALISATION
     // =========================================================================
+    //
+    //   - gender:    'any' | 'male' | 'female' | 'unknown'
+    //   - status:    'any' | 'living' | 'deceased'
+    //   - minAge:    integer or null
+    //   - maxAge:    integer or null
+    //   - locationId: string id or null (null = any location)
+    //   - relationshipFilter: 'any' | 'exclude_blood_relative'
+    //                         | 'exclude_spouse'
+    //                         | 'exclude_blood_relative_and_spouse'
+    //   - excludeIds: array of ids to omit from results
+    //   - showDeceased: boolean
 
-    /**
-     * Default filterConfig for selector modals. Every selector gets the
-     * same shape; each modal decides which fields to actually render.
-     *
-     *   - gender:    'any' | 'male' | 'female' | 'unknown'
-     *   - status:    'any' | 'living' | 'deceased'
-     *   - minAge:    integer or null
-     *   - maxAge:    integer or null
-     *   - locationId: string id or null (null = any location)
-     *   - relationshipFilter: 'any' | 'exclude_blood_relative'
-     *                         | 'exclude_spouse'
-     *                         | 'exclude_blood_relative_and_spouse'
-     *   - excludeIds: array of ids to omit from results (e.g. the anchor
-     *                 character of a matchmaker, or a currently selected
-     *                 entity)
-     *   - showDeceased: boolean (when true, `status` filter is bypassed
-     *                   for display — the caller wants deceased shown)
-     */
     function getDefaultFilterConfig() {
         return {
             gender: 'any',
@@ -172,12 +161,6 @@
         'exclude_blood_relative_and_spouse'
     ];
 
-    /**
-     * Merges a caller-supplied filterConfig over the default config,
-     * validating enum fields. Unknown enum values are treated as the
-     * default (with a console warning). Unknown keys are preserved so
-     * caller-supplied extensions don't get silently dropped.
-     */
     function normalizeFilterConfig(config) {
         var defaults = getDefaultFilterConfig();
         if (_isMissing(config) || typeof config !== 'object' || Array.isArray(config)) {
@@ -237,10 +220,6 @@
     // =========================================================================
     // 3. CHARACTER MATCH PREDICATES
     // =========================================================================
-    //
-    // Predicates are pure: (character, config) → boolean. They never
-    // mutate and never touch state. The config is the normalized form
-    // from normalizeFilterConfig, not the raw caller input.
 
     function matchGender(character, config) {
         if (!character) return false;
@@ -290,19 +269,13 @@
     }
 
     // =========================================================================
-    // 4. RELATIONSHIP PREDICATES (REVISED)
+    // 4. RELATIONSHIP PREDICATES
     // =========================================================================
 
     /**
-     * True if the two characters share a biological ancestor at any
-     * bounded depth, or are directly parent/child.
-     *
-     * Delegates to FamilyQueries.isBloodRelated. The predicate is a
-     * filter helper, so it fails closed: if FamilyQueries isn't loaded,
-     * it returns `false` (i.e., "cannot confirm blood relation"). That
-     * means a "exclude blood relatives" filter would fall through and
-     * show the candidate, which is a defensive default (the user sees
-     * more options rather than fewer).
+     * True if the two characters share a biological ancestor, or are
+     * directly parent/child. Delegates to FamilyQueries.isBloodRelated.
+     * Fails closed (returns false) if FamilyQueries is missing.
      *
      * @param {string} aId
      * @param {string} bId
@@ -329,16 +302,9 @@
 
     /**
      * True if the two characters have an ongoing marriage relationship.
-     *
-     * Delegates to RelationshipQueries.getRelationshipBetween. The
-     * relationship domain is optional in the current tree (per
-     * character-system.js, the relationship rebuild is partial), so this
-     * fails closed: if the domain isn't loaded, it returns `false`.
-     *
-     * "Spouse" here means specifically `type === 'marriage' &&
-     * status === 'ongoing'`. It does not cover betrothal, engagement,
-     * concubinage, or romance. A caller that needs a broader "romantically
-     * linked" predicate should use the relationship domain directly.
+     * Delegates to RelationshipQueries.getRelationshipBetween (or the
+     * flat global equivalent). Fails closed (returns false) if the
+     * relationship domain is missing.
      *
      * @param {string} aId
      * @param {string} bId
@@ -347,11 +313,20 @@
     function isSpouseBasic(aId, bId) {
         if (!_hasId(aId) || !_hasId(bId)) return false;
         if (aId === bId) return false;
-        if (typeof window.getRelationshipBetween !== 'function') return false;
+
+        var getRel = null;
+        if (typeof window.getRelationshipBetween === 'function') {
+            getRel = window.getRelationshipBetween;
+        } else if (typeof window.RelationshipQueries !== 'undefined'
+            && window.RelationshipQueries
+            && typeof window.RelationshipQueries.getRelationshipBetween === 'function') {
+            getRel = window.RelationshipQueries.getRelationshipBetween;
+        }
+        if (!getRel) return false;
 
         var rel = null;
         try {
-            rel = window.getRelationshipBetween(aId, bId);
+            rel = getRel(aId, bId);
         } catch (e) {
             if (typeof console !== 'undefined' && console.warn) {
                 console.warn(
@@ -367,13 +342,7 @@
     /**
      * Applies the relationshipFilter from config to a candidate.
      *
-     *   'any'                                 → true
-     *   'exclude_blood_relative'              → !isBloodRelativeBasic
-     *   'exclude_spouse'                      → !isSpouseBasic
-     *   'exclude_blood_relative_and_spouse'   → both false
-     *
-     * @param {string} anchorId   the "subject" of the filter (e.g., the
-     *                            matchmaker's anchor character)
+     * @param {string} anchorId   the "subject" of the filter
      * @param {string} candidateId
      * @param {Object} config
      * @returns {boolean}
@@ -401,16 +370,6 @@
     // 5. COMPOSITE MATCH
     // =========================================================================
 
-    /**
-     * True if a character passes every configured filter.
-     *
-     * @param {Object} character
-     * @param {Object} config     normalized config
-     * @param {string} [anchorId] the subject of relationship filters
-     *                            (optional; only needed when
-     *                            config.relationshipFilter !== 'any')
-     * @returns {boolean}
-     */
     function matchesCharacter(character, config, anchorId) {
         if (!character) return false;
         if (!matchExcludeIds(character, config)) return false;
@@ -448,19 +407,85 @@
         return '';
     }
 
+    /**
+     * Returns the gender label ('Male' / 'Female' / 'Unknown').
+     * Delegates to formatting.js::getGenderLabel when available;
+     * otherwise a local classifier with identical output.
+     *
+     * @param {string} gender
+     * @returns {string}
+     */
+    function getGenderLabel(gender) {
+        if (typeof window.getGenderLabel === 'function') {
+            var fromFormatting = window.getGenderLabel(gender);
+            if (typeof fromFormatting === 'string' && fromFormatting.length > 0) {
+                return fromFormatting;
+            }
+        }
+        switch (gender) {
+            case 'male': return 'Male';
+            case 'female': return 'Female';
+            default: return 'Unknown';
+        }
+    }
+
+    /**
+     * Returns the gender symbol as trusted HTML (an SVG from icons.js)
+     * when icons are available, or a plain-text label as a fallback.
+     *
+     * modals-char-selector.js::_buildList calls this via
+     * _Helpers.getGenderSymbol(char.gender). The output is inserted
+     * into the selector row via innerHTML, so the returned string must
+     * be either trusted SVG (from icons.js) or HTML-escaped text.
+     *
+     * Priority:
+     *   1. window.getGenderIcon(gender)   — SVG markup (icons.js)
+     *   2. window.Icons[GENDER_ICON_NAME] — SVG markup by name
+     *   3. plain-text label from getGenderLabel, HTML-escaped
+     *
+     * @param {string} gender
+     * @returns {string}
+     */
+    function getGenderSymbol(gender) {
+        if (typeof window.getGenderIcon === 'function') {
+            try {
+                var icon = window.getGenderIcon(gender);
+                if (typeof icon === 'string' && icon.length > 0) {
+                    return icon;
+                }
+            } catch (e) {
+                // Fall through to the local lookup.
+            }
+        }
+
+        if (window.Icons && typeof window.Icons === 'object') {
+            var iconName = 'GENDER_NEUTRAL';
+            if (gender === 'male') iconName = 'MALE';
+            else if (gender === 'female') iconName = 'FEMALE';
+            var svg = window.Icons[iconName];
+            if (typeof svg === 'string' && svg.length > 0) {
+                return svg;
+            }
+        }
+
+        // Text fallback. Escape in case a caller inserts into innerHTML.
+        return _escapeText(getGenderLabel(gender));
+    }
+
+    function _escapeText(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // =========================================================================
     // 7. EXPORTS
     // =========================================================================
 
-    /**
-     * Public namespace used by modals-char-selector.js,
-     * modals-household-selector.js, and locationDropdown.js (indirectly
-     * via the character selector).
-     *
-     * The surface is stable; new helpers should be added here, not as
-     * separate window.* globals, to keep the selector dependency graph
-     * tight.
-     */
     window.SelectorHelpers = {
         // Filter config
         getDefaultFilterConfig: getDefaultFilterConfig,
@@ -482,19 +507,21 @@
         // Display
         getCharacterDisplayName: getCharacterDisplayName,
         getCharacterInitials: getCharacterInitials,
+        getGenderLabel: getGenderLabel,
+        getGenderSymbol: getGenderSymbol,
 
         // Diagnostics
-        version: 2
+        version: 3
     };
 
-    // Backward-compat aliases — the on-disk version exposed
-    // `_SelectorBaseHelpers` and a handful of flat globals. Those are
-    // preserved so any caller that hasn't migrated continues to work.
+    // Backward-compat aliases.
     window._SelectorBaseHelpers = window.SelectorHelpers;
     window.getCharacterDisplayName = getCharacterDisplayName;
     window.getCharacterInitials = getCharacterInitials;
     window.isBloodRelativeBasic = isBloodRelativeBasic;
     window.isSpouseBasic = isSpouseBasic;
+    window.getGenderLabel = getGenderLabel;
+    window.getGenderSymbol = getGenderSymbol;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.SelectorHelpers;
