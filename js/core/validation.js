@@ -67,6 +67,17 @@
  *   still carries `locationId` as "Unknown field: locationId". That
  *   is the correct outcome for imported pre-migration data.
  *
+ * EXISTING-ID CONTEXT CONTRACT:
+ *   The `existing*Ids` fields in validator context objects mean
+ *   "IDs already present in CANONICAL masterData", never "IDs in this
+ *   import". validateImportData deliberately does NOT pass the
+ *   import's own ID set under those names: self-duplicates within an
+ *   import are reported exactly once, by _reportSelfDuplicates.
+ *   Import-internal reference resolution (e.g. place.parentId pointing
+ *   at another place in the same payload) is performed in
+ *   validateImportData itself, because that is an import concern, not
+ *   an entity-shape concern.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - time.js: TIME_CONSTANTS.MIN_YEAR, TIME_CONSTANTS.MAX_YEAR
  *
@@ -77,7 +88,17 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (Phase 2.8):
+ *   Current revision (Phase 2.9):
+ *     - Fixed double-reporting of import self-duplicates. validateImportData
+ *       previously passed the import's own ID set as `existingCharacterIds`
+ *       and `existingPlaceIds`, so every self-duplicate was reported twice
+ *       (once by _reportSelfDuplicates, once by validateCharacter /
+ *       validatePlace). Both validators' duplicate checks are now
+ *       reserved for "IDs already in canonical masterData". Import-internal
+ *       reference resolution for places (dangling parentId) moved into
+ *       validateImportData, which already builds the placesById lookup.
+ *       See EXISTING-ID CONTEXT CONTRACT above.
+ *   Previous revision (Phase 2.8):
  *     - Removed 'locationId' from ENTITY_SCHEMAS.rank.optional. This was
  *       the last remaining reference to a removed rank field. See RANK
  *       LOCATION in the module header. The rank schema now lists only
@@ -401,8 +422,14 @@ function validateCharacter(char, context) {
         }
     }
 
-    // --- Import duplicate detection (only when caller supplies a set that
-    //     is NOT the import's own ID set — see validateImportData) ---
+    // --- Duplicate detection against the CANONICAL WORLD ---
+    //
+    // `context.existingCharacterIds` means "IDs already present in canonical
+    // masterData", NOT "IDs in this import". The import path deliberately
+    // does not pass its own ID set here: self-duplicates within an import
+    // are reported exactly once, by _reportSelfDuplicates in
+    // validateImportData. Keep this contract honest; do not widen the
+    // meaning of `existingCharacterIds` to make an import caller work.
     if (context.existingCharacterIds
         && typeof context.existingCharacterIds.has === 'function'
         && char.id !== undefined && char.id !== null
@@ -533,13 +560,9 @@ function validatePlace(place, context) {
         }
     }
 
+    // Reference SYNTAX check only. Existence is resolved by the caller
+    // (validateImportData for imports, accessors.js for canonical data).
     _checkReferenceId(place.parentId, 'Parent ID', isValidPlaceId, errors);
-    if (place.parentId !== undefined && place.parentId !== null
-        && context.existingPlaceIds
-        && typeof context.existingPlaceIds.has === 'function'
-        && !context.existingPlaceIds.has(place.parentId)) {
-        errors.push('Parent place "' + place.parentId + '" does not exist');
-    }
 
     if (place.notes !== undefined && place.notes !== null) {
         if (typeof place.notes !== 'string') {
@@ -549,6 +572,11 @@ function validatePlace(place, context) {
         }
     }
 
+    // --- Duplicate detection against the CANONICAL WORLD ---
+    //
+    // `context.existingPlaceIds` means "IDs already present in canonical
+    // masterData", NOT "IDs in this import". See the character equivalent
+    // above and EXISTING-ID CONTEXT CONTRACT in the module header.
     if (context.existingPlaceIds
         && typeof context.existingPlaceIds.has === 'function'
         && place.id !== undefined && place.id !== null
@@ -841,7 +869,6 @@ function validateBidirectionalRelationship(rel1, char1Id, rel2, char2Id) {
     if (rel1.status !== rel2.status) {
         issues.push('Status mismatch: ' + rel1.status + ' vs ' + rel2.status);
     }
-
     var details1 = rel1.details || {};
     var details2 = rel2.details || {};
     if (details1.startYear !== details2.startYear) {
@@ -937,6 +964,10 @@ function _buildIdLookup(arr) {
 /**
  * @private
  * Reports duplicates within an import's own ID set as errors.
+ *
+ * This is the SOLE reporter of import self-duplicates. The entity
+ * validators' duplicate checks are reserved for canonical-world
+ * comparison (see EXISTING-ID CONTEXT CONTRACT in the module header).
  */
 function _reportSelfDuplicates(arr, entityLabel, errors) {
     if (!Array.isArray(arr)) return;
@@ -956,10 +987,15 @@ function _reportSelfDuplicates(arr, entityLabel, errors) {
 /**
  * Validates an imported JSON structure.
  *
- * The context passed to entity validators describes the IMPORT's ID space
- * for reference resolution. It is NOT passed as `existing*Ids`, because
- * those are reserved for "IDs already in the canonical world". The import's
- * own duplicate detection is done by dedicated passes.
+ * Duplicate detection policy:
+ *   - Self-duplicates WITHIN the import are reported exactly once, by
+ *     _reportSelfDuplicates. The import's own ID set is NOT passed to
+ *     validateCharacter / validatePlace as `existing*Ids`, because those
+ *     fields mean "IDs already present in canonical masterData". See
+ *     EXISTING-ID CONTEXT CONTRACT in the module header.
+ *   - Import-internal reference resolution (place.parentId pointing at a
+ *     place in the same payload) is performed here, because it is an
+ *     import concern rather than an entity-shape concern.
  *
  * @param {Object} imported
  * @returns {{ isValid: boolean, errors: string[], warnings: string[] }}
@@ -995,21 +1031,20 @@ function validateImportData(imported) {
         }
     }
 
-    // --- Collect IDs (for reference resolution within the import) ---
-    var importCharacterIds = _collectIds(dataToValidate.characters);
-    var importPlaceIds = _collectIds(dataToValidate.places);
-
-    // --- Self-duplicate detection within the import ---
+    // --- Self-duplicate detection within the import (sole reporter) ---
     _reportSelfDuplicates(dataToValidate.characters, 'character', errors);
     _reportSelfDuplicates(dataToValidate.places, 'place', errors);
     _reportSelfDuplicates(dataToValidate.ranks, 'rank', errors);
     _reportSelfDuplicates(dataToValidate.roles, 'role', errors);
 
-    // --- Validate characters (references resolved against the import) ---
+    // --- Validate characters ---
+    //
+    // No `existingCharacterIds` is passed: that field means "IDs already
+    // in canonical masterData", not "IDs in this import". Self-duplicates
+    // are already reported above; passing the import's own set here would
+    // double-report every self-duplicate.
     if (Array.isArray(dataToValidate.characters)) {
-        var charContext = {
-            existingCharacterIds: importCharacterIds
-        };
+        var charContext = {};
         for (var i = 0; i < dataToValidate.characters.length; i++) {
             var char = dataToValidate.characters[i];
             var v = validateCharacter(char, charContext);
@@ -1022,8 +1057,13 @@ function validateImportData(imported) {
     }
 
     // --- Validate places (single lookup built once) ---
+    //
+    // As with characters, no `existingPlaceIds` is passed for the
+    // duplicate check. The import's own ID set is used here for
+    // import-internal reference resolution: dangling parentId and
+    // parent cycles. Those are import concerns, not shape concerns.
     if (Array.isArray(dataToValidate.places)) {
-        var placeContext = { existingPlaceIds: importPlaceIds };
+        var placeContext = {};
         var placesById = _buildIdLookup(dataToValidate.places);
 
         for (var i = 0; i < dataToValidate.places.length; i++) {
@@ -1034,9 +1074,13 @@ function validateImportData(imported) {
             }
 
             if (place && place.parentId !== undefined && place.parentId !== null) {
-                var cyc = validatePlaceHierarchy(place, placesById);
-                if (!cyc.isValid) {
-                    errors.push('Place ' + (place.displayName || place.id) + ': ' + cyc.message);
+                if (!placesById.has(place.parentId)) {
+                    errors.push('Place ' + (place.displayName || place.id) + ': Parent place "' + place.parentId + '" does not exist');
+                } else {
+                    var cyc = validatePlaceHierarchy(place, placesById);
+                    if (!cyc.isValid) {
+                        errors.push('Place ' + (place.displayName || place.id) + ': ' + cyc.message);
+                    }
                 }
             }
         }
