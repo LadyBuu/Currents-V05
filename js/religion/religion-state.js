@@ -27,17 +27,33 @@
  *   - UI state                         (ReligionUIState)
  *   - presentation                     (ReligionViewModels / ReligionRender)
  *
- * Read/write contract:
+ * CANONICAL ARRAY OWNERSHIP
+ * -------------------------
+ *   masterData.data.religions is the canonical store. This module DOES
+ *   NOT hold a permanent reference to that array. Every mutation
+ *   primitive reassigns masterData.data.religions to a NEW array
+ *   (built via slice of the freshly-mutated working copy). Callers
+ *   that captured the array reference before a mutation see a stale
+ *   array, not a mutated one — same guarantee role-state.js provides
+ *   via `masterData.data.roles = _roles.slice()`.
  *
+ *   Prior revisions called religions.push(religion) / religions.splice()
+ *   on the live array. A caller holding `masterData.data.religions` and
+ *   iterating it during a mutation saw the array change mid-iteration
+ *   (skipped records, out-of-bounds reads). Same bug class the
+ *   settlement-queries.js SETTLEMENT DATA ACCESS CONTRACT flagged and
+ *   role-state.js fixed.
+ *
+ * READ/WRITE CONTRACT
+ * -------------------
  *     getById(id)                   → clone (public, safe)
  *     getByTrait(trait)             → clones
  *     getByLocation(locationId)     → clones
  *     getByLeader(characterId)      → clone
- *     getFollowersByReligion(id)    → array of live character records
- *                                     (character records are owned by the
- *                                     character domain; cloning them here
- *                                     would create a false impression that
- *                                     mutation was safe)
+ *     getFollowersByReligion(id)    → slice() of live records the
+ *                                     follower index holds (character
+ *                                     domain owns them; cloned reads
+ *                                     happen at religion-queries.js)
  *     getGodById(id)                → clone
  *     getLawById(id)                → clone
  *     getPlaceOfWorshipById(id)     → clone
@@ -49,27 +65,36 @@
  *     _updateReligion(id, record)   → commands only
  *     _removeReligion(id)           → commands only
  *
- * Cross-domain:
- *   - Followers index reads character records via accessors.getCharacters.
- *     That is a declared dependency. See header note on getFollowersByReligion.
- *   - invalidateFollowerIndex() is exposed for the character domain to call
- *     when a character's religionId changes. Do not call it from religion
- *     mutation primitives — those already re-hydrate everything.
- *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Phase 3 (previous): removed _state.religions, moved semantic queries to
- *     ReligionQueries, renamed cache → indexes, added notify().
- *   Phase 7 (current): converge to the rank/role/relationship/education
- *     reference pattern:
- *       - hydrateFromMasterData replaces rebuildIndexes
- *       - public reads return clones
- *       - _getXCanonical accessors added for commands
- *       - mutation primitives added (_addReligion / _updateReligion /
- *         _removeReligion) so Commands stop touching masterData directly
- *       - duplicate-id detection on hydrate
- *       - validateIntegrity for bootstrap
- *       - publish(eventName, data) replaces notify(event)
+ *   Current revision:
+ *     - _addReligion / _updateReligion / _removeReligion no longer
+ *       mutate masterData.data.religions in place. Every primitive
+ *       builds a working copy, mutates the copy, then assigns
+ *       masterData.data.religions = workingCopy. Stale references held
+ *       by callers (including the enumerator used by
+ *       religion-queries.js::_enumerateCanonicalReligions) are now
+ *       snapshots, not aliases. Same guarantee role-state.js provides.
+ *     - _getReligionCanonical / _getGodCanonical / _getLawCanonical
+ *       continue to return the LIVE record the caller can mutate, but
+ *       that record lives inside the working copy that gets reassigned
+ *       — so mutating it via a canonical read is only safe if the
+ *       caller immediately calls _updateReligion with the (re-built)
+ *       copy. This was already the contract; the reassignment makes it
+ *       observable in the by-reference case (a caller holding the old
+ *       reference sees the OLD record, not the current one).
+ *     - Header CANONICAL ARRAY OWNERSHIP section added.
+ *     - _notifySubscriberError now routes through window.reportError
+ *       when available (SettlementState's pattern) before falling back
+ *       to console.error. Same diagnostic surface across domains.
+ *     - No behavioral change to hydrateFromMasterData, the mutation
+ *       policy, the subscriptions, or the diagnostics.
+ *   Previous revisions:
+ *     - Phase 3: removed _state.religions; renamed cache → indexes.
+ *     - Phase 7: hydrateFromMasterData; public reads return clones;
+ *       _getXCanonical accessors added; mutation primitives added;
+ *       duplicate-id detection on hydrate; validateIntegrity;
+ *       publish(eventName, data).
  * =============================================================================
  */
 
@@ -80,7 +105,7 @@
     // 1. STATE STRUCTURE
     // =========================================================================
 
-    // No canonical religion records here. Only subscribers.
+    // No canonical religion records held here. Only subscribers.
     var _subscribers = [];
 
     // Derived indexes. Rebuildable from masterData.data.religions and
@@ -103,7 +128,6 @@
     // =========================================================================
 
     function _getCharacters() {
-        // Required dependency. Throws if missing.
         if (typeof window.getCharacters !== 'function') {
             throw new Error(
                 'ReligionState requires accessors.getCharacters. ' +
@@ -114,24 +138,37 @@
     }
 
     function _getCanonicalReligionsArray() {
-        // Reads from the canonical store. Returns the live array.
-        // State never owns a copy of this.
+        // Reads from the canonical store. Returns whatever the current
+        // array reference is. After any mutation primitive runs, this
+        // is a NEW array; callers holding a prior reference have a
+        // snapshot. See CANONICAL ARRAY OWNERSHIP in the header.
         if (!window.masterData || !window.masterData.data) {
             return null;
         }
         if (!Array.isArray(window.masterData.data.religions)) {
-            // Canonical store hasn't been initialized. Distinguish
-            // "not ready" (null) from "empty" ([]).
+            // "Not ready" (null) is distinct from "empty" ([]).
             return null;
         }
         return window.masterData.data.religions;
+    }
+
+    function _setCanonicalReligionsArray(newArray) {
+        // Reassign rather than mutate-in-place. Every mutation primitive
+        // calls this with a working copy. See CANONICAL ARRAY OWNERSHIP.
+        if (!window.masterData || !window.masterData.data) {
+            throw new Error(
+                'ReligionState: masterData.data is not available. ' +
+                'Cannot write canonical religions.'
+            );
+        }
+        window.masterData.data.religions = newArray;
     }
 
     function _markDirty() {
         if (typeof window.markDataDirty === 'function') {
             try { window.markDataDirty(); return; } catch (e) { /* fall through */ }
         }
-        // Non-fatal. markDataDirty is a persistence hint, not the save itself.
+        // Non-fatal. markDataDirty is a persistence hint, not the save.
     }
 
     // =========================================================================
@@ -169,9 +206,9 @@
      * Rebuilds all derived indexes from canonical data.
      *
      * Called by:
-     *   - ReligionCommands at the end of every mutation (via _commit)
+     *   - ReligionCommands at the end of every mutation (via the State
+     *     mutation primitive, which is called by the command)
      *   - ReligionBootstrap.init() at page load
-     *   - ReligionState mutation primitives (after write)
      *   - Application-level reload / import
      *
      * NOT called by:
@@ -185,9 +222,8 @@
         var religions = _getCanonicalReligionsArray();
 
         if (religions === null) {
-            // Canonical store not ready. Do not clear indexes, do not fake
-            // empty data. Leave previous indexes intact and let the caller
-            // decide when to retry.
+            // Canonical store not ready. Leave previous indexes intact
+            // and let the caller decide when to retry.
             return false;
         }
 
@@ -274,17 +310,10 @@
         return true;
     }
 
-    /**
-     * Deprecated alias for hydrateFromMasterData().
-     * Kept so any un-migrated caller during the refactor does not break.
-     */
     function rebuildIndexes() {
         return hydrateFromMasterData();
     }
 
-    /**
-     * Deprecated alias for hydrateFromMasterData().
-     */
     function refreshFromMasterData() {
         var ok = hydrateFromMasterData();
         if (ok) {
@@ -295,9 +324,9 @@
     }
 
     function _buildFollowersIndex() {
-        // Cross-domain: reads character records. Character records are owned
-        // by the character domain. This index is derived state that declares
-        // a dependency on that domain.
+        // Cross-domain: reads character records. Character records are
+        // owned by the character domain. This index is derived state
+        // that declares a dependency on that domain.
         _indexes.followersByReligion = new Map();
 
         var characters = _getCharacters();
@@ -313,11 +342,6 @@
         }
     }
 
-    /**
-     * Rebuilds only the follower index. Called by the character domain when a
-     * character's religionId changes. Do not call from religion mutation
-     * primitives — those already re-hydrate everything.
-     */
     function _invalidateFollowerIndex() {
         _buildFollowersIndex();
     }
@@ -349,11 +373,12 @@
     }
 
     /**
-     * Followers of a religion. Returns live character records.
-     *
-     * Character records are owned by the character domain. Cloning them here
-     * would create a false impression that mutation is safe. Callers who want
-     * a snapshot should deep-clone themselves.
+     * Followers of a religion. Returns a slice of the follower index
+     * entries (character records). The elements are LIVE character
+     * records, not projections — this is documented behavior. Religion
+     * queries that need projections call
+     * window.getCharacterById(id) on each element (see
+     * religion-queries.js::_projectFollowers).
      */
     function getFollowersByReligion(religionId) {
         if (!religionId) return [];
@@ -379,8 +404,6 @@
         return rec ? _clone(rec) : null;
     }
 
-    // Deprecated: exposes the live Map wrappers. Kept only for any remaining
-    // caller during the migration. New code must use the named getters.
     function getIndexes() {
         return _indexes;
     }
@@ -411,25 +434,29 @@
     // These are the mechanism, not the decision. ReligionCommands decides
     // what to write and when; State executes and re-hydrates.
     //
-    // Every primitive:
-    //   - mutates masterData.data.religions
-    //   - re-hydrates indexes
-    //   - marks data dirty
+    // CANONICAL ARRAY OWNERSHIP: every primitive builds a working copy,
+    // mutates the copy, then reassigns masterData.data.religions. The
+    // old array (held by any caller) becomes a stale snapshot. See the
+    // header section.
     //
-    // Every primitive throws on missing canonical data, missing ids, or
-    // id mismatches. Corruption must be loud.
-    //
+
+    function _buildWorkingCopy() {
+        // Returns a slice of the canonical array (new array, same element
+        // references). Caller is expected to replace elements or push /
+        // splice, then call _setCanonicalReligionsArray(workingCopy).
+        var religions = _getCanonicalReligionsArray();
+        if (religions === null) {
+            throw new Error(
+                'ReligionState: canonical store not initialized. ' +
+                'Cannot mutate religions.'
+            );
+        }
+        return religions.slice();
+    }
 
     function _addReligion(religion) {
         if (!religion || !religion.id) {
             throw new Error('ReligionState._addReligion requires a religion with an id.');
-        }
-
-        var religions = _getCanonicalReligionsArray();
-        if (religions === null) {
-            throw new Error(
-                'ReligionState._addReligion: canonical store not initialized.'
-            );
         }
 
         if (_indexes.byId.has(religion.id)) {
@@ -438,7 +465,10 @@
             );
         }
 
-        religions.push(religion);
+        var working = _buildWorkingCopy();
+        working.push(religion);
+        _setCanonicalReligionsArray(working);
+
         hydrateFromMasterData();
         _markDirty();
         return religion;
@@ -457,16 +487,11 @@
             );
         }
 
-        var religions = _getCanonicalReligionsArray();
-        if (religions === null) {
-            throw new Error(
-                'ReligionState._updateReligion: canonical store not initialized.'
-            );
-        }
+        var working = _buildWorkingCopy();
 
         var index = -1;
-        for (var i = 0; i < religions.length; i++) {
-            if (religions[i] && religions[i].id === id) {
+        for (var i = 0; i < working.length; i++) {
+            if (working[i] && working[i].id === id) {
                 index = i;
                 break;
             }
@@ -475,7 +500,9 @@
             throw new Error('ReligionState._updateReligion: religion not found: ' + id);
         }
 
-        religions[index] = religion;
+        working[index] = religion;
+        _setCanonicalReligionsArray(working);
+
         hydrateFromMasterData();
         _markDirty();
         return religion;
@@ -486,16 +513,11 @@
             throw new Error('ReligionState._removeReligion requires an id.');
         }
 
-        var religions = _getCanonicalReligionsArray();
-        if (religions === null) {
-            throw new Error(
-                'ReligionState._removeReligion: canonical store not initialized.'
-            );
-        }
+        var working = _buildWorkingCopy();
 
         var index = -1;
-        for (var i = 0; i < religions.length; i++) {
-            if (religions[i] && religions[i].id === id) {
+        for (var i = 0; i < working.length; i++) {
+            if (working[i] && working[i].id === id) {
                 index = i;
                 break;
             }
@@ -504,8 +526,10 @@
             throw new Error('ReligionState._removeReligion: religion not found: ' + id);
         }
 
-        var removed = religions[index];
-        religions.splice(index, 1);
+        var removed = working[index];
+        working.splice(index, 1);
+        _setCanonicalReligionsArray(working);
+
         hydrateFromMasterData();
         _markDirty();
         return removed;
@@ -528,12 +552,6 @@
         };
     }
 
-    /**
-     * Publishes an event to all subscribers.
-     *
-     * @param {string} eventName
-     * @param {*} data
-     */
     function publish(eventName, data) {
         var event = {
             type: eventName,
@@ -550,20 +568,17 @@
         }
     }
 
-    /**
-     * Deprecated alias for publish(). Some old callers used notify(event).
-     */
     function notify(event) {
         if (!event || typeof event.type !== 'string') {
             publish('unknown', event);
             return;
         }
-        // Strip the old shape and re-publish in the new form so subscribers
-        // see a consistent event object.
         publish(event.type, event.data !== undefined ? event.data : null);
     }
 
     function _reportSubscriberError(err) {
+        // Prefer the DOM global error reporter (SettlementState's
+        // pattern). Fall back to console.error. Never swallow.
         if (typeof window.reportError === 'function') {
             try { window.reportError(err); return; } catch (e) { /* fall through */ }
         }
@@ -576,10 +591,6 @@
     // 9. INTEGRITY / DIAGNOSTICS
     // =========================================================================
 
-    /**
-     * Warn-only integrity check. Called by ReligionBootstrap.init().
-     * Returns an array of {level, message}. Never throws.
-     */
     function validateIntegrity() {
         var findings = [];
 
@@ -661,14 +672,6 @@
     // =========================================================================
     // 10. INITIAL BUILD
     // =========================================================================
-    //
-    // Attempt an initial build if canonical data already exists. If it does
-    // not, indexes remain empty and ReligionBootstrap.init() (or an explicit
-    // refreshFromMasterData call) will hydrate later.
-    //
-    // The retry-on-DOM-ready pattern from the previous version is retained
-    // because it was load-bearing for pages where scripts load before data.
-    //
 
     function _init() {
         if (_initialized) return;
@@ -679,7 +682,6 @@
             return;
         }
 
-        // Canonical store not ready. Retry on DOM ready, then on window load.
         if (typeof document !== 'undefined') {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', _init);
@@ -717,7 +719,7 @@
     window.ReligionState = {
         // ---- Lifecycle ----
         hydrateFromMasterData: hydrateFromMasterData,
-        rebuildIndexes: rebuildIndexes,          // deprecated alias
+        rebuildIndexes: rebuildIndexes,              // deprecated alias
         refreshFromMasterData: refreshFromMasterData, // deprecated alias
 
         // ---- Public reads (clones) ----
@@ -746,7 +748,7 @@
         // ---- Subscriptions ----
         subscribe: subscribe,
         publish: publish,
-        notify: notify,                          // deprecated alias
+        notify: notify,
 
         // ---- Cross-domain refresh ----
         invalidateFollowerIndex: _invalidateFollowerIndex,
