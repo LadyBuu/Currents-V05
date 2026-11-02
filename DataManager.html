@@ -1,28 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Data Manager</title>
+    <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/data-manager.css" />
 </head>
 <body>
 
-<!-- ============================================================ -->
-<!-- DATA MANAGER APP WRAPPER                                      -->
-<!-- ============================================================ -->
 <div class="data-manager-app">
 
-    <!-- TOP BAR -->
+    <!-- TOPBAR -->
     <div class="topbar">
-        <span class="title">🗄 Data Manager</span>
+        <span class="title">Data Manager</span>
         <span class="spacer"></span>
         <label for="yearInput">Year</label>
         <input type="number" class="year-input" id="yearInput" value="1250" />
-        <button class="tb-btn" id="setYearBtn">✓ Set</button>
-        <button class="tb-btn" id="exportBtn">⬇ Export</button>
-        <button class="tb-btn" id="importBtn">⬆ Import</button>
+        <button class="tb-btn" id="setYearBtn">Set</button>
+        <button class="tb-btn" id="exportBtn">Export</button>
+        <button class="tb-btn" id="importBtn">Import</button>
         <input type="file" id="fileInput" accept=".json" style="display:none;" />
     </div>
 
@@ -53,16 +51,9 @@
 
     <!-- TAB CONTENT -->
     <div class="tab-content" id="tabContent">
-        <!-- LOCATION TYPES -->
         <div class="tab-pane active" id="tab-locationtypes"></div>
-
-        <!-- GOVERNMENT TYPES -->
         <div class="tab-pane" id="tab-governmenttypes"></div>
-
-        <!-- RANKS -->
         <div class="tab-pane" id="tab-ranks"></div>
-
-        <!-- CENSUS -->
         <div class="tab-pane" id="tab-census">
             <div class="empty-state">
                 <div class="icon" id="empty-census-icon"></div>
@@ -70,8 +61,6 @@
                 <div class="sub-message">(placeholder – coming soon)</div>
             </div>
         </div>
-
-        <!-- HISTORY -->
         <div class="tab-pane" id="tab-history">
             <div class="empty-state">
                 <div class="icon" id="empty-history-icon"></div>
@@ -79,8 +68,6 @@
                 <div class="sub-message">(placeholder – coming soon)</div>
             </div>
         </div>
-
-        <!-- RELATIONS -->
         <div class="tab-pane" id="tab-relations">
             <div class="empty-state">
                 <div class="icon" id="empty-relations-icon"></div>
@@ -88,8 +75,6 @@
                 <div class="sub-message">(placeholder – coming soon)</div>
             </div>
         </div>
-
-        <!-- SETTINGS -->
         <div class="tab-pane" id="tab-settings">
             <div class="empty-state">
                 <div class="icon" id="empty-settings-icon"></div>
@@ -100,7 +85,6 @@
     </div>
 
 </div>
-<!-- END data-manager-app wrapper -->
 
 <!-- ============================================================ -->
 <!-- PRELOAD                                                       -->
@@ -117,7 +101,7 @@
                     window.masterData = parsed;
                 }
             }
-        } catch(e) {}
+        } catch (e) {}
 
         if (!window.masterData || !window.masterData.data) {
             window.masterData = {
@@ -143,42 +127,76 @@
 </script>
 
 <!-- ============================================================ -->
-<!-- CORE SCRIPTS                                                  -->
+<!-- CORE CONSTANTS                                                -->
 <!-- ============================================================ -->
-<script src="js/core/constants.js"></script>
-<script src="js/core/randomness.js"></script>
-<script src="js/core/collections.js"></script>
-<script src="js/core/validation.js"></script>
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE UTILITIES                                                -->
+<!-- ============================================================ -->
 <script src="js/core/formatting.js"></script>
-<script src="js/core/time.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
+<script src="js/core/time.js"></script>
+<script src="js/core/randomness.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE STORAGE                                                  -->
+<!-- ============================================================ -->
+<script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
+<script>
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') {
+                window.initializeStorage();
+            }
+        } catch (e) {
+            console.error('[DataManager] initializeStorage failed:', e);
+        }
+    })();
+</script>
+
+<!-- ============================================================ -->
+<!-- CORE ACCESSORS / WORLD / NAMES                                -->
+<!-- ============================================================ -->
 <script src="js/core/accessors.js"></script>
+<script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
-<script src="js/core/integrity.js"></script>
-<script src="js/core/icons.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE UI PRIMITIVES                                            -->
+<!-- ============================================================ -->
 <script src="js/core/ui.js"></script>
-<script src="js/core/collapsible.js"></script>
-<script src="js/core/responsive.js"></script>
+<script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
-<script src="js/core/exportUtils.js"></script>
-<script src="js/core/query-helpers.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
 
 <!-- ============================================================ -->
-<!-- SELECTORS                                                     -->
-<!-- ============================================================ -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- ============================================================ -->
-<!-- CHARACTER PREREQUISITES (required by location + rank)         -->
+<!-- CHARACTER (required by location, rank, selectors, government) -->
 <!-- ============================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- ============================================================ -->
+<!-- SELECTORS (need character; household selector omitted)        -->
+<!-- ============================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
 
 <!-- ============================================================ -->
 <!-- LOCATION SYSTEM                                               -->
@@ -197,29 +215,87 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- ============================================================ -->
-<!-- LOCATION TYPE MANAGER                                         -->
-<!-- ============================================================ -->
+<!-- LOCATION TYPE MANAGER -->
 <script src="js/tabs/location-type-manager-tab.js"></script>
 
 <!-- ============================================================ -->
-<!-- RANK SYSTEM                                                   -->
+<!-- RANK SYSTEM (js/ranks/)                                       -->
 <!-- ============================================================ -->
-<script src="js/core/rank/rank-constants.js"></script>
-<script src="js/core/rank/rank-rules.js"></script>
-<script src="js/core/rank/rank-state.js"></script>
-<script src="js/core/rank/rank-queries.js"></script>
-<script src="js/core/rank/rank-assignment.js"></script>
-<script src="js/core/rank/rank-commands.js"></script>
-<script src="js/core/rank/rank-issues.js"></script>
-<script src="js/core/rank/rank-ui-list.js"></script>
-<script src="js/core/rank/modals-rank.js"></script>
-<script src="js/core/rank/rank-bootstrap.js"></script>
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
+
+<!-- RANK TAB MANAGER -->
+<script src="js/tabs/rank-manager-tab.js"></script>
 
 <!-- ============================================================ -->
-<!-- RANK TAB MANAGER                                              -->
+<!-- GOVERNMENT DEPENDENCY STUBS                                   -->
 <!-- ============================================================ -->
-<script src="js/tabs/rank-manager-tab.js"></script>
+<!-- government-queries.js requires RoleQueries, SettlementQueries,
+     SettlementProsperityQueries, IndustryQueries at load. Those
+     modules are not in this page's load set, so we install minimal
+     stubs. Government Type CRUD works fully; other Government flows
+     that reach the stubs will surface their own failures. -->
+<script>
+    (function () {
+        if (!window.SettlementQueries) {
+            window.SettlementQueries = {
+                getIndustryTaxRate: function () { return null; },
+                getGovernmentSalaryBudget: function () { return null; }
+            };
+        }
+        if (!window.SettlementProsperityQueries) {
+            window.SettlementProsperityQueries = {
+                getProsperityValue: function () { return null; }
+            };
+        }
+        if (!window.IndustryQueries) {
+            window.IndustryQueries = {
+                getIndustryTaxRevenue: function () { return 0; },
+                getIndustryEnterpriseStats: function () { return null; }
+            };
+        }
+        if (!window.RoleQueries) {
+            window.RoleQueries = {
+                getRoleSummary: function () { return null; },
+                getRankSummary: function () { return null; },
+                getAllRankSummaries: function () { return []; },
+                getAllRoleSummaries: function () { return []; }
+            };
+        }
+        if (!window.SettlementGovernmentCommands) {
+            window.SettlementGovernmentCommands = {
+                setJusticeSeverity: function () { return { success: true }; },
+                setWatch: function () { return { success: true }; }
+            };
+        }
+        if (!window.HouseholdQueries) {
+            window.HouseholdQueries = {
+                getHouseholdById: function () { return null; },
+                getCharacterHousehold: function () { return null; }
+            };
+        }
+        if (!window.HouseholdCommands) {
+            window.HouseholdCommands = {
+                adjustWealth: function () { return { success: false, reason: 'stub' }; },
+                creditWealth: function () { return { success: false, reason: 'stub' }; },
+                clearLocationReferences: function () {
+                    return {
+                        success: true,
+                        data: { clearedCount: 0, households: [] }
+                    };
+                }
+            };
+        }
+    })();
+</script>
 
 <!-- ============================================================ -->
 <!-- GOVERNMENT SYSTEM                                             -->
@@ -240,9 +316,7 @@
 <script src="js/government/modals-government-economy.js"></script>
 <script src="js/government/settlement-law-formatters.js"></script>
 
-<!-- ============================================================ -->
-<!-- GOVERNMENT TYPE MANAGER                                       -->
-<!-- ============================================================ -->
+<!-- GOVERNMENT TYPE MANAGER -->
 <script src="js/tabs/government-type-manager-tab.js"></script>
 
 <!-- ============================================================ -->
@@ -252,12 +326,9 @@
     (function() {
         'use strict';
 
-        // -----------------------------------------------------------------
-        // 1. Icon injection
-        // -----------------------------------------------------------------
+        // --- Inject Icons from icons.js into the DOM ---
         // Only names that actually exist in icons.js are used. Missing
-        // names render empty rather than a guessed fallback (see the same
-        // pattern in location-ui-list.js and the three manager tabs).
+        // names render empty rather than a guessed fallback.
         function injectIcons() {
             if (typeof window.Icons === 'undefined') {
                 setTimeout(injectIcons, 100);
@@ -288,9 +359,7 @@
             }
         }
 
-        // -----------------------------------------------------------------
-        // 2. Tab switching
-        // -----------------------------------------------------------------
+        // --- Tab switching ---
         var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
         var tabPanes = {
             locationtypes:   document.getElementById('tab-locationtypes'),
@@ -302,8 +371,6 @@
             settings:        document.getElementById('tab-settings')
         };
 
-        // Only tabs whose pane is rendered on demand need a renderer.
-        // The plain-HTML panes are left alone.
         var TAB_RENDERERS = {
             locationtypes: function () {
                 if (window.LocationTypeManager) {
@@ -343,14 +410,8 @@
             });
         });
 
-        // -----------------------------------------------------------------
-        // 3. Set Year
-        // -----------------------------------------------------------------
+        // --- Set Year ---
         // Write via the canonical path (markDataDirty → debounced save).
-        // The previous handler did a manual localStorage.setItem AND
-        // called saveMasterData(true); both bypassed the debounce and the
-        // save-error tracking. saveMasterData's boolean parameter is
-        // ignored — see the DOMAIN PERSIST CONTRACT in storage.js.
         document.getElementById('setYearBtn').addEventListener('click', function() {
             var val = parseInt(document.getElementById('yearInput').value, 10);
             if (isNaN(val)) return;
@@ -363,9 +424,7 @@
             }
         });
 
-        // -----------------------------------------------------------------
-        // 4. Export
-        // -----------------------------------------------------------------
+        // --- Export ---
         document.getElementById('exportBtn').addEventListener('click', function() {
             var data = window.masterData;
             if (!data) { alert('No data to export'); return; }
@@ -378,9 +437,7 @@
             URL.revokeObjectURL(url);
         });
 
-        // -----------------------------------------------------------------
-        // 5. Import
-        // -----------------------------------------------------------------
+        // --- Import ---
         document.getElementById('importBtn').addEventListener('click', function() {
             document.getElementById('fileInput').click();
         });
@@ -412,8 +469,6 @@
 
                     window.masterData = dataToImport;
 
-                    // Persist via the canonical path. saveMasterData
-                    // returns a boolean (Pattern A); inspect it.
                     var saveOk = true;
                     if (typeof window.saveMasterData === 'function') {
                         saveOk = window.saveMasterData();
@@ -462,9 +517,7 @@
             this.value = '';
         });
 
-        // -----------------------------------------------------------------
-        // 6. Initial render
-        // -----------------------------------------------------------------
+        // --- Initial render ---
         injectIcons();
 
         if (window.LocationTypeManager) {
