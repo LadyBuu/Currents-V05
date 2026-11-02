@@ -84,7 +84,32 @@
  *                            year. The simulation passes the simulated
  *                            year here. UI callers and direct commands
  *                            omit it and get the wall-clock behaviour.
+ *
+ *                            VALIDATION CONTRACT: when referenceYear is
+ *                            supplied and is not a valid world year, the
+ *                            command REFUSES with a structured reason.
+ *                            It does NOT silently fall back to
+ *                            getCurrentYear(). Silent fallback would
+ *                            mask a caller bug and record the death at
+ *                            the wrong year. See REFERENCE YEAR
+ *                            VALIDATION in the module header.
  *   }
+ *
+ * REFERENCE YEAR VALIDATION:
+ *   markDeceased validates options.referenceYear when supplied. The two
+ *   supported states are:
+ *
+ *     - referenceYear omitted (undefined / null) → getCurrentYear()
+ *     - referenceYear supplied and valid         → use as-is
+ *
+ *   A supplied-but-invalid referenceYear returns:
+ *     { success: false, reason: 'referenceYear must be a valid world year.' }
+ *
+ *   This matches the codebase's documented "no silent fallbacks" rule
+ *   (character-doc.txt §4). Prior revisions silently substituted
+ *   getCurrentYear(), which hid caller bugs — a caller that passed
+ *   10000 thinking it was valid got a death recorded at 1250 with no
+ *   warning.
  *
  * RELIGION FIELDS:
  *   Two character-owned fields are written only by this module:
@@ -187,6 +212,17 @@
  *   file never use it directly to return data; they use it to locate
  *   the record, then clone from it.
  *
+ * BATCH UPDATE ALIAS:
+ *   `updateCharacters` is a synonym for `updateCharactersFields`. Both
+ *   names point at the same function. The plural form matches the
+ *   location-commands.js dependency surface
+ *   (`CC.updateCharacters(changes)` — used by
+ *   LocationCommands.deletePlace's character-cleanup sweep) and the
+ *   location-bootstrap.js cross-domain check
+ *   (`CharacterCommands.updateCharacters`). The historical name
+ *   (`updateCharactersFields`) is preserved for any caller that already
+ *   reaches for it. Both are exported; either works.
+ *
  * DEPENDENCIES (REQUIRED):
  *   - character-state.js: CharacterState (getLiveCharacterForMutation,
  *                         updateCharacter, updateCharacters,
@@ -216,7 +252,26 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (P1-5):
+ *   Current revision (P1-6):
+ *     - Added `updateCharacters` alias to the exports. It points at the
+ *       same function as `updateCharactersFields`. This closes the
+ *       naming mismatch with location-commands.js::_cleanupCharactersAtPlaces
+ *       (which calls CC.updateCharacters(changes)) and with
+ *       location-bootstrap.js::_verifyCrossDomain (which checks for
+ *       CharacterCommands.updateCharacters). Both callers use the
+ *       plural form; CharacterCommands previously exported only
+ *       updateCharactersFields. Fixed by adding the alias — no existing
+ *       caller breaks, new callers get the name they expect.
+ *     - markDeceased now REFUSES when options.referenceYear is supplied
+ *       but not a valid world year. Prior revisions silently fell back
+ *       to getCurrentYear(), which masked a caller bug and recorded
+ *       the death at the wall-clock year. See REFERENCE YEAR
+ *       VALIDATION in the module header.
+ *     - Header BATCH UPDATE ALIAS and REFERENCE YEAR VALIDATION
+ *       sections added.
+ *     - No other behavioural change. Every existing export keeps the
+ *       same name and behaviour.
+ *   Previous revision (P1-5):
  *     - Added setReligion(characterId, religionId, options). The ONLY
  *       sanctioned writer for character.religionId and
  *       character.religionHistory. ReligionCommands
@@ -832,11 +887,19 @@
         var deps = _requireMortalityRules();
         if (!deps.ok) return _fail(deps.reason);
 
-        var referenceYear = (_isPlainObject(options)
-            && !_isMissing(options.referenceYear)
-            && window.isValidYear(options.referenceYear) === true)
-            ? options.referenceYear
-            : window.getCurrentYear();
+        // referenceYear handling. See REFERENCE YEAR VALIDATION in the
+        // module header. A supplied-but-invalid referenceYear is a
+        // caller bug and is refused. It is NOT silently replaced with
+        // getCurrentYear().
+        var referenceYear;
+        if (_isPlainObject(options) && !_isMissing(options.referenceYear)) {
+            if (window.isValidYear(options.referenceYear) !== true) {
+                return _fail('referenceYear must be a valid world year.');
+            }
+            referenceYear = options.referenceYear;
+        } else {
+            referenceYear = window.getCurrentYear();
+        }
 
         var validationFacts = {
             characterId: characterId,
@@ -2509,6 +2572,9 @@
     window.CharacterCommands = {
         updateCharacterFields: updateCharacterFields,
         updateCharactersFields: updateCharactersFields,
+        // BATCH UPDATE ALIAS. See BATCH UPDATE ALIAS in the module
+        // header. Points at the same function as updateCharactersFields.
+        updateCharacters: updateCharactersFields,
         updateCharacter: updateCharacter,
 
         markDeceased: markDeceased,
