@@ -86,11 +86,49 @@
  *   the underlying character IDs must use getCharactersGroupedByLocation
  *   directly, or getCharactersInLocations from character-queries.js.
  *
- *   A future revision may accept a `groupBy` option ('gender',
- *   'ageGroup', 'lifeStage', 'rank', 'household') that returns a
- *   bucketed object instead of a bare count. Not implemented today;
- *   documented so callers know the shape will be a bucketed object, not
- *   a flat count, if the option is added.
+ * SHADOWING BY locationDropdown.js:
+ *   This module exports:
+ *     window.getLocationCountry(place)     — accepts a PLACE OBJECT.
+ *     window.getLocationDistrict(place)    — accepts a PLACE OBJECT.
+ *
+ *   js/selectors/locationDropdown.js also exports functions with the
+ *   same names, but accepting a PLACE OBJECT OR A PLACE ID STRING.
+ *   Under the documented load order (world.js before selectors), the
+ *   selector's version loads LAST and OVERWRITES these exports on
+ *   window.
+ *
+ *   The runtime winner is therefore the SELECTOR's version. That
+ *   version delegates to THIS module's version for place-object
+ *   inputs, so behaviour is identical to what this module provides.
+ *   For id-string inputs, the selector's version resolves the place
+ *   first, then delegates to this module's version — a strict
+ *   extension, not a conflict.
+ *
+ *   Consequences for callers:
+ *     - If you only have a place object, call
+ *       window.getLocationCountry(place) and forget about this
+ *       shadowing note. The result is identical regardless of which
+ *       version is currently on window.
+ *     - If you have a place id and want to avoid depending on the
+ *       selector file being loaded, call
+ *       window.getPlaceById(id) first, then pass the place object.
+ *       This works regardless of load order.
+ *     - If you want to reach THIS module's version directly
+ *       (bypassing the selector), there is no stable name for it.
+ *       This module's exports ARE the window globals; there is no
+ *       `World.getLocationCountry` namespace. If a future refactor
+ *       needs a stable module-private reference, add a namespace
+ *       export; do not rely on capturing the function before the
+ *       selector overwrites it.
+ *
+ *   This shadowing is intentional and documented from both sides. See
+ *   the SHADOWING section in js/selectors/locationDropdown.js for the
+ *   other side of the contract.
+ *
+ *   A caller who reaches for window.getLocationCountry at runtime
+ *   should assume the SUPERSET contract (accepts place OR id). Do not
+ *   assume the world.js signature (place only) unless you have
+ *   verified the load order excludes locationDropdown.js.
  *
  * DEPENDENCIES (all REQUIRED):
  *   - accessors.js: getPlaces, getPlaceById, getLocationTypeById, getCharacters
@@ -101,6 +139,17 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Header SHADOWING BY locationDropdown.js section added.
+ *       Documents that js/selectors/locationDropdown.js overwrites
+ *       window.getLocationCountry and window.getLocationDistrict
+ *       under the documented load order, that the selector's version
+ *       is a strict superset (accepts place OR id), and that callers
+ *       should treat the runtime global as the superset contract.
+ *     - Inline docstrings on getLocationCountry and
+ *       getLocationDistrict updated to reflect the runtime contract
+ *       (place OR id after selectors load).
+ *     - No behavioural change. Every function's logic is unchanged.
+ *   Previous revision:
  *     - Added getLocationPopulationCount(locationId, options).
  *       education-queries.js requires this function (per its
  *       LOCATION RESOLUTION section) and previously threw for
@@ -354,6 +403,18 @@
         return false;
     }
 
+    /**
+     * Returns the country-scoped ancestor of `place`, or null.
+     *
+     * RUNTIME CONTRACT (post-load-order): under the documented load
+     * order, js/selectors/locationDropdown.js overwrites this export
+     * with a superset version that also accepts a place id string.
+     * Callers reaching the global at runtime should assume the
+     * superset contract. See SHADOWING BY locationDropdown.js in the
+     * module header.
+     *
+     * This module's version accepts only place objects.
+     */
     function getLocationCountry(place) {
         if (!place) return null;
         var chain = getParentChain(place);
@@ -365,6 +426,18 @@
         return null;
     }
 
+    /**
+     * Returns the district-scoped ancestor of `place`, or null.
+     *
+     * RUNTIME CONTRACT (post-load-order): under the documented load
+     * order, js/selectors/locationDropdown.js overwrites this export
+     * with a superset version that also accepts a place id string.
+     * Callers reaching the global at runtime should assume the
+     * superset contract. See SHADOWING BY locationDropdown.js in the
+     * module header.
+     *
+     * This module's version accepts only place objects.
+     */
     function getLocationDistrict(place) {
         if (!place) return null;
         var chain = getParentChain(place);
@@ -633,6 +706,10 @@
     // Path and ancestry
     window.getParentChain = getParentChain;
     window.isAncestorOf = isAncestorOf;
+
+    // Country/district resolution — NOTE: these exports are shadowed
+    // by js/selectors/locationDropdown.js under the documented load
+    // order. See SHADOWING BY locationDropdown.js in the module header.
     window.getLocationCountry = getLocationCountry;
     window.getLocationDistrict = getLocationDistrict;
 
