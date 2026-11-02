@@ -1,14 +1,34 @@
-/* ============================================================================
-   DATA MANAGER - EXTERNAL CSS
-   ============================================================================
-   This file contains styles specific to the Data Manager tool.
-   It handles Location Types, Government Types, and Ranks tabs.
-   Works alongside common.css (which provides the dark TRON theme).
-   ============================================================================ */
+/* ==========================================================================
+   DATA MANAGER — SHELL CSS
+   ==========================================================================
 
-/* ============================================================================
-   1. BASE LAYOUT
-   ============================================================================ */
+   Structural styles for the Data Manager app frame. NO colour, radius,
+   shadow, or font literals. Every visual value is a themes.css token.
+
+   SCOPE:
+     - .data-manager-app wrapper
+     - .data-manager-app .topbar (title, tb-btn, year-input, label)
+     - .data-manager-app .panel-tabs (tab-btn, tab-icon)
+     - .data-manager-app .tab-content, .tab-pane
+
+   The three tab modules inject their OWN structural CSS at load:
+     - location-type-manager-tab.js  → .ltm-*  (toolbar, table, buttons)
+     - government-type-manager-tab.js → .gtm-*  (toolbar, table, buttons)
+     - rank-manager-tab.js            → .rtm-*  (toolbar, table, issues)
+
+   Shared classes (empty-state, location-tree-badge, .btn) live in
+   common.css. Do NOT redeclare them here.
+
+   THEMES: every visual token (--bg, --surface, --line, --accent, --dim,
+   --tmut, --radius, --f-display, --f-body, --f-mono, --glow-sm,
+   --modal-overlay, --modal-bg) is defined in themes.css. No literal
+   colours, no literal font stacks, no literal pixel radii.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. APP WRAPPER
+   ========================================================================== */
 
 .data-manager-app {
     display: flex;
@@ -19,9 +39,10 @@
     overflow: hidden;
 }
 
-/* ============================================================================
+
+/* ==========================================================================
    2. TOPBAR
-   ============================================================================ */
+   ========================================================================== */
 
 .data-manager-app .topbar {
     background: var(--bg2);
@@ -31,17 +52,19 @@
     gap: 8px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
-    min-height: 42px;
+    min-height: var(--topbar-height, 42px);
     flex-wrap: wrap;
+    position: relative;
     z-index: 10;
 }
 
 .data-manager-app .topbar .title {
+    font-family: var(--f-display);
     font-weight: 600;
     font-size: 0.8rem;
     color: var(--accent);
     white-space: nowrap;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
 }
 
 .data-manager-app .topbar .spacer {
@@ -49,34 +72,11 @@
     min-width: 8px;
 }
 
-.data-manager-app .topbar .tb-btn {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 4px 10px;
-    border-radius: 4px;
-    cursor: pointer;
+.data-manager-app .topbar label {
+    font-family: var(--f-display);
     font-size: 0.6rem;
-    transition: border-color 0.2s, background 0.2s;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.data-manager-app .topbar .tb-btn:hover {
-    border-color: var(--accent);
-    background: var(--bg3);
-}
-
-.data-manager-app .topbar .tb-btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-}
-
-.data-manager-app .topbar .tb-btn.primary:hover {
-    background: var(--accent-dark);
-    border-color: var(--accent-dark);
+    color: var(--dim);
+    letter-spacing: 0.05em;
 }
 
 .data-manager-app .topbar .year-input {
@@ -84,25 +84,57 @@
     border: 1px solid var(--border);
     color: var(--text);
     padding: 3px 6px;
-    border-radius: 4px;
+    border-radius: var(--radius);
+    font-family: var(--f-mono);
     font-size: 0.6rem;
-    width: 60px;
+    width: 64px;
 }
 
 .data-manager-app .topbar .year-input:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-.data-manager-app .topbar label {
+.data-manager-app .topbar .tb-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--f-body);
     font-size: 0.6rem;
-    color: var(--dim);
-    font-family: 'Cinzel', serif;
+    font-weight: 500;
+    transition: border-color 0.15s ease,
+                background-color 0.15s ease,
+                color 0.15s ease;
 }
 
-/* ============================================================================
+.data-manager-app .topbar .tb-btn:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent-light);
+}
+
+.data-manager-app .topbar .tb-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+}
+
+.data-manager-app .topbar .tb-btn.primary:hover {
+    background: var(--accent-dark);
+    border-color: var(--accent-dark);
+    color: var(--accent-fg);
+}
+
+
+/* ==========================================================================
    3. PANEL TABS
-   ============================================================================ */
+   ========================================================================== */
 
 .data-manager-app .panel-tabs {
     display: flex;
@@ -116,8 +148,9 @@
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     -ms-overflow-style: none;
-    min-height: 38px;
+    min-height: var(--tab-height, 38px);
     align-items: center;
+    position: relative;
 }
 
 .data-manager-app .panel-tabs::-webkit-scrollbar {
@@ -127,109 +160,103 @@
 }
 
 .data-manager-app .panel-tabs .tab-btn {
-    padding: 8px 14px;
-    background: none;
-    border: none;
-    font-family: 'Cinzel', serif;
-    font-size: 0.55rem;
-    cursor: pointer;
-    color: var(--dim);
-    border-bottom: 2px solid transparent;
-    white-space: nowrap;
-    transition: all 0.3s;
-    flex-shrink: 0;
-    min-height: 36px;
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-family: var(--f-display);
+    font-size: 0.6rem;
+    color: var(--dim);
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-height: calc(var(--tab-height, 38px) - 2px);
+    transition: color 0.15s ease,
+                background-color 0.15s ease,
+                border-color 0.15s ease;
 }
 
 .data-manager-app .panel-tabs .tab-btn:hover {
-    color: var(--accent);
-    text-shadow: 0 0 5px var(--accent);
-    background: rgba(106, 158, 207, 0.08);
+    color: var(--accent-light);
+    background: var(--accent-dim);
 }
 
 .data-manager-app .panel-tabs .tab-btn.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
-    text-shadow: 0 0 8px var(--accent);
+    background: var(--accent-dim);
+    font-weight: 600;
+    text-shadow: var(--glow-sm);
 }
 
 .data-manager-app .panel-tabs .tab-btn .tab-icon {
     display: inline-flex;
     align-items: center;
-    font-size: 0.7rem;
+    justify-content: center;
+    width: 1em;
+    height: 1em;
+    color: currentColor;
 }
 
 .data-manager-app .panel-tabs .tab-btn .tab-icon svg {
-    width: 1em;
-    height: 1em;
+    width: 100%;
+    height: 100%;
     display: block;
+    fill: currentColor;
 }
 
-/* ============================================================================
+
+/* ==========================================================================
    4. TAB CONTENT
-   ============================================================================ */
+   ========================================================================== */
 
 .data-manager-app .tab-content {
     flex: 1;
-    overflow: auto;
+    overflow-y: auto;
     padding: 16px 20px;
     background: var(--bg);
     color: var(--text);
-}
-
-.data-manager-app .tab-content::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-.data-manager-app .tab-content::-webkit-scrollbar-track {
-    background: var(--bg);
-    border-radius: 4px;
-}
-
-.data-manager-app .tab-content::-webkit-scrollbar-thumb {
-    background: var(--accent);
-    border-radius: 4px;
-    box-shadow: 0 0 4px var(--accent);
-}
-
-.data-manager-app .tab-content::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-dark);
-    box-shadow: 0 0 8px var(--accent);
-}
-
-.data-manager-app .tab-content {
-    scrollbar-width: thin;
-    scrollbar-color: var(--accent) var(--bg);
+    min-height: 0;
 }
 
 .data-manager-app .tab-pane {
     display: none;
-    color: var(--text);
 }
 
 .data-manager-app .tab-pane.active {
     display: block;
+    animation: dmFadeIn 0.2s ease;
 }
 
-/* ============================================================================
-   5. TOOLBAR (per tab) - Used by tab manager scripts
-   ============================================================================ */
+@keyframes dmFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+
+/* ==========================================================================
+   5. GENERIC TOOLBAR (fallback, if a future tab doesn't inject its own)
+   ==========================================================================
+   The three tabs each ship a self-injected toolbar (ltm-toolbar,
+   gtm-toolbar, rtm-toolbar). This block is a neutral fallback for any
+   future tab that does NOT inject one. It is not applied to any element
+   the current tabs render.
+   ========================================================================== */
 
 .data-manager-app .tab-toolbar {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
+    gap: 10px;
     flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 16px;
     padding: 8px 12px;
+    margin-bottom: 14px;
     background: var(--bg2);
-    border-radius: 8px;
     border: 1px solid var(--border);
+    border-radius: var(--radius);
 }
 
 .data-manager-app .tab-toolbar .info {
@@ -238,7 +265,7 @@
 }
 
 .data-manager-app .tab-toolbar .info .count {
-    font-weight: bold;
+    font-weight: 600;
     color: var(--accent);
 }
 
@@ -248,406 +275,35 @@
     flex-wrap: wrap;
 }
 
-.data-manager-app .tab-toolbar .btn {
-    padding: 4px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.6rem;
-    font-weight: 500;
-    border: 1px solid var(--border);
-    background: var(--bg3);
-    color: var(--text);
-    transition: all 0.2s;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
 
-.data-manager-app .tab-toolbar .btn:hover {
-    border-color: var(--accent);
-    background: var(--bg2);
-}
-
-.data-manager-app .tab-toolbar .btn.primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-}
-
-.data-manager-app .tab-toolbar .btn.primary:hover {
-    background: var(--accent-dark);
-    border-color: var(--accent-dark);
-}
-
-.data-manager-app .tab-toolbar .btn.warning {
-    background: #c87040;
-    border-color: #c87040;
-    color: #fff;
-}
-
-.data-manager-app .tab-toolbar .btn.warning:hover {
-    background: #b06030;
-    border-color: #b06030;
-}
-
-.data-manager-app .tab-toolbar .btn.danger {
-    background: rgba(200, 68, 68, 0.15);
-    border-color: #8b4040;
-    color: var(--danger-lt);
-}
-
-.data-manager-app .tab-toolbar .btn.danger:hover {
-    background: rgba(200, 68, 68, 0.25);
-}
-
-.data-manager-app .tab-toolbar .btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-/* ============================================================================
-   6. TABLE STYLES - Light text on dark backgrounds
-   ============================================================================ */
-
-.data-manager-app .table-container {
-    overflow: auto;
-}
-
-.data-manager-app .data-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.75rem;
-    color: var(--text);
-}
-
-.data-manager-app .data-table thead {
-    background: var(--bg3);
-    border-bottom: 2px solid var(--border);
-}
-
-.data-manager-app .data-table thead th {
-    padding: 8px 10px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--dim);
-    font-size: 0.6rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid var(--border);
-}
-
-.data-manager-app .data-table thead th.center {
-    text-align: center;
-}
-
-.data-manager-app .data-table tbody tr {
-    border-bottom: 1px solid var(--border-light);
-    transition: background 0.15s;
-}
-
-.data-manager-app .data-table tbody tr:hover {
-    background: rgba(106, 158, 207, 0.06);
-}
-
-.data-manager-app .data-table tbody td {
-    padding: 6px 10px;
-    vertical-align: middle;
-    color: var(--text);
-}
-
-.data-manager-app .data-table tbody td.center {
-    text-align: center;
-}
-
-.data-manager-app .data-table .symbol-cell {
-    font-size: 1.1rem;
-    text-align: center;
-    color: var(--text);
-}
-
-.data-manager-app .data-table .name-cell {
-    font-weight: 500;
-    color: var(--text);
-}
-
-.data-manager-app .data-table .dim-text {
-    color: var(--dim);
-    font-size: 0.65rem;
-}
-
-.data-manager-app .data-table .accent-text {
-    color: var(--accent);
-    font-weight: 600;
-}
-
-.data-manager-app .data-table .count-badge {
-    background: rgba(106, 158, 207, 0.12);
-    border: 1px solid rgba(106, 158, 207, 0.2);
-    border-radius: 12px;
-    padding: 1px 8px;
-    font-size: 0.55rem;
-    color: var(--accent-light);
-    font-weight: 500;
-}
-
-.data-manager-app .data-table .empty-badge {
-    color: var(--tmut);
-    font-size: 0.65rem;
-}
-
-.data-manager-app .data-table .actions-cell {
-    white-space: nowrap;
-    text-align: center;
-}
-
-.data-manager-app .data-table .action-btn {
-    padding: 2px 8px;
-    font-size: 0.55rem;
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s;
-    color: var(--text);
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    margin-right: 4px;
-}
-
-.data-manager-app .data-table .action-btn:hover {
-    border-color: var(--accent);
-    background: var(--bg2);
-}
-
-.data-manager-app .data-table .action-btn.danger {
-    background: rgba(200, 68, 68, 0.1);
-    border-color: #8b4040;
-    color: var(--danger-lt);
-}
-
-.data-manager-app .data-table .action-btn.danger:hover {
-    background: rgba(200, 68, 68, 0.2);
-}
-
-.data-manager-app .data-table .action-btn.danger:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-/* ============================================================================
-   7. EMPTY STATE - Light text on dark backgrounds
-   ============================================================================ */
-
-.data-manager-app .empty-state {
-    text-align: center;
-    padding: 40px 20px;
-    color: var(--dim);
-    background: var(--bg2);
-    border-radius: 8px;
-    border: 1px dashed var(--border);
-}
-
-.data-manager-app .empty-state .icon {
-    font-size: 2rem;
-    display: block;
-    margin-bottom: 12px;
-    color: var(--tmut);
-}
-
-.data-manager-app .empty-state .icon svg {
-    width: 2rem;
-    height: 2rem;
-    display: block;
-    margin: 0 auto;
-}
-
-.data-manager-app .empty-state .message {
-    font-size: 0.8rem;
-    color: var(--text);
-}
-
-.data-manager-app .empty-state .sub-message {
-    font-size: 0.65rem;
-    color: var(--tmut);
-    margin-top: 4px;
-}
-
-/* ============================================================================
-   8. ISSUES MODAL - Light text on dark backgrounds
-   ============================================================================ */
-
-.data-manager-app .issues-list {
-    max-height: 500px;
-    overflow: auto;
-    padding: 4px;
-}
-
-.data-manager-app .issues-list .issue-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border-light);
-    color: var(--text);
-}
-
-.data-manager-app .issues-list .issue-item:nth-child(even) {
-    background: var(--bg3);
-}
-
-.data-manager-app .issues-list .issue-item .severity {
-    font-size: 0.55rem;
-    font-weight: bold;
-    padding: 1px 6px;
-    border-radius: 3px;
-    flex-shrink: 0;
-}
-
-.data-manager-app .issues-list .issue-item .severity.error {
-    color: #ff6b6b;
-    background: rgba(198, 40, 40, 0.2);
-}
-
-.data-manager-app .issues-list .issue-item .severity.warning {
-    color: #f0a070;
-    background: rgba(200, 112, 64, 0.2);
-}
-
-.data-manager-app .issues-list .issue-item .severity.info {
-    color: var(--accent);
-    background: rgba(106, 158, 207, 0.15);
-}
-
-.data-manager-app .issues-list .issue-item .content {
-    flex: 1;
-    min-width: 0;
-}
-
-.data-manager-app .issues-list .issue-item .content .title {
-    font-size: 0.65rem;
-    font-weight: 500;
-    color: var(--text);
-}
-
-.data-manager-app .issues-list .issue-item .content .message {
-    font-size: 0.6rem;
-    color: var(--dim);
-    margin-top: 2px;
-}
-
-.data-manager-app .issues-list .issue-item .content .meta {
-    font-size: 0.5rem;
-    color: var(--tmut);
-    margin-top: 2px;
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-
-.data-manager-app .issues-list .issue-item .content .fix-label {
-    font-size: 0.5rem;
-    color: var(--success);
-}
-
-.data-manager-app .issues-list .issue-item .content .no-fix {
-    font-size: 0.5rem;
-    color: var(--danger-lt);
-}
-
-.data-manager-app .issues-list .issue-item .checkbox {
-    margin-top: 3px;
-    cursor: pointer;
-    flex-shrink: 0;
-    accent-color: var(--accent);
-}
-
-.data-manager-app .issues-list .issue-item .no-check {
-    width: 16px;
-    flex-shrink: 0;
-    text-align: center;
-    color: var(--dim);
-    font-size: 0.6rem;
-}
-
-/* ============================================================================
-   9. ISSUES TOOLBAR - Light text on dark backgrounds
-   ============================================================================ */
-
-.data-manager-app .issues-toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 8px 12px;
-    background: var(--bg2);
-    border-radius: 6px;
-    margin-bottom: 12px;
-    border: 1px solid var(--border);
-}
-
-.data-manager-app .issues-toolbar .summary {
-    font-size: 0.65rem;
-    color: var(--dim);
-}
-
-.data-manager-app .issues-toolbar .summary .error-count {
-    color: #ff6b6b;
-}
-
-.data-manager-app .issues-toolbar .summary .warning-count {
-    color: #f0a070;
-}
-
-.data-manager-app .issues-toolbar .actions {
-    display: flex;
-    gap: 6px;
-}
-
-.data-manager-app .issues-toolbar .btn-sm {
-    padding: 2px 10px;
-    font-size: 0.55rem;
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    color: var(--text);
-    transition: all 0.15s;
-}
-
-.data-manager-app .issues-toolbar .btn-sm:hover {
-    border-color: var(--accent);
-    background: var(--bg2);
-}
-
-/* ============================================================================
-   10. RESPONSIVE
-   ============================================================================ */
+/* ==========================================================================
+   6. RESPONSIVE
+   ========================================================================== */
 
 @media (max-width: 768px) {
     .data-manager-app .topbar {
         padding: 4px 10px;
+        gap: 6px;
         min-height: 38px;
     }
 
     .data-manager-app .topbar .title {
-        font-size: 0.65rem;
+        font-size: 0.7rem;
     }
 
     .data-manager-app .topbar .tb-btn {
         padding: 3px 8px;
-        font-size: 0.5rem;
+        font-size: 0.55rem;
     }
 
     .data-manager-app .topbar .year-input {
         width: 50px;
-        font-size: 0.5rem;
+        font-size: 0.55rem;
         padding: 2px 4px;
     }
 
     .data-manager-app .topbar label {
-        font-size: 0.5rem;
+        font-size: 0.55rem;
     }
 
     .data-manager-app .panel-tabs {
@@ -657,112 +313,38 @@
 
     .data-manager-app .panel-tabs .tab-btn {
         padding: 6px 10px;
-        font-size: 0.5rem;
+        font-size: 0.55rem;
         min-height: 32px;
     }
 
     .data-manager-app .tab-content {
         padding: 12px 14px;
     }
-
-    .data-manager-app .tab-toolbar {
-        padding: 6px 10px;
-    }
-
-    .data-manager-app .tab-toolbar .info {
-        font-size: 0.6rem;
-    }
-
-    .data-manager-app .tab-toolbar .btn {
-        font-size: 0.5rem;
-        padding: 3px 8px;
-    }
-
-    .data-manager-app .data-table {
-        font-size: 0.65rem;
-    }
-
-    .data-manager-app .data-table thead th {
-        padding: 6px 8px;
-        font-size: 0.5rem;
-    }
-
-    .data-manager-app .data-table tbody td {
-        padding: 4px 8px;
-    }
-
-    .data-manager-app .data-table .symbol-cell {
-        font-size: 0.9rem;
-    }
-
-    .data-manager-app .data-table .action-btn {
-        font-size: 0.45rem;
-        padding: 1px 6px;
-    }
-
-    .data-manager-app .empty-state {
-        padding: 30px 16px;
-    }
-
-    .data-manager-app .empty-state .icon {
-        font-size: 1.5rem;
-    }
-
-    .data-manager-app .empty-state .message {
-        font-size: 0.7rem;
-    }
-
-    .data-manager-app .issues-list .issue-item .content .title {
-        font-size: 0.6rem;
-    }
-
-    .data-manager-app .issues-list .issue-item .content .message {
-        font-size: 0.55rem;
-    }
-
-    .data-manager-app .issues-toolbar {
-        padding: 6px 10px;
-    }
-
-    .data-manager-app .issues-toolbar .summary {
-        font-size: 0.55rem;
-    }
-
-    .data-manager-app .issues-toolbar .btn-sm {
-        font-size: 0.45rem;
-        padding: 1px 8px;
-    }
-
-    .data-manager-app .tab-content::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-    }
 }
 
 @media (max-width: 480px) {
     .data-manager-app .topbar {
-        padding: 3px 6px;
-        min-height: 34px;
+        padding: 3px 8px;
         gap: 4px;
+        min-height: 34px;
     }
 
     .data-manager-app .topbar .title {
-        font-size: 0.5rem;
+        font-size: 0.6rem;
     }
 
     .data-manager-app .topbar .tb-btn {
         padding: 2px 6px;
-        font-size: 0.4rem;
+        font-size: 0.5rem;
     }
 
     .data-manager-app .topbar .year-input {
-        width: 40px;
-        font-size: 0.4rem;
-        padding: 2px 3px;
+        width: 44px;
+        font-size: 0.5rem;
     }
 
     .data-manager-app .topbar label {
-        font-size: 0.4rem;
+        font-size: 0.5rem;
     }
 
     .data-manager-app .panel-tabs {
@@ -771,131 +353,24 @@
     }
 
     .data-manager-app .panel-tabs .tab-btn {
-        padding: 4px 8px;
-        font-size: 0.45rem;
+        padding: 5px 8px;
+        font-size: 0.5rem;
         min-height: 28px;
     }
 
     .data-manager-app .tab-content {
         padding: 8px 10px;
     }
-
-    .data-manager-app .tab-toolbar {
-        padding: 4px 8px;
-        gap: 4px;
-    }
-
-    .data-manager-app .tab-toolbar .info {
-        font-size: 0.5rem;
-    }
-
-    .data-manager-app .tab-toolbar .btn {
-        font-size: 0.45rem;
-        padding: 2px 6px;
-    }
-
-    .data-manager-app .data-table {
-        font-size: 0.55rem;
-    }
-
-    .data-manager-app .data-table thead th {
-        padding: 4px 6px;
-        font-size: 0.45rem;
-    }
-
-    .data-manager-app .data-table tbody td {
-        padding: 3px 6px;
-    }
-
-    .data-manager-app .data-table .symbol-cell {
-        font-size: 0.75rem;
-    }
-
-    .data-manager-app .data-table .action-btn {
-        font-size: 0.4rem;
-        padding: 1px 4px;
-        margin-right: 2px;
-    }
-
-    .data-manager-app .empty-state {
-        padding: 20px 12px;
-    }
-
-    .data-manager-app .empty-state .icon {
-        font-size: 1.2rem;
-    }
-
-    .data-manager-app .empty-state .message {
-        font-size: 0.6rem;
-    }
-
-    .data-manager-app .empty-state .sub-message {
-        font-size: 0.5rem;
-    }
-
-    .data-manager-app .issues-list .issue-item {
-        padding: 4px 6px;
-    }
-
-    .data-manager-app .issues-list .issue-item .content .title {
-        font-size: 0.55rem;
-    }
-
-    .data-manager-app .issues-list .issue-item .content .message {
-        font-size: 0.5rem;
-    }
-
-    .data-manager-app .issues-toolbar {
-        padding: 4px 8px;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 4px;
-    }
-
-    .data-manager-app .issues-toolbar .summary {
-        font-size: 0.5rem;
-        text-align: center;
-    }
-
-    .data-manager-app .issues-toolbar .actions {
-        justify-content: center;
-    }
-
-    .data-manager-app .tab-content::-webkit-scrollbar {
-        width: 4px;
-        height: 4px;
-    }
 }
 
-/* ============================================================================
-   11. ANIMATIONS
-   ============================================================================ */
 
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.data-manager-app .fade-in {
-    animation: fadeIn 0.25s ease;
-}
-
-/* ============================================================================
-   12. PRINT STYLES
-   ============================================================================ */
+/* ==========================================================================
+   7. PRINT
+   ========================================================================== */
 
 @media print {
     .data-manager-app .topbar,
-    .data-manager-app .panel-tabs,
-    .data-manager-app .tab-toolbar,
-    .data-manager-app .tab-toolbar .btn,
-    .data-manager-app .data-table .action-btn {
+    .data-manager-app .panel-tabs {
         display: none !important;
     }
 
@@ -903,6 +378,7 @@
         height: auto !important;
         display: block !important;
         background: #fff !important;
+        color: #000 !important;
     }
 
     .data-manager-app .tab-content {
@@ -915,43 +391,5 @@
     .data-manager-app .tab-pane {
         display: block !important;
         page-break-inside: avoid;
-    }
-
-    .data-manager-app .data-table {
-        border-collapse: collapse !important;
-        width: 100% !important;
-    }
-
-    .data-manager-app .data-table thead th {
-        background: #eee !important;
-        color: #000 !important;
-        border-bottom: 2px solid #ccc !important;
-    }
-
-    .data-manager-app .data-table tbody tr {
-        border-bottom: 1px solid #ddd !important;
-    }
-
-    .data-manager-app .data-table tbody td {
-        color: #000 !important;
-    }
-
-    .data-manager-app .empty-state {
-        border: 1px solid #ccc !important;
-        background: #f5f5f5 !important;
-        color: #333 !important;
-    }
-
-    .data-manager-app .issues-list .issue-item {
-        border-bottom: 1px solid #ddd !important;
-    }
-
-    .data-manager-app .issues-list .issue-item .content .message {
-        color: #555 !important;
-    }
-
-    .data-manager-app .issues-toolbar {
-        border: 1px solid #ccc !important;
-        background: #f5f5f5 !important;
     }
 }
