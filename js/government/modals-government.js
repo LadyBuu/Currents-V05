@@ -1,11 +1,37 @@
 /**
- * modals-government.js
+ * =============================================================================
+ * GOVERNMENT MODALS
+ * =============================================================================
+ *
+ * LOCATION: js/government/modals-government.js
+ *
  * Government type CRUD, place government assignment, and government type
  * deletion. Department CRUD lives in modals-government-departments.js.
  * Position CRUD lives in modals-government-positions.js.
  *
  * Reads via GovernmentQueries + GovernmentViewModels.
  * Writes via GovernmentCommands. Persist once per successful batch.
+ *
+ * MODAL KEY TRANSLATION:
+ *   modals-core.js reads options.titleHtml and options.contentHtml. The
+ *   three call sites in this file were written against the older key
+ *   names title / content. Without translation, modals-core.js falls
+ *   back to its defaults ("Modal" title, empty body) and every form
+ *   input disappears — which is why "Add Government Type" rendered as
+ *   a modal shell with only Cancel and Create Type visible.
+ *
+ *   The local _openModal helper now forwards title → titleHtml and
+ *   content → contentHtml before delegating to window.openModal.
+ *   Callers keep their current shape; modals-core.js receives what it
+ *   actually reads.
+ *
+ * DEFENSIVE FORM GUARDS:
+ *   Every onConfirm that reads a form element now checks for its
+ *   presence first. Before this, a missing input threw a TypeError
+ *   inside onConfirm, which modals-core.js propagates and which leaves
+ *   the modal open with no user-visible error. The guard turns that
+ *   silent failure into a toast.
+ * =============================================================================
  */
 (function() {
     'use strict';
@@ -44,12 +70,37 @@
         else if (typeof window.showToastMessage === 'function') window.showToastMessage(plain, type);
     }
 
+    /**
+     * Opens a modal through modals-core.js with key translation.
+     *
+     * modals-core.js reads titleHtml / contentHtml. This file's call
+     * sites pass title / content. Translate at the boundary so the
+     * body reaches .modal-body and every input inside it is reachable
+     * via root.querySelector in the onConfirm handlers.
+     *
+     * If the caller already supplied titleHtml or contentHtml, those
+     * values win — the aliases only fill in when the modern keys are
+     * absent. That makes this helper safe for both shapes.
+     */
     function _openModal(opts) {
         if (typeof window.openModal !== 'function') {
             throw new Error('modals-government.js: openModal not available');
         }
-        return window.openModal(opts);
+        var forwarded = {};
+        for (var k in opts) {
+            if (Object.prototype.hasOwnProperty.call(opts, k)) {
+                forwarded[k] = opts[k];
+            }
+        }
+        if (forwarded.titleHtml === undefined && forwarded.title !== undefined) {
+            forwarded.titleHtml = forwarded.title;
+        }
+        if (forwarded.contentHtml === undefined && forwarded.content !== undefined) {
+            forwarded.contentHtml = forwarded.content;
+        }
+        return window.openModal(forwarded);
     }
+
     function _closeTopModal() {
         if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
@@ -166,7 +217,12 @@
             confirmText: 'Create Type',
             cancelText: 'Cancel',
             onConfirm: function(root) {
-                var name = root.querySelector('#newGovTypeName').value.trim();
+                var nameEl = root.querySelector('#newGovTypeName');
+                if (!nameEl) {
+                    _toast('Form not found in modal', 'error');
+                    return false;
+                }
+                var name = nameEl.value.trim();
                 if (!name) { _toast('Government type name is required', 'error'); return false; }
                 var desc = root.querySelector('#newGovTypeDesc').value || '';
                 var rankSel = root.querySelector('#newGovTypeRanks');
@@ -235,7 +291,12 @@
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
             onConfirm: function(root) {
-                var name = root.querySelector('#editGovTypeName').value.trim();
+                var nameEl = root.querySelector('#editGovTypeName');
+                if (!nameEl) {
+                    _toast('Form not found in modal', 'error');
+                    return false;
+                }
+                var name = nameEl.value.trim();
                 if (!name) { _toast('Government type name is required', 'error'); return false; }
                 var desc = root.querySelector('#editGovTypeDesc').value || '';
                 var rankSel = root.querySelector('#editGovTypeRanks');
@@ -344,8 +405,14 @@
             confirmText: 'Assign',
             cancelText: 'Cancel',
             onConfirm: function(root) {
-                var govTypeId = root.querySelector('#govTypeId').value || null;
-                var govStyle = root.querySelector('#govStyle').value.trim() || null;
+                var typeEl = root.querySelector('#govTypeId');
+                if (!typeEl) {
+                    _toast('Form not found in modal', 'error');
+                    return false;
+                }
+                var govTypeId = typeEl.value || null;
+                var styleEl = root.querySelector('#govStyle');
+                var govStyle = styleEl ? (styleEl.value.trim() || null) : null;
 
                 var result = Commands.assignGovernmentToPlace(placeId, govTypeId, govStyle);
                 if (!result.success) {
