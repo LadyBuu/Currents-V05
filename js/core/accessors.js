@@ -162,6 +162,19 @@
  *                                    for the government-leader modifier;
  *                                    see its LEADER TRAITS header).
  *
+ *   Note on professions: modals-roles.js reads `professions` off a
+ *   projection for a role-count display. That read remains out of
+ *   contract (see BELOW-CONTRACT FIELDS in character-state.js's
+ *   PROJECTION CONTENTS header). It is a documented follow-up. The
+ *   settlement domain previously read professions off the projection
+ *   too; that read was removed when character-state.js::_project
+ *   stopped emitting professions, and settlement now reads via
+ *   CharacterCommands.getProfessions (see PROFESSION INPUT in
+ *   settlement-prosperity-queries.js). settlement-prosperity-queries.js
+ *   is therefore NOT listed in this graph as a professions consumer
+ *   any more; it remains listed for its traits read (the leader
+ *   modifier).
+ *
  *   If character-queries.js ever drops one of the listed fields from
  *   the projection, the modules that read it break silently. The
  *   per-module CHARACTER PROJECTION CONTRACT sections name the
@@ -204,6 +217,20 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - CONCRETE DEPENDENCY GRAPH updated to remove
+ *       settlement-prosperity-queries.js from the list of modules
+ *       reading `professions` off the character projection. That read
+ *       was removed when character-state.js::_project stopped
+ *       emitting professions, and settlement now reads via
+ *       CharacterCommands.getProfessions (see PROFESSION INPUT in
+ *       settlement-prosperity-queries.js).
+ *     - Note on professions subsection added under the
+ *       CONCRETE DEPENDENCY GRAPH, documenting that modals-roles.js
+ *       remains the one projection-professions reader and that
+ *       settlement is now listed only for its traits read (the leader
+ *       modifier).
+ *     - No code change. Header documentation only.
+ *   Previous revision:
  *     - Header SETTLEMENT DATA section added, documenting that
  *       masterData.data.settlementData is NOT indexed by any accessor
  *       cache in this module, that no cache invalidation is required
@@ -219,22 +246,16 @@
  *       documented alongside the other projection consumers.
  *     - No behavioural change to any accessor's return value, to the
  *       out-of-sync warning throttle, or to the cache rebuild logic.
- *   Previous revision:
+ *   Earlier revisions:
  *     - _ACCESSOR_DEFINITIONS array added. Cache variables, warning
  *       flags, builder functions, invalidateAccessorCaches, and
- *       refreshCaches are all driven from it. Prior revisions listed
- *       the seven caches in five separate places, so adding a new
- *       accessor required editing five sites. See ACCESSOR DEFINITIONS.
+ *       refreshCaches are all driven from it.
  *     - Header THE CACHED VERSUS PROJECTION ACCESSOR DISTINCTION now
  *       names the concrete modules that depend on the projection shape.
- *       See the CONCRETE DEPENDENCY GRAPH subsection.
  *     - Header RENAME-THEN-RENAME-BACK HAZARD subsection added to
- *       CACHE CONSISTENCY CONTRACT, documenting the size-check's
- *       limitation.
+ *       CACHE CONSISTENCY CONTRACT.
  *     - Header REBUILD FAILURE subsection added to CACHE CONSISTENCY
- *       CONTRACT, documenting the throw-on-masterData-missing path.
- *     - No behavioural change to any accessor's return value, to the
- *       out-of-sync warning throttle, or to the cache rebuild logic.
+ *       CONTRACT.
  * =============================================================================
  */
 
