@@ -92,6 +92,94 @@
  *   `householdHistory` is character-owned and carries the membership
  *   timeline (join/leave entries, with the same householdId field name).
  *
+ * PROJECTION CONTENTS (AUTHORITATIVE):
+ *   `_project(c)` emits the following fields. This list is the SINGLE
+ *   SOURCE OF TRUTH for what a character projection contains. The
+ *   `CHARACTER PROJECTION CONTRACT` section in character-queries.js
+ *   cross-references this list; if `_project` changes, that section
+ *   must be updated.
+ *
+ *   Identity:
+ *     id, name, surname, surnameSource, gender, birthYear, isDeceased,
+ *     isLegitimate (NOT included — see BELOW-CONTRACT below), isDeleted,
+ *     createdAt, updatedAt
+ *
+ *   Death:
+ *     deathYear, deathCause, deathCauseDetail, deathNotes, isMurder,
+ *     killerId, murderMotive, murderMethod, isExecution,
+ *     executionReason, executionMethod, executionLocation
+ *
+ *   Location and movement:
+ *     birthplaceId, currentLocationId, moves
+ *
+ *   Household:
+ *     household, householdId, householdHistory
+ *
+ *   Religion and culture:
+ *     religionId, religionHistory, cultureId
+ *
+ *   Embedded domain containers:
+ *     traits, rankAssignments, apprentices
+ *
+ *   Rank pointer:
+ *     activeRankId, activeRankNumber
+ *
+ *   Education containers:
+ *     education, educationHistory, subjectProgress, isLiterate
+ *
+ *   Surname history:
+ *     surnameHistory
+ *
+ *   Presentation:
+ *     epithet, notes, appearance
+ *
+ *   BELOW-CONTRACT FIELDS (deliberately NOT projected):
+ *     professions     — read via CharacterCommands.getProfessions /
+ *                       getProfession. Prior revisions included it on
+ *                       the projection; that violated the documented
+ *                       projection contract, and settlement-prosperity-
+ *                       queries.js read it off the projection instead
+ *                       of the command reader. Removed. See A.1.2 in
+ *                       the current refactor history and the
+ *                       PROFESSION INPUT section in
+ *                       settlement-prosperity-queries.js.
+ *
+ *     attraction      — not currently on the projection. No consumer
+ *                       reads it today. If the relationship domain is
+ *                       revived, add it back and document the addition
+ *                       here.
+ *
+ *     isLegitimate    — not currently on the projection. No consumer
+ *                       reads it today. Legacy field; kept on the
+ *                       record but not surfaced.
+ *
+ *     friendshipDetails — not currently on the projection. Read via
+ *                       the relationship domain's command readers.
+ *
+ *     apprenticeshipDetails — not currently on the projection. Read
+ *                       via ApprenticeshipCommands.
+ *
+ *     masterId, masterProfessionId, isMaster — not currently on the
+ *                       projection. Read via ApprenticeshipCommands /
+ *                       apprenticeship queries.
+ *
+ *     cultureId (already present) — kept. Culture is character-owned
+ *                       and projected.
+ *
+ *     activeRankId, activeRankNumber — present. Rank pointer is
+ *                       character-owned and projected; the full
+ *                       rankAssignments array is also projected.
+ *
+ *     religionId, religionHistory — present. Religion is
+ *                       character-owned (written via
+ *                       CharacterCommands.setReligion) and projected.
+ *
+ *   REMOVED FIELDS (compatibility):
+ *     The parent-child compatibility mirrors (motherId, fatherId,
+ *     children, adoptedParents, adoptedChildren) are not part of the
+ *     character record and are not projected. Family relationships
+ *     live in FamilyState (family-state.js).
+ *
  * PROJECTION CONTRACT (IMPORTANT):
  *   Every public read returns a defensive projection — a fresh object
  *   whose nested arrays and objects are cloned. Mutating a projection
@@ -102,21 +190,16 @@
  *       fields are primitives (safe to mutate).
  *     - `projection.subjectProgress[key]` is a fresh object whose fields
  *       are primitives (safe to mutate).
- *     - `projection.professions[i]` is a fresh object whose `specs` and
- *       `salaryHistory` arrays are cloned (safe to mutate).
  *     - `projection.rankAssignments[i]` is a fresh object whose `number`
  *       is a fresh object (safe to mutate).
  *     - `projection.moves[i]` is a fresh object (safe to mutate).
  *
- *   If a caller needs the live reference (authorized mutation code only),
- *   it calls getLiveCharacterForMutation(id). The leading underscore was
- *   removed in the Phase 1.1 refactor; the old name is preserved as a
- *   deprecated alias for one revision.
+ *   `projection.professions` is NOT on the projection any more (see
+ *   PROJECTION CONTENTS above). Callers that need the profession array
+ *   must read it via CharacterCommands.getProfessions / getProfession.
  *
- * REMOVED FIELDS:
- *   The parent-child compatibility mirrors (motherId, fatherId, children,
- *   adoptedParents, adoptedChildren) are no longer part of the character
- *   record. Family relationships live in FamilyState (family-state.js).
+ *   If a caller needs the live reference (authorized mutation code only),
+ *   it calls getLiveCharacterForMutation(id).
  *
  * MUTATION PRIMITIVES:
  *   - updateCharacter(id, patch)          character-owned field patch
@@ -218,6 +301,27 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _project now includes `surnameSource`. names.js reads it via
+ *       getCharacterSurnameSource; without the projection field, the
+ *       factory's default ('custom') was silently masked as 'country'
+ *       when read through the projection.
+ *     - _project no longer includes `professions`. The projection
+ *       contract (character-queries.js header) explicitly listed
+ *       professions as NOT projected; the prior _project violated
+ *       that. settlement-prosperity-queries.js was reading
+ *       character.professions off the projection; that file has been
+ *       updated to use CharacterCommands.getProfessions per character.
+ *       _cloneProfessions is deleted.
+ *     - Header PROJECTION CONTENTS (AUTHORITATIVE) section added. It
+ *       enumerates every field _project emits, plus a BELOW-CONTRACT
+ *       FIELDS list of fields intentionally NOT projected (with the
+ *       module that owns the reader for each). This is the single
+ *       source of truth for the projection contents; the
+ *       CHARACTER PROJECTION CONTRACT section in character-queries.js
+ *       cross-references it.
+ *     - No behavioural change to any read or write primitive. Every
+ *       other field's projection behaviour is unchanged.
+ *   Previous revision:
  *     - Added `householdId` to _CHARACTER_OWNED_FIELDS. The character
  *       record carries `household` and `householdId` as parallel
  *       reverse-index fields for the same household membership fact;
@@ -233,18 +337,20 @@
  *       both household and householdId are character-owned.
  *     - No other behavioural change.
  *   Previous revision:
- *     - _project now includes `moves`, `householdHistory`, `religionHistory`,
- *       `surnameHistory`, and `apprentices` in the returned shape. These are
- *       character-owned or domain-owned fields the location, family, name,
- *       and apprenticeship domains read from a projection. Before this
- *       revision, the projection omitted them, which silently caused
- *       location-commands.js::recordMove to overwrite the entire moves
- *       array on every call (because it read `character.moves` from the
- *       projection, saw `undefined`, and treated it as `[]`).
- *     - New _cloneMoves, _cloneStringArray, and _cloneSurnameHistory helpers
- *       added so the newly-projected fields are defensively cloned.
- *     - No public signature change. Every field that was already present
- *       remains present with the same shape.
+ *     - _project now includes `moves`, `householdHistory`,
+ *       `religionHistory`, `surnameHistory`, and `apprentices` in the
+ *       returned shape. These are character-owned or domain-owned
+ *       fields the location, family, name, and apprenticeship domains
+ *       read from a projection. Before this revision, the projection
+ *       omitted them, which silently caused
+ *       location-commands.js::recordMove to overwrite the entire
+ *       moves array on every call (because it read `character.moves`
+ *       from the projection, saw `undefined`, and treated it as `[]`).
+ *     - New _cloneMoves, _cloneStringArray, and _cloneSurnameHistory
+ *       helpers added so the newly-projected fields are defensively
+ *       cloned.
+ *     - No public signature change. Every field that was already
+ *       present remains present with the same shape.
  *   Previous revision:
  *     - _emitChange no longer calls _rebuildCaches() or
  *       _notifySubscribers(). Both happen exclusively in
@@ -662,34 +768,6 @@
     // 10. PROJECTION HELPERS
     // =========================================================================
 
-    function _cloneProfessions(professions) {
-        if (!Array.isArray(professions)) return [];
-        var out = [];
-        for (var i = 0; i < professions.length; i++) {
-            var p = professions[i];
-            if (!p) continue;
-            out.push({
-                id: p.id,
-                name: p.name,
-                skillLevel: p.skillLevel,
-                startYear: _isMissing(p.startYear) ? null : p.startYear,
-                primary: p.primary === true,
-                notes: typeof p.notes === 'string' ? p.notes : '',
-                specs: Array.isArray(p.specs) ? p.specs.slice() : [],
-                baseSalary: typeof p.baseSalary === 'number' ? p.baseSalary : 0,
-                customSalary: _isMissing(p.customSalary) ? null : p.customSalary,
-                salaryHistory: Array.isArray(p.salaryHistory)
-                    ? p.salaryHistory.slice()
-                    : [],
-                salaryLastCalculated: _isMissing(p.salaryLastCalculated)
-                    ? null
-                    : p.salaryLastCalculated,
-                paysSalary: p.paysSalary === undefined ? true : p.paysSalary === true
-            });
-        }
-        return out;
-    }
-
     function _cloneNumberInfo(number) {
         if (!number || typeof number !== 'object') return null;
         return {
@@ -897,6 +975,7 @@
             id: c.id,
             name: typeof c.name === 'string' ? c.name : '',
             surname: typeof c.surname === 'string' ? c.surname : '',
+            surnameSource: _isMissing(c.surnameSource) ? null : c.surnameSource,
             gender: _isMissing(c.gender) ? 'unknown' : c.gender,
             birthYear: _isMissing(c.birthYear) ? null : c.birthYear,
             isDeceased: c.isDeceased === true,
@@ -920,7 +999,6 @@
             cultureId: _isMissing(c.cultureId) ? null : c.cultureId,
 
             traits: _cloneTraits(c.traits),
-            professions: _cloneProfessions(c.professions),
             rankAssignments: _cloneRankAssignments(c.rankAssignments),
 
             // Move history. Every location-domain read of character.moves
