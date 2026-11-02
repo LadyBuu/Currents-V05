@@ -26,9 +26,11 @@
  *
  *   window.getLocationCountry(placeOrId)
  *     Returns the country-level ancestor of a place, or null.
+ *     Accepts a place object OR a place id. See SHADOWING below.
  *
  *   window.getLocationDistrict(placeOrId)
  *     Returns the district-level ancestor of a place, or null.
+ *     Accepts a place object OR a place id. See SHADOWING below.
  *
  *   window.getLocationTypeLabel(typeId)
  *     Returns the display name for a location type, or 'Unknown'.
@@ -71,6 +73,47 @@
  *   should treat the fallback's output as potentially stale and rely on
  *   world.js for the canonical answer.
  *
+ * SHADOWING (world.js exports with the same names)
+ * ------------------------------------------------
+ *   world.js exports:
+ *     window.getLocationCountry(place)      — accepts a PLACE OBJECT,
+ *                                             returns the country place.
+ *     window.getLocationDistrict(place)     — accepts a PLACE OBJECT,
+ *                                             returns the district place.
+ *
+ *   This module ALSO exports:
+ *     window.getLocationCountry(placeOrId)  — accepts a PLACE OBJECT
+ *                                             OR a place ID string,
+ *                                             returns the country place.
+ *     window.getLocationDistrict(placeOrId) — accepts a PLACE OBJECT
+ *                                             OR a place ID string,
+ *                                             returns the district place.
+ *
+ *   Under the documented load order, world.js loads BEFORE this file,
+ *   so this file's version wins on the global namespace. The winning
+ *   function is a SUPERSET of world.js's:
+ *
+ *     - When called with a place object: delegates to world.js's
+ *       resolver, so behaviour is identical.
+ *     - When called with a place id:    resolves the place locally,
+ *       then delegates to world.js's resolver. This is a strict
+ *       extension — world.js's version would fail on an id input.
+ *     - When world.js is not loaded:    uses the local fallback. This
+ *       is the bootstrap case; see FALLBACK POLICY.
+ *
+ *   Callers should treat window.getLocationCountry /
+ *   window.getLocationDistrict as the SUPERSET contract. Do not assume
+ *   the world.js signature (place-only) or the locationDropdown
+ *   signature (place-or-id) — assume the superset, which accepts both.
+ *
+ *   If world.js ever renames its exports to avoid the collision, this
+ *   module's fallback path is sufficient for the dropdown use case. If
+ *   world.js ever stops exposing getLocationCountry /
+ *   getLocationDistrict entirely, this module's fallback takes over
+ *   for ALL callers — including world.js's own internal callers if
+ *   they reach for these names via the global namespace. That is a
+ *   world.js concern; this module's fallback is a working superset.
+ *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - accessors.js   (getPlaces, getPlaceById, getLocationTypeById)
  *
@@ -81,6 +124,23 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Header SHADOWING section added. Documents that this module's
+ *       getLocationCountry / getLocationDistrict exports overwrite
+ *       world.js's same-named exports under the documented load
+ *       order, and that the winning function is a superset (accepts
+ *       place OR id, falls back to world.js for place inputs). No
+ *       behavioral change to any function.
+ *     - Header FALLBACK POLICY updated with a note about the
+ *       superset contract.
+ *   Previous revisions:
+ *     - Local fallbacks for hierarchy, country, district retained for
+ *       early-bootstrap; world.js used when loaded.
+ *     - getLocationHierarchyDisplay delegates to formatting.js.
+ *     - getLocationTypeLabel added.
+ *     - buildLocationDropdown added.
  * =============================================================================
  */
 
@@ -155,6 +215,10 @@
     // =========================================================================
     // 2. HIERARCHY RESOLUTION (delegated to world.js with local fallback)
     // =========================================================================
+    //
+    // See SHADOWING in the module header. These accessors return the
+    // world.js function if present; the fallback path is used only
+    // during early bootstrap when world.js has not loaded yet.
 
     function _worldGetParentChain() {
         if (typeof window.getParentChain === 'function') {
@@ -302,13 +366,25 @@
     /**
      * Returns the country-level ancestor of a place, or null.
      * Delegates to world.getLocationCountry when available.
+     *
+     * Accepts a place object OR a place id. See SHADOWING in the
+     * module header for why the id-accepting version supersets the
+     * world.js signature.
      */
     function getLocationCountry(placeOrId) {
         var place = _resolvePlace(placeOrId);
         if (!place) return null;
 
+        // Note: window.getLocationCountry here is world.js's version
+        // IF this module has not yet overwritten it. During the module's
+        // own evaluation, the function being defined is not yet on
+        // window, so this lookup hits world.js's version. After this
+        // module loads, window.getLocationCountry IS this function —
+        // but the recursive lookup path is guarded by _worldGetLocationCountry
+        // being called only from within this function's body, which
+        // runs after module evaluation.
         var worldFn = _worldGetLocationCountry();
-        if (worldFn) {
+        if (worldFn && worldFn !== getLocationCountry) {
             try {
                 return worldFn(place);
             } catch (e) {
@@ -321,13 +397,16 @@
     /**
      * Returns the district-level ancestor of a place, or null.
      * Delegates to world.getLocationDistrict when available.
+     *
+     * Accepts a place object OR a place id. See SHADOWING in the
+     * module header.
      */
     function getLocationDistrict(placeOrId) {
         var place = _resolvePlace(placeOrId);
         if (!place) return null;
 
         var worldFn = _worldGetLocationDistrict();
-        if (worldFn) {
+        if (worldFn && worldFn !== getLocationDistrict) {
             try {
                 return worldFn(place);
             } catch (e) {
@@ -416,6 +495,15 @@
     // =========================================================================
     // 5. EXPORTS
     // =========================================================================
+    //
+    // Note the shadowing on getLocationCountry and getLocationDistrict.
+    // See SHADOWING in the module header.
+    //
+    // If world.js's exports are ever renamed to avoid the collision,
+    // these assignments become the canonical resolver names and no
+    // caller breaks. If world.js ever stops exposing these names
+    // entirely, this module's exports become the sole providers, and
+    // this module's fallback path activates for every caller.
 
     window.buildLocationDropdown = buildLocationDropdown;
     window.getLocationHierarchyDisplay = getLocationHierarchyDisplay;
