@@ -11,7 +11,6 @@
  * Depends on (checked at load time):
  *   - LocationViewModels    (data preparation)
  *   - LocationUIState       (transient UI state)
- *   - window.getIcon        (icons.js)
  *   - window.Icons          (icons.js) — read directly so unknown names
  *                           throw rather than silently falling back to
  *                           Icons.CIRCLE
@@ -30,6 +29,13 @@
  *   ARROW_RIGHT icons, which do exist, and reads window.Icons directly
  *   so future drift is caught immediately.
  *
+ *   window.getIcon is NOT a load-time dependency of this module. It is
+ *   present on icons.js and is consumed by other modules, but this file
+ *   does not call it. An earlier revision required it at load, which
+ *   would have made a future removal of getIcon from icons.js break
+ *   this file for no reason. The load-time guard now requires only
+ *   window.Icons — the one thing this file actually reads.
+ *
  * ICON CHOICES:
  *   EXPANDED   : TRIANGLE_DOWN   (▾)  — standard "expanded" affordance
  *   COLLAPSED  : ARROW_RIGHT     (▶)  — standard "collapsed" affordance
@@ -42,6 +48,15 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Removed the getIcon load-time dependency check. The module
+ *       requires window.Icons (which _icon reads directly) but never
+ *       calls window.getIcon. The prior guard was a dead dependency:
+ *       removing getIcon from icons.js would have broken this file
+ *       even though it never used the function.
+ *     - Header "Icon policy" section updated to document the removal
+ *       and the reasoning.
+ *     - No behavioural change to any render path.
+ *   Previous revision:
  *     - ICONS.EXPANDED changed from 'CHEVRON_DOWN' to 'TRIANGLE_DOWN'.
  *       ICONS.COLLAPSED changed from 'CHEVRON_RIGHT' to 'ARROW_RIGHT'.
  *       Neither CHEVRON_* name existed in icons.js; the prior revision
@@ -52,14 +67,8 @@
  *       ("Missing icon throws — do not silently render a blank glyph").
  *       The prior implementation called window.getIcon(name), which
  *       silently falls back to Icons.CIRCLE.
- *     - window.Icons added to load-time dependency check. If icons.js
- *       is not loaded, the module fails at load, not at render.
- *     - Header ICON CHOICES section added, documenting the mapping and
- *       why CHEVRON_* was dropped.
- *     - No public signature change, no public return-shape change.
- *   Prior revision:
- *     - Initial implementation, using CHEVRON_DOWN / CHEVRON_RIGHT
- *       (which did not exist in icons.js).
+ *     - window.Icons added to load-time dependency check.
+ *     - Header ICON CHOICES section added.
  * =============================================================================
  */
 
@@ -85,11 +94,11 @@
             'location-ui-list.js requires icons.js (window.Icons) to load first.'
         );
     }
-    if (typeof window.getIcon !== 'function') {
-        throw new Error(
-            'location-ui-list.js requires icons.js (getIcon) to load first.'
-        );
-    }
+    // NOTE: window.getIcon is NOT required here. This module reads
+    // window.Icons[name] directly in _icon() and throws on unknown
+    // names. getIcon (with its CIRCLE fallback) is not called by this
+    // file. Requiring it would be a dead dependency — see the header
+    // "Icon policy" section.
 
     var VM = window.LocationViewModels;
     var UI = window.LocationUIState;
