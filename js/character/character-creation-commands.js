@@ -67,6 +67,46 @@
  *   and letting downstream projections observe undefined fields — is
  *   deliberately removed.
  *
+ * CREATE-WITH-ROLLBACK (OBSERVABLE EVENT SEQUENCE):
+ *   _createCharacterInternal inserts the character (via
+ *   CharacterState.addCharacter, which fires characterChanged), then
+ *   establishes family and religion edges. If any edge establishment
+ *   fails, the character is soft-deleted via
+ *   CharacterState.removeCharacter, which fires another
+ *   characterChanged event.
+ *
+ *   Subscribers therefore see TWO characterChanged events for a failed
+ *   creation:
+ *
+ *     Event 1: action === 'create', characterIds === [<id>]
+ *     Event 2: action === 'delete', characterIds === [<id>]
+ *
+ *   The character never existed in a "successfully created" state from
+ *   the caller's perspective; the caller receives a structured failure
+ *   and does not consider the character created. But subscribers that
+ *   react to characterChanged events (UI refreshers, index rebuilders,
+ *   cross-domain caches) will have observed both events. If a
+ *   subscriber caches per-character data, it should treat the second
+ *   event as authoritative — the character no longer exists.
+ *
+ *   This is a documented design property, not a bug. The alternative —
+ *   deferring the initial _emitChange until after edges are established
+ *   — would require a two-phase commit inside CharacterState, which is
+ *   outside CharacterState's contract (it owns single-write
+ *   transactions, not multi-step orchestration). Composing
+ *   multi-step transactions belongs to the caller — this module —
+ *   and the caller's only tools are CS.addCharacter / removeCharacter.
+ *
+ *   bulkCreateCharacters has the same property: a partially failed
+ *   batch (some characters created, some failed at edge establishment
+ *   and rolled back) produces an interleaved stream of create and
+ *   delete events. The batch returns `partial: true` and per-entry
+ *   `errors` for the caller to inspect.
+ *
+ *   A subscriber that needs atomic batch semantics must compose its
+ *   own transaction boundary around the batch — not currently
+ *   supported by CharacterState; documented debt.
+ *
  * CONTRACT:
  *   - Every public command returns { success: boolean, reason?, ... }.
  *   - All validation happens before any mutation.
@@ -86,6 +126,21 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Header CREATE-WITH-ROLLBACK section added. Documents the
+ *       observable create-then-delete event sequence that subscribers
+ *       see when _createCharacterInternal or bulkCreateCharacters
+ *       rolls back a partially created character. Not a code change;
+ *       the property existed and is now documented as deliberate.
+ *     - No behavioural change to any command. Every function's return
+ *       value is unchanged.
+ *   Previous revisions:
+ *     - createCharacterFromData validation routed through
+ *       validateBuiltCharacter (previously less strict).
+ *     - Family edges established through FamilyCommands.setParent.
+ *     - Religion edge established via ReligionCommands (non-fatal).
  * =============================================================================
  */
 
