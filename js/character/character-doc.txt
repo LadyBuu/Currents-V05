@@ -1,184 +1,1419 @@
-# Still Waters — Character Subsystem Documentation
+================================================================================
+STILL WATERS — CHARACTER SUBSYSTEM DOCUMENTATION AND LOAD ORDER
+================================================================================
 
-Version: 3.3
-Last regenerated from: the code in `js/character/`, `js/core/`, and the
-Phase 2.x / 3.x refactor passes (see the "Refactor Notes" appendix for the
-current-phase deltas).
+Scope of this document:
+  - Every file in the character subsystem that was provided:
+      js/character/character-state.js
+      js/character/character-queries.js
+      js/character/character-commands.js
+      js/character/character-factory.js
+      js/character/character-generator.js
+      js/character/character-creation-commands.js
+      js/character/character-deletion-commands.js
+      js/character/character-lifecycle.js
+      js/character/character-statistics.js
+      js/character/character-system.js
+      js/character/character-ui-list.js
+      js/character/family-rules.js
+      js/character/family-state.js
+      js/character/family-queries.js
+      js/character/family-commands.js
+      js/character/family-statistics.js
+      js/character/children-rules.js
+      js/character/children-state.js
+      js/character/children-queries.js
+      js/character/children-commands.js
+      js/character/children-generator.js
+      js/character/children-statistics.js
+      js/character/mortality-rules.js
+      js/character/mortality-queries.js
+      js/character/mortality-statistics.js
+      js/character/modals-character.js
+      js/character/modals-children-adoption.js
+      js/character/modals-children-birth.js
+      js/character/modals-children-surrogacy.js
+      js/character/modals-death.js
 
-Covers: character, family, children, education, mortality, lifecycle,
-parentage edge model, persistence, cross-domain dispatch, integrity,
-and the compatibility shim.
+  - Every core (js/core/) file the character subsystem depends on,
+    either at load time (module-level guards) or at call time, and how
+    each dependency is used.
 
-Status: character subsystem complete through Phase 3.13. Every module's
-header matches its behaviour. Persistence is scheduled by
-markDataDirty. The relationship and role domains have their own docs;
-this file does not duplicate them.
+Cross-references:
+  - character-doc.txt (the character subsystem's own narrative doc).
+  - stillwaters-docs.txt (the core-level documentation and load order
+    for the supplied core files).
 
----
+This document is derived strictly from the module headers, dependency
+guard blocks, and the runtime `window.X` lookups in the supplied code.
+Anything not provable from the supplied files is marked [UNVERIFIED].
 
-## 1. Overview
 
-The character subsystem manages:
+================================================================================
+PART 1 — CORE FILE DEPENDENCIES
+================================================================================
 
-- Canonical character records
-- Biological, legal, and social parentage
-- Kinship classification
-- Pregnancy, birth, surrogacy, and adoption metadata
-- Death, murder, and execution
-- Education enrollment, graduation, withdrawal, and literacy
-- Population, family, children, and mortality statistics
-- Panel UI state persistence
-- UI modals for character CRUD, family view, death, birth, surrogacy,
-  adoption, and education
-- Multi-year simulation clock coordination
-- Cross-tab reload coordination (via storage.js)
-- Data integrity detection and repair (via core/integrity.js)
+This section answers, for each character-subsystem file, WHICH core files
+it needs and WHY. Read it top-to-bottom as the answer to "what does the
+character module depend on".
 
-Eight architectural rules govern the whole subsystem:
+Terminology:
+  REQUIRED (load-time) — a module-level guard throws if the dependency
+    is missing when this file loads.
+  REQUIRED (call-time) — a function or method throws/refuses if the
+    dependency is missing when the function is invoked.
+  OPTIONAL — the module checks for the dependency and falls back
+    (usually by skipping the feature) when it is absent.
 
-1. **One owner per concept.**
-   Character record                → `CharacterState`.
-   Parent edges                    → `FamilyState` (parentChildEdges).
-   Pregnancy, surrogacy, adoption  → `ChildrenState`.
-   Education containers            → `CharacterCommands` (education API).
-   Death fields                    → on the character record, written
-                                     only by `CharacterCommands.markDeceased`.
+--------------------------------------------------------------------------------
+1.1 CORE FILES THE CHARACTER SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
 
-2. **Rules are pure.** `-rules.js` modules contain no I/O, no
-   randomness, no mutation, no state access.
+  js/core/time.js
+    Provides: TIME_CONSTANTS (DEFAULT_YEAR, MIN_YEAR, MAX_YEAR),
+              getCurrentYear, isValidYear, calculateAge.
+    Used for: year defaults, year validation, age computation, birth
+              year defaults when `options.currentYear` is omitted.
 
-3. **Reads and writes are separate.** `-queries.js` reads, `-commands.js`
-   writes. A query never mutates.
+  js/core/ids.js
+    Provides: generateId (all prefixes).
+    Used for: character id, edge id, pregnancy id, surrogacy id,
+              adoption id, conversion event id.
 
-4. **Dependencies fail loudly.** Missing required modules throw at load.
-   Missing optional dependencies either throw at call time or fail
-   closed with a documented empty value. Missing data returns null or [].
+  js/core/randomness.js
+    Provides: random, randomInt, randomBoolean, pickRandom,
+              pickRandomMultiple, pickWeighted, shuffleArray.
+    Used for: every random draw in the character subsystem. Math.random
+              is forbidden; the module guards on window.random.
 
-5. **Randomness is injected.** No rules module generates random numbers.
-   Rolls are passed in by the caller. Where a command genuinely needs a
-   random draw, it goes through `randomness.js` (`window.random()`).
-   `Math.random()` is forbidden everywhere.
+  js/core/storage.js
+    Provides: masterData (initialized reference), markDataDirty.
+    Used for: canonical collection read, dirty marker after mutation.
 
-6. **Multi-year simulation passes the simulated year.**
-   `CharacterCommands.markDeceased` accepts `options.referenceYear` for
-   this purpose. `CharacterLifecycle.advanceMortality` uses it on every
-   simulated death and now also accepts `options.startYear` and returns
-   `result.finalYear`. Any caller that writes a death year ahead of
-   wall-clock must supply the reference year explicitly or validation
-   will reject the death.
+  js/core/accessors.js
+    Provides: getCharacters, invalidateAccessorCaches, getPlaces,
+              getPlaceById, getLocationTypeById, getNameLists, getRoles,
+              getPlaceScope, getLocationTypeScope, getCharacterById
+              (via accessors, the shim, or the projection override —
+              whichever wins the documented load-order race).
+    Used for: initial character load, cache invalidation after writes,
+              generator access to places and roles, names.js access
+              inside generator.
 
-7. **No dead-schema reads.** The character record's parentage fields
-   (`motherId`, `fatherId`, `children`, `adoptedParents`,
-   `adoptedChildren`) were removed when parentage moved to
-   `parentChildEdges`. The `relationships` array was removed when
-   romantic links moved to the relationship domain. No module in the
-   character subsystem — or in the household subsystem that reads from
-   it — may read those fields.
+  js/core/formatting.js
+    Provides: escapeHtml.
+    Used for: all UI modal string interpolation (modals-character,
+              modals-children-*, modals-death, character-ui-list).
 
-   This rule is now enforced across every layer:
-   - `storage-schema.js` does not normalize them.
-   - `validation.js` does not list them in `ENTITY_SCHEMAS`.
-   - `integrity.js` does not audit them.
-   - `character-factory.js` does not emit them.
-   - `character-state.js` does not project them.
+  js/core/icons.js
+    Provides: Icons.
+    Used for: all modal SVG icon injection.
 
-8. **Per-character failures do not abort simulations.**
-   `CharacterLifecycle.advanceMortality` catches per-character death
-   failures (e.g. a corrupt birthYear) and records them in
-   `result.skipped` rather than throwing and aborting the multi-year
-   loop. See §7 for the full contract. `killCharacter` retains its
-   throw-through contract for explicit single-character commands.
+  js/core/modals-core.js
+    Provides: openModal, closeTopModal, confirmDialog.
+    Used for: every modal in modals-character, modals-children-*,
+              modals-death.
 
----
+  js/core/validation.js
+    Provides: validateImportData (indirect — via storage.js on import).
+    Used for: import path only. The character subsystem does not call
+              validation.js directly.
 
-## 2. File Manifest
+  js/core/world.js
+    Provides: getPlaceScope, getLocationTypeScope (used by
+              character-generator for country resolution).
+    Used for: character-generator only.
 
-### Character core
+  js/core/names.js
+    Provides: getRandomNameFromCountry, getRandomSurnameFromCountry.
+    Used for: character-generator only.
 
-| File | Role |
-|---|---|
-| `character-state.js` | Canonical character collection and derived indexes. Owns all mutation primitives. Owns ephemeral UI state (facade compatibility). Projections deep-clone every embedded container. |
-| `character-queries.js` | Semantic character-level reads (search, summary, facts, age-range, family delegates, profession delegates). Read side of `CharacterState`. |
-| `character-commands.js` | Mutation boundary for character-owned fields. Traits, professions, rank assignments, education containers, literacy, surname history, religion orchestration, death transition. |
-| `character-factory.js` | Canonical `buildCharacter` constructor. Validates, defaults, and assembles every character record. Also provides `validateBuiltCharacter` for the pre-built insertion path. |
-| `character-generator.js` | Random character data generation. Produces the plain data object fed to `buildCharacter`. Does not construct entities. |
-| `character-creation-commands.js` | Creation boundary. Routes every creation path through `buildCharacter` + `CharacterState.addCharacter`. Establishes family edges and religion after insertion. |
-| `character-deletion-commands.js` | Deletion boundary. Soft delete, hard delete, purge, bulk. Dispatches cross-domain cleanup on hard delete. Also exposes `registerDeleteHandler` for modules that load after this file. |
-| `character-lifecycle.js` | Time progression and mortality orchestration. `advanceMortality`, `killCharacter`, `triggerNaturalDeath`, `triggerAccidentalDeath`. Age/life-stage classification. Cross-domain death dispatch. `registerDeathHandler` for modules that load after this file. |
+  js/core/constants/character-traits.js
+    Provides: CHARACTER_TRAIT_VALUES.
+    Used for: HARD load-time guard in character-factory.js and
+              character-generator.js; the trait write path in
+              character-commands.js refuses without it.
 
-### Family
+  js/core/state.js
+    Not a direct dependency of the character subsystem. state.js
+    depends on CharacterState, not the other way around. Do not add a
+    dependency in this direction.
 
-| File | Role |
-|---|---|
-| `family-rules.js` | Pure parentage and kinship policy. Validators. |
-| `family-state.js` | Canonical `parentChildEdges` collection. Indexes by parent, child, and pair. |
-| `family-queries.js` | Traversal and projection of parent-child edges. Kinship wrappers (`classifyKinship`, `getKinshipCloseness`). Ancestor provider for `FamilyRules` cycle detection. |
-| `family-commands.js` | Mutation boundary for parent edges. `setParent`, `removeParent`, `createAdoption`, `removeAdoption`, `changeParentType`, `handleCharacterDeath`, `removeAllReferencesTo`. |
-| `family-statistics.js` | Aggregate family counts for a character. Composition of `FamilyQueries` + `CharacterQueries`. |
+  js/core/collections.js
+    Not used directly by the character subsystem. Nothing in the
+    supplied character files imports from collections.js.
 
-### Children
+  js/core/exportUtils.js
+    Not used directly by the character subsystem. CSV/JSON export is a
+    separate concern.
 
-| File | Role |
-|---|---|
-| `children-rules.js` | Pure pregnancy, surrogacy, and adoption policy. Fertility, conception, complication, reconciliation heuristics. |
-| `children-state.js` | Canonical store for pregnancy records, surrogacy arrangements, adoption metadata. |
-| `children-queries.js` | Read projections for pregnancies, surrogacy arrangements, adoptions. Composes `FamilyQueries` for parent resolution. |
-| `children-commands.js` | Mutation boundary. `recordBirth`, `recordPregnancyAttempt`, `recordSurrogacyArrangement`, `recordAdoptionMetadata`, etc. Coordinates `CharacterCreationCommands` and `FamilyCommands`. Routes maternal death through `CharacterLifecycle.killCharacter`. |
-| `children-generator.js` | Birth proposal generation. Does not construct children. |
-| `children-statistics.js` | Aggregate pregnancy, surrogacy, adoption, and per-parent family statistics. |
+  js/core/responsive.js
+  js/core/ui/collapsible.js
+  js/core/tab-manager.js
+  js/core/ui.js
+  js/core/ui-state.js
+    Not used directly by the character subsystem. modals-core.js
+    internally may depend on formatting.js and icons.js, which are
+    already on the list.
 
-### Mortality
+  js/core/maintenance.js
+    Not used directly. maintenance.js depends on integrity.js, which
+    depends on accessors.js, not on the character subsystem.
 
-| File | Role |
-|---|---|
-| `mortality-rules.js` | Pure death validation, cause catalogue, mortality-rate bands, deterministic cause picker. |
-| `mortality-queries.js` | Read projections for death records, murders, executions. |
-| `mortality-statistics.js` | Aggregate mortality analytics. |
+  js/core/integrity.js
+    Not used directly by the character subsystem. It audits reference
+    integrity of characters, but the character subsystem never calls
+    into it. It reads via accessors.js.
 
-### UI
+  js/core/constants/age-constants.js
+    Indirect dependency: character-lifecycle.js's getLifeStage /
+    getAgeGroup read window.LIFE_STAGES / window.AGE_GROUPS at call
+    time. If the constants are missing, those helpers return null
+    rather than fabricating. Character-lifecycle does not throw for a
+    missing age-constants.js at load time. Under the documented core
+    load order, age-constants.js is present.
 
-| File | Role |
-|---|---|
-| `character-ui-list.js` | Renders character lists and cards. Delegated click handling. |
-| `modals-character.js` | Character CRUD, details, family view. Edit-modal transaction contract (see §8). |
-| `modals-children-adoption.js` | Adoption metadata modals. |
-| `modals-children-birth.js` | Birth, pregnancy, batch birth modals. |
-| `modals-children-surrogacy.js` | Surrogacy arrangement modals. |
-| `modals-death.js` | Death, murder, execution modals. Childbed-fever routing (see §9). |
+  js/core/constants/character-constants.js
+    Indirect dependency via character-factory.js: the factory's
+    VALID_GENDERS / VALID_ATTRACTIONS constants are locally declared
+    (they do not read GENDER_VALUES / ATTRACTION_VALUES from the
+    constants file). validation.js optionally reads the constants
+    files. The factory therefore does not require
+    character-constants.js at load. Under the documented core load
+    order, character-constants.js loads first anyway.
 
-### Compatibility
+  js/core/constants/character-traits.js
+    (Already listed above. Listed here again for visibility because it
+    is the one constants file that is a HARD load-time dependency of
+    the character subsystem.)
 
-| File | Role |
-|---|---|
-| `character-system.js` | One-way legacy aliases onto the canonical modules. Loads last. Throws if any canonical module is missing. |
+  js/core/constants/relationship-constants.js
+  js/core/constants/location-constants.js
+  js/core/constants/constants.js
+    Not direct dependencies of the character subsystem. relationship-
+    constants.js is used by validation.js; the character subsystem
+    itself does not read RELATIONSHIP_STATUS or LOCATION_LEVELS.
 
----
 
-## 3. Load Order
+--------------------------------------------------------------------------------
+1.2 CHARACTER-SUBSYSTEM FILE DEPENDENCY MATRIX
+--------------------------------------------------------------------------------
 
-The load order below is canonical. Every page that uses the character
-subsystem must follow it. Deviating from it causes one of the
-module-level throw guards to fire.
+Columns:
+  CORE  — required core files (load-time unless marked "(call)")
+  CHAR  — required character-subsystem files (load-time unless marked)
+  OPT   — optional dependencies (called only when the feature is used)
 
-### 3.1 Bootstrap Sequence
+character-state.js
+  CORE  time.js (getCurrentYear, indirectly for calculateAge users),
+        storage.js (masterData, markDataDirty),
+        accessors.js (getCharacters — initial load; invalidateAccessorCaches
+                      — call-time).
+  CHAR  None.
+  OPT   None.
+  Notes Guard at load throws unless getCharacters, masterData, and
+        markDataDirty are all present. The collision guard also throws
+        if window.CharacterState.__owner is set by another module.
 
-`storage.js` defines `initializeStorage()` and `loadMasterData()`.
-**Neither runs automatically.** The bootstrap between `storage.js` and
-the character subsystem must call `window.initializeStorage()` before
-the character state modules load.
+character-queries.js
+  CORE  time.js (calculateAge, getCurrentYear, isValidYear),
+        accessors.js (getRankById — call-time, for rank display).
+  CHAR  character-state.js (load-time).
+  OPT   character-commands.js (getProfessions — call-time),
+        family-queries.js (call-time).
+  Notes Guard at load requires CharacterState, calculateAge,
+        getCurrentYear, isValidYear.
 
-This is not optional. `character-state.js`, `family-state.js`,
-`children-state.js`, `household-state.js`, and `residence-system.js` all
-require `window.masterData` to be populated at their parse time. If the
-bootstrap does not call `initializeStorage()` first, every one of those
-modules throws at load with a clear "masterData is required" error.
+character-commands.js
+  CORE  time.js (getCurrentYear, isValidYear),
+        ids.js (generateId — setReligion only).
+        character-traits.js (CHARACTER_TRAIT_VALUES — trait writes only;
+        the module loads without it and trait writes refuse).
+  CHAR  character-state.js (load-time).
+  OPT   mortality-rules.js (markDeceased only),
+        religion-commands.js (setReligion / assignCharacterReligion
+        only — called through CharacterCommands.assignCharacterReligion
+        and ReligionCommands internals).
+  Notes Guard at load requires CharacterState.updateCharacter,
+        updateCharacters, applyDomainFieldPatch,
+        getLiveCharacterForMutation, getAllCharacters, plus
+        getCurrentYear, isValidYear, generateId.
 
-The minimal correct sequence is:
+character-factory.js
+  CORE  ids.js (generateId — load-time guard),
+        character-traits.js (CHARACTER_TRAIT_VALUES — load-time guard;
+        this is a HARD dependency, not soft).
+  CHAR  None.
+  OPT   time.js (isValidYear — used at call time when validating years
+        if window.isValidYear is present).
+  Notes Throws at load if generateId or CHARACTER_TRAIT_VALUES are
+        missing. This makes character-traits.js a required core file
+        for the entire character factory path.
 
-```html
-<script src="js/core/storage.js"></script>
-<script>
-    // MUST run here, before any state module loads.
+character-generator.js
+  CORE  randomness.js (pickRandom, random, randomBoolean, randomInt,
+        pickWeighted),
+        time.js (getCurrentYear, isValidYear),
+        world.js (getPlaceScope, getLocationTypeScope),
+        accessors.js (getPlaces, getPlaceById, getNameLists, getRoles),
+        names.js (getRandomNameFromCountry, getRandomSurnameFromCountry),
+        character-traits.js (CHARACTER_TRAIT_VALUES — load-time guard).
+  CHAR  None.
+  OPT   religion-queries.js (ReligionQueries — for religion selection),
+        culture-queries.js (CultureQueries — for culture resolution;
+        the required method is getPrimaryCultureForLocation),
+        culture-generation.js (CultureGeneration — for appearance).
+  Notes Every required name above is a HARD load-time guard. Loading
+        character-generator.js without any one of them throws.
+
+character-creation-commands.js
+  CORE  time.js (getCurrentYear — load-time guard).
+        character-factory.js (buildCharacter, validateBuiltCharacter —
+        load-time guard; both live in the character subsystem).
+  CHAR  character-state.js (load-time guard — addCharacter,
+        addCharacters, removeCharacter),
+        character-factory.js (see above).
+  OPT   character-generator.js (createRandomCharacter only),
+        family-commands.js (only when options.parents is supplied),
+        religion-commands.js (only when data.religionId is supplied).
+  Notes Guard at load requires CharacterState, buildCharacter,
+        validateBuiltCharacter, getCurrentYear.
+
+character-deletion-commands.js
+  CORE  time.js (getCurrentYear — used indirectly through FamilyCommands
+        cleanup targets; the module itself only reads through
+        CharacterState).
+  CHAR  character-state.js (load-time guard — removeCharacter,
+        removeCharacters, applyDomainFieldPatch,
+        getAllCharacters, getLiveCharacterForMutation).
+  OPT   family-commands.js (FamilyCommands.removeAllReferencesTo —
+        call-time, per-domain cleanup),
+        children-commands.js (call-time),
+        relationship-integrations.js (call-time; NOT loaded by default
+        under the documented load order — see DELETE HANDLER HOOK),
+        household-commands.js (call-time),
+        apprenticeship-commands.js (call-time),
+        rank-issues.js (call-time).
+  Notes Exports registerDeleteHandler on window so modules that load
+        after this file can register cleanup hooks. Relationship
+        integration relies on this hook under the documented load order.
+
+character-lifecycle.js
+  CORE  time.js (getCurrentYear, isValidYear — load-time guard),
+        randomness.js (random — load-time guard),
+        character-commands.js (markDeceased — load-time guard),
+        mortality-rules.js (MortalityRules — load-time guard).
+  CHAR  character-state.js (load-time guard),
+        character-commands.js (see above).
+  OPT   family-commands.js (handleCharacterDeath — call-time),
+        relationship-integrations.js (call-time; not present under the
+        documented load order — see DEATH HANDLER HOOK),
+        rank-issues.js (call-time),
+        location-commands.js (via registerDeathHandler),
+        event-log.js (logEvent — call-time),
+        settlement-annual-processor.js
+        (processAllSettlementsAnnual — call-time, optional).
+  Notes Exports registerDeathHandler on window. Location commands,
+        relationship integration, and any other cross-domain hook
+        register here rather than being reached through the named
+        dispatch table.
+
+character-statistics.js
+  CORE  time.js (calculateAge, getCurrentYear — load-time guards).
+  CHAR  character-state.js (load-time guard),
+        character-queries.js (load-time guard).
+  OPT   character-commands.js (getProfessions — call-time; professions
+        are read off the projection only if CharacterCommands is
+        present, otherwise the profession distribution is empty).
+  Notes getLiteracyStatistics requires an explicit literacy predicate
+        and throws if one is not supplied. The education domain owns
+        literacy.
+
+character-system.js
+  CORE  None at the pure-core level. This shim does not depend on any
+        js/core/ file directly.
+  CHAR  Every core character-subsystem module plus the family,
+        mortality, and children modules. The REQUIRED list is:
+        CharacterState, CharacterCommands, CharacterQueries,
+        CharacterCreationCommands, CharacterDeletionCommands,
+        CharacterLifecycle, FamilyRules, FamilyState, FamilyQueries,
+        FamilyCommands, FamilyStatistics, MortalityRules,
+        MortalityQueries, MortalityStatistics, ChildrenState,
+        ChildrenRules, ChildrenQueries, ChildrenCommands,
+        ChildrenStatistics, ChildrenGenerator.
+  OPT   None.
+  Notes This file is a one-way alias shim. It installs legacy globals
+        (getCharacters, getCharacterById, getCharacterSummary, etc.)
+        and must be loaded LAST, after every other character-subsystem
+        file.
+
+character-ui-list.js
+  CORE  formatting.js (escapeHtml — load-time guard).
+  CHAR  character-queries.js (load-time guard),
+        character-system.js OR accessors.js (load-time guard — the
+        check accepts either as the provider of getCharacters).
+  OPT   culture-queries.js (getCultureDisplay — call-time; culture
+        badges are omitted when absent),
+        world.js (getCurrentPlace — call-time; location display
+        resolves through it).
+  Notes The onSelect callback receives a projection, not a live
+        entity. See the CALLBACK CONTRACT in the module header.
+
+family-rules.js
+  CORE  None. Pure policy.
+  CHAR  None.
+  OPT   None.
+
+family-state.js
+  CORE  storage.js (masterData — load-time guard).
+  CHAR  None.
+  OPT   None.
+  Notes Subscribes to masterDataUpdated on window.
+
+family-queries.js
+  CORE  None at the pure-core level.
+  CHAR  family-state.js (load-time guard),
+        family-rules.js (load-time guard),
+        character-state.js (load-time guard — used for existence
+        iteration in the kinship wrappers).
+  OPT   None.
+
+family-commands.js
+  CORE  ids.js (generateId — load-time guard),
+        time.js (getCurrentYear — load-time guard; also isValidYear —
+        call-time).
+  CHAR  family-state.js (load-time guard),
+        family-rules.js (load-time guard),
+        family-queries.js (load-time guard),
+        character-state.js (load-time guard).
+  OPT   event-log.js (logEvent — call-time).
+
+family-statistics.js
+  CORE  None at the pure-core level.
+  CHAR  family-queries.js (load-time guard),
+        family-rules.js (load-time guard),
+        character-queries.js (load-time guard).
+  OPT   None.
+
+children-rules.js
+  CORE  None. Pure policy.
+  CHAR  None.
+  OPT   None.
+
+children-state.js
+  CORE  storage.js (masterData — load-time guard).
+  CHAR  None.
+  OPT   None.
+  Notes Subscribes to masterDataUpdated on window.
+
+children-queries.js
+  CORE  None at the pure-core level.
+  CHAR  children-state.js (load-time guard),
+        family-queries.js (load-time guard).
+  OPT   children-rules.js (only for enum passthrough; the module does
+        not require it at load time).
+
+children-commands.js
+  CORE  ids.js (generateId — load-time guard),
+        time.js (getCurrentYear, isValidYear — load-time guards),
+        randomness.js (random — load-time guard).
+  CHAR  children-state.js (load-time guard),
+        children-rules.js (load-time guard),
+        character-state.js (load-time guard),
+        character-commands.js (load-time guard),
+        character-creation-commands.js (load-time guard),
+        family-commands.js (load-time guard).
+  OPT   character-lifecycle.js (killCharacter — for maternal death
+        only; the command REFUSES the maternal-death outcome if the
+        module is missing rather than producing a half-dispatch),
+        religion-commands.js (call-time inheritance via
+        CharacterCommands.assignCharacterReligion).
+  Notes The commit path writes to masterData.data.pregnancyRecords /
+        surrogacyArrangements / adoptionRecords directly and calls
+        markDataDirty.
+
+children-generator.js
+  CORE  randomness.js (pickRandom, random, randomBoolean, randomInt —
+        load-time guards),
+        time.js (getCurrentYear, isValidYear — load-time guards),
+        accessors.js (getCharacterById — load-time guard; note this is
+        the project/direct accessor at generator call time).
+  CHAR  children-rules.js (load-time guard — FERTILITY_CONSTANTS and
+        getStillbirthChance are required).
+  OPT   None. The generator does NOT have a fallback for ChildrenRules
+        constants; it throws at load when ChildrenRules is missing.
+
+children-statistics.js
+  CORE  None at the pure-core level.
+  CHAR  children-state.js (load-time guard),
+        children-queries.js (load-time guard),
+        character-state.js (load-time guard).
+  OPT   family-queries.js (required only for getParentChildStatistics;
+        that function throws if FamilyQueries is missing).
+
+mortality-rules.js
+  CORE  None. Pure policy.
+  CHAR  None.
+  OPT   None.
+
+mortality-queries.js
+  CORE  None at the pure-core level.
+  CHAR  character-state.js (load-time guard),
+        mortality-rules.js (load-time guard).
+  OPT   None.
+
+mortality-statistics.js
+  CORE  None at the pure-core level.
+  CHAR  mortality-queries.js (load-time guard),
+        mortality-rules.js (load-time guard).
+  OPT   None.
+
+modals-character.js
+  CORE  formatting.js (escapeHtml — load-time guard),
+        icons.js (Icons — load-time guard),
+        modals-core.js (openModal, closeTopModal, confirmDialog —
+        load-time guard),
+        accessors.js (getPlaces — load-time guard),
+        time.js (getCurrentYear, isValidYear — load-time guards),
+        character-traits.js (CHARACTER_TRAIT_VALUES — optional; trait
+        sections are omitted when absent).
+  CHAR  character-commands.js (load-time guard),
+        character-queries.js (load-time guard),
+        character-creation-commands.js (load-time guard),
+        character-deletion-commands.js (load-time guard),
+        character-state.js (load-time guard),
+        family-queries.js (load-time guard; also
+        getAncestorProvider — load-time guard),
+        family-commands.js (load-time guard),
+        family-rules.js (load-time guard; also
+        wouldCreateBiologicalCycle — load-time guard).
+  OPT   selectors/modals-char-selector.js (openCharacterSelector —
+        required for parent pickers),
+        modals-death.js (openDeathModal — required for the Kill
+        route).
+
+modals-children-adoption.js
+  CORE  formatting.js (escapeHtml — load-time guard),
+        icons.js (Icons — load-time guard),
+        modals-core.js (openModal, closeTopModal — load-time guards),
+        time.js (getCurrentYear, isValidYear, calculateAge — load-time
+        guards).
+  CHAR  character-queries.js (load-time guard),
+        children-commands.js (load-time guard),
+        children-queries.js (load-time guard),
+        children-rules.js (load-time guard),
+        family-commands.js (load-time guard),
+        family-queries.js (load-time guard).
+  OPT   selectors/modals-char-selector.js (openCharacterSelector —
+        required only for the parent-picker flow).
+
+modals-children-birth.js
+  CORE  formatting.js (escapeHtml — load-time guard),
+        icons.js (Icons — load-time guard),
+        modals-core.js (openModal, closeTopModal — load-time guards),
+        time.js (getCurrentYear, isValidYear, calculateAge — load-time
+        guards),
+        randomness.js (random — load-time guard; surprise-birth count
+        and gender assignment use the shared RNG stream).
+  CHAR  character-queries.js (load-time guard),
+        children-commands.js (load-time guard),
+        children-queries.js (load-time guard),
+        children-generator.js (load-time guard),
+        children-rules.js (load-time guard).
+
+modals-children-surrogacy.js
+  CORE  formatting.js (escapeHtml — load-time guard),
+        icons.js (Icons — load-time guard),
+        modals-core.js (openModal, closeTopModal — load-time guards),
+        time.js (getCurrentYear, isValidYear, calculateAge — load-time
+        guards).
+  CHAR  character-queries.js (load-time guard),
+        children-commands.js (load-time guard),
+        children-queries.js (load-time guard),
+        children-rules.js (load-time guard).
+  OPT   selectors/modals-char-selector.js (openCharacterSelector —
+        required for partner / surrogate / donor selection).
+
+modals-death.js
+  CORE  formatting.js (escapeHtml — load-time guard),
+        icons.js (Icons — load-time guard),
+        modals-core.js (openModal, closeTopModal — load-time guards),
+        time.js (getCurrentYear, isValidYear, calculateAge — load-time
+        guards),
+        randomness.js (random — load-time guard; UI-suggestion
+        defaults use it).
+  CHAR  character-queries.js (load-time guard),
+        mortality-rules.js (load-time guard),
+        character-lifecycle.js (load-time guard).
+  OPT   selectors/modals-char-selector.js (openCharacterSelector —
+        father picker and killer picker),
+        modals-children-birth.js (openPregnancyAttemptModal — childbed
+        fever route),
+        children-rules.js (FERTILITY_CONSTANTS — used to decide
+        whether childbed fever is offered; missing → not offered, no
+        throw).
+
+
+--------------------------------------------------------------------------------
+1.3 DEPENDENCY INVERSE: WHICH CHARACTER FILES USE WHICH CORE FILES
+--------------------------------------------------------------------------------
+
+  time.js                 — almost every file listed above.
+                            Not used by: family-rules.js,
+                            children-rules.js, mortality-rules.js,
+                            character-traits.js (indirect via
+                            character-factory), family-state.js (only
+                            indirectly via subscriptions),
+                            children-state.js (same),
+                            mortality-queries.js (delegates to
+                            MortalityRules, which is pure policy).
+
+  ids.js                  — character-factory.js,
+                            character-commands.js (setReligion),
+                            character-creation-commands.js,
+                            family-commands.js,
+                            children-commands.js.
+
+  randomness.js           — character-lifecycle.js,
+                            character-generator.js,
+                            children-commands.js,
+                            children-generator.js,
+                            modals-children-birth.js,
+                            modals-death.js.
+
+  storage.js              — character-state.js,
+                            family-state.js,
+                            children-state.js,
+                            children-commands.js (writes
+                            masterData.data.* and calls
+                            markDataDirty).
+
+  accessors.js            — character-state.js (getCharacters,
+                            invalidateAccessorCaches),
+                            character-queries.js (getRankById),
+                            character-generator.js (getPlaces,
+                            getPlaceById, getNameLists, getRoles),
+                            character-ui-list.js (getCharacters via
+                            accessors OR character-system),
+                            character-factory.js (indirect: it
+                            validates IDs by shape, not existence),
+                            modals-character.js (getPlaces).
+
+  formatting.js           — character-ui-list.js,
+                            modals-character.js,
+                            modals-children-adoption.js,
+                            modals-children-birth.js,
+                            modals-children-surrogacy.js,
+                            modals-death.js.
+
+  icons.js                — same list as formatting.js, plus
+                            (transitively) modals-core.js's own
+                            dependency.
+
+  modals-core.js          — every modals-*.js file.
+
+  world.js                — character-generator.js.
+
+  names.js                — character-generator.js.
+
+  character-traits.js     — character-factory.js (load-time),
+                            character-generator.js (load-time),
+                            character-commands.js (trait writes only —
+                            refuses without it),
+                            modals-character.js (trait sections
+                            omitted when absent).
+
+  validation.js           — only via storage.js's import path; the
+                            character subsystem does not call it
+                            directly.
+
+  constants.js            — not used by the character subsystem.
+
+  collections.js          — not used by the character subsystem.
+
+  exportUtils.js          — not used by the character subsystem.
+
+  responsive.js,
+  collapsible.js,
+  ui.js,
+  ui-state.js,
+  tab-manager.js,
+  maintenance.js,
+  integrity.js            — not used by the character subsystem.
+
+
+================================================================================
+PART 2 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks (which throw if a dependency is not
+      loaded),
+  (b) call-time window.X lookups in code,
+  (c) the character-system.js REQUIRED list (which throws if any
+      canonical character module is absent),
+  (d) character-creation-commands.js's own guard against
+      buildCharacter / validateBuiltCharacter / getCurrentYear,
+  (e) character-lifecycle.js's guard against markDeceased,
+  (f) children-commands.js's guard against many character modules,
+  (g) the documented core load order (see stillwaters-docs.txt),
+  (h) the character-doc.txt §3 bootstrap contract.
+
+Reading note:
+  The character subsystem sits above the core layer and below the
+  application bootstrap. Groups C0 and C1 below are the core
+  prerequisites; groups A1..A9 are the character subsystem's own load
+  order; group A10 is the shim; group A11 is the bootstrap call.
+
+--------------------------------------------------------------------------------
+GROUP C0 — CORE FILES REQUIRED BY THE CHARACTER SUBSYSTEM
+--------------------------------------------------------------------------------
+
+Load these BEFORE any js/character/ file. This is a subset of the
+core-level Group 0 and Group 2 from stillwaters-docs.txt, filtered to
+the character subsystem's actual needs.
+
+  js/core/constants/character-traits.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/ids.js
+  js/core/time.js
+  js/core/randomness.js
+  js/core/storage.js
+  js/core/accessors.js
+  js/core/world.js
+  js/core/names.js
+  js/core/modals-core.js
+
+Load-time rationale per file:
+
+  character-traits.js — HARD load-time guard in
+    character-factory.js and character-generator.js. Loading either
+    without it throws.
+
+  formatting.js, icons.js — load-time guards in every modals-*.js
+    and in character-ui-list.js. modals-core.js also requires both.
+
+  ids.js — load-time guard in character-factory.js,
+    character-commands.js, family-commands.js, and
+    children-commands.js.
+
+  time.js — load-time guards in character-queries.js,
+    character-creation-commands.js, character-lifecycle.js,
+    family-commands.js, children-commands.js, children-generator.js,
+    character-statistics.js, modals-character.js,
+    modals-children-adoption.js, modals-children-birth.js,
+    modals-children-surrogacy.js, modals-death.js.
+
+  randomness.js — load-time guards in character-lifecycle.js,
+    character-generator.js, children-commands.js,
+    children-generator.js, modals-children-birth.js,
+    modals-death.js.
+
+  storage.js — must have initialized window.masterData before
+    character-state.js, family-state.js, or children-state.js load.
+    See the bootstrap note in character-doc.txt §3.1:
+    `initializeStorage()` MUST run between storage.js and the state
+    modules. Under the character subsystem's own load order, this is
+    the initializeStorage() call described in Group A11 below.
+
+  accessors.js — getCharacters must be present at character-state.js
+    load time. invalidateAccessorCaches must be present at first
+    mutation for cross-tab reload correctness. character-generator.js
+    requires getPlaces, getPlaceById, getNameLists, getRoles at load
+    time.
+
+  world.js — required by character-generator.js at load time
+    (getPlaceScope, getLocationTypeScope).
+
+  names.js — required by character-generator.js at load time
+    (getRandomNameFromCountry, getRandomSurnameFromCountry).
+
+  modals-core.js — required by every modals-*.js at load time
+    (openModal, closeTopModal, confirmDialog).
+
+The following are also needed but by transitively-reached code
+(uploaded on demand at call time), so they are placed here to be safe:
+
+  js/core/validation.js
+    Needed if the application ever calls storage.js's import path in a
+    character-containing world. storage.js guards this with
+    typeof === 'function', so it does NOT throw if absent. Load it in
+    Group C0 to avoid surprise at import time.
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+    Not hard dependencies of the character subsystem itself, but under
+    the documented core load order they load first. Loading them here
+    costs nothing and prevents future cross-domain drift.
+
+Bootstrap call:
+  After storage.js is loaded, `window.initializeStorage()` MUST run
+  before any js/character/*-state.js file loads. See GROUP A11 for the
+  exact placement note. As a consequence:
+
+    storage.js  →  initializeStorage()  →  character-state.js
+                                          family-state.js
+                                          children-state.js
+
+  If initializeStorage() is not called before character-state.js
+  parses, character-state.js's guard throws "missing required
+  dependencies: masterData". Same for family-state.js and
+  children-state.js.
+
+
+--------------------------------------------------------------------------------
+GROUP A1 — PURE POLICY FILES (NO DEPENDENCIES WITHIN THE CHARACTER SUBSYSTEM)
+--------------------------------------------------------------------------------
+
+Load these first inside js/character/. None of them require another
+character file.
+
+  js/character/family-rules.js
+  js/character/children-rules.js
+  js/character/mortality-rules.js
+
+Rationale:
+  - All three declare no js/character/ dependencies.
+  - children-generator.js and modals-death.js consume children-rules.js
+    at load time (FERTILITY_CONSTANTS / getStillbirthChance).
+  - family-queries.js and family-commands.js consume family-rules.js
+    at load time.
+  - mortality-queries.js and mortality-statistics.js consume
+    mortality-rules.js at load time.
+  - character-lifecycle.js consumes mortality-rules.js at load time.
+
+  Load order among the three is unimportant; load them together.
+
+
+--------------------------------------------------------------------------------
+GROUP A2 — CANONICAL STATE MODULES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+  js/character/family-state.js
+  js/character/children-state.js
+
+Rationale:
+  - All three require window.masterData at load time. See GROUP C0's
+    bootstrap note.
+  - Each file's collision / dependency guards run at parse time.
+  - No inter-character-file dependency between these three. The order
+    within this group does not matter as long as each is loaded before
+    its consumers in Groups A3 and later.
+
+
+--------------------------------------------------------------------------------
+GROUP A3 — CANONICAL COMMAND AND QUERY MODULES
+--------------------------------------------------------------------------------
+
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+Rationale:
+  - character-commands.js requires character-state.js (Group A2).
+  - character-queries.js requires character-state.js (Group A2).
+  - These two together form the character read/write API. Every later
+    group depends on at least one of them.
+
+  Notes:
+    - character-queries.js also optionally reaches into
+      character-commands.js (getProfessions). That is a CALL-TIME
+      lookup, so commands may load after queries without throwing.
+      Loading commands first (as shown) simply makes the runtime path
+      cheaper.
+    - family-queries.js (Group A4) reads CharacterState, not
+      character-queries.js. The dependency is one-directional.
+
+
+--------------------------------------------------------------------------------
+GROUP A4 — FAMILY QUERIES AND COMMANDS
+--------------------------------------------------------------------------------
+
+  js/character/family-queries.js
+  js/character/family-commands.js
+
+Rationale:
+  - family-queries.js requires family-state.js (Group A2),
+    family-rules.js (Group A1), and character-state.js (Group A2).
+  - family-commands.js requires family-state.js,
+    family-rules.js, family-queries.js, character-state.js, ids.js,
+    and time.js. All are in Groups C0, A1, A2, A3, and A4.
+
+  Notes:
+    - family-statistics.js (Group A5) consumes family-queries.js.
+    - character-lifecycle.js (Group A6) and children-commands.js
+      (Group A7) consume family-commands.js at load time. This makes
+      family-commands.js a hard prerequisite for those files.
+
+
+--------------------------------------------------------------------------------
+GROUP A5 — AGGREGATION MODULES (QUERIES + STATISTICS)
+--------------------------------------------------------------------------------
+
+  js/character/mortality-queries.js
+  js/character/mortality-statistics.js
+  js/character/family-statistics.js
+
+Rationale:
+  - mortality-queries.js requires character-state.js (Group A2) and
+    mortality-rules.js (Group A1).
+  - mortality-statistics.js requires mortality-queries.js (above) and
+    mortality-rules.js.
+  - family-statistics.js requires family-queries.js (Group A4),
+    family-rules.js (Group A1), and character-queries.js (Group A3).
+
+  Load order within this group is unimportant. Load them together.
+
+
+--------------------------------------------------------------------------------
+GROUP A6 — CHARACTER CREATION, DELETION, LIFECYCLE
+--------------------------------------------------------------------------------
+
+  js/character/character-factory.js
+  js/character/character-generator.js
+  js/character/character-creation-commands.js
+  js/character/character-deletion-commands.js
+  js/character/character-lifecycle.js
+
+Rationale:
+  - character-factory.js requires ids.js and character-traits.js
+    (Group C0). No js/character/ dependency.
+  - character-generator.js requires randomness.js, time.js, world.js,
+    accessors.js, names.js, and character-traits.js (all in Group
+    C0).
+  - character-creation-commands.js requires character-state.js (Group
+    A2), character-factory.js (above), and time.js. It OPTIONALLY
+    calls character-generator.js, family-commands.js, and
+    religion-commands.js at call time.
+  - character-deletion-commands.js requires character-state.js
+    (Group A2). All cross-domain cleanup targets are CALL-TIME
+    lookups guarded by typeof === 'function'.
+  - character-lifecycle.js requires character-state.js (Group A2),
+    character-commands.js (Group A3), mortality-rules.js (Group A1),
+    time.js and randomness.js (Group C0).
+
+  Order notes:
+    - character-factory.js must load before character-creation-
+      commands.js (the latter requires buildCharacter and
+      validateBuiltCharacter at load time).
+    - character-generator.js has no load-time dependency on any other
+      js/character/ file, but it is placed here because it lives on
+      the creation path and is called from character-creation-
+      commands.js at runtime.
+    - character-lifecycle.js must load before children-commands.js
+      (Group A7) because children-commands.js imports
+      CharacterLifecycle.killCharacter for the maternal-death path.
+      If CharacterLifecycle is missing at load time,
+      character-lifecycle.js throws when children-commands.js
+      attempts to call it — but children-commands.js only refuses the
+      maternal-death OUTCOME at call time, not the whole module at
+      load time. Under the documented load order, lifecycle is loaded
+      before children-commands.js so this doesn't matter. Keep the
+      order.
+    - character-lifecycle.js must load before modals-death.js (Group
+      A8) because modals-death.js requires CharacterLifecycle at load
+      time.
+    - character-creation-commands.js must load before
+      children-commands.js (Group A7) because children-commands.js
+      requires it at load time.
+
+  Registration side effects:
+    - character-lifecycle.js exposes window.registerDeathHandler.
+      Modules that load after it (location-commands.js,
+      relationship-integrations.js, etc.) call this at their own load
+      time to register cleanup. That is a load-order-independent
+      contract; nothing in the character subsystem needs to know which
+      modules registered.
+
+
+--------------------------------------------------------------------------------
+GROUP A7 — CHILDREN (RULES ALREADY LOADED; STATE ALREADY LOADED;
+                 COMMANDS + GENERATOR + STATISTICS HERE)
+--------------------------------------------------------------------------------
+
+  js/character/children-queries.js
+  js/character/children-generator.js
+  js/character/children-commands.js
+  js/character/children-statistics.js
+
+Rationale:
+  - children-queries.js requires children-state.js (Group A2) and
+    family-queries.js (Group A4).
+  - children-generator.js requires randomness.js, time.js,
+    accessors.js (all Group C0) and children-rules.js (Group A1).
+  - children-commands.js requires children-state.js, children-
+    rules.js, character-state.js, character-commands.js,
+    character-creation-commands.js, family-commands.js, ids.js,
+    time.js, randomness.js. Every one of those lives in a group
+    loaded earlier.
+  - children-statistics.js requires children-state.js,
+    children-queries.js, character-state.js, and optionally
+    family-queries.js (at call time only, for
+    getParentChildStatistics).
+
+  Order notes:
+    - children-queries.js must load before children-commands.js
+      because modals consume both, and modals-* require both at
+      their own load time.
+    - children-commands.js must load before children-statistics.js
+      transitively — children-statistics.js requires
+      children-queries.js (which requires children-state.js); it does
+      NOT require children-commands.js. Ordering here is about
+      clarity, not correctness; loading them in the order shown keeps
+      the dependency picture linear.
+    - children-commands.js commits to masterData.data.* on its own
+      (pregnancyRecords, surrogacyArrangements, adoptionRecords).
+      This is documented in its header. It depends on
+      window.markDataDirty, not on storage.js directly.
+
+
+--------------------------------------------------------------------------------
+GROUP A8 — CHARACTER-UI MODALS
+--------------------------------------------------------------------------------
+
+  js/character/modals-character.js
+  js/character/modals-children-birth.js
+  js/character/modals-children-surrogacy.js
+  js/character/modals-children-adoption.js
+  js/character/modals-death.js
+
+Rationale:
+  - All five require formatting.js, icons.js, modals-core.js, and
+    time.js (Group C0).
+  - modals-character.js additionally requires accessors.js (Group
+    C0), CharacterCommands, CharacterQueries,
+    CharacterCreationCommands, CharacterDeletionCommands,
+    CharacterState (Groups A2, A3, A6), FamilyQueries,
+    FamilyCommands, FamilyRules (Groups A1, A4).
+  - modals-children-birth.js additionally requires randomness.js
+    (Group C0), CharacterQueries, ChildrenCommands, ChildrenQueries,
+    ChildrenGenerator, ChildrenRules (Groups A3, A7).
+  - modals-children-surrogacy.js additionally requires
+    CharacterQueries, ChildrenCommands, ChildrenQueries,
+    ChildrenRules (Groups A3, A7).
+  - modals-children-adoption.js additionally requires
+    CharacterQueries, ChildrenCommands, ChildrenQueries,
+    ChildrenRules, FamilyCommands, FamilyQueries (Groups A3, A4,
+    A7).
+  - modals-death.js additionally requires randomness.js (Group C0),
+    CharacterQueries, MortalityRules, CharacterLifecycle (Groups A3,
+    A5, A6).
+
+  Order notes:
+    - All five modal files load in ANY order among themselves; none
+      imports another at load time.
+    - modals-character.js is required by character-ui-list.js? No.
+      character-ui-list.js is a pure renderer and does not touch
+      modals-character.js.
+    - modals-death.js's childbed-fever route calls
+      window.openPregnancyAttemptModal, which lives in
+      modals-children-birth.js. That is a CALL-TIME lookup with
+      typeof === 'function' guard. Loading modals-children-birth.js
+      before modals-death.js is therefore not strictly necessary,
+      but placing them adjacent in the same group makes the intent
+      obvious.
+    - modals-children-adoption.js's parent-picker flow calls
+      window.openCharacterSelector. That is an OPTIONAL dependency;
+      the modal returns a structured failure if the selector is not
+      loaded at call time. See the module header's DEPENDENCIES
+      (OPTIONAL) section.
+
+
+--------------------------------------------------------------------------------
+GROUP A9 — CHARACTER-UI LIST RENDERER
+--------------------------------------------------------------------------------
+
+  js/character/character-ui-list.js
+
+Rationale:
+  - Requires formatting.js (Group C0), CharacterQueries (Group A3),
+    and a provider of window.getCharacters (character-system.js OR
+    accessors.js).
+  - The module explicitly accepts either provider. It does not
+    require character-system.js or accessors.js at load time — it
+    requires window.getCharacters to be a function, which either
+    provider satisfies.
+  - OPTIONAL: CultureQueries.getCultureDisplay (skipped when absent),
+    world.js's getCurrentPlace (skipped when absent — location
+    displays render fallback text).
+
+  Order notes:
+    - character-ui-list.js MAY be loaded any time after Group A3
+      plus Group C0. It does not require character-system.js.
+    - If character-ui-list.js loads BEFORE character-system.js and
+      accessors.js is present, its load-time guard passes because
+      accessors.js satisfies window.getCharacters.
+    - If character-ui-list.js loads BEFORE accessors.js and
+      character-system.js is present, its guard also passes because
+      character-system.js satisfies window.getCharacters.
+    - Under the documented core load order (accessors.js is in Group
+      C0), loading character-ui-list.js after Group C0 is safe.
+
+
+--------------------------------------------------------------------------------
+GROUP A10 — COMPATIBILITY SHIM (LAST CHARACTER-SUBSYSTEM FILE)
+--------------------------------------------------------------------------------
+
+  js/character/character-system.js
+
+Rationale:
+  - This file's REQUIRED list contains every canonical
+    character-subsystem module (see Group A10's REQUIRED list in
+    Part 1.2). If any one is missing when character-system.js loads,
+    it throws.
+  - It installs legacy globals (getCharacters, getCharacterById,
+    getCharacterSummary, etc.) and must therefore load after all its
+    dependencies.
+  - Under the documented load order, character-system.js is the LAST
+    file in the character subsystem to load, and its installed
+    window.getCharacterById is the projection-returning version that
+    the rest of the codebase sees at runtime. See
+    stillwaters-docs.txt §3.3 ("Character projection vs. live
+    entity").
+
+
+--------------------------------------------------------------------------------
+GROUP A11 — APPLICATION BOOTSTRAP
+--------------------------------------------------------------------------------
+
+Between GROUP C0 and GROUP A2, the application must call:
+
     window.initializeStorage();
-</script>
-<!-- everything else -->
+
+This is the same call described in stillwaters-docs.txt §Group 10.
+It initializes window.masterData and starts cross-tab sync. Every
+character-subsystem file in Groups A2 and later that touches
+masterData (character-state.js, family-state.js, children-state.js)
+requires it at load time.
+
+After character-system.js (Group A10), the application is free to call
+any character-subsystem init routines. The supplied character files do
+not declare an explicit "init()" — they self-install on load. Any
+application-level bootstrap (dashboard wiring, tab-manager init,
+toolbar binding) runs after Group A10.
+
+
+================================================================================
+PART 3 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list, ready to paste into a page. Group comments are
+inline; each entry is one <script> load. Keep the lines in the order
+shown.
+
+  — Group C0: core prerequisites —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/ids.js
+  js/core/time.js
+  js/core/randomness.js
+  js/core/storage.js
+
+  — Group C0 bootstrap call —
+  initializeStorage()      (function call, not script load)
+
+  — Group C0: remaining core prerequisites —
+  js/core/accessors.js
+  js/core/validation.js
+  js/core/world.js
+  js/core/names.js
+  js/core/modals-core.js
+
+  — Group A1: pure policy —
+  js/character/family-rules.js
+  js/character/children-rules.js
+  js/character/mortality-rules.js
+
+  — Group A2: canonical state —
+  js/character/character-state.js
+  js/character/family-state.js
+  js/character/children-state.js
+
+  — Group A3: command and query API —
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  — Group A4: family queries and commands —
+  js/character/family-queries.js
+  js/character/family-commands.js
+
+  — Group A5: aggregation —
+  js/character/mortality-queries.js
+  js/character/mortality-statistics.js
+  js/character/family-statistics.js
+
+  — Group A6: creation, deletion, lifecycle —
+  js/character/character-factory.js
+  js/character/character-generator.js
+  js/character/character-creation-commands.js
+  js/character/character-deletion-commands.js
+  js/character/character-lifecycle.js
+
+  — Group A7: children —
+  js/character/children-queries.js
+  js/character/children-generator.js
+  js/character/children-commands.js
+  js/character/children-statistics.js
+
+  — Group A8: character UI modals —
+  js/character/modals-character.js
+  js/character/modals-children-birth.js
+  js/character/modals-children-surrogacy.js
+  js/character/modals-children-adoption.js
+  js/character/modals-death.js
+
+  — Group A9: character UI list —
+  js/character/character-ui-list.js
+
+  — Group A10: compatibility shim —
+  js/character/character-system.js
+
+
+================================================================================
+PART 4 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1. character-traits.js before character-factory.js.
+    Failure without it: character-factory.js throws at load
+    ("CHARACTER_TRAIT_VALUES missing").
+
+ 2. character-traits.js before character-generator.js.
+    Failure without it: character-generator.js throws at load.
+
+ 3. storage.js AND a successful initializeStorage() call before
+    character-state.js, family-state.js, children-state.js.
+    Failure without it: those state modules throw at load
+    ("masterData is required" / "storage.js must load first").
+
+ 4. time.js before any file that guards on getCurrentYear or
+    isValidYear. That is: character-queries.js,
+    character-creation-commands.js, character-lifecycle.js,
+    character-commands.js, family-commands.js,
+    children-commands.js, children-generator.js,
+    character-statistics.js, and every modals-*.js.
+    Failure without it: each of those files throws at load.
+
+ 5. randomness.js before character-lifecycle.js,
+    character-generator.js, children-commands.js,
+    children-generator.js, modals-children-birth.js,
+    modals-death.js.
+    Failure without it: each throws at load.
+
+ 6. ids.js before character-factory.js, character-commands.js,
+    character-creation-commands.js, family-commands.js,
+    children-commands.js.
+    Failure without it: each throws at load.
+
+ 7. accessors.js before character-state.js (getCharacters) and
+    character-generator.js (getPlaces / getPlaceById / getNameLists /
+    getRoles / getCharacterById). Also before character-ui-list.js if
+    character-system.js has not loaded yet.
+    Failure without it: the load-time guards throw.
+
+ 8. world.js and names.js before character-generator.js.
+    Failure without it: character-generator.js throws at load
+    ("getPlaceScope / getLocationTypeScope / getRandomNameFromCountry /
+    getRandomSurnameFromCountry missing").
+
+ 9. formatting.js and icons.js and modals-core.js before any
+    modals-*.js and before character-ui-list.js.
+    Failure without it: each throws at load.
+
+10. character-factory.js before character-creation-commands.js.
+    Failure without it: character-creation-commands.js throws at
+    load ("buildCharacter / validateBuiltCharacter missing").
+
+11. character-state.js before character-commands.js and
+    character-queries.js.
+    Failure without it: each throws at load.
+
+12. character-commands.js before character-lifecycle.js and
+    character-creation-commands.js and character-queries.js (the last
+    one only if character-queries.js reaches CharacterCommands at
+    call time — which it does for getProfessions; that is a
+    call-time dependency, so it does not throw at load but the
+    profession-related paths return empty).
+
+13. mortality-rules.js before mortality-queries.js,
+    mortality-statistics.js, character-lifecycle.js, character-
+    commands.js (for markDeceased callers), modals-death.js.
+    Failure without it: each throws at load (character-commands.js
+    throws at load only if the trait-vocabulary guard is not what you
+    are testing; specifically, character-commands.js's mortality
+    dependency is CALL-TIME — markDeceased refuses if MortalityRules
+    is missing — while the other four throw at load).
+
+14. family-rules.js before family-queries.js,
+    family-commands.js, family-statistics.js, modals-character.js.
+    Failure without it: each throws at load.
+
+15. family-state.js before family-queries.js and
+    family-commands.js.
+    Failure without it: each throws at load.
+
+16. family-queries.js before family-commands.js,
+    family-statistics.js, children-queries.js,
+    children-commands.js, character-statistics.js (optional — only
+    getParentChildStatistics requires it),
+    modals-character.js, modals-children-adoption.js.
+    Failure without it: each throws at load except
+    character-statistics.js, which throws only when
+    getParentChildStatistics is called.
+
+17. family-commands.js before character-lifecycle.js (for named
+    cross-domain dispatch) and children-commands.js and
+    character-creation-commands.js and modals-character.js and
+    modals-children-adoption.js.
+    Failure without it: each throws at load.
+
+18. children-rules.js before children-generator.js,
+    children-commands.js, children-queries.js (children-queries only
+    uses children-rules for enum passthrough; it does NOT throw at
+    load if missing, but the modal and command layers expect it),
+    modals-children-birth.js, modals-children-surrogacy.js,
+    modals-children-adoption.js.
+    Failure without it: children-generator.js, children-commands.js,
+    and the three children modal files throw at load.
+
+19. children-state.js before children-queries.js,
+    children-commands.js, children-statistics.js.
+    Failure without it: each throws at load.
+
+20. character-creation-commands.js and family-commands.js before
+    children-commands.js.
+    Failure without it: children-commands.js throws at load.
+
+21. character-lifecycle.js before modals-death.js and before
+    children-commands.js if the maternal-death outcome is to be
+    supported (children-commands.js refuses the maternal-death
+    outcome at call time if CharacterLifecycle is missing, but the
+    rest of children-commands.js loads).
+    Failure without it: modals-death.js throws at load;
+    children-commands.js refuses the maternal-death path.
+
+22. character-system.js AFTER every other character-subsystem file.
+    Failure without it: character-system.js throws at load with the
+    full list of missing modules. Under the documented load order,
+    its installed window.getCharacterById is the projection-returning
+    version the runtime sees.
+
+23. No dependencies flow FROM core INTO the character subsystem.
+    state.js (js/core/state.js) requires CharacterState, but the
+    character subsystem does NOT require state.js. Do not add a
+    js/core/state.js → character-subsystem edge.
+
+
+================================================================================
+PART 5 — KNOWN HAZARDS
+================================================================================
+
+  1. initializeStorage() must run BEFORE character-state.js,
+     family-state.js, children-state.js. Not just storage.js — the
+     function call itself. This is the single most common load-order
+     mistake, because storage.js loads fine and its exported functions
+     are all present; the failure is that window.masterData is still
+     undefined when the state modules parse. See character-doc.txt
+     §3.1 for the canonical wording.
+
+  2. window.getCharacterById race. accessors.js exports the
+     live-entity version. character-queries.js ALSO defines a
+     getCharacterById, but does NOT install it on window — the
+     character-system.js shim does, at load time. Under the
+     documented load order the shim wins the runtime race, so
+     window.getCharacterById returns a PROJECTION. The
+     character-ui-list.js onSelect callback therefore receives a
+     projection. Do not attempt to mutate the callback's argument;
+     use CharacterCommands or
+     CharacterState.getLiveCharacterForMutation.
+
+  3. Character-commands trait dependency. character-traits.js is a
+     HARD load-time dependency of character-factory.js and
+     character-generator.js, but character-commands.js is a SOFT
+     dependency: the module loads, and trait WRITE operations refuse
+     with a clear reason if CHARACTER_TRAIT_VALUES is not present.
+     This asymmetry is documented in character-commands.js's TRAITS
+     header section. If your bootstrap loads the factory and the
+     generator but skips character-traits.js, those two throw; if it
+     skips the trait vocabulary but loads only character-commands.js,
+     trait writes fail. Under the documented load order, the
+     vocabulary is present at all times.
+
+  4. character-system.js is a one-way alias shim. It does not define
+     any module behavior; every alias points at a canonical
+     character-subsystem function. Do not add new behavior to the
+     shim; add it to the canonical module and alias it.
+
+  5. Cross-domain cleanup hooks. character-lifecycle.js and
+     character-deletion-commands.js both install
+     window.registerDeathHandler and window.registerDeleteHandler.
+     These registries are the load-order-independent path for
+     domains that load AFTER the character subsystem
+     (location-commands.js and relationship-integrations.js are the
+     two named in the headers). Do not add new dependencies on those
+     domains from inside the character subsystem; use the
+     registration hooks.
+
+  6. Maternal death is routed through CharacterLifecycle.killCharacter,
+     not through CharacterCommands.markDeceased. children-commands.js
+     REFUSES the maternal-death outcome if CharacterLifecycle is
+     missing rather than leaving a half-dispatch. Do not "fix" this
+     by calling markDeceased directly; that would produce a dead
+     mother with stale family edges and stale rank assignments.
+
+  7. children-commands.js writes to masterData.data directly
+     (pregnancyRecords, surrogacyArrangements, adoptionRecords) and
+     calls markDataDirty. This is documented; do not
+     "helpfully" reroute those writes through storage.js's own save
+     functions. They go through markDataDirty for the same reason
+     every other domain does.
+
+  8. FamilyAccessors does not exist in the current tree. The shim's
+     family aliases route to FamilyQueries and FamilyCommands
+     directly. Any caller that reaches for FamilyAccessors gets
+     undefined and must be fixed.
+
+  9. RelationshipIntegrations (plural) — this is the load-order-safe
+     path for relationship cleanup. The named dispatch table in
+     character-lifecycle.js and character-deletion-commands.js
+     references it, but under the documented load order it loads
+     AFTER the character subsystem, so the named dispatch is a
+     no-op. The registration hooks are what actually reach it.
+
+ 10. modals-death.js's childbed-fever routing has a per-call guard
+     (`routingInProgress`). A second "Confirm Death" click while the
+     father selector is open is a no-op. Do not remove this guard on
+     the assumption that the modal stack handles double-clicks; the
+     stack handles them, but the routing sequence would open a second
+     father selector.
+
+ 11. Settlement data does NOT need accessor cache invalidation.
+     masterData.data.settlementData is not indexed by accessors.js.
+     Settlement commands may write through markDataDirty and read via
+     SettlementQueries; character-state.js's invalidateAccessorCaches
+     is what keeps getCharacterById fresh, and that is what the
+     character subsystem calls on every write.
+
+ 12. character-statistics.js::getLiteracyStatistics requires a
+     literacy predicate as an argument; it throws without one. The
+     education domain owns literacy and routes through
+     CharacterCommands.isLiterate. Do not add a fallback inside
+     character-statistics.js that returns 0; zero is a legitimate
+     result and a fabricated zero would mask a missing education
+     domain.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
