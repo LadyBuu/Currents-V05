@@ -10,10 +10,8 @@
  *          - Track associated characters (ministers, officials, etc.)
  *
  * DEPENDENCIES (checked at load time):
- *   - accessors.js          (getPlaceById, getCharacterById, getCharacters)
+ *   - accessors.js          (getPlaceById, getCharacterById)
  *   - government-state.js   (GovernmentState)
- *   - government-commands.js (GovernmentCommands — reads only; writes
- *                           go through LocationCommands)
  *   - location-commands.js  (LocationCommands — assignLeader,
  *                           endLeaderTerm, persist)
  *   - formatting.js         (escapeHtml)
@@ -45,10 +43,8 @@
  *     3. LocationCommands.persist() — once, at the end
  *
  *   The net data result is a correct past-leader assignment record, but
- *   any leader who was active before step 1 has been ended. Adding a
- *   past leader this way will end the current one. A future
- *   LocationCommands.addPastLeaderAssignment command would remove that
- *   limitation; the tab does not attempt to invent that path here.
+ *   any leader who was active before step 1 has been ended. The modal
+ *   says so.
  *
  * MODAL KEY TRANSLATION:
  *   modals-core.js reads titleHtml / contentHtml. The call sites in
@@ -57,6 +53,14 @@
  *
  * MODAL INPUT SCOPING:
  *   Every onConfirm / onOpen reads inputs via root.querySelector.
+ *
+ * INLINE STYLE POLICY:
+ *   This revision removes every inline style="" attribute that the
+ *   previous revision used for stat-value colours and the collapsed
+ *   former-leaders body. The colours now come from
+ *   .gh-stat-value.is-active / .is-ended / .is-officials (themes.css
+ *   tokens var(--ok) / var(--danger-lt) / var(--accent)). The collapsed
+ *   state uses .gh-subsection-body.is-collapsed.
  * =============================================================================
  */
 
@@ -143,12 +147,6 @@
         }
     }
 
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-        }
-    }
-
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
@@ -178,11 +176,8 @@
     }
 
     /**
-     * Age of a character. Takes the full character projection (or a
-     * subset that carries birthYear, isDeceased, deathYear) so the
-     * deceased flag reaches calculateAge. Passing only birth/death
-     * years silently returned "age today if still alive" for deceased
-     * characters — a bug in the previous revision.
+     * Age of a character. Takes the full character projection so the
+     * deceased flag reaches calculateAge.
      */
     function _calculateCharacterAge(character, asOfYear) {
         if (!character) return null;
@@ -221,7 +216,7 @@
 
             for (var a = 0; a < dept.assignments.length; a++) {
                 var assignment = dept.assignments[a];
-                if (assignment.endYear) continue; // active only
+                if (assignment.endYear) continue;
 
                 var charId = assignment.characterId;
                 if (!charId) continue;
@@ -280,7 +275,6 @@
 
         var officials = {};
 
-        // Leaders first
         for (var i = 0; i < leaders.length; i++) {
             var leader = leaders[i];
             if (!leader || !leader.characterId) continue;
@@ -298,7 +292,6 @@
             };
         }
 
-        // Non-leader officials
         for (var a = 0; a < associated.length; a++) {
             var assoc = associated[a];
             if (officials[assoc.characterId]) {
@@ -464,8 +457,7 @@
         html += '<button class="gh-btn gh-btn-add" data-action="add-leader">' +
             _getIcon('PLUS') + ' Add Leader' +
             '</button>';
-        html += '<button class="gh-btn gh-btn-refresh" ' +
-            'data-action="refresh-history">' +
+        html += '<button class="gh-btn" data-action="refresh-history">' +
             _getIcon('REFRESH') + ' Refresh' +
             '</button>';
         html += '</div>';
@@ -479,17 +471,17 @@
             '</div>';
         html += '<div class="gh-stat">' +
             '<span class="gh-stat-label">Current</span>' +
-            '<span class="gh-stat-value" style="color:#28a745;">' +
+            '<span class="gh-stat-value is-active">' +
             currentLeaders.length + '</span>' +
             '</div>';
         html += '<div class="gh-stat">' +
             '<span class="gh-stat-label">Former</span>' +
-            '<span class="gh-stat-value" style="color:#dc3545;">' +
+            '<span class="gh-stat-value is-ended">' +
             formerLeaders.length + '</span>' +
             '</div>';
         html += '<div class="gh-stat">' +
             '<span class="gh-stat-label">Officials</span>' +
-            '<span class="gh-stat-value" style="color:#4a90d9;">' +
+            '<span class="gh-stat-value is-officials">' +
             officials.length + '</span>' +
             '</div>';
         html += '</div>';
@@ -528,7 +520,7 @@
                 html += '<span class="gh-toggle-icon">' +
                     _getIcon('TRIANGLE_RIGHT') + '</span>';
                 html += '</div>';
-                html += '<div class="gh-subsection-body" style="display:none;">';
+                html += '<div class="gh-subsection-body is-collapsed">';
                 html += '<div class="gh-leaders-list">';
                 for (var f = 0; f < formerLeaders.length; f++) {
                     var formerIdx = sortedLeaders.indexOf(formerLeaders[f]);
@@ -563,7 +555,7 @@
         }
         html += '</div>';
 
-        html += '</div>'; // end gh-tab-container
+        html += '</div>';
 
         return html;
     }
@@ -634,7 +626,7 @@
                 content += 'This is a current/active leader';
                 content += '</label>';
                 content += '</div>';
-                content += '<p class="gh-modal-note">' +
+                content += '<p class="gov-modal-note">' +
                     'Note: adding an active leader will end the current ' +
                     'leader\'s term. Adding a past leader records the ' +
                     'assignment but also ends the current term — the ' +
@@ -647,7 +639,7 @@
                     content: content,
                     confirmText: 'Add Leader',
                     cancelText: 'Cancel',
-                    onOpen: function(root) {
+                    onMount: function(root) {
                         var activeCheck = root.querySelector('#gh-leader-is-active');
                         var endYearInput = root.querySelector('#gh-leader-end-year');
                         var reasonInput = root.querySelector('#gh-leader-reason');
@@ -704,8 +696,6 @@
                             }
                         }
 
-                        // Step 1: install (as current leader — ends any
-                        // prior active leader).
                         var assignResult = LC.assignLeader(
                             placeId, characterId, startYear, title
                         );
@@ -719,16 +709,11 @@
                             return false;
                         }
 
-                        // Step 2: if the caller wants this entry to be
-                        // a past term, end it immediately.
                         if (!isActive) {
                             var endResult = LC.endLeaderTerm(
                                 placeId, characterId, endYear
                             );
                             if (!endResult || endResult.success !== true) {
-                                // Roll back is not available — the
-                                // assignment is live. Report loudly so
-                                // the caller knows.
                                 _showToast(
                                     'Leader assigned but end-term failed: ' +
                                     (endResult && endResult.reason
@@ -886,19 +871,17 @@
                 }
             });
 
-            // Toggle for former leaders
             container.addEventListener('click', function(e) {
                 var toggle = e.target.closest('[data-toggle="former-leaders"]');
                 if (!toggle) return;
                 var body = toggle.nextElementSibling;
                 if (!body) return;
-                var isHidden = body.style.display === 'none';
-                body.style.display = isHidden ? 'block' : 'none';
+                var collapsed = body.classList.toggle('is-collapsed');
                 var icon = toggle.querySelector('.gh-toggle-icon');
                 if (icon) {
-                    icon.innerHTML = isHidden
-                        ? _getIcon('TRIANGLE_DOWN')
-                        : _getIcon('TRIANGLE_RIGHT');
+                    icon.innerHTML = collapsed
+                        ? _getIcon('TRIANGLE_RIGHT')
+                        : _getIcon('TRIANGLE_DOWN');
                 }
             });
         }
