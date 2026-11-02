@@ -1,0 +1,729 @@
+/* ============================================================================
+   RELIGION MANAGER — SPECIFIC STYLES
+   ============================================================================
+   File: css/religion.css
+   Dependencies: css/themes.css (all tokens), css/common.css (structure),
+                 css/data-manager.css (layout shell)
+
+   SCOPE
+     Only styles emitted by religion-render.js and the religion tabs.
+     Every color/radius/shadow value is a token. No hardcoded values.
+
+   CLASSES COVERED
+     .religion-list, .religion-item, .religion-item--selected,
+     .religion-item--deprecated, .religion-item__*,
+     .religion-trait, .religion-trait--*,
+     .religion-status, .religion-status--active, .religion-status--deprecated,
+     .religion-card, .religion-card__*, .religion-card--compact,
+     .religion-table, .religion-table__*, .religion-table--empty,
+     .religion-empty,
+     .religion-stat, .religion-stat--*,
+     .religion-tab-content, .religion-stats, .religion-simple-list,
+     .btn.view-religion-btn, .btn.edit-religion-btn
+   ============================================================================ */
+
+
+/* ============================================================================
+   1. RELIGION LIST (sidebar)
+   ============================================================================ */
+
+.religion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+}
+
+.religion-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    transition:
+        background-color var(--transition-fast, 0.15s) ease,
+        border-color var(--transition-fast, 0.15s) ease;
+    color: var(--text);
+    background: transparent;
+}
+
+.religion-item:hover {
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+}
+
+.religion-item--selected {
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+
+.religion-item--deprecated {
+    opacity: 0.72;
+}
+
+.religion-item--deprecated .religion-item__name {
+    text-decoration: line-through;
+    text-decoration-color: var(--tmut);
+}
+
+.religion-item__main {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.religion-item__icon {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    font-size: 1rem;
+    color: var(--accent-light);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 1px);
+}
+
+.religion-item__body {
+    flex: 1;
+    min-width: 0;
+}
+
+.religion-item__header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 2px;
+}
+
+.religion-item__name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.religion-item__badge {
+    font-size: 0.5rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.religion-item__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+.religion-item__leader {
+    color: var(--accent-light);
+}
+
+.religion-item__locations {
+    color: var(--tmut);
+}
+
+.religion-item__aside {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex: none;
+}
+
+.religion-item__stats {
+    display: flex;
+    gap: 4px;
+}
+
+.religion-item__actions {
+    display: flex;
+    gap: 2px;
+}
+
+.religion-item__actions .btn {
+    min-height: 22px;
+    padding: 1px 8px;
+    font-size: 0.5rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius);
+}
+
+.religion-item__actions .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent-light);
+    background: var(--bg2);
+}
+
+
+/* ============================================================================
+   2. TRAIT + STATUS BADGES
+   ============================================================================ */
+
+.religion-trait {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.5rem;
+    padding: 1px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Per-trait colors — token-derived, not hardcoded. */
+.religion-trait--monotheistic {
+    border-color: var(--accent);
+    color: var(--accent-light);
+    background: var(--accent-dim);
+}
+.religion-trait--polytheistic {
+    border-color: var(--v-alt, var(--accent));
+    color: var(--v-alt, var(--accent));
+    background: color-mix(in srgb, var(--v-alt, var(--accent)) 12%, transparent);
+}
+.religion-trait--syncretic {
+    border-color: var(--ok);
+    color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.religion-trait--evangelical {
+    border-color: var(--st-draft, var(--warn));
+    color: var(--st-draft, var(--warn));
+    background: color-mix(in srgb, var(--st-draft, var(--warn)) 12%, transparent);
+}
+.religion-trait--animist {
+    border-color: var(--st-final, var(--ok));
+    color: var(--st-final, var(--ok));
+    background: color-mix(in srgb, var(--st-final, var(--ok)) 12%, transparent);
+}
+
+.religion-status {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.5rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+
+.religion-status--active {
+    color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+.religion-status--deprecated {
+    color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--bad) 30%, transparent);
+}
+
+
+/* ============================================================================
+   3. STAT CHIPS
+   ============================================================================ */
+
+.religion-stat {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    font-size: 0.5rem;
+    font-family: var(--f-mono);
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--dim);
+    line-height: 1;
+}
+
+.religion-stat--followers {
+    color: var(--accent-light);
+    border-color: var(--accent-soft);
+    background: var(--accent-dim);
+}
+.religion-stat--gods {
+    color: var(--st-draft, var(--warn));
+    border-color: color-mix(in srgb, var(--st-draft, var(--warn)) 30%, transparent);
+}
+.religion-stat--laws {
+    color: var(--v-alt, var(--accent));
+    border-color: color-mix(in srgb, var(--v-alt, var(--accent)) 30%, transparent);
+}
+.religion-stat--places {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+
+
+/* ============================================================================
+   4. RELIGION CARD
+   ============================================================================ */
+
+.religion-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 2);
+    padding: 16px 18px;
+    color: var(--text);
+    margin-bottom: 12px;
+    transition: border-color var(--transition-base, 0.2s) ease;
+}
+
+.religion-card:hover {
+    border-color: var(--accent);
+}
+
+.religion-card--compact {
+    padding: 10px 12px;
+}
+
+.religion-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.religion-card__identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.religion-card__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    font-size: 1.2rem;
+    color: var(--accent-light);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    flex: none;
+}
+
+.religion-card__name {
+    font-family: var(--f-display);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 2px;
+}
+
+.religion-card__description {
+    font-size: 0.7rem;
+    color: var(--dim);
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.religion-card__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 12px;
+    font-size: 0.65rem;
+    color: var(--dim);
+    margin-bottom: 8px;
+}
+
+.religion-card__leader {
+    color: var(--accent-light);
+}
+
+.religion-card__locations {
+    font-size: 0.6rem;
+    color: var(--tmut);
+    margin-bottom: 8px;
+}
+
+.religion-card__feature {
+    font-size: 0.6rem;
+    color: var(--accent);
+    margin-bottom: 8px;
+}
+
+.religion-card__actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+}
+
+.religion-card__actions .btn {
+    min-height: 28px;
+    padding: 3px 12px;
+    font-size: 0.6rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius);
+}
+
+.religion-card__actions .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+
+/* ============================================================================
+   5. RELIGION TABLE
+   ============================================================================ */
+
+.religion-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.7rem;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.religion-table thead {
+    background: var(--bg3);
+    border-bottom: 2px solid var(--border);
+}
+
+.religion-table thead th {
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+}
+
+.religion-table tbody tr {
+    border-bottom: 1px solid var(--border-light);
+    transition: background-color var(--transition-fast, 0.15s) ease;
+}
+
+.religion-table tbody tr:hover {
+    background: var(--accent-dim);
+}
+
+.religion-table__row--deprecated {
+    opacity: 0.6;
+}
+
+.religion-table tbody td {
+    padding: 6px 10px;
+    color: var(--text);
+    vertical-align: middle;
+}
+
+.religion-table__actions {
+    white-space: nowrap;
+    text-align: right;
+}
+
+.religion-table__actions .btn {
+    min-height: 24px;
+    padding: 2px 10px;
+    font-size: 0.55rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius);
+    margin-left: 4px;
+}
+
+.religion-table__actions .btn:hover {
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+.religion-table--empty {
+    background: transparent;
+    border: 1px dashed var(--border);
+}
+
+.religion-table__empty {
+    padding: 30px 20px;
+    text-align: center;
+    color: var(--tmut);
+    font-style: italic;
+}
+
+
+/* ============================================================================
+   6. EMPTY STATE
+   ============================================================================ */
+
+.religion-empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.8rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+}
+
+
+/* ============================================================================
+   7. TAB CONTENT
+   ============================================================================ */
+
+.religion-tab-content {
+    padding: 4px 0;
+}
+
+.religion-tab-content h2 {
+    font-family: var(--f-display);
+    font-size: 1.3rem;
+    color: var(--fg);
+    margin-bottom: 8px;
+}
+
+.religion-tab-content p {
+    color: var(--dim);
+    font-size: 0.75rem;
+    margin-bottom: 12px;
+    line-height: 1.6;
+}
+
+.religion-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 10px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.65rem;
+    color: var(--dim);
+}
+
+.religion-stats span {
+    display: inline-flex;
+    align-items: center;
+}
+
+.religion-simple-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.religion-simple-list li {
+    padding: 6px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.7rem;
+    color: var(--text);
+    transition: border-color var(--transition-fast, 0.15s) ease;
+}
+
+.religion-simple-list li:hover {
+    border-color: var(--accent);
+}
+
+
+/* ============================================================================
+   8. RELIGION DETAILS MODAL (in case any modals-religion modal is opened)
+   ============================================================================ */
+
+.religion-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.religion-form label {
+    font-size: 0.65rem;
+    color: var(--dim);
+    display: block;
+    margin-bottom: 4px;
+}
+
+.religion-form input,
+.religion-form select,
+.religion-form textarea {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.75rem;
+    font-family: var(--f-body);
+}
+
+.religion-form input:focus,
+.religion-form select:focus,
+.religion-form textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+
+/* ============================================================================
+   9. RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .religion-item {
+        padding: 6px 8px;
+    }
+
+    .religion-item__stats {
+        display: none;
+    }
+
+    .religion-item__actions .btn {
+        padding: 1px 6px;
+        font-size: 0.45rem;
+    }
+
+    .religion-card {
+        padding: 12px 14px;
+    }
+
+    .religion-table {
+        font-size: 0.6rem;
+    }
+
+    .religion-table thead th,
+    .religion-table tbody td {
+        padding: 4px 6px;
+    }
+}
+
+@media (max-width: 480px) {
+    .religion-item__actions {
+        display: none;
+    }
+
+    .religion-item__meta {
+        font-size: 0.5rem;
+    }
+
+    .religion-card__icon {
+        width: 26px;
+        height: 26px;
+        font-size: 1rem;
+    }
+
+    .religion-card__name {
+        font-size: 0.95rem;
+    }
+
+    .religion-stat {
+        font-size: 0.45rem;
+        min-width: 16px;
+        height: 16px;
+    }
+}
+
+
+/* ============================================================================
+   10. THEME TOGGLE (topbar)
+   ============================================================================ */
+
+.theme-toggle {
+    position: relative;
+    display: inline-flex;
+}
+
+.theme-toggle__btn {
+    gap: 6px;
+}
+
+.theme-toggle__menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 200;
+    min-width: 160px;
+    padding: 4px;
+    margin: 0;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.theme-toggle__menu[hidden] { display: none; }
+
+.theme-toggle__menu button {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.7rem;
+    border-radius: calc(var(--radius) - 2px);
+    cursor: pointer;
+    transition: background-color var(--transition-fast, 0.15s) ease;
+}
+
+.theme-toggle__menu button:hover,
+.theme-toggle__menu button:focus-visible {
+    background: var(--accent-dim);
+    color: var(--accent-light);
+    outline: none;
+}
+
+
+/* ============================================================================
+   11. REDUCED MOTION
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    .religion-item,
+    .religion-card,
+    .religion-table tbody tr,
+    .religion-simple-list li,
+    .theme-toggle__menu button {
+        transition: none;
+    }
+}
