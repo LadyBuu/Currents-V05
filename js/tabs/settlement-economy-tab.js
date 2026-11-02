@@ -1,1374 +1,839 @@
 /**
  * =============================================================================
- * SETTLEMENT ECONOMY TAB - UI for settlement economy management
+ * STILL WATERS - SETTLEMENT ECONOMY TAB
+ * js/tabs/settlement-economy-tab.js
  * =============================================================================
- * 
- * This file provides the complete UI for the Settlement Economy tab.
- * 
+ *
+ * ECONOMY TAB RENDERER.
+ *
+ * Renders the settlement's fiscal snapshot (wealth, debt, tax rates,
+ * budgets, income, expenses, surplus, employment) and hosts the actions
+ * that open the economy modals for detailed editing.
+ *
+ * It is a UI module. It:
+ *   - reads through SettlementViewModels and SettlementQueries
+ *   - mutates through SettlementFiscalCommands and
+ *     SettlementGovernmentCommands
+ *   - opens the economy modals via SettlementEconomyModals and core
+ *     modals via SettlementModals
+ *   - does not read canonical settlement data directly
+ *   - does not compute domain values
+ *   - does not create settlement records
+ *   - does not persist
+ *   - does not fabricate missing domain values
+ *   - does not render raw null/undefined as "null" or "undefined"
+ *   - does not use a recursion guard
+ *   - does not use setTimeout to guess when the DOM is ready
+ *
+ * Contract reference: Settlement Architecture Contracts §12 (Command
+ * Contract), §15 (ViewModel Contract), §16 (UI Contract), §21 (Fiscal
+ * Contract), §32 (Completion Standard).
+ *
+ * RENDERER CONTRACT
+ * -----------------
+ *   Registered via SettlementTabs.registerTabRenderer('economy', fn).
+ *   SettlementTabs invokes fn(container, context):
+ *
+ *     container  HTMLElement       already emptied by SettlementTabs
+ *     context    {
+ *       locationId  string|null    selected settlement id
+ *       data        Object|null    canonical settlement record
+ *       viewModel   Object|null    buildSettlementSummary result
+ *     }
+ *
+ *   SettlementTabs has already validated locationId and data before
+ *   calling the renderer.
+ *
+ * FISCAL SEMANTICS
+ * ----------------
+ *   Tax rate, trade tariff, and industry tax rate are canonical policy
+ *   fields owned by the settlement record. They are edited through
+ *   SettlementFiscalCommands.updateFiscalPolicy, which validates every
+ *   field in one transaction via SettlementFiscalRules.
+
+ *   Budget allocations (educationBudget, governmentSalaryBudget,
+ *   infrastructureBudget, militaryBudget) are policy fields distinct
+ *   from actual spending. They are edited through
+ *   SettlementFiscalCommands.setBudgetAllocation.
+
+ *   Actual spending (militarySpending, infrastructureSpending,
+ *   educationSpending) is written by the annual budget-decision flow
+ *   and is NOT editable from this tab. It is displayed read-only.
+
+ *   Debt and wealth are independent canonical balances (§18). Repayment
+ *   and borrowing go through SettlementDebtCommands, reached via the
+ *   debt management modal. The tab does not call debt commands
+ *   directly — the modal is the only entry point.
+ *
+ *   Fiscal limits (TAX_RATE.max = 50 etc.) come from
+ *   SettlementFiscalDefinitions, read via SettlementFiscalRules'
+ *   validator return. The tab does not hardcode 0–50 / 0–30 / 0–30.
+ *
+ *   The old economy tab had its own <input type="number" min="0" max="50">
+ *   bounds hardcoded in the markup, and its save path called
+ *   SettlementCommands.updateTaxRate / updateTradeTariff / etc. (none
+ *   of which exist on the new surface). The tab also tried to edit
+ *   spending through SettlementCommands.updateMilitarySpending (also
+ *   gone). All three paths are gone; the tab now delegates every
+ *   mutation to the appropriate modal, which calls the correct
+ *   command, and only renders read-only values itself.
+ *
+ * WHY THE TAB DELEGATES EDITING TO MODALS
+ * ---------------------------------------
+ *   Inline number inputs with "save" buttons next to them invite a
+ *   class of problems the modals solve cleanly:
+
+ *     - partial-commit on save (one field updates, another fails
+ *       validation, the UI shows "saved" anyway)
+ *     - stale reads (the tab captures a summary at render time, the
+ *       user edits two fields, the second save is computed against
+ *       the first save's pre-state)
+ *     - validation divergence (the tab hardcodes max=50, the rules
+ *       layer says the limit is 50 today but could change)
+ *     - no atomic multi-field transaction (the user is editing tax,
+ *       tariff, and industry tax in one visual block; a save that
+ *       succeeds for tax but fails for tariff leaves the UI in a
+ *       state that does not match the world)
+
+ *   SettlementEconomyModals.openTaxRateModal uses
+ *   SettlementFiscalCommands.updateFiscalPolicy — one call, one
+ *   validation pass, one commit, one re-render. The tab's job is to
+ *   show the current state and route the user to the modal.
+
+ * ACTION DELEGATION
+ * -----------------
+ *   Every mutating button on the economy tab opens a modal:
+
+ *     Tax Rates    → SettlementEconomyModals.openTaxRateModal
+ *     Spending     → SettlementEconomyModals.openSpendingModal (read-only)
+ *     Budget       → SettlementModals.openBudgetModal
+ *     Justice      → SettlementEconomyModals.openJusticeModal
+ *     Debt         → SettlementEconomyModals.openDebtManagementModal
+ *     Report       → SettlementEconomyModals.openFinancialReportModal
+ *     Efficiency   → SettlementEconomyModals.openEfficiencyModal
+ *     Employment   → SettlementModals.openEmploymentModal
+ *     State Ent.   → SettlementModals.openStateEnterpriseModal
+
+ *   No action on this tab calls a command directly. Every mutation
+ *   runs through a modal that owns the confirmation, the validation,
+ *   and the post-command refresh. This matches the §16 UI Contract:
+ *   the tab renders, the modal mutates.
+
+ * POST-COMMAND REFRESH
+ * --------------------
+ *   The modals call SettlementTabs.requestRender('economy') on success.
+ *   The tab itself does not wire that refresh — the modal does — because
+ *   the modal is the caller that knows the command succeeded. A tab-side
+ *   re-render after closing the modal would be a second render of the
+ *   same state.
+
+ *   The Refresh button on the tab calls requestRender('economy')
+ *   directly, which is a user-initiated re-read of the current world.
+
+ * ICON POLICY
+ * -----------
+ *   No emojis. No inline SVG. Chrome icons come from window.getIcon if
+ *   it is loaded; when icons.js is not on the page, the renderer falls
+ *   back to plain text labels.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Rewritten against the new settlement module set.
+ *     - Signature changed from (containerId, locationId, summary) to
+ *       (container, context), matching settlement-tabs.js.
+ *     - Recursion guard (_rendering) and the modal-open flag removed
+ *       (§20 prohibits recursion guards; §16 prohibits modal-locking
+ *       flags on a read-only renderer).
+ *     - All inline number inputs and save buttons removed. Editing is
+ *       delegated to the economy modals, which call
+ *       SettlementFiscalCommands / SettlementGovernmentCommands /
+ *       SettlementDebtCommands with the correct contracts.
+ *     - SettlementState.getSettlementBudget / getSettlementSummary /
+ *       getSettlementEmployment reads replaced by
+ *       SettlementEconomyQueries.getBudgetSummary /
+ *       SettlementEmploymentQueries.getEmployment / buildSettlementSummary.
+ *     - SettlementEconomy.* reads (calculateSurplus, getDebtRatio,
+ *       getEfficiencyScore, getFinancialReport) replaced by their
+ *       SettlementEconomyQueries equivalents. getFinancialReport had
+ *       no direct equivalent — the tab opens the financial report
+ *       modal, which builds the report from buildFinancialReportView.
+ *     - Spending inputs removed. The tab displays the three spending
+ *       fields read-only; the spending modal is opened for detail.
+ *     - The debt repayment mini-form (repay-all button, then manual
+ *       onclick hijack on the modal's confirm button) is gone. Debt
+ *       repayment goes through
+ *       SettlementEconomyModals.openDebtManagementModal, which uses
+ *       SettlementDebtCommands.repayDebt (atomic, one candidate, one
+ *       commit). The prior implementation called updateWealth and
+ *       updateDebt as two separate commands — a §18 violation that
+ *       could leave wealth debited but debt unreduced if the second
+ *       command failed.
+ *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
+ *       is not called — the tab does not display a year.
+ *   Previous revisions:
+ *     - Pre-refactor implementation against SettlementState /
+ *       SettlementCommands / SettlementCrud / SettlementEconomy, all
+ *       of which no longer exist.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
-    var _rendering = false;
-    var _modalOpen = false;
+    function _getSummaryModel() {
+        var VMs = window.SettlementViewModels;
+        if (!VMs || typeof VMs.buildSettlementSummary !== 'function') {
+            throw new Error(
+                'settlement-economy-tab: SettlementViewModels.' +
+                'buildSettlementSummary is missing.'
+            );
+        }
+        return VMs;
+    }
+
+    function _getEconomyQueries() {
+        var Q = window.SettlementEconomyQueries;
+        if (!Q || typeof Q.getBudgetSummary !== 'function') {
+            throw new Error(
+                'settlement-economy-tab: SettlementEconomyQueries is ' +
+                'missing. Load settlement-economy-queries.js before this tab.'
+            );
+        }
+        return Q;
+    }
+
+    function _getEmploymentQueries() {
+        return window.SettlementEmploymentQueries || null;
+    }
+
+    function _getPlaceQueries() {
+        return window.PlaceQueries || null;
+    }
+
+    function _getTabs() {
+        return window.SettlementTabs || null;
+    }
+
+    function _openCoreModal(name, args) {
+        var bundle = window.SettlementModals;
+        if (!bundle || typeof bundle[name] !== 'function') {
+            throw new Error(
+                'settlement-economy-tab: SettlementModals.' + name + ' is missing.'
+            );
+        }
+        return bundle[name].apply(bundle, args || []);
+    }
+
+    function _openEconomyModal(name, args) {
+        var bundle = window.SettlementEconomyModals;
+        if (!bundle || typeof bundle[name] !== 'function') {
+            throw new Error(
+                'settlement-economy-tab: SettlementEconomyModals.' + name +
+                ' is missing. Load modals-settlement-economy.js before this tab.'
+            );
+        }
+        return bundle[name].apply(bundle, args || []);
+    }
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. HELPERS
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
-    function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        }
+    function _unknown() {
+        return '<span class="value-unknown">—</span>';
     }
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
+    function _fmtNumber(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString());
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
+    function _fmtGold(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString()) + 'g';
     }
 
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
-        }
-        if (confirm(message)) {
-            onConfirm();
-        }
+    function _fmtPercent(value, opts) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        var s = _escapeHtml(value.toLocaleString());
+        return s + '%';
     }
 
     function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
+        if (typeof window.getIcon === 'function') {
+            try {
+                var icon = window.getIcon(name);
+                if (typeof icon === 'string') return icon;
+            } catch (e) {
+                // getIcon exists but threw; fall through to ''.
+            }
         }
         return '';
     }
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    function _placeName(locationId) {
+        var pq = _getPlaceQueries();
+        if (!pq || typeof pq.getPlaceById !== 'function') return null;
+        var place = pq.getPlaceById(locationId);
+        return place ? (place.displayName || place.name || null) : null;
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getLocationPopulationCount(locationId) {
-        if (typeof window.getLocationPopulationCount === 'function') {
-            return window.getLocationPopulationCount(locationId);
+    function _toast(message, type) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
         }
-        return 0;
     }
 
-    function _getSettlementData(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementData) {
-            return SettlementState.getSettlementData(locationId);
+    function _requestRefresh() {
+        var tabs = _getTabs();
+        if (tabs && typeof tabs.requestRender === 'function') {
+            tabs.requestRender('economy');
         }
-        return null;
     }
 
-    function _getSettlementSummary(locationId) {
-        if (typeof SettlementQueries !== 'undefined' && SettlementQueries.getSettlementSummary) {
-            return SettlementQueries.getSettlementSummary(locationId);
-        }
-        return null;
-    }
-
-    function _getSettlementBudget(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementBudget) {
-            return SettlementState.getSettlementBudget(locationId);
-        }
-        return null;
-    }
-
-    function _getSettlementEmployment(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementEmployment) {
-            return SettlementState.getSettlementEmployment(locationId);
-        }
-        return null;
-    }
-
-    function _calculateSurplus(locationId) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.calculateSurplus) {
-            return SettlementEconomy.calculateSurplus(locationId);
-        }
-        return 0;
-    }
-
-    function _getDebtRatio(locationId) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.getDebtRatio) {
-            return SettlementEconomy.getDebtRatio(locationId);
-        }
-        return 0;
-    }
-
-    function _getEfficiencyScore(locationId) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.getEfficiencyScore) {
-            return SettlementEconomy.getEfficiencyScore(locationId);
-        }
-        return null;
-    }
-
-    function _getFinancialReport(locationId, years) {
-        if (typeof SettlementEconomy !== 'undefined' && SettlementEconomy.getFinancialReport) {
-            return SettlementEconomy.getFinancialReport(locationId, years);
-        }
-        return null;
-    }
-
-    function _getSettlementBudgetAllocation(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementBudgetAllocation) {
-            return SettlementState.getSettlementBudgetAllocation(locationId);
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 3. UPDATE COMMANDS
-    // =========================================================================
-
-    function _updateTaxRate(locationId, rate) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateTaxRate) {
-            return SettlementCommands.updateTaxRate(locationId, rate);
-        }
-        return null;
-    }
-
-    function _updateTradeTariff(locationId, tariff) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateTradeTariff) {
-            return SettlementCommands.updateTradeTariff(locationId, tariff);
-        }
-        return null;
-    }
-
-    function _updateIndustryTaxRate(locationId, rate) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateIndustryTaxRate) {
-            return SettlementCommands.updateIndustryTaxRate(locationId, rate);
-        }
-        return null;
-    }
-
-    function _updateMilitarySpending(locationId, amount) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateMilitarySpending) {
-            return SettlementCommands.updateMilitarySpending(locationId, amount);
-        }
-        return null;
-    }
-
-    function _updateInfrastructureSpending(locationId, amount) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateInfrastructureSpending) {
-            return SettlementCommands.updateInfrastructureSpending(locationId, amount);
-        }
-        return null;
-    }
-
-    function _updateEducationSpending(locationId, amount) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateEducationSpending) {
-            return SettlementCommands.updateEducationSpending(locationId, amount);
-        }
-        return null;
-    }
-
-    function _updateJusticeSeverity(locationId, severity) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateJusticeSeverity) {
-            return SettlementCommands.updateJusticeSeverity(locationId, severity);
-        }
-        return null;
-    }
-
-    function _updateWatch(locationId, hasWatch, size) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateWatch) {
-            return SettlementCommands.updateWatch(locationId, hasWatch, size);
-        }
-        return null;
-    }
-
-    function _updateWealth(locationId, delta, reason) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateWealth) {
-            return SettlementCommands.updateWealth(locationId, delta, reason);
-        }
-        return null;
-    }
-
-    function _updateDebt(locationId, delta, reason) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateDebt) {
-            return SettlementCommands.updateDebt(locationId, delta, reason);
-        }
-        return null;
-    }
-
-    function _allocateEducationBudget(locationId, amount, year) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.allocateEducationBudget) {
-            return SettlementCommands.allocateEducationBudget(locationId, amount, year);
-        }
-        return null;
-    }
-
-    function _allocateGovernmentSalaryBudget(locationId, amount, year) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.allocateGovernmentSalaryBudget) {
-            return SettlementCommands.allocateGovernmentSalaryBudget(locationId, amount, year);
-        }
-        return null;
-    }
-
-    // =========================================================================
-    // 4. ICON HELPERS
-    // =========================================================================
-
-    function _icon(name) {
-        return _getIcon(name);
-    }
-
-    // =========================================================================
-    // 5. MAIN RENDER FUNCTION
-    // =========================================================================
-
-    function renderSettlementEconomy(containerId, locationId, summary) {
-        if (_rendering) {
-            return;
-        }
-        _rendering = true;
-
+    function _safeModalOpen(fn) {
+        // Wrap the modal call so a missing dependency produces a toast,
+        // not an uncaught exception in an event handler (which would
+        // abort other listeners on the same click).
         try {
-            var container = document.getElementById(containerId);
-            if (!container) {
-                _rendering = false;
+            fn();
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('settlement-economy-tab: modal open failed:', err);
+            }
+            _toast(
+                'Could not open modal: ' +
+                (err && err.message ? err.message : 'unknown error'),
+                'error'
+            );
+        }
+    }
+
+    // =========================================================================
+    // 3. ACTION HANDLERS
+    // =========================================================================
+
+    function _handleAction(action, locationId) {
+        switch (action) {
+            case 'tax-rates':
+                _safeModalOpen(function () {
+                    _openEconomyModal('openTaxRateModal', [locationId]);
+                });
                 return;
-            }
-
-            if (!summary) {
-                summary = _getSettlementSummary(locationId);
-                if (!summary) {
-                    var data = _getSettlementData(locationId);
-                    if (data) {
-                        var ranks = typeof SettlementState !== 'undefined' && SettlementState._getAllRanks ? 
-                            SettlementState._getAllRanks() : [];
-                        var rank = null;
-                        for (var i = 0; i < ranks.length; i++) {
-                            if (ranks[i].id === data.rankId) {
-                                rank = ranks[i];
-                                break;
-                            }
-                        }
-                        summary = {
-                            name: data.locationName || locationId,
-                            rank: rank || { id: data.rankId, name: data.rankId || 'Unknown' },
-                            prosperity: { value: data.prosperity || 50, description: 'Stable' },
-                            wealth: data.wealth || 0,
-                            totalDebt: data.totalDebt || 0,
-                            netWorth: (data.wealth || 0) - (data.totalDebt || 0),
-                            taxRate: data.taxRate || 10,
-                            tradeTariff: data.tradeTariff || 5,
-                            industryTaxRate: data.industryTaxRate || 8,
-                            crimeRate: data.crimeRate || 0.05,
-                            foundedYear: data.foundedYear || 1250,
-                            lastUpgraded: data.lastUpgraded || 1250,
-                            specializationRoleId: data.specializationRoleId || null,
-                            features: [],
-                            justice: {
-                                severity: data.justiceSeverity || 'medium',
-                                hasWatch: data.hasWatch || false,
-                                watchSize: data.watchSize || 0
-                            },
-                            spending: {
-                                military: data.militarySpending || 0,
-                                infrastructure: data.infrastructureSpending || 0,
-                                education: data.educationSpending || 0
-                            }
-                        };
-                    }
-                }
-            }
-
-            if (!summary) {
-                container.innerHTML = '<div class="empty-state">No settlement data found. Select a location with a settlement.</div>';
-                _rendering = false;
+            case 'spending':
+                _safeModalOpen(function () {
+                    _openEconomyModal('openSpendingModal', [locationId]);
+                });
                 return;
-            }
-
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                container.innerHTML = '<div class="empty-state">Location not found</div>';
-                _rendering = false;
+            case 'budget':
+                _safeModalOpen(function () {
+                    _openCoreModal('openBudgetModal', [locationId]);
+                });
                 return;
+            case 'justice':
+                _safeModalOpen(function () {
+                    _openEconomyModal('openJusticeModal', [locationId]);
+                });
+                return;
+            case 'debt':
+                _safeModalOpen(function () {
+                    _openEconomyModal('openDebtManagementModal', [locationId]);
+                });
+                return;
+            case 'report':
+                _safeModalOpen(function () {
+                    _openEconomyModal('openFinancialReportModal', [locationId]);
+                });
+                return;
+            case 'efficiency':
+                _safeModalOpen(function () {
+                    _openEconomyModal('openEfficiencyModal', [locationId]);
+                });
+                return;
+            case 'employment':
+                _safeModalOpen(function () {
+                    _openCoreModal('openEmploymentModal', [locationId]);
+                });
+                return;
+            case 'state-enterprises':
+                _safeModalOpen(function () {
+                    _openCoreModal('openStateEnterpriseModal', [locationId]);
+                });
+                return;
+            case 'refresh':
+                _requestRefresh();
+                return;
+            default:
+                // Unknown action: no-op, do not throw. A stale button
+                // in cached HTML should not break the tab.
+                return;
+        }
+    }
+
+    function _wireActions(container, locationId) {
+        container.addEventListener('click', function (event) {
+            var target = event.target;
+            if (!target || typeof target.closest !== 'function') return;
+            var btn = target.closest('[data-action]');
+            if (!btn) return;
+            if (!container.contains(btn)) return;
+            event.preventDefault();
+            var action = btn.dataset.action;
+            var loc = btn.dataset.location || locationId;
+            _handleAction(action, loc);
+        });
+    }
+
+    // =========================================================================
+    // 4. SECTION BUILDERS
+    // =========================================================================
+
+    function _buildHeader(context) {
+        var locationId = context.locationId;
+        var summary = context.viewModel || {};
+        var name = summary.name
+            ? summary.name
+            : (_placeName(locationId) || '(unnamed location)');
+
+        var rankName = summary.rank ? summary.rank.name : null;
+        var prosperity = summary.prosperity;
+        var prosperityValue = (prosperity && typeof prosperity.value === 'number')
+            ? prosperity.value
+            : null;
+        var prosperityBand = prosperity ? prosperity.band : null;
+        var prosperityBandName = prosperityBand ? prosperityBand.name : null;
+
+        var prosperityColor = 'var(--dim)';
+        if (prosperityBand && prosperityBand.id) {
+            switch (prosperityBand.id) {
+                case 'thriving':   prosperityColor = 'var(--success)'; break;
+                case 'stable':     prosperityColor = 'var(--accent)'; break;
+                case 'struggling': prosperityColor = 'var(--danger)'; break;
             }
+        }
 
-            var population = _getLocationPopulationCount(locationId);
-            var budget = _getSettlementBudget(locationId);
-            var employment = _getSettlementEmployment(locationId);
-            var surplus = _calculateSurplus(locationId);
-            var debtRatio = _getDebtRatio(locationId);
-            var efficiency = _getEfficiencyScore(locationId);
+        var refreshBtn = '<button type="button" data-action="refresh" ' +
+            'data-location="' + _escapeHtml(locationId) + '" ' +
+            'style="font-size:0.6rem;padding:4px 12px;background:var(--bg3);' +
+            'border:1px solid var(--accent);border-radius:4px;cursor:pointer;' +
+            'color:var(--accent-light);">' +
+            _getIcon('REFRESH') + ' Refresh</button>';
 
-            var LOC = _icon('LOCATION');
-            var COIN = _icon('COIN');
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var WARNING = _icon('WARNING');
-            var SHIELD = _icon('SHIELD');
-            var PERSON = _icon('PERSON');
-            var STAR = _icon('STAR_4');
-            var REFRESH = _icon('REFRESH');
-            var GEAR = _icon('GEAR');
-            var EDIT = _icon('EDIT');
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;display:flex;' +
+            'justify-content:space-between;align-items:center;flex-wrap:wrap;' +
+            'gap:8px;border:1px solid var(--border);">' +
+            '<div>' +
+            '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent-light);">' +
+            _getIcon('LOCATION') + ' ' + _escapeHtml(name) + '</div>' +
+            '<div style="font-size:0.6rem;color:var(--dim);">' +
+            'Rank: ' + (rankName ? _escapeHtml(rankName) : _unknown()) +
+            '</div>' +
+            '</div>' +
+            '<div style="text-align:right;">' +
+            '<div style="font-size:0.7rem;color:var(--text);">Prosperity: ' +
+            '<span style="color:' + prosperityColor + ';font-weight:bold;">' +
+            (prosperityValue === null
+                ? _unknown()
+                : _escapeHtml(String(prosperityValue)) + '%') +
+            '</span></div>' +
+            '<div style="font-size:0.55rem;color:var(--dim);">' +
+            (prosperityBandName ? _escapeHtml(prosperityBandName) : '') +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:flex-end;' +
+            'margin-bottom:16px;">' + refreshBtn + '</div>';
+    }
 
-            var content = '<div style="padding: 4px;">';
+    function _buildWealthDebtRow(context, debtRatio) {
+        var summary = context.viewModel || {};
+        var wealth = typeof summary.wealth === 'number' ? summary.wealth : null;
+        var debt = typeof summary.totalDebt === 'number' ? summary.totalDebt : null;
+        var netWorth = (wealth !== null && debt !== null)
+            ? wealth - debt
+            : null;
 
-            // HEADER
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--border);">' +
+        function cell(label, valueHtml, color, iconName) {
+            return '<div style="background:var(--bg2);padding:12px;' +
+                'border-radius:8px;text-align:center;border:1px solid var(--border);">' +
+                '<div style="font-size:0.55rem;color:var(--dim);">' +
+                (iconName ? _getIcon(iconName) + ' ' : '') +
+                _escapeHtml(label) + '</div>' +
+                '<div style="font-size:1.1rem;font-weight:bold;color:' + color + ';">' +
+                valueHtml + '</div>' +
+                '</div>';
+        }
+
+        var wealthColor = (wealth !== null && wealth >= 0)
+            ? 'var(--success)' : 'var(--danger)';
+        var debtColor = (debt !== null && debt > 0)
+            ? 'var(--danger-lt)' : 'var(--success)';
+        var netColor = (netWorth !== null && netWorth >= 0)
+            ? 'var(--success)' : 'var(--danger)';
+
+        var ratioColor = 'var(--text)';
+        if (typeof debtRatio === 'number') {
+            if (debtRatio > 50) ratioColor = 'var(--danger)';
+            else if (debtRatio > 25) ratioColor = 'var(--warn)';
+            else ratioColor = 'var(--success)';
+        }
+
+        return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
+            'gap:12px;margin-bottom:16px;">' +
+            cell('Wealth', _fmtGold(wealth), wealthColor, 'COIN') +
+            cell('Debt', _fmtGold(debt), debtColor, null) +
+            cell('Debt Ratio', _fmtPercent(debtRatio), ratioColor, null) +
+            cell('Net Worth', _fmtGold(netWorth), netColor, null) +
+            '</div>';
+    }
+
+    function _buildFiscalPolicySection(context) {
+        var summary = context.viewModel || {};
+        var locationId = context.locationId;
+
+        function row(label, valueHtml, hint) {
+            return '<div style="display:flex;justify-content:space-between;' +
+                'padding:6px 0;border-bottom:1px solid var(--border-light);' +
+                'align-items:center;">' +
                 '<div>' +
-                '<div style="font-size: 0.8rem; font-weight: bold; color: var(--accent-light);">' + LOC + ' ' + _escapeHtml(place.displayName) + '</div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">Population: ' + population.toLocaleString() + ' · Rank: ' + _escapeHtml(summary.rank ? summary.rank.name : 'Unknown') + '</div>' +
+                '<div style="font-size:0.65rem;color:var(--text);">' +
+                _escapeHtml(label) + '</div>' +
+                (hint
+                    ? '<div style="font-size:0.5rem;color:var(--dim);">' +
+                      _escapeHtml(hint) + '</div>'
+                    : '') +
                 '</div>' +
-                '<div style="text-align: right;">' +
-                '<div style="font-size: 0.7rem; color: var(--text);">Prosperity: <span style="color: ' + (summary.prosperity && summary.prosperity.value >= 70 ? 'var(--success)' : summary.prosperity && summary.prosperity.value >= 40 ? 'var(--accent)' : 'var(--danger)') + '; font-weight: bold;">' + (summary.prosperity ? summary.prosperity.value : 50) + '%</span></div>' +
-                '<div style="font-size: 0.6rem; color: var(--dim);">' + (summary.prosperity ? summary.prosperity.description : 'Stable') + '</div>' +
-                '</div>' +
+                '<div style="font-size:0.75rem;font-weight:bold;color:var(--text);">' +
+                valueHtml + '</div>' +
                 '</div>';
-
-            // WEALTH & DEBT SUMMARY
-            var netWorth = (summary.wealth || 0) - (summary.totalDebt || 0);
-            content += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">' + COIN + ' Wealth</div>' +
-                '<div style="font-size: 1.1rem; font-weight: bold; color: ' + ((summary.wealth || 0) >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + (summary.wealth || 0) + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Debt</div>' +
-                '<div style="font-size: 1.1rem; font-weight: bold; color: ' + ((summary.totalDebt || 0) > 0 ? 'var(--danger-lt)' : 'var(--success)') + ';">' + (summary.totalDebt || 0) + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Debt Ratio</div>' +
-                '<div style="font-size: 1.1rem; font-weight: bold; color: ' + (debtRatio > 50 ? 'var(--danger)' : debtRatio > 25 ? 'var(--warn)' : 'var(--success)') + ';">' + debtRatio + '%</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Net Worth</div>' +
-                '<div style="font-size: 1.1rem; font-weight: bold; color: ' + (netWorth >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + netWorth + 'g</div>' +
-                '</div>' +
-                '</div>';
-
-            // TAX RATES - EDITABLE INLINE
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.7rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + GEAR + ' Tax Rates & Tariffs</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">' +
-                
-                // Tax Rate
-                '<div style="background: var(--bg); padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Tax Rate</div>' +
-                '<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">' +
-                '<input type="number" id="taxRateInput" value="' + (summary.taxRate || 10) + '" min="0" max="50" style="width: 60px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.7rem;">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">%</span>' +
-                '<button class="tax-update-btn" data-field="taxRate" style="font-size: 0.5rem; padding: 2px 8px; background: var(--accent); border: none; border-radius: 3px; cursor: pointer; color: #ffffff;">' + EDIT + '</button>' +
-                '</div>' +
-                '</div>' +
-
-                // Trade Tariff
-                '<div style="background: var(--bg); padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Trade Tariff</div>' +
-                '<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">' +
-                '<input type="number" id="tradeTariffInput" value="' + (summary.tradeTariff || 5) + '" min="0" max="30" style="width: 60px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.7rem;">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">%</span>' +
-                '<button class="tax-update-btn" data-field="tradeTariff" style="font-size: 0.5rem; padding: 2px 8px; background: var(--accent); border: none; border-radius: 3px; cursor: pointer; color: #ffffff;">' + EDIT + '</button>' +
-                '</div>' +
-                '</div>' +
-
-                // Industry Tax Rate
-                '<div style="background: var(--bg); padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Industry Tax</div>' +
-                '<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">' +
-                '<input type="number" id="industryTaxRateInput" value="' + (summary.industryTaxRate || 8) + '" min="0" max="30" style="width: 60px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.7rem;">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">%</span>' +
-                '<button class="tax-update-btn" data-field="industryTaxRate" style="font-size: 0.5rem; padding: 2px 8px; background: var(--accent); border: none; border-radius: 3px; cursor: pointer; color: #ffffff;">' + EDIT + '</button>' +
-                '</div>' +
-                '</div>' +
-
-                '</div>' +
-                '</div>';
-
-            // SPENDING CONTROLS
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.7rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + COIN + ' Spending Controls</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">' +
-
-                // Military
-                '<div style="background: var(--bg); padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Military</div>' +
-                '<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">' +
-                '<input type="number" id="militarySpendingInput" value="' + (summary.spending.military || 0) + '" min="0" step="5" style="width: 70px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.7rem;">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">g/yr</span>' +
-                '<button class="spending-update-btn" data-field="military" style="font-size: 0.5rem; padding: 2px 8px; background: var(--accent); border: none; border-radius: 3px; cursor: pointer; color: #ffffff;">' + EDIT + '</button>' +
-                '</div>' +
-                '</div>' +
-
-                // Infrastructure
-                '<div style="background: var(--bg); padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Infrastructure</div>' +
-                '<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">' +
-                '<input type="number" id="infrastructureSpendingInput" value="' + (summary.spending.infrastructure || 0) + '" min="0" step="5" style="width: 70px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.7rem;">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">g/yr</span>' +
-                '<button class="spending-update-btn" data-field="infrastructure" style="font-size: 0.5rem; padding: 2px 8px; background: var(--accent); border: none; border-radius: 3px; cursor: pointer; color: #ffffff;">' + EDIT + '</button>' +
-                '</div>' +
-                '</div>' +
-
-                // Education
-                '<div style="background: var(--bg); padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Education</div>' +
-                '<div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">' +
-                '<input type="number" id="educationSpendingInput" value="' + (summary.spending.education || 0) + '" min="0" step="5" style="width: 70px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 0.7rem;">' +
-                '<span style="font-size: 0.55rem; color: var(--dim);">g/yr</span>' +
-                '<button class="spending-update-btn" data-field="education" style="font-size: 0.5rem; padding: 2px 8px; background: var(--accent); border: none; border-radius: 3px; cursor: pointer; color: #ffffff;">' + EDIT + '</button>' +
-                '</div>' +
-                '</div>' +
-
-                '</div>' +
-                '</div>';
-
-            // BUDGET SECTION
-            var totalIncome = budget ? budget.totalIncome || 0 : 0;
-            var totalExpenses = budget ? budget.totalExpenses || 0 : 0;
-            var annualSurplus = budget ? budget.annualSurplus || 0 : 0;
-
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 4px;">' +
-                '<div style="font-size: 0.7rem; color: var(--accent-light); font-weight: bold;">' + COIN + ' Annual Budget</div>' +
-                '</div>' +
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">' +
-                '<div style="background: var(--bg); padding: 8px; border-radius: 6px; text-align: center; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Total Income</div>' +
-                '<div style="font-size: 0.9rem; font-weight: bold; color: var(--success);">' + totalIncome + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg); padding: 8px; border-radius: 6px; text-align: center; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Total Expenses</div>' +
-                '<div style="font-size: 0.9rem; font-weight: bold; color: var(--danger);">' + totalExpenses + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg); padding: 8px; border-radius: 6px; text-align: center; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.5rem; color: var(--dim);">Surplus</div>' +
-                '<div style="font-size: 0.9rem; font-weight: bold; color: ' + (annualSurplus >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + (annualSurplus >= 0 ? '+' : '') + annualSurplus + 'g</div>' +
-                '</div>' +
-                '</div>' +
-                (budget ? _renderBudgetBreakdown(budget) : '') +
-                '</div>';
-
-            // ACTION BUTTONS
-            content += '<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;">' +
-                '<button class="economy-action-btn" data-action="justice" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + SHIELD + ' Justice</button>' +
-                '<button class="economy-action-btn" data-action="budget" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + COIN + ' Budget</button>' +
-                '<button class="economy-action-btn" data-action="debt" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + COIN + ' Debt</button>' +
-                '<button class="economy-action-btn" data-action="report" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + CIRCLE + ' Report</button>' +
-                '<button class="economy-action-btn" data-action="efficiency" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + STAR + ' Efficiency</button>' +
-                '<button class="economy-action-btn" data-action="employment" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + PERSON + ' Employment</button>' +
-                '<button class="economy-action-btn" data-action="refresh" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer; color: var(--accent-light);">' + REFRESH + ' Refresh</button>' +
-                '</div>';
-
-            // EMPLOYMENT SUMMARY
-            if (employment) {
-                content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.7rem; color: var(--accent-light); font-weight: bold; margin-bottom: 6px;">' + PERSON + ' Employment</div>' +
-                    '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px;">' +
-                    '<div style="background: var(--bg); padding: 6px; border-radius: 4px; text-align: center; border: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.45rem; color: var(--dim);">Workers</div>' +
-                    '<div style="font-size: 0.8rem; font-weight: bold; color: var(--text);">' + employment.totalWorkers + '</div>' +
-                    '</div>' +
-                    '<div style="background: var(--bg); padding: 6px; border-radius: 4px; text-align: center; border: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.45rem; color: var(--dim);">Unemployed</div>' +
-                    '<div style="font-size: 0.8rem; font-weight: bold; color: ' + (employment.unemployed > 0 ? 'var(--danger-lt)' : 'var(--success)') + ';">' + employment.unemployed + '</div>' +
-                    '</div>' +
-                    '<div style="background: var(--bg); padding: 6px; border-radius: 4px; text-align: center; border: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.45rem; color: var(--dim);">Employment Rate</div>' +
-                    '<div style="font-size: 0.8rem; font-weight: bold; color: ' + (employment.employmentRate >= 70 ? 'var(--success)' : employment.employmentRate >= 40 ? 'var(--warn)' : 'var(--danger)') + ';">' + employment.employmentRate + '%</div>' +
-                    '</div>' +
-                    '<div style="background: var(--bg); padding: 6px; border-radius: 4px; text-align: center; border: 1px solid var(--border-light);">' +
-                    '<div style="font-size: 0.45rem; color: var(--dim);">Avg Wage</div>' +
-                    '<div style="font-size: 0.8rem; font-weight: bold; color: var(--text);">' + employment.averageWage + 'g</div>' +
-                    '</div>' +
-                    '</div>' +
-                    '</div>';
-            }
-
-            // EFFICIENCY SCORE
-            if (efficiency) {
-                var ratingColor = efficiency.efficiency >= 80 ? 'var(--success)' :
-                                 efficiency.efficiency >= 60 ? 'var(--accent)' :
-                                 efficiency.efficiency >= 40 ? 'var(--warn)' : 'var(--danger)';
-                content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                    '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px;">' +
-                    '<span style="font-size: 0.65rem; color: var(--dim);">' + STAR + ' Efficiency Score</span>' +
-                    '<span style="font-size: 0.7rem; font-weight: bold; color: ' + ratingColor + ';">' + efficiency.efficiency + ' — ' + efficiency.rating + '</span>' +
-                    '</div>' +
-                    '<div style="width: 100%; height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; margin-top: 4px;">' +
-                    '<div style="width: ' + Math.min(100, efficiency.efficiency) + '%; height: 100%; background: ' + ratingColor + '; border-radius: 2px;"></div>' +
-                    '</div>' +
-                    '</div>';
-            }
-
-            // INFO FOOTER
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                CIRCLE + ' Settlement economy data is updated annually. Use the inline controls above to adjust taxes and spending.' +
-                '</div>';
-
-            content += '</div>';
-
-            container.innerHTML = content;
-
-            _attachActionListeners(container, locationId);
-
-        } finally {
-            _rendering = false;
         }
+
+        var editBtn = '<button type="button" data-action="tax-rates" ' +
+            'data-location="' + _escapeHtml(locationId) + '" ' +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid var(--accent);border-radius:4px;cursor:pointer;' +
+            'color:var(--accent-light);">' +
+            _getIcon('EDIT') + ' Edit</button>';
+
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
+            '<div style="display:flex;justify-content:space-between;' +
+            'align-items:center;margin-bottom:8px;">' +
+            '<div style="font-size:0.65rem;color:var(--accent-light);' +
+            'font-weight:bold;">' +
+            _getIcon('GEAR') + ' Fiscal Policy</div>' +
+            editBtn +
+            '</div>' +
+            row('Tax Rate', _fmtPercent(summary.taxRate),
+                'Percent of base tax collected from residents') +
+            row('Trade Tariff', _fmtPercent(summary.tradeTariff),
+                'Percent added to trade income') +
+            row('Industry Tax', _fmtPercent(summary.industryTaxRate),
+                'Percent of enterprise profit collected') +
+            '</div>';
     }
 
-    // =========================================================================
-    // 6. RENDER BUDGET BREAKDOWN
-    // =========================================================================
+    function _buildBudgetSection(context) {
+        var locationId = context.locationId;
 
-    function _renderBudgetBreakdown(budget) {
-        var html = '<div style="margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.55rem;">';
+        var budget;
+        try {
+            budget = _getEconomyQueries().getBudgetSummary(locationId);
+        } catch (err) {
+            budget = null;
+        }
 
-        // Income
-        html += '<div style="background: var(--bg); padding: 8px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-            '<div style="color: var(--accent-light); font-weight: bold; margin-bottom: 4px;">Income</div>';
+        if (!budget) {
+            return '<div style="background:var(--bg2);padding:12px 16px;' +
+                'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
+                '<div style="font-size:0.65rem;color:var(--accent-light);' +
+                'font-weight:bold;margin-bottom:6px;">' +
+                _getIcon('COIN') + ' Annual Budget</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);text-align:center;' +
+                'padding:8px 0;">Budget data unavailable.</div>' +
+                '</div>';
+        }
+
+        var totalIncome = budget.income && typeof budget.income.total === 'number'
+            ? budget.income.total : null;
+        var totalExpenses = budget.expenses && typeof budget.expenses.total === 'number'
+            ? budget.expenses.total : null;
+        var surplus = typeof budget.surplus === 'number' ? budget.surplus : null;
+        var surplusColor = (surplus !== null && surplus >= 0)
+            ? 'var(--success)' : 'var(--danger)';
+        var surplusSign = (surplus !== null && surplus > 0) ? '+' : '';
+
+        var openBtn = '<button type="button" data-action="budget" ' +
+            'data-location="' + _escapeHtml(locationId) + '" ' +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
+            'color:var(--text);">' +
+            _getIcon('COIN') + ' Open</button>';
+
+        function stat(label, valueHtml, color) {
+            return '<div style="background:var(--bg);padding:8px;' +
+                'border-radius:6px;text-align:center;' +
+                'border:1px solid var(--border-light);">' +
+                '<div style="font-size:0.5rem;color:var(--dim);">' +
+                _escapeHtml(label) + '</div>' +
+                '<div style="font-size:0.9rem;font-weight:bold;color:' +
+                (color || 'var(--text)') + ';">' +
+                valueHtml + '</div>' +
+                '</div>';
+        }
+
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
+            '<div style="display:flex;justify-content:space-between;' +
+            'align-items:center;margin-bottom:8px;">' +
+            '<div style="font-size:0.65rem;color:var(--accent-light);' +
+            'font-weight:bold;">' +
+            _getIcon('COIN') + ' Annual Budget</div>' +
+            openBtn +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;' +
+            'gap:12px;margin-bottom:10px;">' +
+            stat('Total Income', _fmtGold(totalIncome), 'var(--success)') +
+            stat('Total Expenses', _fmtGold(totalExpenses), 'var(--danger)') +
+            stat('Surplus', surplusSign + _fmtGold(surplus), surplusColor) +
+            '</div>' +
+            _buildBudgetBreakdown(budget) +
+            '</div>';
+    }
+
+    function _buildBudgetBreakdown(budget) {
+        if (!budget || !budget.income || !budget.expenses) return '';
+
         var incomeItems = [
-            { key: 'taxes', label: 'Taxes', value: budget.income.taxes || 0 },
-            { key: 'trade', label: 'Trade Tariffs', value: budget.income.trade || 0 },
-            { key: 'industry', label: 'Industry Tax', value: budget.income.industry || 0 },
-            { key: 'stateEnterprises', label: 'State Enterprises', value: budget.income.stateEnterprises || 0 },
-            { key: 'publicEnterprises', label: 'Public Enterprises', value: budget.income.publicEnterprises || 0 },
-            { key: 'other', label: 'Other', value: budget.income.other || 0 }
+            { key: 'taxes',             label: 'Taxes' },
+            { key: 'trade',             label: 'Trade Tariffs' },
+            { key: 'industry',          label: 'Industry Tax' },
+            { key: 'stateEnterprises',  label: 'State Enterprises' },
+            { key: 'publicEnterprises', label: 'Public Enterprises' }
         ];
-        for (var i = 0; i < incomeItems.length; i++) {
-            var item = incomeItems[i];
-            if (item.value > 0 || i < 3) {
-                html += '<div style="display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid var(--border-light);">' +
-                    '<span style="color: var(--dim);">' + item.label + '</span>' +
-                    '<span style="color: var(--text);">' + item.value + 'g</span>' +
-                    '</div>';
-            }
-        }
-        html += '</div>';
-
-        // Expenses
-        html += '<div style="background: var(--bg); padding: 8px; border-radius: 4px; border: 1px solid var(--border-light);">' +
-            '<div style="color: var(--danger); font-weight: bold; margin-bottom: 4px;">Expenses</div>';
         var expenseItems = [
-            { key: 'maintenance', label: 'Maintenance', value: budget.expenses.maintenance || 0 },
-            { key: 'wages', label: 'Wages', value: budget.expenses.wages || 0 },
-            { key: 'military', label: 'Military', value: budget.expenses.military || 0 },
-            { key: 'education', label: 'Education', value: budget.expenses.education || 0 },
-            { key: 'infrastructure', label: 'Infrastructure', value: budget.expenses.infrastructure || 0 },
-            { key: 'construction', label: 'Construction', value: budget.expenses.construction || 0 },
-            { key: 'governmentSalaries', label: 'Gov Salaries', value: budget.expenses.governmentSalaries || 0 },
-            { key: 'other', label: 'Other', value: budget.expenses.other || 0 }
+            { key: 'maintenance',         label: 'Maintenance' },
+            { key: 'wages',               label: 'Wages' },
+            { key: 'military',            label: 'Military' },
+            { key: 'infrastructure',      label: 'Infrastructure' },
+            { key: 'education',           label: 'Education' },
+            { key: 'governmentSalaries',  label: 'Gov Salaries' }
         ];
-        for (var i = 0; i < expenseItems.length; i++) {
-            var item = expenseItems[i];
-            if (item.value > 0 || i < 3) {
-                html += '<div style="display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid var(--border-light);">' +
-                    '<span style="color: var(--dim);">' + item.label + '</span>' +
-                    '<span style="color: var(--text);">' + item.value + 'g</span>' +
-                    '</div>';
-            }
-        }
-        html += '</div>';
 
-        html += '</div>';
-        return html;
-    }
-
-    // =========================================================================
-    // 7. ACTION EVENT LISTENERS
-    // =========================================================================
-
-    function _attachActionListeners(container, locationId) {
-        // Tax update buttons
-        var taxBtns = container.querySelectorAll('.tax-update-btn');
-        for (var i = 0; i < taxBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var field = this.dataset.field;
-                    var input = null;
-                    var updateFn = null;
-                    var currentValue = 0;
-                    var summary = _getSettlementSummary(locationId);
-
-                    switch (field) {
-                        case 'taxRate':
-                            input = document.getElementById('taxRateInput');
-                            updateFn = _updateTaxRate;
-                            currentValue = summary ? summary.taxRate || 10 : 10;
-                            break;
-                        case 'tradeTariff':
-                            input = document.getElementById('tradeTariffInput');
-                            updateFn = _updateTradeTariff;
-                            currentValue = summary ? summary.tradeTariff || 5 : 5;
-                            break;
-                        case 'industryTaxRate':
-                            input = document.getElementById('industryTaxRateInput');
-                            updateFn = _updateIndustryTaxRate;
-                            currentValue = summary ? summary.industryTaxRate || 8 : 8;
-                            break;
-                    }
-
-                    if (!input || !updateFn) return;
-
-                    var newValue = parseInt(input.value);
-                    if (isNaN(newValue) || newValue < 0) {
-                        _showToast('Please enter a valid value', 'error');
-                        return;
-                    }
-
-                    // Validate range
-                    var max = field === 'taxRate' ? 50 : 30;
-                    if (newValue > max) {
-                        _showToast('Value must be between 0 and ' + max, 'error');
-                        return;
-                    }
-
-                    if (newValue === currentValue) {
-                        _showToast('No change', 'info');
-                        return;
-                    }
-
-                    var result = updateFn(locationId, newValue);
-                    if (result && result.success) {
-                        _showToast(field.replace(/([A-Z])/g, ' $1') + ' updated to ' + newValue + '%', 'success');
-                        // Re-render the tab to show updated values
-                        renderSettlementEconomy('tab-economy', locationId, _getSettlementSummary(locationId));
-                    } else {
-                        _showToast('Failed to update: ' + (result ? result.reason : 'Unknown error'), 'error');
-                    }
-                });
-            })(taxBtns[i]);
-        }
-
-        // Spending update buttons
-        var spendBtns = container.querySelectorAll('.spending-update-btn');
-        for (var i = 0; i < spendBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var field = this.dataset.field;
-                    var input = null;
-                    var updateFn = null;
-                    var summary = _getSettlementSummary(locationId);
-
-                    switch (field) {
-                        case 'military':
-                            input = document.getElementById('militarySpendingInput');
-                            updateFn = _updateMilitarySpending;
-                            break;
-                        case 'infrastructure':
-                            input = document.getElementById('infrastructureSpendingInput');
-                            updateFn = _updateInfrastructureSpending;
-                            break;
-                        case 'education':
-                            input = document.getElementById('educationSpendingInput');
-                            updateFn = _updateEducationSpending;
-                            break;
-                    }
-
-                    if (!input || !updateFn) return;
-
-                    var newValue = parseInt(input.value);
-                    if (isNaN(newValue) || newValue < 0) {
-                        _showToast('Please enter a valid amount', 'error');
-                        return;
-                    }
-
-                    var result = updateFn(locationId, newValue);
-                    if (result && result.success) {
-                        _showToast(field.charAt(0).toUpperCase() + field.slice(1) + ' spending updated to ' + newValue + 'g', 'success');
-                        renderSettlementEconomy('tab-economy', locationId, _getSettlementSummary(locationId));
-                    } else {
-                        _showToast('Failed to update spending: ' + (result ? result.reason : 'Unknown error'), 'error');
-                    }
-                });
-            })(spendBtns[i]);
-        }
-
-        // Action buttons
-        var btns = container.querySelectorAll('.economy-action-btn');
-        for (var i = 0; i < btns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var action = this.dataset.action;
-                    switch (action) {
-                        case 'justice':
-                            _openJusticeModal(locationId);
-                            break;
-                        case 'budget':
-                            _openBudgetAllocationModal(locationId);
-                            break;
-                        case 'debt':
-                            _openDebtModal(locationId);
-                            break;
-                        case 'report':
-                            _openFinancialReportModal(locationId);
-                            break;
-                        case 'efficiency':
-                            _openEfficiencyModal(locationId);
-                            break;
-                        case 'employment':
-                            _openEmploymentModal(locationId);
-                            break;
-                        case 'refresh':
-                            renderSettlementEconomy('tab-economy', locationId, _getSettlementSummary(locationId));
-                            break;
-                    }
-                });
-            })(btns[i]);
-        }
-    }
-
-    // =========================================================================
-    // 8. JUSTICE MODAL
-    // =========================================================================
-
-    function _openJusticeModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            var place = _getPlaceById(locationId);
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var WARNING = _icon('WARNING');
-
-            var crimeRate = summary.crimeRate || 0;
-            var severity = summary.justice.severity || 'medium';
-            var hasWatch = summary.justice.hasWatch || false;
-            var watchSize = summary.justice.watchSize || 0;
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">Justice & Watch Management</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
+        function list(items, source, accent) {
+            var html = '<div style="background:var(--bg);padding:8px;' +
+                'border-radius:4px;border:1px solid var(--border-light);">' +
+                '<div style="color:' + accent + ';font-weight:bold;' +
+                'margin-bottom:4px;font-size:0.55rem;">' +
+                _escapeHtml(source === 'income' ? 'Income' : 'Expenses') +
                 '</div>';
 
-            if (crimeRate > 0.2) {
-                content += '<div style="background: rgba(200, 68, 68, 0.15); padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; border-left: 3px solid var(--danger);">' +
-                    WARNING + ' Crime rate is high: ' + Math.round(crimeRate * 100) + '%' +
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i];
+                var value = source === 'income'
+                    ? budget.income[item.key]
+                    : budget.expenses[item.key];
+                html += '<div style="display:flex;justify-content:space-between;' +
+                    'padding:2px 0;border-bottom:1px solid var(--border-light);' +
+                    'font-size:0.55rem;">' +
+                    '<span style="color:var(--dim);">' +
+                    _escapeHtml(item.label) + '</span>' +
+                    '<span style="color:var(--text);">' +
+                    _fmtGold(value) + '</span>' +
                     '</div>';
             }
 
-            content +=
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Justice Severity</label>' +
-                '<select id="justiceSeverityInput" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<option value="lenient" ' + (severity === 'lenient' ? 'selected' : '') + '>Lenient</option>' +
-                '<option value="medium" ' + (severity === 'medium' ? 'selected' : '') + '>Medium</option>' +
-                '<option value="harsh" ' + (severity === 'harsh' ? 'selected' : '') + '>Harsh</option>' +
-                '<option value="extreme" ' + (severity === 'extreme' ? 'selected' : '') + '>Extreme</option>' +
-                '</select>' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Harsher justice reduces crime but may affect prosperity</small>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">' +
-                '<input type="checkbox" id="hasWatchInput" ' + (hasWatch ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-                '<span style="font-size: 0.7rem; color: var(--text);">Has Watch / Guard Force</span>' +
-                '</label>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Watch Size</label>' +
-                '<input type="number" id="watchSizeInput" value="' + (watchSize || 0) + '" min="0" step="5" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Larger watch reduces crime but costs more</small>' +
-                '</div>' +
-
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                CIRCLE + ' Current crime rate: ' + Math.round(crimeRate * 100) + '%' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Justice & Watch Management',
-                content: content,
-                confirmText: 'Save Changes',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var severity = document.getElementById('justiceSeverityInput').value;
-                    var hasWatch = document.getElementById('hasWatchInput').checked;
-                    var watchSize = parseInt(document.getElementById('watchSizeInput').value) || 0;
-
-                    var results = [];
-                    if (severity !== (summary.justice.severity || 'medium')) {
-                        results.push(_updateJusticeSeverity(locationId, severity));
-                    }
-                    if (hasWatch !== (summary.justice.hasWatch || false) || watchSize !== (summary.justice.watchSize || 0)) {
-                        results.push(_updateWatch(locationId, hasWatch, watchSize));
-                    }
-
-                    var success = results.every(function(r) { return r && r.success; });
-                    if (success) {
-                        _showToast('Justice system updated', 'success');
-                        _closeTopModal();
-                        renderSettlementEconomy('tab-economy', locationId, _getSettlementSummary(locationId));
-                    } else {
-                        _showToast('Failed to update justice system', 'error');
-                    }
-                    _modalOpen = false;
-                    return true;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening justice modal', 'error');
+            html += '</div>';
+            return html;
         }
+
+        return '<div style="display:grid;grid-template-columns:1fr 1fr;' +
+            'gap:12px;font-size:0.55rem;">' +
+            list(incomeItems, 'income', 'var(--success)') +
+            list(expenseItems, 'expenses', 'var(--danger)') +
+            '</div>';
     }
 
-    // =========================================================================
-    // 9. BUDGET ALLOCATION MODAL
-    // =========================================================================
+    function _buildEmploymentSection(context) {
+        var locationId = context.locationId;
+        var EQ = _getEmploymentQueries();
+        if (!EQ || typeof EQ.getEmployment !== 'function') return '';
 
-    function _openBudgetAllocationModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
+        var employment;
         try {
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            var place = _getPlaceById(locationId);
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var data = _getSettlementData(locationId);
-
-            var currentEducationBudget = data ? data.educationBudget || 0 : 0;
-            var currentGovSalaryBudget = data ? data.governmentSalaryBudget || 0 : 0;
-            var currentInfrastructureBudget = data ? data.infrastructureBudget || 0 : 0;
-            var currentMilitaryBudget = data ? data.militaryBudget || 0 : 0;
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">Budget Allocation</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 4px;">Available Wealth: ' + summary.wealth + 'g</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Education Budget</label>' +
-                '<input type="number" id="educationBudgetInput" value="' + currentEducationBudget + '" min="0" step="5" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Funds schools and literacy programs</small>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Government Salary Budget</label>' +
-                '<input type="number" id="govSalaryBudgetInput" value="' + currentGovSalaryBudget + '" min="0" step="5" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Salaries for government officials</small>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Infrastructure Budget</label>' +
-                '<input type="number" id="infrastructureBudgetInput" value="' + currentInfrastructureBudget + '" min="0" step="5" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Roads, bridges, and public works</small>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Military Budget</label>' +
-                '<input type="number" id="militaryBudgetInput" value="' + currentMilitaryBudget + '" min="0" step="5" style="width: 100%; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                '<small style="font-size: 0.5rem; color: var(--dim);">Defense and security</small>' +
-                '</div>' +
-
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                CIRCLE + ' Allocations are deducted from wealth. Annual interest on debt is 5%.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Budget Allocation',
-                content: content,
-                confirmText: 'Allocate Budget',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var edu = parseInt(document.getElementById('educationBudgetInput').value) || 0;
-                    var gov = parseInt(document.getElementById('govSalaryBudgetInput').value) || 0;
-                    var infra = parseInt(document.getElementById('infrastructureBudgetInput').value) || 0;
-                    var mil = parseInt(document.getElementById('militaryBudgetInput').value) || 0;
-
-                    var totalAllocation = edu + gov + infra + mil;
-                    if (totalAllocation > summary.wealth) {
-                        _showToast('Total allocation (' + totalAllocation + 'g) exceeds wealth (' + summary.wealth + 'g)', 'error');
-                        return false;
-                    }
-
-                    var results = [];
-                    if (edu !== currentEducationBudget) {
-                        results.push(_allocateEducationBudget(locationId, edu, _getCurrentYear()));
-                    }
-                    if (gov !== currentGovSalaryBudget) {
-                        results.push(_allocateGovernmentSalaryBudget(locationId, gov, _getCurrentYear()));
-                    }
-
-                    var success = results.every(function(r) { return r && r.success; });
-                    if (success) {
-                        _showToast('Budget allocated successfully', 'success');
-                        _closeTopModal();
-                        renderSettlementEconomy('tab-economy', locationId, _getSettlementSummary(locationId));
-                    } else {
-                        _showToast('Failed to allocate budget', 'error');
-                    }
-                    _modalOpen = false;
-                    return true;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening budget modal', 'error');
+            employment = EQ.getEmployment(locationId);
+        } catch (err) {
+            return '';
         }
+        if (!employment) return '';
+
+        var openBtn = '<button type="button" data-action="employment" ' +
+            'data-location="' + _escapeHtml(locationId) + '" ' +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
+            'color:var(--text);">' +
+            _getIcon('PERSON') + ' Details</button>';
+
+        var rateColor = 'var(--danger)';
+        if (typeof employment.employmentRate === 'number') {
+            if (employment.employmentRate >= 70) rateColor = 'var(--success)';
+            else if (employment.employmentRate >= 40) rateColor = 'var(--warn)';
+        }
+
+        function stat(label, valueHtml, color) {
+            return '<div style="background:var(--bg);padding:6px;' +
+                'border-radius:4px;text-align:center;' +
+                'border:1px solid var(--border-light);">' +
+                '<div style="font-size:0.45rem;color:var(--dim);">' +
+                _escapeHtml(label) + '</div>' +
+                '<div style="font-size:0.8rem;font-weight:bold;color:' +
+                (color || 'var(--text)') + ';">' +
+                valueHtml + '</div>' +
+                '</div>';
+        }
+
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
+            '<div style="display:flex;justify-content:space-between;' +
+            'align-items:center;margin-bottom:6px;">' +
+            '<div style="font-size:0.65rem;color:var(--accent-light);' +
+            'font-weight:bold;">' +
+            _getIcon('PERSON') + ' Employment</div>' +
+            openBtn +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
+            'gap:8px;">' +
+            stat('Workers', _fmtNumber(employment.totalEmployed)) +
+            stat('Unemployed', _fmtNumber(employment.unemployed),
+                employment.unemployed > 0 ? 'var(--danger-lt)' : 'var(--success)') +
+            stat('Rate', _fmtPercent(employment.employmentRate), rateColor) +
+            stat('Avg Wage', _fmtGold(employment.averageWage)) +
+            '</div>' +
+            '</div>';
+    }
+
+    function _buildActionButtons(locationId) {
+        function btn(action, label, iconName, opts) {
+            opts = opts || {};
+            var style = 'font-size:0.6rem;padding:4px 12px;' +
+                'background:var(--bg3);border:1px solid ' +
+                (opts.accent ? 'var(--accent)' : 'var(--border)') + ';' +
+                'border-radius:4px;cursor:pointer;color:' +
+                (opts.accent ? 'var(--accent-light)' : 'var(--text)') + ';';
+            return '<button type="button" data-action="' + _escapeHtml(action) + '" ' +
+                'data-location="' + _escapeHtml(locationId) + '" ' +
+                'style="' + style + '">' +
+                (iconName ? _getIcon(iconName) + ' ' : '') +
+                _escapeHtml(label) + '</button>';
+        }
+
+        return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">' +
+            btn('tax-rates', 'Fiscal Policy', 'GEAR') +
+            btn('spending', 'Spending', 'COIN') +
+            btn('budget', 'Budget', 'COIN') +
+            btn('justice', 'Justice', 'SHIELD') +
+            btn('debt', 'Debt', 'COIN') +
+            btn('report', 'Report', 'CIRCLE_DOT') +
+            btn('efficiency', 'Efficiency', 'STAR_4') +
+            btn('employment', 'Employment', 'PERSON') +
+            btn('state-enterprises', 'State Enterprises', 'GEAR') +
+            '</div>';
+    }
+
+    function _buildFooter() {
+        return '<div style="padding:8px;background:var(--bg3);border-radius:6px;' +
+            'font-size:0.55rem;color:var(--dim);">' +
+            _getIcon('CIRCLE_DOT') + ' ' +
+            'Fiscal policy and budgets are edited through the modals. ' +
+            'Spending is set by the annual budget flow and is not editable here. ' +
+            'Debt repayment goes through the debt modal, which uses one atomic ' +
+            'transaction for wealth and debt.</div>';
     }
 
     // =========================================================================
-    // 10. DEBT MODAL
+    // 5. RENDER
     // =========================================================================
 
-    function _openDebtModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
+    /**
+     * Renders the economy tab into the container.
+     *
+     * @param {HTMLElement} container
+     * @param {Object} context  { locationId, data, viewModel }
+     */
+    function renderSettlementEconomy(container, context) {
+        if (!container) {
+            throw new Error(
+                'settlement-economy-tab: container is required'
+            );
+        }
+        if (!context || !context.locationId) {
+            throw new Error(
+                'settlement-economy-tab: context.locationId is required'
+            );
+        }
 
+        var locationId = context.locationId;
+
+        // debtRatio is derived from the two canonical balances via
+        // the economy query. It may be null (settlement missing, or one
+        // of the two balances non-finite); the renderer treats null as
+        // "unknown" and does not guess.
+        var debtRatio;
         try {
-            var summary = _getSettlementSummary(locationId);
-            if (!summary) {
-                _showToast('Settlement data not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            var place = _getPlaceById(locationId);
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var WARNING = _icon('WARNING');
-            var debtRatio = _getDebtRatio(locationId);
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">Debt Management</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Total Debt</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + (summary.totalDebt > 0 ? 'var(--danger-lt)' : 'var(--success)') + ';">' + summary.totalDebt + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Debt Ratio</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + (debtRatio > 50 ? 'var(--danger)' : debtRatio > 25 ? 'var(--warn)' : 'var(--success)') + ';">' + debtRatio + '%</div>' +
-                '</div>' +
-                '</div>';
-
-            if (summary.totalDebt > 0) {
-                content +=
-                    '<div style="background: rgba(200, 68, 68, 0.15); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid var(--danger);">' +
-                    WARNING + ' Debt incurs 5% annual interest. Currently paying ' + Math.floor(summary.totalDebt * 0.05) + 'g/year in interest.' +
-                    '</div>' +
-
-                    '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Repay Debt</label>' +
-                    '<div style="display: flex; gap: 8px; align-items: center;">' +
-                    '<input type="number" id="repayAmount" value="0" min="0" max="' + summary.wealth + '" style="width: 120px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">' +
-                    '<span style="font-size: 0.55rem; color: var(--dim);">Max: ' + summary.wealth + 'g</span>' +
-                    '<button id="repayAllBtn" class="btn" style="font-size: 0.6rem; padding: 4px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + _icon('ARROW_RIGHT') + ' Repay All</button>' +
-                    '</div>' +
-                    '<small style="font-size: 0.5rem; color: var(--dim);">Using wealth to repay debt reduces interest payments</small>' +
-                    '</div>';
-            } else {
-                content += '<div style="background: rgba(74, 158, 106, 0.15); padding: 12px; border-radius: 8px; margin-bottom: 16px; border-left: 3px solid var(--success);">' +
-                    'Settlement has no debt' +
-                    '</div>';
-            }
-
-            content +=
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                CIRCLE + ' Wealth: ' + summary.wealth + 'g · Net Worth: ' + summary.netWorth + 'g' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Debt Management',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-            setTimeout(function() {
-                var repayAllBtn = document.getElementById('repayAllBtn');
-                if (repayAllBtn) {
-                    repayAllBtn.addEventListener('click', function() {
-                        var repayInput = document.getElementById('repayAmount');
-                        if (repayInput) {
-                            repayInput.value = Math.min(summary.totalDebt, summary.wealth);
-                        }
-                    });
-                }
-
-                var repayInput = document.getElementById('repayAmount');
-                if (repayInput && summary.totalDebt > 0) {
-                    var modalFooter = document.querySelector('.modal-footer');
-                    if (modalFooter) {
-                        var confirmBtn = modalFooter.querySelector('.confirm-btn');
-                        if (confirmBtn) {
-                            confirmBtn.textContent = 'Repay & Close';
-                            confirmBtn.onclick = function() {
-                                var amount = parseInt(document.getElementById('repayAmount').value) || 0;
-                                if (amount <= 0) {
-                                    _showToast('Enter a valid amount to repay', 'error');
-                                    return false;
-                                }
-                                if (amount > summary.wealth) {
-                                    _showToast('Not enough wealth to repay ' + amount + 'g', 'error');
-                                    return false;
-                                }
-                                if (amount > summary.totalDebt) {
-                                    _showToast('Cannot repay more than total debt (' + summary.totalDebt + 'g)', 'error');
-                                    return false;
-                                }
-
-                                _confirmDialog(
-                                    'Repay ' + amount + 'g of debt? This will reduce your wealth by ' + amount + 'g.',
-                                    'Confirm Repayment',
-                                    function() {
-                                        var wealthResult = _updateWealth(locationId, -amount, 'Debt repayment');
-                                        if (wealthResult && wealthResult.success) {
-                                            var debtResult = _updateDebt(locationId, -amount, 'Debt repayment');
-                                            if (debtResult && debtResult.success) {
-                                                _showToast('Repaid ' + amount + 'g of debt', 'success');
-                                                _closeTopModal();
-                                                renderSettlementEconomy('tab-economy', locationId, _getSettlementSummary(locationId));
-                                            }
-                                        }
-                                        _modalOpen = false;
-                                    }
-                                );
-                                return false;
-                            };
-                        }
-                    }
-                }
-            }, 150);
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening debt modal', 'error');
+            debtRatio = _getEconomyQueries().getDebtRatio(locationId);
+        } catch (err) {
+            debtRatio = null;
         }
+
+        var html = '<div style="padding:4px;">' +
+            _buildHeader(context) +
+            _buildWealthDebtRow(context, debtRatio) +
+            _buildFiscalPolicySection(context) +
+            _buildBudgetSection(context) +
+            _buildEmploymentSection(context) +
+            _buildActionButtons(locationId) +
+            _buildFooter() +
+            '</div>';
+
+        container.innerHTML = html;
+        _wireActions(container, locationId);
     }
 
     // =========================================================================
-    // 11. FINANCIAL REPORT MODAL
+    // 6. REGISTRATION
     // =========================================================================
 
-    function _openFinancialReportModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var place = _getPlaceById(locationId);
-            var report = _getFinancialReport(locationId, 5);
-            if (!report) {
-                _showToast('Financial report not available', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            var summary = report.summary;
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var COIN = _icon('COIN');
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">' + COIN + ' Financial Report</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + ' — 5 Year Summary</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Avg Income</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--success);">' + summary.averageIncome + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Avg Expenses</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--danger);">' + summary.averageExpenses + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Avg Surplus</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: ' + (summary.averageSurplus >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + (summary.averageSurplus >= 0 ? '+' : '') + summary.averageSurplus + 'g</div>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="background: var(--bg3); padding: 8px; border-radius: 6px; border: 1px solid var(--border-light);">' +
-                '<div style="font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Yearly Breakdown</div>';
-
-            for (var i = 0; i < report.reports.length; i++) {
-                var r = report.reports[i];
-                var isSurplus = r.surplus >= 0;
-                content += '<div style="display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid var(--border-light); font-size: 0.55rem;">' +
-                    '<span style="color: var(--dim);">' + r.year + '</span>' +
-                    '<span style="color: var(--text);">Income: ' + r.income + 'g</span>' +
-                    '<span style="color: var(--text);">Expenses: ' + r.expenses + 'g</span>' +
-                    '<span style="color: ' + (isSurplus ? 'var(--success)' : 'var(--danger)') + ';">Surplus: ' + (isSurplus ? '+' : '') + r.surplus + 'g</span>' +
-                    '</div>';
-            }
-
-            content +=
-                '</div>' +
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim); margin-top: 12px;">' +
-                CIRCLE + ' Based on current economic conditions. Historical data is simulated.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Financial Report',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening financial report', 'error');
+    function _register() {
+        var tabs = _getTabs();
+        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
+            throw new Error(
+                'settlement-economy-tab: SettlementTabs is missing. ' +
+                'Load settlement-tabs.js before this tab.'
+            );
         }
+        tabs.registerTabRenderer('economy', renderSettlementEconomy);
     }
 
-    // =========================================================================
-    // 12. EFFICIENCY MODAL
-    // =========================================================================
-
-    function _openEfficiencyModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var place = _getPlaceById(locationId);
-            var score = _getEfficiencyScore(locationId);
-            if (!score) {
-                _showToast('Efficiency score not available', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var STAR = _icon('STAR_4');
-
-            var ratingColor = score.efficiency >= 80 ? 'var(--success)' :
-                             score.efficiency >= 60 ? 'var(--accent)' :
-                             score.efficiency >= 40 ? 'var(--warn)' :
-                             score.efficiency >= 20 ? 'var(--danger)' : 'var(--danger-dark)';
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">' + STAR + ' Government Efficiency</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
-                '</div>' +
-
-                '<div style="text-align: center; padding: 20px; background: var(--bg3); border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 3rem; font-weight: bold; color: ' + ratingColor + ';">' + score.efficiency + '</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: ' + ratingColor + ';">' + score.rating + '</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Income</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--text);">' + score.income + 'g</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Expenses</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--danger);">' + score.expenses + 'g</div>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Population</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--text);">' + score.population + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Income per Capita</div>' +
-                '<div style="font-size: 1rem; font-weight: bold; color: var(--text);">' + score.incomePerCapita + 'g</div>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                CIRCLE + ' Efficiency score measures how effectively the settlement generates income relative to expenses.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Efficiency Score',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening efficiency modal', 'error');
-        }
-    }
+    _register();
 
     // =========================================================================
-    // 13. EMPLOYMENT MODAL
-    // =========================================================================
-
-    function _openEmploymentModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var place = _getPlaceById(locationId);
-            var employment = _getSettlementEmployment(locationId);
-            if (!employment) {
-                _showToast('Employment data not available', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            var population = _getLocationPopulationCount(locationId);
-            var adults = Math.max(0, Math.floor(population * 0.6));
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var PERSON = _icon('PERSON');
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">' + PERSON + ' Employment Report</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Total Workers</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: var(--text);">' + employment.totalWorkers + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Unemployed</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + (employment.unemployed > 0 ? 'var(--danger-lt)' : 'var(--success)') + ';">' + employment.unemployed + '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Employment Rate</div>' +
-                '<div style="font-size: 1.2rem; font-weight: bold; color: ' + (employment.employmentRate >= 70 ? 'var(--success)' : employment.employmentRate >= 40 ? 'var(--warn)' : 'var(--danger)') + ';">' + employment.employmentRate + '%</div>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.65rem; color: var(--accent-light); margin-bottom: 6px;">Employment Breakdown</div>' +
-                '<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                '<span style="color: var(--dim);">State Employed</span>' +
-                '<span style="color: var(--text);">' + employment.stateEmployed + '</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                '<span style="color: var(--dim);">Private Employed</span>' +
-                '<span style="color: var(--text);">' + employment.privateEmployed + '</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.6rem;">' +
-                '<span style="color: var(--dim);">Unemployed</span>' +
-                '<span style="color: var(--danger-lt);">' + employment.unemployed + '</span>' +
-                '</div>' +
-                '</div>' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.65rem; color: var(--accent-light); margin-bottom: 6px;">Wage Information</div>' +
-                '<div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.6rem;">' +
-                '<span style="color: var(--dim);">Average Wage</span>' +
-                '<span style="color: var(--text);">' + employment.averageWage + 'g/year</span>' +
-                '</div>' +
-                '<div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.6rem;">' +
-                '<span style="color: var(--dim);">Adult Population</span>' +
-                '<span style="color: var(--text);">' + adults + '</span>' +
-                '</div>' +
-                '</div>' +
-                '</div>' +
-
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                CIRCLE + ' Employment data is calculated from all enterprises in this location. Create more enterprises to increase employment.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Employment Report',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening employment modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 14. REGISTER WITH TAB SYSTEM
-    // =========================================================================
-
-    if (typeof window.registerTabRenderer === 'function') {
-        window.registerTabRenderer('economy', renderSettlementEconomy, true);
-    }
-
-    // =========================================================================
-    // 15. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
     window.renderSettlementEconomy = renderSettlementEconomy;
