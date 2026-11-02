@@ -59,6 +59,77 @@
  *     at its call site, not by hiding the failure inside the commit
  *     helper.
  *
+ * CANDIDATE-WRITE ORDERING:
+ *   The candidate is written to the in-memory canonical store BEFORE
+ *   persist runs. Sequence, step by step:
+ *
+ *     Step 1  store[locationId] = candidate   (in-memory write)
+ *     Step 2  state.rebuildIndexes()          (in-memory index update)
+ *     Step 3  saveMasterData()                (durable write)
+ *     Step 4  state.publish(event)            (subscriber notification)
+ *
+ *   If step 3 fails, steps 1 and 2 have already happened. The in-memory
+ *   canonical store holds the new candidate. SettlementState indexes
+ *   point at it. But storage still holds the OLD record. Storage and
+ *   memory are now out of sync.
+ *
+ *   Step 4 does NOT run: subscribers are not told the world changed.
+ *
+ *   This ordering is deliberate:
+ *
+ *   - Writing the candidate before persist lets rebuildIndexes run
+ *     against the new state, which is the state the caller asked for.
+ *     Rebuild-after-persist would require running rebuild twice on
+ *     success (once to make the caller's in-flight reads coherent,
+ *     once to make subscribers coherent) or would leave a window in
+ *     which a read between write and rebuild saw an inconsistent
+ *     index.
+ *
+ *   - Throwing on persist failure (rather than rolling back step 1)
+ *     means the caller knows the write was not durable and is
+ *     responsible for recovery. Rolling back would require cloning the
+ *     previous record before every commit — expensive and error-prone,
+ *     and the failure case is rare.
+ *
+ *   CONSEQUENCES FOR CALLERS:
+ *
+ *     On a persist throw, the caller MUST NOT treat the operation as
+ *     failed-if-it-returned. The command reports an exception, but the
+ *     in-memory state has moved. Correct recovery is one of:
+ *
+ *       - Reload from storage (reloadMasterData / forceReloadData).
+ *         This re-installs the pre-failure record and rebuilds indexes.
+ *
+ *       - Retry the persist (via a subsequent commit or a direct
+ *         saveMasterData call). This makes the in-memory state durable.
+ *
+ *       - Explicitly re-commit the previous candidate (via another
+ *         commit call with the pre-failure record). This is the caller
+ *         choosing to roll back.
+ *
+ *     A caller that catches the exception, logs it, and continues
+ *     without doing one of these three will leave the tab in a state
+ *     where its in-memory record and its storage record disagree. A
+ *     subsequent cross-tab reload would silently revert the in-memory
+ *     record to the pre-failure state — an unexpected outcome that
+ *     looks like data loss.
+ *
+ *     Most callers (the annual processor, the modal command wrappers)
+ *     let the throw propagate to a boundary that reports a toast and
+ *     stops. That is acceptable for interactive flows because the tab
+ *     is not advanced past the failure. Batch callers (the annual
+ *     processor's processAllSettlementsAnnual) catch per-settlement
+ *     failures and continue; the divengence applies to that specific
+ *     settlement only, and the next successful save (from another
+ *     settlement, or from a retry) rewrites the full store including
+ *     the failed settlement's in-memory candidate — so the "ahead of
+ *     storage" state heals on the next successful commit.
+ *
+ *   This is documented here because it is a design consequence, not an
+ *   accident. A reader who sees "candidate is written, then persist is
+ *   attempted" is right to ask what happens on failure, and the answer
+ *   is above.
+ *
  * PERSIST FAILURE CONTRACT:
  *
  *   saveMasterData() returns a boolean. It does NOT throw on write
@@ -98,12 +169,20 @@
  *       Subscribers must not be told the world changed when it was not
  *       durably written. The candidate was already written to the
  *       in-memory canonical store, so the in-memory state is
- *       inconsistent with storage until the next successful commit. The
- *       caller is responsible for reloading or retrying.
+ *       inconsistent with storage until the next successful commit. See
+ *       CANDIDATE-WRITE ORDERING above for the recovery contract.
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Header CANDIDATE-WRITE ORDERING section added. Documents that
+ *       the candidate is written to the in-memory store BEFORE persist
+ *       runs, so on persist failure the in-memory state is ahead of
+ *       storage until the caller reloads, retries, or re-commits the
+ *       prior record. Correct-by-design; previously undocumented.
+ *     - No behavioural change. The commit sequence, the persist
+ *       inspection, and the throw-on-failure semantics are unchanged.
+ *   Previous revision:
  *     - _saveMasterData() now inspects the boolean return from
  *       window.saveMasterData() and throws on false, using
  *       getLastSaveError() to surface the underlying failure reason.
@@ -121,7 +200,7 @@
  *       return shape. The only observable difference is that it now
  *       throws when persist fails, instead of returning the published
  *       event as if everything succeeded.
- *   Prior revision:
+ *   Previous revision:
  *     - Initial implementation.
  * =============================================================================
  */
@@ -204,8 +283,8 @@
     // Returns the event that was published, so callers can use the same
     // object shape for their own return value if they want.
     //
-    // Throws if persistence fails. See PERSIST FAILURE CONTRACT in the
-    // module header.
+    // Throws if persistence fails. See PERSIST FAILURE CONTRACT and
+    // CANDIDATE-WRITE ORDERING in the module header.
     //
 
     /**
@@ -233,6 +312,8 @@
         }
 
         // --- 1. Write candidate to canonical store ---
+        // In-memory write happens BEFORE persist. See CANDIDATE-WRITE
+        // ORDERING in the module header for the failure semantics.
         var store = _getCanonicalStore();
         store[locationId] = candidate;
 
@@ -245,7 +326,7 @@
         // durably written. The candidate has already been written to the
         // in-memory canonical store at this point, so the caller is
         // responsible for reloading or retrying after a thrown persist
-        // error.
+        // error. See CANDIDATE-WRITE ORDERING in the module header.
         _saveMasterData();
 
         // --- 4. Publish once ---
