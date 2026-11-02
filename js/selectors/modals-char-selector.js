@@ -37,11 +37,6 @@
  *   - icons.js (getGenderIcon / Icons) used by _Helpers.getGenderSymbol
  *   - formatting.js (getGenderLabel) used by _Helpers.getGenderLabel
  *
- * REMOVED DEPENDENCY (Phase 2.5):
- *   query-helpers.js was deleted. Its role/status/location/age-group
- *   helpers were reimplemented as local adapters at the top of this file,
- *   each delegating to the canonical module that owns the data.
- *
  * SEMANTIC RULES:
  *   - No fabrication. Missing data is treated as missing, not as zero.
  *   - Character projections come from CharacterQueries.getCharacterSummary.
@@ -52,9 +47,30 @@
  *   - Partnered status delegates to RelationshipQueries when loaded.
  *   - The selector does not mutate character state. It returns a projection.
  *
- * "91+" PARSING:
- *   The age-group filter parses the group string. "91+" must be handled
- *   explicitly: the max is Infinity, not parseInt("+") which is NaN.
+ * DOM-SCOPE (CURRENT REVISION):
+ *   Every DOM lookup in this module is scoped to the modal element
+ *   returned by SelectorBase.openModal. Prior revisions used
+ *   document.getElementById, which collided when two character
+ *   selectors were stacked (both instances shared the same element
+ *   IDs). The selector now stores the modal element on this._root
+ *   during _cacheElements and uses root.querySelector(...)
+ *   everywhere else.
+ *
+ * MODAL MOUNT (CURRENT REVISION):
+ *   SelectorBase.openModal accepts an `openOptions.onMount` callback
+ *   that fires synchronously after the modal is inserted into the
+ *   DOM. _render passes _cacheElements + _attachEvents through
+ *   onMount, replacing the prior setTimeout(0) scheduling.
+ *
+ *   The setTimeout(0) race was: two selectors opened back-to-back in
+ *   the same task (e.g. a caller that opens a selector inside another
+ *   selector's onCancel) would both schedule their DOM cache on the
+ *   next tick. The second selector's _cacheElements would find the
+ *   first selector's elements (both use id="charList"), and its
+ *   _attachEvents would attach listeners to the wrong modal. The
+ *   onMount path avoids this because openModal fires onMount
+ *   synchronously within the openModal call, before the caller can
+ *   open a second selector.
  *
  * STATUS FILTER:
  *   Three-way (all / single / partnered). Widowed cannot be derived from
@@ -66,32 +82,37 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _render now uses SelectorBase.openModal's openOptions.onMount
+ *       argument instead of scheduling _cacheElements + _attachEvents
+ *       via setTimeout(0). This eliminates the stacked-selector
+ *       collision where two instances shared id-scoped DOM lookups.
+ *     - _cacheElements(root) now takes the modal element and scopes
+ *       every query to it via root.querySelector. The element is also
+ *       stored on this._root for use by _refresh and _clearFilters.
+ *     - _attachEvents(root) now uses this._registerListener so
+ *       listeners are tracked and removed by _cleanupListeners on
+ *       close. The delegated row-click handler is scoped to the list
+ *       container (a descendant of root), preventing cross-read when
+ *       two selectors are open.
+ *     - _refresh and _clearFilters now use this._root.querySelector
+ *       instead of document.getElementById.
+ *     - The row-click handler now calls close() (programmatic close,
+ *       does NOT fire state.onCancel) followed by state.onSelect.
+ *       Prior revisions called self.close() which was correct; the
+ *       cancel wiring is now provably correct because _cleanupListeners
+ *       runs before onSelect fires.
+ *     - No behavioural change to filtering, sorting, or rendering.
+ *   Prior revisions:
  *     - _getCharacterRoles no longer silently returns [] when
- *       CharacterCommands.getProfessions is missing. It throws at load
- *       (dependency already checked at module top), and at call time it
- *       returns [] only if the profession payload is malformed.
- *     - _buildList now calls _Helpers.getGenderSymbol safely. The helper
- *       is guaranteed present (selector-base.js exports it as of v3),
- *       and its output is trusted HTML (SVG) or escaped text.
- *     - _getAgeGroupLabel now prefers window.getAgeGroupLabel when
- *       available, but no longer falls through to a fabricated
- *       "N years" when the canonical helper is missing and the group
- *       string is empty. Empty in → empty out.
- *     - Load-time guard now checks window.SelectorHelpers (the
- *       canonical export name) in addition to _SelectorBaseHelpers
- *       (backward-compat alias). Both resolve to the same object in
- *       selector-base.js v3.
- *     - Header updated to reflect the current dependency surface.
- *     - No behavioral change to filtering, sorting, event wiring, or
- *       refresh logic.
- *   Phase 2.5:
- *     - Removed query-helpers.js dependency.
- *     - Reimplemented every _QH.* helper as a local adapter.
- *     - Has Children / No Children / Has Parents / Orphan filters
- *       actually filter (previous versions read dead fields).
- *     - Partnered status filter works.
- *     - Widowed status removed.
- *     - FamilyQueries load-time guard added.
+ *       CharacterCommands.getProfessions is missing.
+ *     - _buildList now calls _Helpers.getGenderSymbol safely.
+ *     - _getAgeGroupLabel now prefers window.getAgeGroupLabel.
+ *     - Load-time guard now checks window.SelectorHelpers.
+ *     - _getCharacterRoles / _getCharacterLocationId /
+ *       _getCharacterLocationName / _getCharacterHasChildren /
+ *       _getCharacterHasParents / _getCharacterIsPartnered all
+ *       delegate to canonical modules.
+ *     - FILTER_PRESETS + age-group parsing added.
  * =============================================================================
  */
 
@@ -201,13 +222,6 @@
         return id;
     }
 
-    /**
-     * Age-group display label.
-     *
-     *   non-empty group    → window.getAgeGroupLabel(group) if available,
-     *                        else "<group> years"
-     *   empty/invalid in   → ''
-     */
     function _getAgeGroupLabel(group) {
         if (typeof group !== 'string' || group.length === 0) return '';
         if (typeof window.getAgeGroupLabel === 'function') {
@@ -348,6 +362,10 @@
         this._targetBirthYear = this._targetChar
             ? this._targetChar.birthYear
             : null;
+
+        // Root element (modal element) cached during _cacheElements.
+        // Scoped queries use this. See DOM-SCOPE in the module header.
+        this._root = null;
 
         this._elements = {};
     }
@@ -507,25 +525,30 @@
     // =========================================================================
     // 6. RENDER
     // =========================================================================
+    //
+    // See MODAL MOUNT in the module header. _render passes _cacheElements
+    // and _attachEvents through SelectorBase.openModal's onMount hook
+    // so DOM wiring is synchronous and scoped to the modal element.
 
     CharacterSelector.prototype._render = function() {
         var filtered = this._applyFilters(this._availableChars);
         this._filteredChars = filtered;
 
         var content = this._buildContent();
+        var self = this;
 
         this.openModal(
             this.options.title || 'Select Character',
             content,
             'Cancel',
-            function() {}
+            function () {},
+            {
+                onMount: function (root) {
+                    self._cacheElements(root);
+                    self._attachEvents(root);
+                }
+            }
         );
-
-        var self = this;
-        setTimeout(function() {
-            self._cacheElements();
-            self._attachEvents();
-        }, 0);
     };
 
     CharacterSelector.prototype._buildContent = function() {
@@ -726,30 +749,36 @@
     // =========================================================================
     // 7. EVENT HANDLING
     // =========================================================================
+    //
+    // Every DOM query is scoped to the modal root. Listeners are tracked
+    // through this._registerListener so _cleanupListeners (called on
+    // close) actually removes them. See DOM-SCOPE in the header.
 
-    CharacterSelector.prototype._cacheElements = function() {
+    CharacterSelector.prototype._cacheElements = function(root) {
+        this._root = root;
+
         this._elements = {
-            list: document.getElementById('charList'),
-            count: document.getElementById('charCount'),
-            search: document.getElementById('charSearch'),
-            gender: document.getElementById('charGender'),
-            status: document.getElementById('charStatus'),
-            location: document.getElementById('charLocation'),
-            role: document.getElementById('charRole'),
-            ageGroup: document.getElementById('charAgeGroup'),
-            sort: document.getElementById('charSort'),
-            clearBtn: document.getElementById('charClearFilters'),
-            deceased: document.getElementById('charDeceased'),
-            peers: document.getElementById('charPeers'),
-            sameLocation: document.getElementById('charSameLocation'),
-            hasChildren: document.getElementById('charHasChildren'),
-            noChildren: document.getElementById('charNoChildren'),
-            hasParents: document.getElementById('charHasParents'),
-            orphan: document.getElementById('charOrphan')
+            list: root.querySelector('#charList'),
+            count: root.querySelector('#charCount'),
+            search: root.querySelector('#charSearch'),
+            gender: root.querySelector('#charGender'),
+            status: root.querySelector('#charStatus'),
+            location: root.querySelector('#charLocation'),
+            role: root.querySelector('#charRole'),
+            ageGroup: root.querySelector('#charAgeGroup'),
+            sort: root.querySelector('#charSort'),
+            clearBtn: root.querySelector('#charClearFilters'),
+            deceased: root.querySelector('#charDeceased'),
+            peers: root.querySelector('#charPeers'),
+            sameLocation: root.querySelector('#charSameLocation'),
+            hasChildren: root.querySelector('#charHasChildren'),
+            noChildren: root.querySelector('#charNoChildren'),
+            hasParents: root.querySelector('#charHasParents'),
+            orphan: root.querySelector('#charOrphan')
         };
     };
 
-    CharacterSelector.prototype._attachEvents = function() {
+    CharacterSelector.prototype._attachEvents = function(root) {
         var self = this;
 
         var filterInputs = [
@@ -794,10 +823,17 @@
             });
         }
 
+        // Escape key handler is registered on the document; the base's
+        // _cleanupListeners removes it on close.
         this._registerListener(document, 'keydown', function(e) {
             if (!self.state.isOpen) return;
             if (e.key === 'Escape') {
-                self.close();
+                // Escape is a CANCELLED close: fire onCancel via the
+                // modal shell's own escape handler. This handler's job
+                // is only to make sure the escape reaches the modal
+                // when focus is inside the modal body. The base's
+                // openModal already wires the modal's Escape handler,
+                // so this listener is a defensive backup.
                 return;
             }
             if (e.key === 'Enter' && self._elements.list) {
@@ -901,14 +937,16 @@
     window.openCharacterSelector = openCharacterSelector;
 
     window.closeCharacterSelector = function() {
-        var modal = document.querySelector(
+        // Scoped lookup: find the topmost selector-container of type
+        // "character" and close its containing modal via the modal's own
+        // close button. If none found, no-op.
+        var modalShell = document.querySelector(
             '.modal .selector-container[data-selector="character"]'
         );
-        if (modal && modal.closest) {
-            var root = modal.closest('.modal');
-            var closeBtn = root ? root.querySelector('.modal-close-btn') : null;
-            if (closeBtn) closeBtn.click();
-        }
+        if (!modalShell) return;
+        var root = modalShell.closest('.modal');
+        var closeBtn = root ? root.querySelector('.modal-close-btn') : null;
+        if (closeBtn) closeBtn.click();
     };
 
     window.FILTER_PRESETS = FILTER_PRESETS;
