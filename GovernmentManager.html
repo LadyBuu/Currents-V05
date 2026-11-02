@@ -1,16 +1,81 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Government Manager</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/worldManager.css">
     <link rel="stylesheet" href="css/selectors.css">
     <link rel="stylesheet" href="css/location-sidebar.css">
     <link rel="stylesheet" href="css/gov-manager.css">
+
+    <!-- ============================================================ -->
+    <!-- NEW: sub-tab strip styles for the Government page tab        -->
+    <!-- ============================================================ -->
+    <style>
+        .gov-subtabs {
+            display: flex;
+            gap: 2px;
+            padding: 0 4px;
+            margin-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+
+        .gov-subtab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: 2px solid transparent;
+            border-radius: 4px 4px 0 0;
+            font-family: var(--f-display);
+            font-size: 0.68rem;
+            letter-spacing: 0.05em;
+            color: var(--dim);
+            cursor: pointer;
+            transition: color 0.15s ease,
+                        background-color 0.15s ease,
+                        border-color 0.15s ease;
+        }
+
+        .gov-subtab:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+
+        .gov-subtab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: var(--accent-dim);
+            font-weight: 600;
+        }
+
+        .gov-subtab .gov-subtab-icon {
+            display: inline-flex;
+            width: 1em;
+            height: 1em;
+            align-items: center;
+            justify-content: center;
+            color: currentColor;
+        }
+
+        .gov-subtab .gov-subtab-icon svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+
+        .gov-subpanel {
+            min-height: 200px;
+        }
+    </style>
 </head>
 <body>
 
@@ -61,7 +126,12 @@
 <!-- ============================================================ -->
 
 <!-- 1. Constants (MUST BE FIRST) -->
-<script src="js/core/constants.js"></script>
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
 
 <!-- 2. Pure utilities (no dependencies) -->
 <script src="js/core/randomness.js"></script>
@@ -74,7 +144,21 @@
 <script src="js/core/ids.js"></script>
 
 <!-- 4. Data layer -->
+<script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
+<script>
+    /* ---- NEW ---- */
+    /* initializeStorage() must run before any *-state.js module loads. */
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') {
+                window.initializeStorage();
+            }
+        } catch (e) {
+            console.error('[GovernmentManager] initializeStorage failed:', e);
+        }
+    })();
+</script>
 <script src="js/core/accessors.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
@@ -86,8 +170,8 @@
 <!-- 6. Icons & UI -->
 <script src="js/core/icons.js"></script>
 <script src="js/core/ui.js"></script>
-<script src="js/core/collapsible.js"></script>
 <script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
 
 <!-- 7. Core modals (PURE - no system deps) -->
 <script src="js/core/modals-core.js"></script>
@@ -95,20 +179,13 @@
 <!-- 8. Utilities -->
 <script src="js/core/exportUtils.js"></script>
 
-<!-- 9. QUERY HELPERS - Core query utilities (NO system deps) -->
-<script src="js/core/query-helpers.js"></script>
-
 <!-- ============================================================ -->
 <!-- SELECTORS - Depend on core only                              -->
 <!-- ============================================================ -->
 
-<!-- 10. SELECTOR BASE - Shared selector utilities -->
 <script src="js/selectors/selector-base.js"></script>
-
-<!-- 11. SELECTOR COMPONENTS -->
 <script src="js/selectors/locationDropdown.js"></script>
 <script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
 
 <!-- ============================================================ -->
 <!-- CHARACTER SYSTEM                                             -->
@@ -117,6 +194,11 @@
 <script src="js/character/character-state.js"></script>
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+<script src="js/character/mortality-rules.js"></script>
 <script src="js/character/character-lifecycle.js"></script>
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
@@ -126,43 +208,56 @@
 <!-- ============================================================ -->
 
 <script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
 <script src="js/location/location-queries.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
 <script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
 <script src="js/location/modals-location.js"></script>
 <script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
 
 <!-- ============================================================ -->
-<!-- RANK SYSTEM                                                  -->
+<!-- RANK SYSTEM (js/ranks/)                                      -->
 <!-- ============================================================ -->
 
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
-<script src="js/ranks/rank-commands.js"></script>
 <script src="js/ranks/rank-queries.js"></script>
-<script src="js/ranks/rank-assignments.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
 <script src="js/ranks/modals-rank.js"></script>
-
-<!-- ============================================================ -->
-<!-- ROLE SYSTEM                                                  -->
-<!-- ============================================================ -->
-
-<script src="js/roles/role-state.js"></script>
-<script src="js/roles/role-commands.js"></script>
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/modals-roles.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
 
 <!-- ============================================================ -->
 <!-- HOUSEHOLD SYSTEM                                             -->
 <!-- ============================================================ -->
 
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
 <script src="js/households/household-state.js"></script>
 <script src="js/households/household-queries.js"></script>
-<script src="js/households/household-assignment.js"></script>
-<script src="js/households/household-economy.js"></script>
-<script src="js/households/modals-household.js"></script>
-<script src="js/households/modals-residence.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- Household selector (needs household-*.js above) -->
+<script src="js/selectors/modals-household-selector.js"></script>
+
+<!-- ============================================================ -->
+<!-- ROLE SYSTEM                                                  -->
+<!-- ============================================================ -->
+
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/modals-roles.js"></script>
 
 <!-- ============================================================ -->
 <!-- SETTLEMENT SYSTEM                                            -->
@@ -202,10 +297,25 @@
 <script src="js/government/modals-government-economy.js"></script>
 
 <!-- ============================================================ -->
-<!-- GOVERNMENT UI (UI Tabs)                                      -->
+<!-- NEW: GOVERNMENT LOCATION-SCOPED SUB-TABS                     -->
+<!-- ============================================================ -->
+<!--
+    The five files below render location-scoped Government views.
+    Each exports a render(containerId, locationId, onComplete)
+    function that paints one aspect of the currently selected
+    location. They are mounted inside the "Government" page tab
+    as sub-tabs (Details / Departments / History / Laws / Economy).
+-->
+<script src="js/tabs/government-details-tab.js"></script>
+<script src="js/tabs/government-departments-tab.js"></script>
+<script src="js/tabs/government-history-tab.js"></script>
+<script src="js/tabs/government-civil-laws-tab.js"></script>
+<script src="js/tabs/government-economy-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT UI (Page-level Tabs)                              -->
 <!-- ============================================================ -->
 
-<script src="js/ui/gm-government-tab-ui.js"></script>
 <script src="js/ui/gm-government-overview-tab-ui.js"></script>
 <script src="js/ui/gm-government-type-tab-ui.js"></script>
 <script src="js/ui/gm-government-structure-tab-ui.js"></script>
@@ -221,6 +331,220 @@
 <!-- ============================================================ -->
 
 <script src="js/events/annualProcessing.js"></script>
+
+<!-- ============================================================ -->
+<!-- NEW: GOVERNMENT SUB-TAB HOST                                 -->
+<!-- ============================================================ -->
+<!--
+    Provides window.renderGovernmentTab(containerId, placeId,
+    onRefresh). Renders a sub-tab strip + the selected sub-tab's
+    module into a sub-panel. Persists the selected sub-tab in
+    module state so tab switches within the page keep the user on
+    the same sub-tab.
+-->
+<script>
+    (function () {
+        'use strict';
+
+        // The sub-tabs inside the Government page tab. Order is the
+        // order they render in the strip.
+        var GOV_SUBTABS = [
+            {
+                id: 'details',
+                label: 'Details',
+                icon: 'CROWN',
+                render: function (containerId, placeId, onRefresh) {
+                    if (window.GovernmentDetailsTab
+                        && typeof window.GovernmentDetailsTab.render === 'function') {
+                        window.GovernmentDetailsTab.render(containerId, placeId);
+                    } else {
+                        _notLoaded(containerId, 'GovernmentDetailsTab');
+                    }
+                }
+            },
+            {
+                id: 'departments',
+                label: 'Departments',
+                icon: 'HOUSEHOLD',
+                render: function (containerId, placeId, onRefresh) {
+                    if (window.DepartmentsTab
+                        && typeof window.DepartmentsTab.render === 'function') {
+                        window.DepartmentsTab.render(containerId, placeId);
+                    } else {
+                        _notLoaded(containerId, 'DepartmentsTab');
+                    }
+                }
+            },
+            {
+                id: 'history',
+                label: 'History',
+                icon: 'TIMELINE',
+                render: function (containerId, placeId, onRefresh) {
+                    if (window.GovernmentHistoryTab
+                        && typeof window.GovernmentHistoryTab.render === 'function') {
+                        window.GovernmentHistoryTab.render(containerId, placeId);
+                    } else {
+                        _notLoaded(containerId, 'GovernmentHistoryTab');
+                    }
+                }
+            },
+            {
+                id: 'laws',
+                label: 'Civil Laws',
+                icon: 'SHIELD',
+                render: function (containerId, placeId, onRefresh) {
+                    if (window.LawsTab
+                        && typeof window.LawsTab.render === 'function') {
+                        window.LawsTab.render(containerId, placeId);
+                    } else {
+                        _notLoaded(containerId, 'LawsTab');
+                    }
+                }
+            },
+            {
+                id: 'economy',
+                label: 'Economy',
+                icon: 'COIN',
+                render: function (containerId, placeId, onRefresh) {
+                    if (window.EconomyDetailsTab
+                        && typeof window.EconomyDetailsTab.render === 'function') {
+                        window.EconomyDetailsTab.render(containerId, placeId);
+                    } else {
+                        _notLoaded(containerId, 'EconomyDetailsTab');
+                    }
+                }
+            }
+        ];
+
+        var _activeSubtabId = 'details';
+
+        function _icon(name) {
+            if (window.Icons && typeof window.Icons[name] === 'string') {
+                return window.Icons[name];
+            }
+            return '';
+        }
+
+        function _escapeHtml(s) {
+            if (typeof window.escapeHtml === 'function') {
+                return window.escapeHtml(s);
+            }
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function _notLoaded(containerId, moduleName) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML =
+                '<div class="empty-state">' +
+                    'Sub-tab module not loaded: <code>' +
+                    _escapeHtml(moduleName) +
+                    '</code>' +
+                '</div>';
+        }
+
+        function _findSubtab(id) {
+            for (var i = 0; i < GOV_SUBTABS.length; i++) {
+                if (GOV_SUBTABS[i].id === id) return GOV_SUBTABS[i];
+            }
+            return null;
+        }
+
+        function renderSubtabStrip(containerId, placeId, onRefresh) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+
+            // Build strip
+            var stripHtml = '<div class="gov-subtabs" role="tablist">';
+            for (var i = 0; i < GOV_SUBTABS.length; i++) {
+                var t = GOV_SUBTABS[i];
+                var active = t.id === _activeSubtabId ? ' active' : '';
+                var iconSvg = _icon(t.icon);
+                stripHtml +=
+                    '<button type="button" ' +
+                        'class="gov-subtab' + active + '" ' +
+                        'role="tab" ' +
+                        'aria-selected="' + (t.id === _activeSubtabId) + '" ' +
+                        'data-subtab-id="' + _escapeHtml(t.id) + '">' +
+                        (iconSvg
+                            ? '<span class="gov-subtab-icon">' +
+                                iconSvg + '</span>'
+                            : '') +
+                        '<span>' + _escapeHtml(t.label) + '</span>' +
+                    '</button>';
+            }
+            stripHtml += '</div>';
+
+            // Sub-panel placeholder
+            var panelHtml =
+                '<div id="' + _escapeHtml(containerId) + '-subpanel" ' +
+                    'class="gov-subpanel" role="tabpanel"></div>';
+
+            container.innerHTML = stripHtml + panelHtml;
+
+            // Wire strip clicks
+            var buttons = container.querySelectorAll('.gov-subtab');
+            for (var b = 0; b < buttons.length; b++) {
+                (function (btn) {
+                    btn.addEventListener('click', function () {
+                        var id = btn.getAttribute('data-subtab-id');
+                        if (!id || id === _activeSubtabId) return;
+                        _activeSubtabId = id;
+                        renderSubtabStrip(containerId, placeId, onRefresh);
+                    });
+                })(buttons[b]);
+            }
+
+            // Render active sub-tab into the sub-panel
+            var activeTab = _findSubtab(_activeSubtabId);
+            var subpanelId = containerId + '-subpanel';
+            if (activeTab) {
+                activeTab.render(subpanelId, placeId, onRefresh);
+            }
+        }
+
+        /**
+         * window.renderGovernmentTab(containerId, placeId, onRefresh)
+         *
+         * Mounts the Government page tab: sub-tab strip + the active
+         * sub-tab's module. This is what GovernmentManager.html's
+         * renderGovernmentTab() calls when the "Government" page tab
+         * is activated.
+         *
+         * Each sub-tab is a js/tabs/government-*-tab.js module, each
+         * of which exports render(containerId, locationId) — that is
+         * the module's public entry point. The onRefresh callback is
+         * invoked by the modules' own internal refresh() paths when
+         * they re-render, so the parent tab sees "still active".
+         */
+        window.renderGovernmentTab = function (containerId, placeId, onRefresh) {
+            renderSubtabStrip(containerId, placeId, onRefresh);
+        };
+
+        /**
+         * window.renderGovernmentTabSubtab(subtabId, containerId, placeId)
+         *
+         * Programmatic sub-tab switch. Optional, but useful if the top
+         * bar gains a "Jump to Departments" button later.
+         */
+        window.renderGovernmentTabSubtab = function (subtabId, containerId, placeId) {
+            var found = _findSubtab(subtabId);
+            if (!found) return;
+            _activeSubtabId = subtabId;
+            renderSubtabStrip(containerId, placeId, null);
+        };
+
+        // Expose the current subtab for any caller that needs to know.
+        window.getActiveGovernmentSubtab = function () {
+            return _activeSubtabId;
+        };
+    })();
+</script>
 
 <!-- ============================================================ -->
 <!-- GOVERNMENT MANAGER - MAIN CONTROLLER                         -->
@@ -257,8 +581,8 @@
         CHECK: getIcon('CHECK_SIMPLE'),
         WARNING: getIcon('WARNING'),
         MENU: getIcon('CIRCLE_DOT'),
-        OVERVIEW: getIcon('CENSUS'),
-        STRUCTURE: getIcon('FAMILY_TREE')
+        OVERVIEW: getIcon('PERSON'),
+        STRUCTURE: getIcon('CROWN')
     };
 
     // =============================================================================
@@ -402,14 +726,13 @@
                 }
             });
         } else {
-            // Fallback: simple list of locations
             var places = getPlaces();
             if (places && places.length > 0) {
                 var html = '<div class="place-tree">';
                 for (var i = 0; i < places.length; i++) {
                     var p = places[i];
                     var isSelected = (p.id === currentPlaceId);
-                    html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:rgba(var(--accent-rgb),0.15);' : '') + '">' +
+                    html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:var(--accent-dim);' : '') + '">' +
                         '<span>' + (p.displayName || p.name || 'Unknown') + '</span>' +
                         '</div>';
                 }
@@ -553,12 +876,16 @@
             return;
         }
 
+        // window.renderGovernmentTab is provided by the sub-tab host
+        // above. It renders a sub-tab strip + the active sub-tab's
+        // module into the panel. If for any reason it isn't present
+        // (sub-tab host not loaded), the empty state falls through.
         if (typeof window.renderGovernmentTab === 'function') {
             window.renderGovernmentTab('panelContent', placeId, function() {
                 if (currentTab === 'government') renderCurrentTab();
             });
         } else {
-            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government tab module not loaded') + '</div>';
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government sub-tab host not loaded') + '</div>';
         }
     }
 
@@ -595,7 +922,7 @@
         if (typeof window.renderGovernmentOverviewTab === 'function') {
             window.renderGovernmentOverviewTab('panelContent', placeId);
         } else {
-            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Overview tab module not loaded') + '</div>';
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Overview tab module not loaded (js/ui/gm-government-overview-tab-ui.js)') + '</div>';
         }
     }
 
@@ -609,7 +936,7 @@
                 if (currentTab === 'governmentTypes') renderCurrentTab();
             });
         } else {
-            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Types UI module not loaded.') + '</div>';
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Types UI module not loaded (js/ui/gm-government-type-tab-ui.js)') + '</div>';
         }
     }
 
@@ -648,7 +975,7 @@
                 if (currentTab === 'governmentStructure') renderCurrentTab();
             });
         } else {
-            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Structure tab module not loaded') + '</div>';
+            panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Government Structure tab module not loaded (js/ui/gm-government-structure-tab-ui.js)') + '</div>';
         }
     }
 
@@ -870,8 +1197,6 @@
         }
 
         // Hydrate Government indexes now that masterData.data is available.
-        // The bootstrap script auto-init skips if masterData wasn't loaded at
-        // script-evaluation time, which is the case in this page.
         bootstrapGovernment();
 
         setTimeout(function() {
