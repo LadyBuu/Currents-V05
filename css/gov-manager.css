@@ -16,11 +16,19 @@
      Inline style in the tab              → class in this file
      ──────────────────────────────────────────────────────────
      Integration banner (laws, economy)   → .gov-integration-banner
+                                            .eco-integration-banner (alias)
      Integration status container         → .gov-integration-status
+                                            .eco-integration-status (alias)
+     Integration status title             → .gov-integration-status-title
      Integration status line              → .gov-integration-line
-     Integration status label             → .gov-integration-label
-     Integration status value             → .gov-integration-value
+                                            .eco-integration-line (alias)
      Integration status glyph             → .gov-integration-glyph
+                                            + .is-ok / .is-missing
+                                            .eco-integration-glyph (alias)
+     Integration status label             → .gov-integration-label
+                                            .eco-integration-label (alias)
+     Integration status value             → .gov-integration-value
+                                            .eco-integration-value (alias)
 
      Law item                             → .law-item
      Law header                           → .law-header
@@ -29,15 +37,14 @@
      Law status (active/inactive)         → .law-status / .is-active / .is-inactive
      Law actions                          → .law-actions
      Law button                           → .law-btn
-     Law button edit/delete               → .law-btn-edit / .law-btn-delete
+     Law button add/edit/delete           → .law-btn-add / -edit / -delete
      Law details                          → .law-details
      Law meta                             → .law-meta
      Law category                         → .law-category
-     Law severity                         → .law-severity
+     Law severity                         → .law-severity / .is-minor / -medium / -major / -severe / -capital
      Law jurisdiction                     → .law-jurisdiction
      Law description                      → .law-description
-     Law punishment                       → .law-punishment
-     Law punishment label/type/amount/desc→ .law-punishment-label / -type / -amount / -desc
+     Law punishment                       → .law-punishment / -label / -type / -amount / -desc
      Law exceptions                       → .law-exceptions / -label / -text
      Law notes                            → .law-notes
      Law meta-info                        → .law-meta-info
@@ -45,10 +52,14 @@
      Law section                          → .law-section
      Law section header                   → .law-section-header
      Law section toggle                   → .law-section-toggle
+     Law section body (collapsed)         → .law-section-body / .is-collapsed
      Law toggle icon                      → .law-toggle-icon
      Law stats summary                    → .law-stats-summary
      Law stat                             → .law-stat / -label / -value
+                                            .law-stat-value.is-active / .is-inactive
      Law form (modal body)                → .law-edit-form
+     Law form row                         → .law-edit-form .form-row
+     Law form group grow/shrink           → .law-edit-form .form-group.is-grow / .is-shrink
      Law checkbox label                   → .law-checkbox-label
 
      Dept card                            → .dept-card
@@ -58,78 +69,61 @@
      Dept badge                           → .dept-badge
      Dept actions                         → .dept-actions
      Dept button                          → .dept-btn
-     Dept button small                    → .dept-btn-small
-     Dept stats                           → .dept-stats
-     Dept stat                            → .dept-stat / -label / -value
-     Dept positions                       → .dept-positions
-     Dept positions header                → .dept-positions-header
-     Dept positions list                  → .dept-positions-list
-     Dept position                        → .dept-position
-     Dept position header                 → .dept-position-header
-     Dept position name                   → .dept-position-name
-     Dept position status                 → .dept-position-status / .filled / .vacant
-     Dept position desc                   → .dept-position-desc
-     Dept position requirement            → .dept-position-requirement
-     Dept position staff                  → .dept-position-staff
-     Dept staff item                      → .dept-staff-item
-     Dept staff name                      → .dept-staff-name
-     Dept staff title                     → .dept-staff-title
-     Dept staff since                     → .dept-staff-since
+     Dept button add/small                → .dept-btn-add / .dept-btn-small
+     Dept button edit/delete              → .dept-btn-edit / .dept-btn-delete
+     Dept stats / stat / label / value    → .dept-stats / .dept-stat / -label / -value
+     Dept positions                       → .dept-positions / -header / -list
+     Dept position                        → .dept-position / -header / -name / -status
+                                            .dept-position-status.filled / .vacant
+     Dept position desc / requirement     → .dept-position-desc / -requirement
+     Dept position staff / staff item     → .dept-position-staff / .dept-staff-item
+     Dept staff name / title / since      → .dept-staff-name / -title / -since
      Dept position actions                → .dept-position-actions
      Dept edit form (modal)               → .dept-edit-form
-     Dept empty                           → .dept-empty
-     Dept no positions                    → .dept-no-positions
+     Dept empty / no positions            → .dept-empty / .dept-no-positions
      Dept description                     → .dept-description
-     Dept budget summary                  → .dept-budget-summary / -item / -label / -value
+     Dept budget summary / item / label   → .dept-budget-summary / -item / -label / -value
      Dept budget shortfall/surplus        → .dept-budget-shortfall / .dept-budget-surplus
      Dept budget unavailable              → .dept-budget-unavailable
-     Dept tab container                   → .dept-tab-container
-     Dept tab header / actions            → .dept-tab-header / .dept-tab-actions
+     Dept tab container / header / actions→ .dept-tab-container / .dept-tab-header / -actions
      Dept details empty                   → .dept-details-empty
 
      Gov details container                → .gov-details-container
-     Gov details header                   → .gov-details-header
-     Gov details actions                  → .gov-details-actions
-     Gov details body                     → .gov-details-body
-     Gov details field                    → .gov-details-field
-     Gov details value                    → .gov-details-value
-     Gov details none                     → .gov-details-none
-     Gov type icon                        → .gov-type-icon
-     Gov type desc                        → .gov-type-desc
-     Gov leader item                      → .gov-leader-item
-     Gov leader info                      → .gov-leader-info
-     Gov leader name / title / status     → .gov-leader-name / -title / -status
-     Gov leader since / period            → .gov-leader-since / -period
+     Gov details header / actions / body  → .gov-details-header / -actions / -body
+     Gov details field / value / none     → .gov-details-field / -value / -none
+     Gov type icon / desc                 → .gov-type-icon / .gov-type-desc
+     Gov leader item / info / name        → .gov-leader-item / -info / -name
+     Gov leader title / status / since    → .gov-leader-title / -status / -since
+     Gov leader period                    → .gov-leader-period
      Gov leader actions                   → .gov-leader-actions
-     Gov leadership section               → .gov-leadership-section
-     Gov leadership header                → .gov-leadership-header
-     Gov leadership value                 → .gov-leadership-value
-     Gov leadership empty / active / ended→ .gov-leadership-empty / -active / -ended
-     Gov leadership subheader             → .gov-leadership-subheader
-     Gov leadership toggle                → .gov-leadership-toggle
-     Gov leadership toggle label/icon     → .gov-leadership-toggle-label / -icon
+     Gov leadership section / header      → .gov-leadership-section / -header
+     Gov leadership value / empty         → .gov-leadership-value / -empty
+     Gov leadership active / subheader    → .gov-leadership-active / -subheader
+     Gov leadership ended / toggle        → .gov-leadership-ended / -toggle
+     Gov leadership toggle label / icon   → .gov-leadership-toggle-label / -icon
      Gov leadership ended list            → .gov-leadership-ended-list
-     Gov dept list                        → .gov-dept-list
-     Gov badge                            → .gov-badge
+     Gov dept list / badge                → .gov-dept-list / .gov-badge
      Gov leader form (modal)              → .gov-leader-form
      Gov modal note                       → .gov-modal-note
      Gov edit form (modal)                → .gov-edit-form
      Gov types help                       → .gov-types-help
      Gov details empty                    → .gov-details-empty
 
-     History tab container                → .gh-tab-container
-     History tab header / actions         → .gh-tab-header / .gh-tab-actions
-     History stats summary                → .gh-stats-summary
-     History stat / label / value         → .gh-stat / -label / -value
+     History tab container / header       → .gh-tab-container / .gh-tab-header
+     History tab actions                  → .gh-tab-actions
+     History button add / end             → .gh-btn-add / .gh-btn-end
+     History stats summary / stat         → .gh-stats-summary / .gh-stat
+     History stat label / value           → .gh-stat-label / .gh-stat-value
+                                            .gh-stat-value.is-active / .is-ended / .is-officials
      History section / header             → .gh-section / .gh-section-header
-     History subsection / header          → .gh-subsection / .gh-subsection-header
+     History subsection / header          → .gh-subsection / -header
      History subsection ended             → .gh-subsection-ended
      History subsection toggle / body     → .gh-subsection-toggle / -body
-     History subsection label / toggle ic → .gh-subsection-label / .gh-toggle-icon
-     History leader card                  → .gh-leader-card
-     History leader number                → .gh-leader-number
-     History leader info                  → .gh-leader-info
-     History leader name / title          → .gh-leader-name / .gh-leader-title
+                                            .gh-subsection-body.is-collapsed
+     History subsection label             → .gh-subsection-label
+     History toggle icon                  → .gh-toggle-icon
+     History leader card / number         → .gh-leader-card / .gh-leader-number
+     History leader info / name / title   → .gh-leader-info / -name / -title
      History leader period                → .gh-leader-period
      History leader start / arrow / end   → .gh-leader-start / -arrow / -end
      History leader present / reason      → .gh-leader-present / -reason
@@ -137,11 +131,11 @@
      History leader status                → .gh-leader-status / .active / .ended
      History leader actions               → .gh-leader-actions
      History leaders list                 → .gh-leaders-list
-     History official card / info         → .gh-official-card / .gh-official-info
-     History official name                → .gh-official-name
-     History official positions / pos     → .gh-official-positions / .gh-official-position
-     History official departments         → .gh-official-departments
-     History official age / status        → .gh-official-age / .gh-official-status
+     History official card / info         → .gh-official-card / -info
+     History official name / positions    → .gh-official-name / -positions
+     History official position            → .gh-official-position
+     History official departments / age   → .gh-official-departments / -age
+     History official status              → .gh-official-status / .active / .deceased
      History officials grid               → .gh-officials-grid
      History empty                        → .gh-empty
      History leader form (modal)          → .gh-leader-form
@@ -149,14 +143,17 @@
      History details empty                → .gh-details-empty
 
      Economy container                    → .eco-details-container
-     Economy header / actions             → .eco-details-header / .eco-details-actions
-     Economy hierarchy info / label/etc.  → .eco-hierarchy-info / -label / -count / -children
-     Economy stats grid                   → .eco-stats-grid
-     Economy stat card / icon / content   → .eco-stat-card / -icon / -content
+     Economy header / actions             → .eco-details-header / -actions
+     Economy hierarchy info / label       → .eco-hierarchy-info / -label
+     Economy hierarchy count / children   → .eco-hierarchy-count / -children
+     Economy stats grid / stat card       → .eco-stats-grid / .eco-stat-card
+     Economy stat icon / content          → .eco-stat-icon / .eco-stat-content
      Economy stat value / label / sub     → .eco-stat-value / -label / -sub
      Economy settlement details           → .eco-settlement-details
      Economy prosperity                   → .eco-prosperity / -label / -bar / -fill / -value
+                                            .eco-prosperity-fill.is-ok / .is-warning / .is-danger / .is-danger-strong
      Economy crime                        → .eco-crime / -label / -value
+                                            .eco-crime-value.is-ok / .is-warning / .is-danger / .is-danger-strong
      Economy justice                      → .eco-justice / -label / -value
      Economy watch                        → .eco-watch / -label / -value / -size
      Economy salary budget                → .eco-salary-budget / -label / -value
@@ -166,15 +163,21 @@
      Economy range display                → .eco-range-display
      Economy watch toggle                 → .eco-watch-toggle
      Economy details empty                → .eco-details-empty
-     Economy integration banner           → .eco-integration-banner
-     Economy integration status / line    → .eco-integration-status / .eco-integration-line
 
-   The banner colours use tokens that already exist on every theme
-   (--warning-soft, --warning, --ok, --danger-lt, --dim, --accent).
+     Legacy (pre-refactor) selector names kept as aliases for any
+     historical page that still references them:
+       .gov-tab, .gov-section, .gov-stats-grid, .gov-type-card,
+       .rank-tag, .dept-node, .overview-node, .gov-leader-row
    ================================================================ */
 
+
 /* ================================================================
-   GOVERNMENT TAB (main) — shell
+   1. LEGACY GOVERNMENT TAB SHELL
+   ================================================================
+   Kept for pages that still use the old .gov-tab container.
+   The new sub-tab host renders .gov-* classes only; this block
+   remains a no-op for those. Do not delete without auditing
+   any older HTML that still references .gov-tab.
    ================================================================ */
 
 .gov-tab {
@@ -323,8 +326,9 @@
     border-top: 1px solid var(--border);
 }
 
+
 /* ================================================================
-   GOVERNMENT TYPES TAB
+   2. LEGACY GOVERNMENT TYPES TAB
    ================================================================ */
 
 .gov-type-card {
@@ -427,8 +431,9 @@
     color: var(--danger);
 }
 
+
 /* ================================================================
-   GOVERNMENT STRUCTURE TAB (dept tree)
+   3. LEGACY GOVERNMENT STRUCTURE TAB (dept tree)
    ================================================================ */
 
 .dept-node {
@@ -533,8 +538,9 @@
     text-decoration: underline;
 }
 
+
 /* ================================================================
-   GOVERNMENT OVERVIEW TAB
+   4. LEGACY GOVERNMENT OVERVIEW TAB
    ================================================================ */
 
 .overview-node {
@@ -594,16 +600,18 @@
     gap: 4px 10px;
 }
 
+
 /* ================================================================
-   INTEGRATION BANNER + STATUS (civil laws + economy)
+   5. INTEGRATION BANNER + STATUS (civil laws + economy)
    ================================================================
    Shared by government-civil-laws-tab.js and government-economy-tab.js.
-   The banner is a loud user-facing warning that the tab is a preview;
-   the status panel is a live diagnostic of which settlement
-   dependencies are present.
+   The .eco-integration-* aliases exist so the economy tab can keep
+   its own class names; they resolve to the same rules. Both tabs are
+   driven by the same markup shape.
    ================================================================ */
 
-.gov-integration-banner {
+.gov-integration-banner,
+.eco-integration-banner {
     padding: 10px 14px;
     margin-bottom: 14px;
     background: var(--warning-soft);
@@ -614,12 +622,14 @@
     color: var(--text);
 }
 
-.gov-integration-banner strong {
+.gov-integration-banner strong,
+.eco-integration-banner strong {
     color: var(--warning);
     font-weight: 600;
 }
 
-.gov-integration-banner code {
+.gov-integration-banner code,
+.eco-integration-banner code {
     font-family: var(--f-mono);
     font-size: 0.9em;
     background: var(--bg3);
@@ -628,7 +638,8 @@
     color: var(--text);
 }
 
-.gov-integration-status {
+.gov-integration-status,
+.eco-integration-status {
     padding: 10px 14px;
     margin-bottom: 14px;
     background: var(--bg2);
@@ -646,7 +657,8 @@
     text-transform: uppercase;
 }
 
-.gov-integration-line {
+.gov-integration-line,
+.eco-integration-line {
     display: flex;
     gap: 8px;
     align-items: flex-start;
@@ -654,31 +666,37 @@
     font-size: 0.6rem;
 }
 
-.gov-integration-glyph {
+.gov-integration-glyph,
+.eco-integration-glyph {
     font-weight: 600;
     min-width: 12px;
 }
 
-.gov-integration-glyph.is-ok {
+.gov-integration-glyph.is-ok,
+.eco-integration-glyph.is-ok {
     color: var(--ok);
 }
 
-.gov-integration-glyph.is-missing {
+.gov-integration-glyph.is-missing,
+.eco-integration-glyph.is-missing {
     color: var(--danger-lt);
 }
 
-.gov-integration-label {
+.gov-integration-label,
+.eco-integration-label {
     color: var(--dim);
     min-width: 170px;
 }
 
-.gov-integration-value {
+.gov-integration-value,
+.eco-integration-value {
     color: var(--text);
     flex: 1;
 }
 
+
 /* ================================================================
-   CIVIL LAWS TAB
+   6. CIVIL LAWS TAB
    ================================================================ */
 
 .law-tab-container {
@@ -795,6 +813,14 @@
     color: var(--text);
 }
 
+.law-stat-value.is-active {
+    color: var(--ok);
+}
+
+.law-stat-value.is-inactive {
+    color: var(--danger-lt);
+}
+
 .law-section {
     margin-bottom: 14px;
 }
@@ -823,6 +849,10 @@
 
 .law-section-toggle:hover {
     background: var(--accent-dim);
+}
+
+.law-section-body.is-collapsed {
+    display: none;
 }
 
 .law-toggle-icon {
@@ -943,6 +973,26 @@
     font-family: var(--f-display);
 }
 
+.law-severity.is-minor {
+    color: var(--ok);
+}
+
+.law-severity.is-medium {
+    color: var(--warning);
+}
+
+.law-severity.is-major {
+    color: var(--danger-lt);
+}
+
+.law-severity.is-severe {
+    color: var(--danger);
+}
+
+.law-severity.is-capital {
+    color: var(--danger);
+}
+
 .law-jurisdiction {
     color: var(--dim);
     font-size: 0.55rem;
@@ -1061,8 +1111,6 @@
     margin: 0 0 12px 0;
 }
 
-/* Law form inside the add/edit modal */
-
 .law-edit-form {
     display: flex;
     flex-direction: column;
@@ -1084,6 +1132,15 @@
 .law-edit-form .form-row .form-group {
     flex: 1;
     min-width: 120px;
+}
+
+.law-edit-form .form-group.is-grow {
+    flex: 1;
+    min-width: 120px;
+}
+
+.law-edit-form .form-group.is-shrink {
+    flex: 0 0 120px;
 }
 
 .law-edit-form label {
@@ -1128,8 +1185,9 @@
     accent-color: var(--accent);
 }
 
+
 /* ================================================================
-   DEPARTMENTS TAB
+   7. DEPARTMENTS TAB
    ================================================================ */
 
 .dept-tab-container {
@@ -1520,8 +1578,6 @@
     font-size: 0.6rem;
 }
 
-/* Dept edit form (modal body) */
-
 .dept-edit-form {
     display: flex;
     flex-direction: column;
@@ -1563,8 +1619,9 @@
     min-height: 50px;
 }
 
+
 /* ================================================================
-   GOVERNMENT DETAILS TAB
+   8. GOVERNMENT DETAILS TAB
    ================================================================ */
 
 .gov-details-container {
@@ -1683,8 +1740,6 @@
     color: var(--dim);
     margin-top: 4px;
 }
-
-/* Leadership section */
 
 .gov-leadership-section {
     background: var(--bg2);
@@ -1916,8 +1971,6 @@
     letter-spacing: 0.03em;
 }
 
-/* Gov leader form (modal) */
-
 .gov-leader-form {
     display: flex;
     flex-direction: column;
@@ -1961,8 +2014,6 @@
     line-height: 1.5;
     margin-top: 4px;
 }
-
-/* Gov edit form (modal) */
 
 .gov-edit-form {
     display: flex;
@@ -2014,8 +2065,9 @@
     color: var(--accent-light);
 }
 
+
 /* ================================================================
-   HISTORY TAB
+   9. HISTORY TAB
    ================================================================ */
 
 .gh-tab-container {
@@ -2135,6 +2187,18 @@
     font-family: var(--f-mono);
 }
 
+.gh-stat-value.is-active {
+    color: var(--ok);
+}
+
+.gh-stat-value.is-ended {
+    color: var(--danger-lt);
+}
+
+.gh-stat-value.is-officials {
+    color: var(--accent);
+}
+
 .gh-section {
     margin-bottom: 16px;
 }
@@ -2210,6 +2274,10 @@
 
 .gh-subsection-body {
     padding-top: 8px;
+}
+
+.gh-subsection-body.is-collapsed {
+    display: none;
 }
 
 .gh-leaders-list {
@@ -2429,8 +2497,6 @@
     margin: 0;
 }
 
-/* History form (modal) */
-
 .gh-leader-form {
     display: flex;
     flex-direction: column;
@@ -2491,8 +2557,9 @@
     accent-color: var(--accent);
 }
 
+
 /* ================================================================
-   ECONOMY TAB
+   10. ECONOMY TAB
    ================================================================ */
 
 .eco-details-container {
@@ -2697,7 +2764,24 @@
 
 .eco-prosperity-fill {
     height: 100%;
+    width: 0;
     transition: width 0.3s ease;
+}
+
+.eco-prosperity-fill.is-ok {
+    background: var(--ok);
+}
+
+.eco-prosperity-fill.is-warning {
+    background: var(--warning);
+}
+
+.eco-prosperity-fill.is-danger {
+    background: var(--danger-lt);
+}
+
+.eco-prosperity-fill.is-danger-strong {
+    background: var(--danger);
 }
 
 .eco-prosperity-value,
@@ -2709,6 +2793,22 @@
     font-weight: 500;
     color: var(--text);
     font-family: var(--f-mono);
+}
+
+.eco-crime-value.is-ok {
+    color: var(--ok);
+}
+
+.eco-crime-value.is-warning {
+    color: var(--warning);
+}
+
+.eco-crime-value.is-danger {
+    color: var(--danger-lt);
+}
+
+.eco-crime-value.is-danger-strong {
+    color: var(--danger);
 }
 
 .eco-watch-size {
@@ -2778,8 +2878,6 @@
 .eco-breakdown-prosperity {
     color: var(--accent-light);
 }
-
-/* Economy edit modal */
 
 .eco-edit-form {
     display: flex;
@@ -2880,8 +2978,9 @@
     accent-color: var(--accent);
 }
 
+
 /* ================================================================
-   RESPONSIVE
+   11. RESPONSIVE
    ================================================================ */
 
 @media (max-width: 768px) {
@@ -2956,6 +3055,11 @@
 
     .law-edit-form .form-row .form-group {
         flex: 1 1 auto;
+    }
+
+    .law-edit-form .form-group.is-shrink {
+        flex: 1 1 auto;
+        min-width: 0;
     }
 
     .gh-leader-form .form-row {
