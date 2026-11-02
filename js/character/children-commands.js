@@ -40,8 +40,47 @@
  *     3. CharacterCommands.assignCharacterReligion (non-fatal)
  *     4. ChildrenState._insertPregnancy
  *
- *   If any step after creation fails, the child is soft-deleted and
- *   any parent edges created during this command are removed.
+ *   If any step after creation fails, the child is soft-deleted (via
+ *   CharacterState.applyDomainFieldPatch — NOT via
+ *   CharacterCommands.updateCharacterFields, which refuses domain-owned
+ *   fields like isDeleted and deletedAt) and any parent edges created
+ *   during this command are removed. See ROLLBACK BOUNDARY below.
+ *
+ * ROLLBACK BOUNDARY:
+ *   _rollbackChild is the module's single rollback primitive. It runs
+ *   after a partial failure in recordBirth and must be atomic in the
+ *   sense that EITHER the child is soft-deleted OR the caller is told
+ *   the rollback failed. The rollback uses
+ *   CharacterState.applyDomainFieldPatch — the sanctioned writer for
+ *   character-domain-owned fields. It does NOT use
+ *   CharacterCommands.updateCharacterFields, because that path refuses
+ *   isDeleted / deletedAt (they are in _DOMAIN_OWNED_FIELDS) and would
+ *   silently return { success: false } while leaving the child in the
+ *   canonical collection.
+ *
+ * POSTHUMOUS BIRTHS:
+ *   recordBirth and recordPregnancyAttempt treat a deceased father
+ *   ASYMMETRICALLY, and that asymmetry is deliberate:
+ *
+ *     recordBirth — DOES NOT refuse a deceased father. A posthumous
+ *       birth (father died before the child was born) is a legitimate
+ *       historical outcome. The caller has already established the
+ *       father's identity at the moment of conception; refusing here
+ *       would require the caller to know the father's death year and
+ *       decide whether the conception predates the death — which is
+ *       exactly the kind of check the birth-record layer cannot make
+ *       without conception-year information that the caller may not
+ *       supply. Posthumous births are therefore accepted as-is.
+ *
+ *     recordPregnancyAttempt — DOES refuse a deceased father. A
+ *       conception attempt cannot occur with a dead man. The check is
+ *       safe here because the attempt is the current transaction: a
+ *       living father is a precondition of the attempt.
+ *
+ *   Callers who want stricter validation on recordBirth (e.g. "reject
+ *   posthumous births unless the caller confirms the conception
+ *   predates the death") must implement that check at their own layer.
+ *   ChildrenCommands will not reject posthumous births.
  *
  * PREGNANCY ATTEMPT - DETERMINISTIC MODE:
  *   recordPregnancyAttempt normally rolls every outcome internally.
@@ -109,6 +148,32 @@
  *
  * ICON POLICY: No emojis. No icons.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _rollbackChild now uses CharacterState.applyDomainFieldPatch
+ *       instead of CharacterCommands.updateCharacterFields. isDeleted
+ *       and deletedAt are in _DOMAIN_OWNED_FIELDS on the generic
+ *       character-command path; updateCharacterFields REFUSES them.
+ *       The prior rollback therefore silently failed: the child was
+ *       left in the canonical collection as an orphan, with no parent
+ *       edges and no pregnancy record. Fixed by routing the soft
+ *       delete through applyDomainFieldPatch, which is the sanctioned
+ *       writer for domain-owned fields. See ROLLBACK BOUNDARY in the
+ *       module header.
+ *     - Header POSTHUMOUS BIRTHS section added, documenting the
+ *       intentional asymmetry between recordBirth (permits deceased
+ *       father — posthumous births are legitimate) and
+ *       recordPregnancyAttempt (refuses deceased father — conception
+ *       requires a living father). No behavioural change; the
+ *       asymmetry was already there and is now documented as policy
+ *       rather than accidental.
+ *     - Header ROLLBACK BOUNDARY section added.
+ *     - No other behavioural change to any command.
+ *   Previous revisions:
+ *     - Deterministic-mode pregnancy attempts (options.outcome,
+ *       options.rolls).
+ *     - Maternal death routed through CharacterLifecycle.killCharacter.
  * =============================================================================
  */
 
@@ -353,6 +418,10 @@
     // =========================================================================
     // 6. BIRTH
     // =========================================================================
+    //
+    // See POSTHUMOUS BIRTHS in the module header. recordBirth permits
+    // a deceased father (posthumous births are legitimate). It does NOT
+    // permit a deceased mother (obviously impossible).
 
     function recordBirth(motherId, fatherId, birthYear, options) {
         if (!_hasId(motherId)) return _fail('motherId is required.');
@@ -371,6 +440,8 @@
         if (!mother) return _fail('Mother not found.');
         if (mother.isDeceased === true) return _fail('Mother is deceased.');
 
+        // Father existence check. Note: a DECEASED father is permitted.
+        // See POSTHUMOUS BIRTHS in the module header.
         if (_hasId(fatherId)) {
             var father = _getCharacter(fatherId);
             if (!father) return _fail('Father not found.');
@@ -512,11 +583,22 @@
         });
     }
 
+    /**
+     * Rolls back a partially created child.
+     *
+     * Removes any parent edges established during this command, then
+     * soft-deletes the child via CharacterState.applyDomainFieldPatch.
+     *
+     * See ROLLBACK BOUNDARY in the module header for why
+     * applyDomainFieldPatch is the correct primitive here (and why
+     * CharacterCommands.updateCharacterFields is not — it refuses
+     * domain-owned fields including isDeleted and deletedAt).
+     */
     function _rollbackChild(childId, edgeIds) {
         for (var i = edgeIds.length - 1; i >= 0; i--) {
             FC.removeParent(edgeIds[i], { reason: 'birth rollback' });
         }
-        CC.updateCharacterFields(childId, {
+        CS.applyDomainFieldPatch(childId, {
             isDeleted: true,
             deletedAt: Date.now()
         });
