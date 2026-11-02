@@ -7,14 +7,12 @@
    SCOPE
      Only styles that are SPECIFIC to SettlementManager.html. Tab text
      readability, tab-content scroll containment, location-tree depth
-     guides, settlement cards, upgrade panel, feature buttons. Anything
-     shared with other tools lives in common.css.
+     guides, settlement cards, upgrade panel, feature buttons, crime tab.
+     Anything shared with other tools lives in common.css.
 
    RULES
      - No hardcoded color values. All colors from tokens.
      - No !important unless overriding a truly un-themeable browser default.
-     - No arbitrary font sizes outside the base type scale where avoidable
-       (0.5rem–0.7rem are the existing small-text scale and are preserved).
      - Structural values (grid tracks, gap sizes on the 4/8/16 scale) are
        allowed inline because they are layout, not theme.
    ============================================================================ */
@@ -51,7 +49,8 @@
     color: var(--accent-light);
 }
 
-.panel-tabs .tab-btn.active {
+.panel-tabs .tab-btn.active,
+.panel-tabs .tab-btn.is-active {
     color: var(--accent-fg);
     background: var(--accent);
     border-bottom: 2px solid var(--accent);
@@ -59,12 +58,11 @@
     text-shadow: 0 0 8px var(--accent-glow);
 }
 
-.panel-tabs .tab-btn.active .tab-icon {
+.panel-tabs .tab-btn.active .tab-icon,
+.panel-tabs .tab-btn.is-active .tab-icon {
     color: var(--accent-fg);
 }
 
-/* Roving tabindex focus ring: keep the visible focus but not the ring
-   around every tab on click. :focus-visible only fires for keyboard. */
 .panel-tabs .tab-btn:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
@@ -87,20 +85,14 @@
     animation: fadeIn var(--transition-base, 0.2s) ease;
 }
 
-.tab-pane.active {
+.tab-pane.active,
+.tab-pane.is-active {
     display: block;
 }
 
 
 /* ============================================================================
    3. SCROLLABLE TAB PANES
-   ============================================================================
-   Each tab pane gets an independent scroll region so that long content
-   (settlement history, feature lists) does not push the tab bar offscreen.
-
-   Uses 100dvh (dynamic viewport) with a vh fallback for browsers that do
-   not support dvh yet. The minus-180px accounts for topbar (~48px) plus
-   tab bar (~44px) plus content padding (~16px) plus breathing room.
    ============================================================================ */
 
 #tab-location,
@@ -112,7 +104,8 @@
 #tab-education,
 #tab-history,
 #tab-roles,
-#tab-government {
+#tab-government,
+#tab-crime {
     max-height: calc(100vh - 180px);
     max-height: calc(100dvh - 180px);
     overflow-y: auto;
@@ -130,7 +123,8 @@
 #tab-education::-webkit-scrollbar,
 #tab-history::-webkit-scrollbar,
 #tab-roles::-webkit-scrollbar,
-#tab-government::-webkit-scrollbar {
+#tab-government::-webkit-scrollbar,
+#tab-crime::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
@@ -144,7 +138,8 @@
 #tab-education::-webkit-scrollbar-track,
 #tab-history::-webkit-scrollbar-track,
 #tab-roles::-webkit-scrollbar-track,
-#tab-government::-webkit-scrollbar-track {
+#tab-government::-webkit-scrollbar-track,
+#tab-crime::-webkit-scrollbar-track {
     background: var(--bg2);
     border-radius: 3px;
 }
@@ -158,7 +153,8 @@
 #tab-education::-webkit-scrollbar-thumb,
 #tab-history::-webkit-scrollbar-thumb,
 #tab-roles::-webkit-scrollbar-thumb,
-#tab-government::-webkit-scrollbar-thumb {
+#tab-government::-webkit-scrollbar-thumb,
+#tab-crime::-webkit-scrollbar-thumb {
     background: var(--accent);
     border-radius: 3px;
     box-shadow: var(--glow-sm);
@@ -173,7 +169,8 @@
 #tab-education::-webkit-scrollbar-thumb:hover,
 #tab-history::-webkit-scrollbar-thumb:hover,
 #tab-roles::-webkit-scrollbar-thumb:hover,
-#tab-government::-webkit-scrollbar-thumb:hover {
+#tab-government::-webkit-scrollbar-thumb:hover,
+#tab-crime::-webkit-scrollbar-thumb:hover {
     background: var(--accent-light);
 }
 
@@ -219,7 +216,6 @@
     color: var(--ok);
 }
 
-/* Depth indentation for the location tree (5 levels supported). */
 .location-tree-item.depth-1 { padding-left: 24px; }
 .location-tree-item.depth-2 { padding-left: 40px; }
 .location-tree-item.depth-3 { padding-left: 56px; }
@@ -292,6 +288,11 @@
     color: var(--tmut);
     font-size: 0.75rem;
     animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
 }
 
 
@@ -390,15 +391,8 @@
     color: var(--accent-fg);
 }
 
-.remove-feature-btn {
-    color: var(--success);
-}
-
-.demolish-feature-btn {
-    color: var(--danger-lt);
-}
-
-/* Forms inside tab panes. Scoped to .tab-pane so modals are untouched. */
+.remove-feature-btn { color: var(--success); }
+.demolish-feature-btn { color: var(--danger-lt); }
 
 .tab-pane .form-group label,
 .tab-pane .form-label {
@@ -528,10 +522,6 @@
 
 /* ============================================================================
    12. MODAL CONTENT READABILITY
-   ============================================================================
-   The modals the settlement modals-core open use the shared modal shell.
-   These rules only adjust form controls inside .modal-content so they
-   match the theme in every palette.
    ============================================================================ */
 
 .modal-content .form-group label {
@@ -590,13 +580,8 @@
     font-size: 0.65rem;
 }
 
-.upgrade-info .requirement.met {
-    color: var(--success);
-}
-
-.upgrade-info .requirement.unmet {
-    color: var(--danger-lt);
-}
+.upgrade-info .requirement.met { color: var(--success); }
+.upgrade-info .requirement.unmet { color: var(--danger-lt); }
 
 .upgrade-btn {
     background: var(--accent);
@@ -653,9 +638,7 @@
     overflow-y: auto;
 }
 
-.theme-toggle__menu[hidden] {
-    display: none;
-}
+.theme-toggle__menu[hidden] { display: none; }
 
 .theme-toggle__menu button {
     display: block;
@@ -681,7 +664,96 @@
 
 
 /* ============================================================================
-   15. RESPONSIVE
+   15. CRIME TAB
+   ============================================================================ */
+
+.crime-tab {
+    max-width: 1000px;
+    margin: 0 auto;
+}
+
+.crime-tab__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 0 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+}
+
+.crime-tab__toolbar .btn {
+    padding: 6px 14px;
+    font-size: 0.7rem;
+    border-radius: var(--radius);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    transition: background-color var(--transition-fast, 0.15s) ease,
+                border-color var(--transition-fast, 0.15s) ease,
+                color var(--transition-fast, 0.15s) ease;
+}
+
+.crime-tab__toolbar .btn:hover {
+    background: var(--bg2);
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+.crime-tab__toolbar .btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+    font-weight: 600;
+}
+
+.crime-tab__toolbar .btn.primary:hover {
+    background: var(--accent-light);
+    color: var(--accent-fg);
+}
+
+.crime-tab__section {
+    margin-bottom: 24px;
+}
+
+.crime-tab__heading {
+    font-family: var(--f-display);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent-light);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+}
+
+/* The crime stats UI emits inline styles, so it slots into the theme
+   automatically. These rules only touch the outer crime-tab chrome. */
+.crime-tab .crime-item,
+.crime-tab .vendetta-item {
+    color: var(--text);
+}
+
+.crime-tab .crime-item:hover,
+.crime-tab .vendetta-item:hover {
+    background: var(--bg2) !important;
+}
+
+.crime-tab .crime-item .crime-detail-btn,
+.crime-tab .vendetta-item .vendetta-detail-btn {
+    color: var(--text);
+}
+
+.crime-tab .crime-item .crime-detail-btn:hover,
+.crime-tab .vendetta-item .vendetta-detail-btn:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent-light) !important;
+}
+
+
+/* ============================================================================
+   16. RESPONSIVE
    ============================================================================ */
 
 @media (max-width: 768px) {
@@ -713,7 +785,8 @@
     #tab-education,
     #tab-history,
     #tab-roles,
-    #tab-government {
+    #tab-government,
+    #tab-crime {
         max-height: calc(100vh - 160px);
         max-height: calc(100dvh - 160px);
         padding-right: 4px;
@@ -726,6 +799,14 @@
 
     .theme-toggle__menu {
         min-width: 140px;
+    }
+
+    .crime-tab__toolbar {
+        flex-direction: column;
+    }
+
+    .crime-tab__toolbar .btn {
+        width: 100%;
     }
 }
 
@@ -759,7 +840,8 @@
     #tab-education,
     #tab-history,
     #tab-roles,
-    #tab-government {
+    #tab-government,
+    #tab-crime {
         max-height: calc(100vh - 140px);
         max-height: calc(100dvh - 140px);
     }
@@ -778,11 +860,11 @@
     }
 }
 
-/* Honor prefers-reduced-motion for the animations this file still uses. */
 @media (prefers-reduced-motion: reduce) {
     .tab-pane,
     .loading-placeholder,
-    .panel-tabs .tab-btn {
+    .panel-tabs .tab-btn,
+    .crime-tab__toolbar .btn {
         animation: none;
         transition: none;
     }
