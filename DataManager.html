@@ -241,8 +241,20 @@
 <!-- government-queries.js requires RoleQueries, SettlementQueries,
      SettlementProsperityQueries, IndustryQueries at load. Those
      modules are not in this page's load set, so we install minimal
-     stubs. Government Type CRUD works fully; other Government flows
-     that reach the stubs will surface their own failures. -->
+     stubs.
+
+     IMPORTANT — Rank data IS loaded on this page (js/ranks/*).
+     The "Allowed Ranks" picker in the Add/Edit Government Type
+     modals calls RoleQueries.getAllRankSummaries(). The stub below
+     reads from RankState.getAllRanks() so the picker shows the
+     real rank catalogue from masterData.data.ranks. Without this,
+     the picker would be empty even though ranks exist.
+
+     Settlement, Industry, and Role data are NOT loaded on this
+     page; those stubs return null / 0 / [] as before. Government
+     Type CRUD works fully. Government flows that reach the
+     Settlement / Industry / Role stubs will surface their own
+     failures. -->
 <script>
     (function () {
         if (!window.SettlementQueries) {
@@ -262,14 +274,72 @@
                 getIndustryEnterpriseStats: function () { return null; }
             };
         }
+
         if (!window.RoleQueries) {
             window.RoleQueries = {
-                getRoleSummary: function () { return null; },
-                getRankSummary: function () { return null; },
-                getAllRankSummaries: function () { return []; },
-                getAllRoleSummaries: function () { return []; }
+                getRoleSummary: function () {
+                    // Role data is not loaded on this page.
+                    return null;
+                },
+                getRankSummary: function (rankId) {
+                    // Rank data IS loaded via RankState. Project the
+                    // canonical rank record into the summary shape
+                    // that Government callers (getRankSummary for
+                    // display) expect.
+                    if (!rankId || !window.RankState
+                        || typeof window.RankState.getRank !== 'function') {
+                        return null;
+                    }
+                    var r = window.RankState.getRank(rankId);
+                    if (!r) return null;
+                    return {
+                        id: r.id,
+                        name: r.name,
+                        priority: typeof r.priority === 'number'
+                            ? r.priority
+                            : 5,
+                        symbol: r.symbol || null
+                    };
+                },
+                getAllRankSummaries: function () {
+                    // Read the real rank catalogue from RankState.
+                    // This is what populates the "Allowed Ranks"
+                    // multi-select in the Add/Edit Government Type
+                    // modals.
+                    if (!window.RankState
+                        || typeof window.RankState.getAllRanks !== 'function') {
+                        return [];
+                    }
+                    var ranks = window.RankState.getAllRanks() || [];
+                    var out = [];
+                    for (var i = 0; i < ranks.length; i++) {
+                        var r = ranks[i];
+                        if (!r || !r.id) continue;
+                        out.push({
+                            id: r.id,
+                            name: r.name,
+                            priority: typeof r.priority === 'number'
+                                ? r.priority
+                                : 5,
+                            symbol: r.symbol || null
+                        });
+                    }
+                    out.sort(function (a, b) {
+                        var pa = a.priority || 999;
+                        var pb = b.priority || 999;
+                        if (pa !== pb) return pa - pb;
+                        return String(a.name || '')
+                            .localeCompare(String(b.name || ''));
+                    });
+                    return out;
+                },
+                getAllRoleSummaries: function () {
+                    // Role data is not loaded on this page.
+                    return [];
+                }
             };
         }
+
         if (!window.SettlementGovernmentCommands) {
             window.SettlementGovernmentCommands = {
                 setJusticeSeverity: function () { return { success: true }; },
@@ -284,8 +354,12 @@
         }
         if (!window.HouseholdCommands) {
             window.HouseholdCommands = {
-                adjustWealth: function () { return { success: false, reason: 'stub' }; },
-                creditWealth: function () { return { success: false, reason: 'stub' }; },
+                adjustWealth: function () {
+                    return { success: false, reason: 'stub' };
+                },
+                creditWealth: function () {
+                    return { success: false, reason: 'stub' };
+                },
                 clearLocationReferences: function () {
                     return {
                         success: true,
