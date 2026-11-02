@@ -1,866 +1,2142 @@
-```markdown
-# Government — Domain Documentation
-
-Version: Session 3 (Government refactor)
-Replaces: `government-docs.txt`
-Owns: `governmentDepartments`, `governmentTypes`, `governmentHistory`
-Depends on: Character, Location, Role, Settlement, Household, Industry
-
----
-
-## 1. Ownership contract
-
-The Government domain owns exactly three canonical arrays on `masterData.data`:
-
-| Array | Shape | Owner |
-|---|---|---|
-| `governmentDepartments` | `[{ id, name, description, locationId, parentDepartmentId, positions[], assignments[], isDeprecated, createdAt, updatedAt }]` | Government |
-| `governmentTypes` | `[{ id, name, description, allowedRankIds[], icon }]` | Government |
-| `governmentHistory` | `[{ id, locationId, characterId?, governmentTypeId?, governmentStyle?, eventType, startYear?, endYear?, title?, recordedAt }]` | Government |
-
-Government **does not** own:
-
-| Data | Owner | Read via | Written via |
-|---|---|---|---|
-| Leader terms (`place.leaders[]`) | Location | `LocationQueries.getCurrentLeader` etc. | `LocationCommands.assignLeader` / `endLeaderTerm` |
-| Place government assignment (`place.governmentTypeId`, `place.governmentStyle`) | Location | `LocationQueries.getPlaceSummary` | `LocationCommands.assignGovernment` |
-| Character professions / skill levels | Character | `CharacterQueries.getCharacterFacts` | `CharacterCommands.addProfession` |
-| Civil law, justice severity, watch | Settlement | `SettlementLawQueries`, `SettlementGovernmentCommands` | `SettlementLawCommands`, `SettlementGovernmentCommands.setJusticeSeverity` / `setWatch` |
-| Household wealth | Household | `HouseholdQueries.getCharacterHousehold` | `HouseholdCommands.adjustWealth` / `creditWealth` |
-| Industry tax rate, tax revenue, enterprise stats | Settlement / Industry | `SettlementQueries.getIndustryTaxRate`, `IndustryQueries.getIndustryTaxRevenue` / `getIndustryEnterpriseStats` | — |
-
-Cross-domain **writes** go through the owning domain's commands. Cross-domain **reads** go through the owning domain's queries. Government code never writes into another domain's canonical arrays.
-
----
-
-## 2. Load order
-
-```
-accessors.js
-storage.js
-time.js
-modals-core.js
-location-state.js
-location-queries.js
-location-commands.js
-character-queries.js         (requires LocationQueries)
-character-commands.js
-role-queries.js
-role-state.js
-skill-utils.js
-role-constants.js
-settlement-queries.js
-settlement-prosperity-queries.js
-settlement-government-commands.js
-settlement-law-commands.js
-settlement-law-queries.js
-industry-queries.js
-household-queries.js
-household-commands.js
-
-government-constants.js
-government-state.js
-government-rules.js
-government-queries.js
-government-commands.js
-government-economy.js
-government-bootstrap.js
-government-view-models.js
-government-ui-list.js
-modals-government.js
-modals-government-departments.js
-modals-government-positions.js
-modals-government-assign.js
-modals-government-economy.js
-```
-
-Every Government module that depends on a cross-domain module verifies it at **load time**, not at call time. Missing modules throw before any Government code runs.
-
-`government-bootstrap.js` is the last Government script. It re-verifies everything, hydrates State, and exposes `window.Government`.
-
----
-
-## 3. File-by-file reference
-
-### 3.1 `government-constants.js`
-
-Frozen vocabulary. No logic.
-
-Exports (`window.GovernmentConstants`):
-
-- **Position/assignment defaults** — `DEFAULT_POSITION_PRIORITY`, `DEFAULT_MIN_SKILL_LEVEL`, `DEFAULT_SKILL_LEVEL`, `MIN_POSITION_PRIORITY`, `MAX_POSITION_PRIORITY`, `MIN_SKILL_LEVEL`, `MAX_SKILL_LEVEL`, `MIN_DEPARTMENT_NAME_LENGTH`, `MIN_POSITION_NAME_LENGTH`, `MIN_GOVERNMENT_TYPE_NAME_LENGTH`, `MIN_CHARACTER_AGE`
-- **Gender** — `GENDER_EITHER`, `GENDER_MALE`, `GENDER_FEMALE`, `GENDER_RESTRICTIONS`
-- **Salary** — `SALARY_TIERS`, `SALARY_PROSPERITY_BASE_MODIFIER`, `SALARY_PROSPERITY_DIVISOR`, `SALARY_EXPERIENCE_CAP_YEARS`, `SALARY_EXPERIENCE_DIVISOR`, `SALARY_EXPERIENCE_BASE_MODIFIER`, `MIN_SALARY`, `MAX_SALARY`
-- **Assignment lifecycle** — `ASSIGNMENT_DEFAULT_END_REASON`, `ASSIGNMENT_END_REASONS`
-- **Leader** — `MAX_LEADER_START_YEAR_FUTURE_OFFSET`
-- **Scoring** — `SCORING_RANK_PRIORITY_BASE`, `SCORING_RANK_PRIORITY_MULTIPLIER`, `SCORING_EXPERIENCE_CAP_YEARS`, `SCORING_EXPERIENCE_MULTIPLIER`, `SCORING_AGE_PRIME_MIN/MAX/BONUS`, `SCORING_AGE_ACCEPTABLE_MIN/MAX/BONUS`, `SCORING_MIN/MAX`, `READY_MIN_AGE`, `READY_MIN_EXPERIENCE_YEARS`
-- **Succession** — `SUCCESSION_CANDIDATE_LIMIT`
-- **History + events** — `GOVERNMENT_HISTORY_EVENT_TYPES`, `EVENTS`, `STATE_EVENTS`
-- **Error codes** — `CODES`
-- **Field allowlists** — `ALLOWED_DEPARTMENT_FIELDS`, `ALLOWED_POSITION_FIELDS`, `ALLOWED_ASSIGNMENT_FIELDS`, `ALLOWED_GOVERNMENT_TYPE_FIELDS`, `DOMAIN_OWNED_FIELDS`
-
-No other Government module defines a numeric constant or an enum inline.
-
-### 3.2 `government-state.js`
-
-Canonical storage indexes, hydration, subscriptions, UI state.
-
-**Public reads (return clones):**
-
-```
-getDepartmentById(id)
-getAllDepartments()
-getDepartmentsByLocationId(locationId)
-getDepartmentsByParentId(parentId)
-getPositionById(departmentId, positionId)
-getPositionsByDepartmentId(departmentId)
-getAssignmentById(departmentId, assignmentId)
-getAssignmentsByDepartmentId(departmentId, activeOnly?)
-getAssignmentsByPositionId(departmentId, positionId, activeOnly?)
-getAssignmentsByCharacterId(characterId, activeOnly?)
-getGovernmentTypeById(typeId)
-getAllGovernmentTypes()
-getGovernmentHistory(locationId?)
-```
-
-**Canonical accessors (Commands only, live records):**
-
-```
-_getDepartmentCanonical(id)
-_getAllDepartmentsCanonical()
-_getDepartmentsByLocationCanonical(locationId)
-_getDepartmentsByParentCanonical(parentId)
-_getPositionCanonical(departmentId, positionId)
-_getPositionsCanonical(departmentId)
-_getAssignmentCanonical(departmentId, assignmentId)
-_getAssignmentsCanonical(departmentId, activeOnly?)
-_getAssignmentsForPositionCanonical(departmentId, positionId, activeOnly?)
-_getAssignmentsForCharacterCanonical(characterId, activeOnly?)
-_getGovernmentTypeCanonical(typeId)
-_getAllGovernmentTypesCanonical()
-_getGovernmentHistoryCanonical()
-```
-
-**Mutation primitives (call `window.markDataDirty` internally; never save):**
-
-```
-_addDepartment(dept)
-_updateDepartment(id, updates, allowedFields)
-_removeDepartment(id)
-_addPosition(departmentId, position)
-_updatePosition(departmentId, positionId, updates, allowedFields)
-_removePosition(departmentId, positionId)
-_appendSalaryOverride(departmentId, positionId, override)
-_addAssignment(departmentId, assignment)
-_updateAssignment(departmentId, assignmentId, updates, allowedFields)
-_removeAssignment(departmentId, assignmentId)
-_addGovernmentType(type)
-_updateGovernmentType(typeId, updates, allowedFields)
-_removeGovernmentType(typeId)
-_addGovernmentHistory(record)
-```
-
-**Lifecycle:**
-
-```
-hydrateFromMasterData()  // rebuilds all indexes from masterData.data
-validateIntegrity()      // warn-only; returns array of warning strings
-```
-
-**UI state:** `getUIState()`, `setUIState(key, value, {notify})`, `updateUIState(updates, {notify})`.
-
-**Subscriptions:** `subscribe(callback)`, `publish(eventType, data)`.
-
-`hydrateFromMasterData` throws on duplicate department, position, assignment, or government type IDs. Referential issues (dangling parent, assignment pointing to missing position, end-before-start) are warned via `validateIntegrity`, never thrown.
-
-### 3.3 `government-rules.js`
-
-Pure policy. No State, no I/O, no randomness. All thresholds from Constants.
-
-**Validators return `{valid, reason}`:**
-
-```
-validateDepartment(data, isUpdate, departmentId?)
-validatePosition(data, isUpdate)
-validatePositionHierarchy(departmentId, positionId, newParentId, getPositionRecord)
-validateGovernmentType(data, isUpdate)
-validateLeaderAssignment(facts)
-validateSalaryUpdate(positionId, newSalary)
-```
-
-**Eligibility returns `{eligible, reason, code}`:**
-
-```
-checkPositionEligibility(characterFacts, positionFacts)
-```
-
-**Planning returns `{valid, reason?, code?, roleToAdd?, skillLevel?, startYear?}`:**
-
-```
-planAssignment({ position, character, options })
-```
-
-**Candidate scoring (pure, deterministic):**
-
-```
-scoreCandidate({ age, experienceYears, rankPriority })
-isCandidateReady({ age, experienceYears })
-compareCandidates(a, b)
-```
-
-**Salary tier:**
-
-```
-getSalaryTier(priority)
-```
-
-### 3.4 `government-queries.js`
-
-Read layer. Composes other domains' queries. Returns clones or projections. No fallbacks.
-
-**Departments:**
-
-```
-getDepartment(departmentId)
-getDepartments(options)                    // { includeDeprecated, locationId, parentDepartmentId, sortBy, sortOrder }
-getDepartmentsByLocation(locationId, options)
-getDepartmentChildren(departmentId)
-getDepartmentDescendants(departmentId)
-getDepartmentPath(departmentId)
-getDepartmentTree(options)
-getDepartmentDetails(departmentId)
-getDepartmentDeletionImpact(departmentId)
-```
-
-**Positions:**
-
-```
-getPosition(departmentId, positionId)
-getPositionsForDepartment(departmentId, options)
-getPositionPath(departmentId, positionId)
-searchPositions(options)                   // { term, departmentId?, requiredRoleId? }
-```
-
-**Assignments:**
-
-```
-getAssignment(departmentId, assignmentId)
-getAssignmentsForDepartment(departmentId, options)
-getAssignmentsForPosition(departmentId, positionId, options)
-getAssignmentsForCharacter(characterId, options)
-getAssignmentHistory(departmentId?, positionId?, characterId?, options)
-```
-
-**Candidates / succession:**
-
-```
-getQualifiedCandidates(departmentId, positionId, options)
-getSuccessionPlan(departmentId, positionId)
-analyzeAssignmentHistory(departmentId)
-```
-
-**Statistics:**
-
-```
-getStatistics()
-getPositionStatistics(departmentId, positionId)
-getAssignmentStatistics(departmentId)
-compareDepartments(a, b)
-getLargestDepartments(limit?)
-getMostActiveDepartments(limit?)
-getPositionsByRoleRequirement(roleId)
-getPositionsRequiringRole()
-```
-
-**Government types:**
-
-```
-getGovernmentTypes()
-getGovernmentType(typeId)
-getGovernmentHistory(locationId?)
-```
-
-**Leader (delegated to Location):**
-
-```
-getCurrentLeader(placeId)
-getLeaderHistory(placeId)
-getLeaderCount(placeId)
-getActiveLeaderCount()
-getLeadersByLocation(locationId)
-getLocationGovernmentSummary(locationId)
-```
-
-**Economy projections:**
-
-```
-getIndustryTaxRate(locationId)
-getIndustryTaxRevenue(locationId)
-getIndustryEnterpriseStats(locationId)
-getGovernmentIndustrySummary(locationId)
-getIndustryHealthScore(locationId)
-getSalaryBudgetSufficiency(locationId)
-```
-
-### 3.5 `government-commands.js`
-
-Write layer. One transaction boundary per command. Result contract:
-
-```
-{ success: true, data }
-{ success: false, reason: string, code?: string }
-```
-
-**Commit tail (`_commit(eventName, payload)`):**
-
-1. `State.hydrateFromMasterData()`
-2. `window.markDataDirty()`
-3. `State.publish(eventName, payload)`
-4. `window.dispatchEvent(new CustomEvent(eventName, { detail: payload }))`
-
-Commands do **not** call `saveMasterData`. Persistence is explicit via `persist()`.
-
-**Department commands:**
-
-```
-createDepartment(data)
-updateDepartment(departmentId, updates)
-deleteDepartment(departmentId, { cascade })
-```
-
-**Position commands:**
-
-```
-addPosition(departmentId, data)
-updatePosition(departmentId, positionId, updates)
-deletePosition(departmentId, positionId)
-updatePositionSalary(departmentId, positionId, newSalary, { year, reason })
-```
-
-**Assignment commands:**
-
-```
-assignCharacterToPosition(departmentId, positionId, characterId, options)
-endAssignment(departmentId, assignmentId, endYear, reason)
-removeAssignment(departmentId, assignmentId)
-bulkAssignCharacters(departmentId, positionId, assignments, { mode })
-```
-
-**Salary payment (cross-domain, separate transaction):**
-
-```
-paySalaryForAssignment(departmentId, positionId, characterId)
-```
-
-**Government type commands:**
-
-```
-createGovernmentType(data)
-updateGovernmentType(typeId, updates)
-deleteGovernmentType(typeId)
-```
-
-**Delegated commands:**
-
-```
-assignLeader(placeId, characterId, startYear, title)
-endLeaderTerm(placeId, characterId, endYear)
-assignGovernmentToPlace(placeId, govTypeId, govStyle)
-updateJusticeSeverity(locationId, severity)
-updateWatch(locationId, hasWatch, size)
-```
-
-**Persistence:**
-
-```
-persist()   // the only saveMasterData call site in the domain
-```
-
-### 3.6 `government-economy.js`
-
-Pure salary calculations. No mutations. No State writes.
-
-```
-calculateSalaryFromFacts(positionFacts, context)
-calculatePositionSalary(departmentId, positionId)
-calculateDepartmentSalaryRequirements(departmentId)
-calculateLocationSalaryRequirements(locationId)
-getPositionSalaryHistory(departmentId, positionId)
-getSalaryTier(priority)                     // passthrough to GovernmentRules.getSalaryTier
-```
-
-### 3.7 `government-bootstrap.js`
-
-Load-time verification and namespace exposure.
-
-```
-GovernmentBootstrap.init()
-GovernmentBootstrap.reinit()
-```
-
-`init()` is idempotent. Auto-runs if `masterData.data` is available at script load. Verifies:
-
-- Required globals: `generateId`, `markDataDirty`, `saveMasterData`, `getCurrentYearSafe`
-- Required Government modules: Constants, State, Rules, Queries, Commands, Economy
-- Required cross-domain modules and specific methods:
-  - `CharacterQueries.getCharacterFacts` / `getAllCharacterFacts`
-  - `CharacterCommands.addProfession`
-  - `LocationQueries.getPlaceSummary`
-  - `LocationCommands.assignLeader` / `endLeaderTerm` / `assignGovernment`
-  - `RoleQueries.getRoleSummary` / `getRankSummary`
-  - `SettlementQueries.getIndustryTaxRate`
-  - `SettlementProsperityQueries.getProsperityValue`
-  - `SettlementGovernmentCommands.setJusticeSeverity` / `setWatch`
-  - `HouseholdQueries.getCharacterHousehold`
-- Canonical shape: `masterData.data.governmentDepartments` / `governmentTypes` / `governmentHistory` are arrays if present
-
-Then calls `State.hydrateFromMasterData()` and `State.validateIntegrity()` (warn-only), then exposes:
-
-```js
-window.Government = {
-    constants: GovernmentConstants,
-    state: GovernmentState,
-    rules: GovernmentRules,
-    queries: GovernmentQueries,
-    commands: GovernmentCommands,
-    economy: GovernmentEconomy
-};
-```
-
-### 3.8 `government-view-models.js`
-
-Presentation shaping. No DOM, no queries, no state. Takes already-fetched data and returns a stable shape for the UI.
-
-```
-toDepartmentListItem / toDepartmentListItems
-toDepartmentSummaryCard
-toDepartmentDetailsViewModel
-toDeleteImpactViewModel
-
-toPositionListItem / toPositionListItems
-toPositionSummaryCard
-toPositionDetailsViewModel
-
-toAssignmentListItem / toAssignmentListItems
-toAssignmentSummaryCard
-toAssignmentHistoryRows
-
-toCandidateRow / toCandidateRows
-toSuccessionPlanViewModel
-
-toAssignmentStatsViewModel
-
-toSalaryViewModel
-toLocationBudgetViewModel
-toTaxRevenueViewModel
-toGovernmentSummaryViewModel
-
-toGovernmentTypeRow
-toGovernmentTypeOptions
-```
-
-### 3.9 `government-ui-list.js`
-
-Renderers. Icons via `window._getIcon`. Structural inline styles only.
-
-```
-renderDepartmentList(container, viewModels, { onSelect, showStats, showActions })
-renderPositionList(container, viewModels, { onSelect, showRoleInfo, showActions })
-renderAssignmentList(container, viewModels, { onSelect, showRoleInfo, showEndButton, departmentId })
-renderPositionSummaryCard(container, vm)
-renderDepartmentSummaryCard(container, vm)
-renderAssignmentSummaryCard(container, vm)
-renderCandidateList(container, candidateVms)
-```
-
-Each takes a container id or element. Each takes already-shaped view models. No query calls.
-
-### 3.10 `modals-government.js`
-
-Government type CRUD + place government assignment. Department CRUD lives in `modals-government-departments.js`.
-
-```
-openAddGovernmentTypeModal(onSuccess)
-openEditGovernmentTypeModal(typeId, onSuccess)
-openDeleteGovernmentTypeModal(typeId, onSuccess)
-openAssignGovernmentModal(placeId, onSuccess)
-```
-
-### 3.11 `modals-government-departments.js`
-
-```
-openCreateGovernmentDepartmentModal(locationId, onSuccess)
-openEditGovernmentDepartmentModal(deptId, onSuccess)
-openDeleteGovernmentDepartmentModal(deptId, onSuccess)
-openViewDepartmentDetailsModal(departmentId)
-```
-
-### 3.12 `modals-government-positions.js`
-
-```
-openAddPositionModal(deptId, onSuccess)
-openEditPositionModal(deptId, positionId, onSuccess)
-openDeletePositionModal(deptId, positionId, onSuccess)
-openViewPositionDetailsModal(deptId, positionId)
-openAssignCharacterToPositionModal(departmentId, positionId, onSuccess)
-```
-
-### 3.13 `modals-government-assign.js`
-
-```
-openBulkAssignModal(departmentId, positionId, onSuccess)
-openAssignmentHistoryModal(departmentId?, positionId?, characterId?)
-openSuccessionPlanningModal(departmentId, positionId)
-openAssignmentStatsModal(departmentId)
-```
-
-### 3.14 `modals-government-economy.js`
-
-```
-openSalaryManagementModal(departmentId, positionId, onSuccess)
-openGovernmentBudgetModal(locationId)
-openTaxRevenueModal(locationId)
-openGovernmentSummaryModal(locationId)
-openFinancialReportModal(locationId)     // alias → openGovernmentSummaryModal
-openEfficiencyScoreModal(locationId)     // alias → openGovernmentSummaryModal
-```
-
----
-
-## 4. Data schemas
-
-### 4.1 Department
-
-```js
-{
-  id: string,                    // "govdept..."
-  name: string,
-  description: string,
-  locationId: string,            // location owned by Location domain
-  parentDepartmentId: string|null,
-  positions: [ Position ],
-  assignments: [ Assignment ],
-  isDeprecated: boolean,
-  createdAt: number,             // year
-  updatedAt: number              // year
-}
-```
-
-### 4.2 Position
-
-```js
-{
-  id: string,                    // "govpos..."
-  name: string,
-  description: string,
-  priority: number,              // 1..100, lower = higher rank
-  parentPositionId: string|null,
-  requiredRoleId: string|null,   // role owned by Role domain
-  minSkillLevel: number,         // 0..100
-  genderRestriction: 'either' | 'male' | 'female',
-  requiredRankId: string|null,   // rank owned by Role domain
-  minExperience: number,         // years
-  salaryOverrides: [ { salary, year, reason } ]
-}
-```
-
-### 4.3 Assignment
-
-```js
-{
-  id: string,                    // "govassign..."
-  positionId: string,
-  characterId: string,
-  characterName: string,         // snapshot at assignment time
-  startYear: number,
-  endYear: number|null,
-  endReason: string|null,
-  title: string,
-  notes: string,
-  roleIdAtAssignment: string|null,
-  skillLevelAtAssignment: number|null
-}
-```
-
-### 4.4 Government type
-
-```js
-{
-  id: string,                    // "govtype..."
-  name: string,
-  description: string,
-  allowedRankIds: [ string ],
-  icon: string                   // icon name
-}
-```
-
-### 4.5 Government history
-
-```js
-{
-  id: string,                    // "govhist..."
-  locationId: string,
-  characterId?: string,
-  characterName?: string|null,
-  governmentTypeId?: string,
-  governmentStyle?: string|null,
-  eventType: 'leader_assigned' | 'leader_term_ended' | 'government_assigned' | 'government_changed',
-  startYear?: number,
-  endYear?: number,
-  title?: string|null,
-  recordedAt: number             // year
-}
-```
-
----
-
-## 5. Commands — write semantics
-
-### 5.1 Field allowlists
-
-Every `update*` command validates its `updates` object against `C.ALLOWED_*_FIELDS`. Rejection paths:
-
-- Unknown field → `"Field \"X\" is not updatable on <context>"` with code `VALIDATION`
-- Cross-domain field → `"Field \"X\" is owned by <owner>; use <owner> instead"` with code `VALIDATION`
-
-`C.DOMAIN_OWNED_FIELDS` maps cross-domain field names to their owning module.
-
-### 5.2 Persistence
-
-One `saveMasterData` call site in the domain: `GovernmentCommands.persist()`.
-
-The commit tail does not save. Modals call `Commands.persist()` exactly once after each successful mutation. Multi-assignment batches (bulk) commit once and persist once.
-
-If `persist()` returns `{success: false}`, the modal shows a warning toast and does not roll back — the in-memory state is consistent, only the disk write failed.
-
-### 5.3 Cross-domain writes
-
-Government commands delegate to the owning domain:
-
-- `assignLeader` / `endLeaderTerm` / `assignGovernmentToPlace` → `LocationCommands.*`, wrapped by `_wrapLocationResult`
-- `updateJusticeSeverity` / `updateWatch` → `SettlementGovernmentCommands.*`, wrapped by `_wrapSettlementResult`
-- `assignCharacterToPosition` / `bulkAssignCharacters` → `CharacterCommands.addProfession` (only when the position requires a role the character lacks)
-- `paySalaryForAssignment` → `HouseholdCommands.adjustWealth` / `creditWealth`
-
-`_wrapLocationResult` normalises Location's `true`-or-throw contract into `{success, data}` / `{success: false, reason, code: 'LOCATION_FAILED'}`.
-
-`_wrapSettlementResult` normalises Settlement's `{success, code, details}` into Government's contract.
-
-### 5.4 Salary is out of the assignment transaction
-
-`assignCharacterToPosition` and `bulkAssignCharacters` do **not** pay salary. Salary payment is a separate command, invoked explicitly by the caller:
-
-```js
-var result = Commands.assignCharacterToPosition(departmentId, positionId, characterId);
-if (result.success) {
-    Commands.persist();
-    var salary = Commands.paySalaryForAssignment(departmentId, positionId, characterId);
-    // salary = { paid: boolean, amount?, householdId?, reason? }
-}
-```
-
-Rationale: salary depends on Household, which is a separate domain. Coupling the assignment transaction to Household's write path was the source of the old warn-once-skip behaviour. Splitting it makes the failure modes independent and lets the UI decide whether to show a salary toast.
-
-### 5.5 CustomEvents
-
-Every successful command fires one `window.CustomEvent` (from `C.EVENTS`):
-
-| Event | Fired by |
-|---|---|
-| `governmentDepartmentCreated` | `createDepartment` |
-| `governmentDepartmentUpdated` | `updateDepartment` |
-| `governmentDepartmentDeleted` | `deleteDepartment` |
-| `governmentPositionAdded` | `addPosition` |
-| `governmentPositionUpdated` | `updatePosition` |
-| `governmentPositionDeleted` | `deletePosition` |
-| `governmentCharacterAssigned` | `assignCharacterToPosition`, `bulkAssignCharacters` |
-| `governmentAssignmentEnded` | `endAssignment` |
-| `governmentAssignmentRemoved` | `removeAssignment` |
-| `governmentSalaryOverridden` | `updatePositionSalary` |
-| `governmentTypeCreated` / `Updated` / `Deleted` | the three government type commands |
-| `governmentLeaderAssigned` / `governmentLeaderTermEnded` | delegating commands |
-| `governmentAssignedToPlace` | `assignGovernmentToPlace` |
-| `governmentJusticeSeverityUpdated` / `governmentWatchUpdated` | delegating commands |
-
-Cross-domain consumers subscribe to these instead of polling.
-
----
-
-## 6. Anti-patterns
-
-None of these appear in the refactored modules. Any reintroduction is a regression.
-
-- `saveMasterData` inside `_commit`, inside any mutation primitive, or inside a modal
-- `invalidateCache` / `invalidateAccessorCaches` calls anywhere
-- `_processing*`, `_rendering`, `_openingModal`, `_processingModal` state flags
-- `value || 0`, `value || 50`, `value || []`, `value || {}` for domain values
-- `return 1250`, `: 1250` fallback returns
-- `typeof window.X !== 'undefined' ? ... : []` for required dependencies
-- `getOrCreate*` from a read path
-- `if (result)` — all Command result checks are `if (!result.success)`
-- Direct writes to Place, Settlement, Household, or Character canonical data from Government code
-- Inline numbers for domain values (priority, skill, salary, age thresholds, gender strings)
-- Inline enum strings for gender, event names, error codes — all come from `GovernmentConstants`
-- Queries calling `GovernmentState._get*Canonical` (only Commands do)
-- View models calling `GovernmentQueries`, `GovernmentState`, or `GovernmentCommands`
-- UI renderers calling `GovernmentQueries`
-- Modals calling `GovernmentState._add*` / `_update*` / `_remove*`
-- `saveMasterData` in more than one function per domain
-
----
-
-## 7. Known deferrals
-
-1. **`LocationCommands` throw/boolean contract.** Not normalised at the source. Government normalises with `_wrapLocationResult`. If LocationCommands adopts the standard `{success, data}` contract, `_wrapLocationResult` collapses to a pass-through.
-
-2. **`LocationQueries.getPlaceGovernmentSummary`.** `GovernmentQueries.getLocationGovernmentSummary` prefers it and falls back to a composition over `getPlaceSummary` + `getCurrentLeader` + `getDepartmentsByLocation`. Once Location exposes the summary method, the fallback branch is dead and can be removed.
-
-3. **`IndustryQueries` is a hard dependency of `GovernmentQueries`.** Reads `getIndustryTaxRevenue` / `getIndustryEnterpriseStats` without fallback. If a build ships Government without Industry, either Industry must load first or those two reads need to move behind a flag.
-
-4. **`SettlementQueries.getGovernmentSalaryBudget`.** Used by `getSalaryBudgetSufficiency`. If Settlement drops the method, the budget-sufficiency display in `openGovernmentSummaryModal` shows nothing (VM returns `sufficiency: null`). No crash.
-
-5. **Legacy `openFinancialReportModal` / `openEfficiencyScoreModal`.** Both alias `openGovernmentSummaryModal`. Kept so old callers don't break. Delete once all callers migrate.
-
-6. **`government-history` is append-only.** No update or delete command. Every leader assignment, leader end, and government assignment appends. If pruning is needed later, add a `pruneGovernmentHistory(locationId, beforeYear)` command.
-
----
-
-## 8. Deleted files
-
-These existed in Session 2 and are gone:
-
-- `government-system.js` — global alias façade. Replaced by `window.Government` on bootstrap.
-- `government-assignment.js` — compatibility façade for candidate/succession/history. Migrated into `GovernmentQueries`.
-- `government-laws.js` — compatibility façade for civil law. Callers use `SettlementLawCommands` / `SettlementLawQueries` directly.
-- `government-docs.txt` — replaced by this file.
-
-Any remaining HTML script tag or file reference must be removed.
-
----
-
-## 9. Bootstrap script tag
-
-Add after all Government scripts and after all cross-domain dependencies:
-
-```html
-<script src="js/systems/government/government-constants.js"></script>
-<script src="js/systems/government/government-state.js"></script>
-<script src="js/systems/government/government-rules.js"></script>
-<script src="js/systems/government/government-queries.js"></script>
-<script src="js/systems/government/government-commands.js"></script>
-<script src="js/systems/government/government-economy.js"></script>
-<script src="js/systems/government/government-bootstrap.js"></script>
-<script src="js/systems/government/government-view-models.js"></script>
-<script src="js/systems/government/government-ui-list.js"></script>
-<script src="js/systems/government/modals-government.js"></script>
-<script src="js/systems/government/modals-government-departments.js"></script>
-<script src="js/systems/government/modals-government-positions.js"></script>
-<script src="js/systems/government/modals-government-assign.js"></script>
-<script src="js/systems/government/modals-government-economy.js"></script>
-```
-
-Order matters:
-
-- `government-constants.js` before `government-state.js` (State does not need Constants at load, but Rules does).
-- `government-state.js` before `government-rules.js` is not required (Rules is pure). Constants is the only load-order requirement for Rules.
-- `government-state.js` and `government-rules.js` both before `government-queries.js`.
-- `government-queries.js` before `government-commands.js` (Commands uses `Queries.getDepartmentDeletionImpact`).
-- `government-economy.js` before `government-commands.js` (Commands' `paySalaryForAssignment` reads `window.GovernmentEconomy` lazily, but load order should be safe regardless).
-- `government-view-models.js` and `government-ui-list.js` before the modals.
-- `government-bootstrap.js` after all six core modules and after cross-domain deps.
-
-HTML files to update:
-
-- `DataManager.html`
-- `GENERIC.html`
-- `GENERIC_sidebar.html`
-- `GovernmentManager.html`
-- `HouseholdManager.html`
-- `ReligionManager.html`
-- `RoleManager.html`
-- `SettlementManager.html`
-
----
-
-## 10. Verification checklist
-
-1. [ ] All HTML files reference only the ten Government scripts listed in §9.
-2. [ ] No script tag references `government-system.js`, `government-assignment.js`, or `government-laws.js`.
-3. [ ] `government-docs.txt` removed.
-4. [ ] Load in the app. First error is the next thing to fix. Expected outcomes:
-   - `government-bootstrap: X required` — add the missing module to the load order.
-   - `government-constants.js requires GovernmentConstants` — load order regression.
-   - `CharacterQueries: LocationQueries is required` — Character must load after Location.
-5. [ ] Open a Government modal. Command succeeds. `saveMasterData` is called exactly once (check by instrumenting).
-6. [ ] Confirm no module outside `GovernmentCommands` calls `GovernmentState._add*` / `_update*` / `_remove*`:
-
-   ```
-   grep -rn "GovernmentState\._" js/ | grep -v "government-commands.js" | grep -v "government-queries.js"
-   ```
-
-   Expected: only `government-rules.js`'s injected `getPositionRecord` argument (which resolves to `_getPositionCanonical` via Commands).
-
-7. [ ] Confirm no module references `GovernmentAssignment`, `GovernmentLaws`, or `government-system`:
-
-   ```
-   grep -rn "GovernmentAssignment\|GovernmentLaws\|government-system" js/
-   ```
-
-   Expected: no matches outside comments in this doc.
-
-8. [ ] Confirm every Government command returns `{success: ...}`:
-
-   ```
-   grep -n "return _" js/systems/government/government-commands.js
-   ```
-
-   Every return statement in the command bodies should be `_ok(...)` or `_fail(...)`.
-
----
-
-## 11. Version history
-
-- **Session 1** — initial Government module split (state, queries, commands, rules, economy, assignment, laws, system, UI, modals).
-- **Session 2** — boundary corrections. `SettlementGovernmentCommands.setJusticeSeverity` / `setWatch` object signature. `LocationCommands.assignGovernment` name correction. `_wrapLocationResult` / `_wrapSettlementResult` added. `CharacterQueries.getCharacterFacts` / `getAllCharacterFacts` added. `RoleQueries.getRoleSummary` / `getRankSummary` added. `LocationQueries.getPlaceSummary` / `getPlaceSummaries` / `getPlaceGovernmentSummary` / `getCurrentLeader` / `getLeaderHistory` / `getActiveLeaderCount` / `getLeadersByLocation` / `getPlacesUsingGovernmentType` added. `modals-core.js` `onMount` / `onConfirm(root)` / `onCancel(root)` semantics frozen. `SettlementProsperityQueries.getProsperityValue` used by economy.
-- **Session 3** — full refactor to the rank/role/education pattern.
-  - `government-constants.js` extracted.
-  - State rewritten: `hydrateFromMasterData`, clone-returning public reads, `_get*Canonical` accessors, `markDataDirty` inside primitives, duplicate-id detection.
-  - Rules rewritten: imports Constants, no inline numbers or enum strings.
-  - Queries written from scratch (the file on disk was a duplicate of Commands). Adds `getQualifiedCandidates`, `getSuccessionPlan`, `analyzeAssignmentHistory` from the deleted `government-assignment.js`.
-  - Commands rewritten: `_commit(eventName, payload)`, `persist()`, field allowlists, load-time cross-domain method verification, CustomEvent dispatch, salary moved to `paySalaryForAssignment`.
-  - Economy patched: constants-based salary coefficients, dead `_SettlementQueries` require removed, `getSalaryTier` passthrough.
-  - Bootstrap added.
-  - View models added.
-  - UI list decoupled from queries.
-  - Modals consume view models, batch persist.
-  - `government-system.js`, `government-assignment.js`, `government-laws.js` deleted.
-  - This document replaces `government-docs.txt`.
-```
-
-That's **10/10**. Government refactor complete on the code and docs side.
-
-Summary of what landed across the sequence:
-
-| # | File | Status |
-|---|---|---|
-| 1 | `government-constants.js` | New |
-| 2 | `government-state.js` | Rewrite |
-| 3 | `government-rules.js` | Patch |
-| 4 | `government-queries.js` | Write from scratch |
-| 5 | `government-commands.js` | Rewrite |
-| 6 | `government-economy.js` | Patch |
-| 7 | `government-bootstrap.js` | New |
-| 8 | `government-view-models.js` | New |
-| 9 | `government-ui-list.js` + 5 modal files | Patch |
-| 10 | `government-doc.md` | New |
-
-Two deletions outside this sequence that still need to happen on disk:
-
-- `js/systems/government/government-system.js`
-- `js/systems/government/government-assignment.js`
-- `js/systems/government/government-laws.js`
-- `js/systems/government/government-docs.txt`
-
-Plus HTML script-tag updates per §9.
-
-One open item flagged for your call: `modals-government-positions.js`'s `openDeletePositionModal` message still claims "Deleting it will also remove all assignments" but the command rejects deletion when active assignments exist. If you want, I can patch that string in a follow-up — either "Remove them first" (matches current command behaviour) or add a cascade option to `deletePosition` (matches the message). Let me know.
+================================================================================
+STILL WATERS — GOVERNMENT SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
+
+Scope of this document:
+  - Every Government file provided in this batch (15 files):
+      js/systems/government/government-constants.js
+      js/systems/government/government-state.js
+      js/systems/government/government-rules.js
+      js/systems/government/government-queries.js
+      js/systems/government/government-commands.js
+      js/systems/government/government-economy.js
+      js/systems/government/government-bootstrap.js
+      js/systems/government/government-view-models.js
+      js/systems/government/government-ui-list.js
+      js/systems/government/modals-government.js
+      js/systems/government/modals-government-departments.js
+      js/systems/government/modals-government-positions.js
+      js/systems/government/modals-government-assign.js
+      js/systems/government/modals-government-economy.js
+      js/systems/government/settlement-law-formatters.js
+  - Every core, character, location, selector, settlement, and other
+    cross-domain file the Government subsystem depends on, at LOAD
+    time (module-level guards) or at CALL time (typeof-guarded
+    lookups), and how each is used.
+  - The dependency graph across Government layers (constants → state
+    → rules → queries → commands → economy → bootstrap → view models
+    → UI → modals).
+  - Cross-references to government-docs.txt (the narrative doc; this
+    document is consistent with it and fills in the dependency
+    sections that government-docs.txt does not cover in code-level
+    detail).
+  - Delivered but deprecated: government-assignment.js and
+    government-laws.js are compatibility façades. government-docs.txt
+    §8 lists them as DELETED; this document treats them as such even
+    though the files still exist in this batch. See PART 7 §16.
+
+PATHS NOTE:
+  This document uses the paths from government-docs.txt §2/§9 (the
+  narrative doc's canonical paths). The files you provided use the
+  same names.
+
+Anything not provable from the supplied files is marked [UNVERIFIED].
+
+
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
+
+The Government subsystem follows the same layer chain as Rank / Role /
+Education / Relationship / Settlement. Files in a later layer may read
+from an earlier layer; they may not read from a later layer. Cycles are
+forbidden.
+
+  CONSTANTS (no deps)
+    js/systems/government/government-constants.js
+
+  STATE (owns canonical indexes; reads masterData)
+    js/systems/government/government-state.js
+
+  RULES (pure policy; no state, no I/O)
+    js/systems/government/government-rules.js
+
+  QUERIES (read-only; composes canonical state + foreign-domain queries)
+    js/systems/government/government-queries.js
+
+  COMMANDS (mutates via State primitives; commit tail is explicit)
+    js/systems/government/government-commands.js
+
+  ECONOMY (pure salary calculations; reads via Queries)
+    js/systems/government/government-economy.js
+
+  BOOTSTRAP (load-time verification + namespace)
+    js/systems/government/government-bootstrap.js
+
+  VIEW MODELS (presentation shaping; consumes query projections)
+    js/systems/government/government-view-models.js
+
+  UI (DOM rendering; consumes view models)
+    js/systems/government/government-ui-list.js
+
+  MODALS (DOM + commands; batch persist per successful action)
+    js/systems/government/modals-government.js
+    js/systems/government/modals-government-departments.js
+    js/systems/government/modals-government-positions.js
+    js/systems/government/modals-government-assign.js
+    js/systems/government/modals-government-economy.js
+
+  SETTLEMENT-LAW FORMATTERS (presentation helpers for civil laws)
+    js/systems/government/settlement-law-formatters.js
+
+  DEPRECATED COMPATIBILITY FAÇADES (government-docs.txt §8 lists
+  these as DELETED; the supplied batch still has them. See PART 7 §16.)
+    js/systems/government/government-assignment.js
+    js/systems/government/government-laws.js
+    js/systems/government/government-system.js
+
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws or refuses if the
+                          dependency is missing at call time; the
+                          module loads without it.
+  OPTIONAL              — the module checks and falls back when absent.
+
+Cross-domain references are labeled with their subsystem:
+  [core]        js/core/...
+  [character]   js/character/...
+  [location]    js/location/...
+  [selectors]   js/selectors/...
+  [settlement]  js/settlement/...
+  [household]   js/households/...
+  [industry]    js/industry/...    [UNVERIFIED]
+  [roles]       js/roles/...       [UNVERIFIED]
+  [religion]    js/religion/...    (consumed only by Settlement, not Government)
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-constants.js
+    Owns window.GovernmentConstants.
+    Load-time dependencies: NONE.
+    Call-time dependencies:  NONE.
+    Consumed by:
+      [load] government-state.js  (C.STATE_EVENTS.HYDRATED /
+        .UI_STATE_CHANGED)
+      [load] government-rules.js  (all thresholds / allowlists /
+        scoring constants)
+      [load] government-queries.js (C.GENDER_EITHER and,
+        indirectly, C.SUCCESSION_CANDIDATE_LIMIT)
+      [load] government-commands.js (all allowlists, all
+        CODES, all EVENTS, GENDER_EITHER, ASSIGNMENT_DEFAULT_END_REASON,
+        GOVERNMENT_HISTORY_EVENT_TYPES, DEFAULT_POSITION_PRIORITY,
+        DEFAULT_MIN_SKILL_LEVEL, DEFAULT_SKILL_LEVEL)
+      [load] government-economy.js (SALARY_PROSPERITY_*,
+        SALARY_EXPERIENCE_*)
+      [load] government-bootstrap.js? No — the bootstrap does not
+        require Constants at load, but it is listed in
+        REQUIRED_MODULES (§5 of government-docs.txt).
+      [load] government-view-models.js (C.GENDER_EITHER,
+        C.GENDER_MALE, C.GENDER_FEMALE for gender label formatting)
+      [load] modals-government.js (C for constants that
+        modals reference)
+      [load] modals-government-positions.js (C for
+        DEFAULT_POSITION_PRIORITY, MIN/MAX bounds, GENDER_*)
+      [load] modals-government-assign.js (C for
+        SUCCESSION_CANDIDATE_LIMIT indirectly; the modal reads it
+        through Queries.getSuccessionPlan which reads it directly)
+      [load] modals-government-economy.js (C for MIN_SALARY,
+        MAX_SALARY bounds on the salary override input)
+    Notes:
+      - No inline numbers or inline enum strings appear in any
+        Government module. Everything points at Constants.
+      - Settlement-law-formatters.js does NOT read Constants. It
+        carries its own display strings (see the "naming note" in
+        government-docs.txt §3.10 and PART 7 §16).
+
+--------------------------------------------------------------------------------
+2.2 STATE
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-state.js
+    Owns window.GovernmentState.
+    Load-time dependencies:
+      window.GovernmentConstants            (C.STATE_EVENTS,
+                                              C.* for validation)
+      window.generateId                     ([core] js/core/ids.js)
+      window.getCurrentYearSafe             ([core] js/core/time.js;
+                                              DEPRECATED alias — see
+                                              HAZARDS §7)
+      window.markDataDirty                  ([core] js/core/storage.js)
+    Call-time dependencies:
+      window.masterData.data (governmentDepartments,
+        governmentTypes, governmentHistory)
+    Consumed by:
+      [load] government-queries.js (public reads: getAllDepartments,
+        getDepartmentById, getDepartmentsByLocationId,
+        getDepartmentsByParentId, getPositionById,
+        getPositionsByDepartmentId, getAssignmentById,
+        getAssignmentsByDepartmentId, getAssignmentsByPositionId,
+        getAssignmentsByCharacterId, getGovernmentTypeById,
+        getAllGovernmentTypes, getGovernmentHistory)
+      [load] government-commands.js (canonical accessors: all
+        _get*Canonical methods; primitives: _addDepartment,
+        _updateDepartment, _removeDepartment, _addPosition,
+        _updatePosition, _removePosition, _appendSalaryOverride,
+        _addAssignment, _updateAssignment, _removeAssignment,
+        _addGovernmentType, _updateGovernmentType,
+        _removeGovernmentType, _addGovernmentHistory;
+        also hydrateFromMasterData and publish)
+      [load] government-bootstrap.js (hydrateFromMasterData,
+        validateIntegrity)
+      [load] government-system.js (via _bind — the deprecated shim
+        reads State.getUIState / State.setUIState /
+        State.updateUIState / State.invalidateCache* /
+        State.refreshFromMasterData* / State.subscribe)
+    Notes:
+      - *invalidateCache and refreshFromMasterData do NOT exist on
+        the State surface. government-system.js calls them via
+        State.invalidateCache / State.refreshFromMasterData; if the
+        deleted-file report in government-docs.txt §8 applies, the
+        shim is dead code and these calls would throw
+        "missing method invalidateCache" at load. See PART 7 §16.
+      - Public reads return DEEP CLONES (see _clone in the module).
+        The _get*Canonical accessors return LIVE references and are
+        used only by Commands and Rules-inside-Commands.
+      - hydrateFromMasterData throws on duplicate department /
+        position / assignment / governmentType ids.
+      - validateIntegrity returns an array of warning strings and
+        does NOT throw. Bootstrap invokes it inside try/catch and
+        logs on throw (which would indicate a State bug, not a data
+        bug).
+      - Mutation primitives call window.markDataDirty() but never
+        save, never publish, never dispatch CustomEvents. The commit
+        tail is the caller's (Commands') responsibility.
+
+--------------------------------------------------------------------------------
+2.3 RULES
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-rules.js
+    Owns window.GovernmentRules.
+    Load-time dependencies:
+      window.GovernmentConstants (all thresholds and enumerations)
+    Call-time dependencies: NONE.
+    Consumed by:
+      [load] government-queries.js (validatePositionHierarchy
+        indirectly via Commands; checkPositionEligibility,
+        scoreCandidate, isCandidateReady, compareCandidates via
+        getQualifiedCandidates / getSuccessionPlan;
+        getSalaryTier via Commands → Commands writes salaryOverrides
+        but Commands does not call getSalaryTier — Economy does)
+      [load] government-commands.js (all validators:
+        validateDepartment, validatePosition,
+        validatePositionHierarchy, validateGovernmentType,
+        validateLeaderAssignment, validateSalaryUpdate; also
+        planAssignment, checkPositionEligibility indirectly via
+        planAssignment)
+      [load] government-economy.js (getSalaryTier)
+    Notes:
+      - Pure functions. No State reads. No I/O. No randomness.
+      - validatePositionHierarchy takes `getPositionRecord` as an
+        injected lookup — Rules stays pure. The caller (Commands)
+        supplies State._getPositionCanonical.
+      - checkPositionEligibility takes characterFacts and
+        positionFacts. The caller supplies both from State /
+        CharacterQueries.
+      - planAssignment returns { valid, reason?, code?, roleToAdd?,
+        skillLevel?, startYear }. It handles the "character lacks
+        required role" case via roleToAdd rather than refusing; the
+        caller decides whether to add the role.
+
+--------------------------------------------------------------------------------
+2.4 QUERIES
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-queries.js
+    Owns window.GovernmentQueries.
+    Load-time dependencies:
+      window.GovernmentConstants          (C.GENDER_EITHER,
+                                            C.SUCCESSION_CANDIDATE_LIMIT)
+      window.GovernmentState               (via State public reads)
+      window.GovernmentRules               (checkPositionEligibility,
+                                            scoreCandidate,
+                                            isCandidateReady,
+                                            compareCandidates)
+      window.CharacterQueries              ([character]
+                                            getCharacterFacts,
+                                            getAllCharacterFacts)
+      window.LocationQueries               ([location]
+                                            getPlaceSummary,
+                                            getPlaceSummaries,
+                                            getCurrentLeader,
+                                            getLeaderHistory,
+                                            getActiveLeaderCount,
+                                            getLeadersByLocation,
+                                            getPlaceGovernmentSummary)
+      window.RoleQueries                   ([roles]
+                                            getRoleSummary,
+                                            getRankSummary)
+      window.SettlementQueries             ([settlement]
+                                            getIndustryTaxRate,
+                                            getGovernmentSalaryBudget)
+      window.SettlementProsperityQueries   ([settlement]
+                                            getProsperityValue)
+      window.IndustryQueries               ([industry]
+                                            getIndustryTaxRevenue,
+                                            getIndustryEnterpriseStats)
+    Call-time dependencies:
+      All of the above, plus C.SUCCESSION_CANDIDATE_LIMIT read
+      inside getSuccessionPlan.
+    Consumed by:
+      [load] government-commands.js (getDepartmentDeletionImpact,
+        getPosition via createDepartment logging path
+        (SettlementQueries.getIndustryTaxRate is not called by
+        Commands directly — Commands reads _SettlementQueries but
+        does not actually use it in the supplied file; see PART 7
+        §12), getAssignmentsForPosition used indirectly through
+        Rules.planAssignment? No — Commands reads State directly
+        for that; getStatistics for future maintenance)
+      [load] government-economy.js (getPosition, getDepartment,
+        getDepartmentsByLocation, getPositionsForDepartment,
+        getAssignmentsForPosition, getAssignmentsForDepartment)
+      [load] government-bootstrap.js (verification only — does
+        not read queries at load time)
+      [load] modals-government.js (getGovernmentType,
+        getGovernmentTypes, getGovernmentType by id)
+      [load] modals-government-departments.js (getDepartment,
+        getDepartments, getDepartmentDetails,
+        getDepartmentDeletionImpact)
+      [load] modals-government-positions.js (getDepartment,
+        getPosition, getPositionsForDepartment,
+        getAssignmentsForPosition)
+      [load] modals-government-assign.js
+        (getDepartment, getPosition, getQualifiedCandidates,
+         getSuccessionPlan, getAssignmentHistory,
+         analyzeAssignmentHistory)
+      [load] modals-government-economy.js (getDepartment,
+        getPosition, getDepartmentsByLocation,
+        getIndustryEnterpriseStats, getIndustryTaxRevenue,
+        getIndustryTaxRate, getSalaryBudgetSufficiency)
+    Notes:
+      - Returns CLONES or projections. Never a live canonical
+        record.
+      - getLocationGovernmentSummary prefers
+        LocationQueries.getPlaceGovernmentSummary and falls back
+        to a composition over getPlaceSummary +
+        getCurrentLeader + getDepartmentsByLocation. See
+        government-docs.txt §7 Known deferrals point 2.
+      - getIndustryTaxRevenue / getIndustryEnterpriseStats return
+        0 / null when the corresponding IndustryQueries method is
+        missing (guarded with typeof === 'function'). IndustryQueries
+        ITSELF is a HARD load-time dependency (§21 of
+        government-docs.txt); the individual methods are guarded at
+        call time.
+      - getSalaryBudgetSufficiency returns
+        { locationId, allocatedBudget, prosperity } — NOT a
+        sufficiency ratio. The view model
+        (toGovernmentSummaryViewModel) computes the ratio from
+        allocatedBudget and the caller-supplied
+        totalSalaryRequirement.
+
+--------------------------------------------------------------------------------
+2.5 COMMANDS
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-commands.js
+    Owns window.GovernmentCommands.
+    Load-time dependencies (all are module-level throws):
+      window.GovernmentConstants               (C)
+      window.GovernmentState                    (State)
+      window.GovernmentQueries                  (Queries)
+      window.GovernmentRules                    (Rules)
+      window.CharacterCommands                  (_CharacterCommands)
+      window.CharacterQueries                   (_CharacterQueries)
+      window.LocationQueries                    (_LocationQueries)
+      window.LocationCommands                   (_LocationCommands)
+      window.HouseholdCommands                  (_HouseholdCommands)
+      window.HouseholdQueries                   (_HouseholdQueries)
+      window.SettlementQueries                  (_SettlementQueries —
+                                                  read but not used in
+                                                  the supplied file;
+                                                  see PART 7 §12)
+      window.SettlementGovernmentCommands       (_SettlementGovCmds)
+    Load-time METHOD checks (throw at load if missing):
+      CharacterCommands.addProfession
+      LocationCommands.assignLeader
+      LocationCommands.endLeaderTerm
+      LocationCommands.assignGovernment
+      SettlementGovernmentCommands.setJusticeSeverity
+      SettlementGovernmentCommands.setWatch
+    Call-time dependencies:
+      window.getCurrentYearSafe  ([core]; deprecated alias — see
+                                  HAZARDS §7)
+      window.saveMasterData      ([core]) — only via persist()
+      window.logEvent            (via _log — typeof-guarded)
+      window.dispatchEvent / CustomEvent
+        (via _dispatch — typeof-guarded)
+      window.HouseholdCommands.adjustWealth or
+      window.HouseholdCommands.creditWealth
+        (via paySalaryForAssignment — typeof-guarded; only one is
+         required)
+    Consumed by:
+      [load] modals-government.js
+      [load] modals-government-departments.js
+      [load] modals-government-positions.js
+      [load] modals-government-assign.js
+      [load] modals-government-economy.js
+      [load] government-system.js (deprecated shim)
+    Notes:
+      - One command per public function.
+      - The commit tail (_commit) does NOT save. It runs
+        State.hydrateFromMasterData → window.markDataDirty →
+        State.publish → _dispatch(CustomEvent). Persistence is
+        explicit via persist().
+      - Field allowlist enforcement: every update command checks
+        updates against C.ALLOWED_*_FIELDS and rejects both unknown
+        fields and C.DOMAIN_OWNED_FIELDS with code VALIDATION.
+      - Cross-domain writes go through the owning domain's
+        commands. Wrappers _wrapLocationResult and
+        _wrapSettlementResult normalise those contracts.
+      - Salary payment (paySalaryForAssignment) is a SEPARATE
+        transaction from assignCharacterToPosition. Modals call
+        assign → persist → paySalary. This matches
+        government-docs.txt §5.4.
+      - bulkAssignCharacters runs a two-pass plan-then-apply. The
+        atomic mode aborts if any plan fails; best-effort applies
+        each valid plan and reports failures.
+
+--------------------------------------------------------------------------------
+2.6 ECONOMY
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-economy.js
+    Owns window.GovernmentEconomy.
+    Load-time dependencies (all hard throws):
+      window.GovernmentConstants              (C)
+      window.GovernmentRules                  (Rules.getSalaryTier)
+      window.GovernmentQueries                (Queries.getPosition,
+                                               getDepartment,
+                                               getDepartmentsByLocation,
+                                               getPositionsForDepartment,
+                                               getAssignmentsForPosition,
+                                               getAssignmentsForDepartment)
+      window.LocationQueries                  (_LocationQueries —
+                                               loaded but not
+                                               referenced in the
+                                               supplied file; see
+                                               PART 7 §13)
+      window.SettlementProsperityQueries      (_ProsperityQueries —
+                                               getProsperityValue)
+    Load-time METHOD check:
+      SettlementProsperityQueries.getProsperityValue
+    Call-time dependencies:
+      window.getCurrentYearSafe  ([core]; deprecated alias — see
+                                  HAZARDS §7)
+    Consumed by:
+      [load] modals-government-economy.js (calculatePositionSalary,
+                                            calculateDepartmentSalaryRequirements,
+                                            getSalaryTier,
+                                            getPositionSalaryHistory)
+      [load] government-commands.js
+        (paySalaryForAssignment reads window.GovernmentEconomy
+         lazily via typeof === 'function')
+    Notes:
+      - Pure calculation. No mutations. No State writes.
+      - _pickLatestOverride picks the latest override by year.
+      - calculateDepartmentSalaryRequirements walks active
+        assignments and sums calculatePositionSalary per position.
+        Vacant positions contribute 0.
+      - _LocationQueries is loaded (load-time guard throws if
+        missing) but is not read in the supplied code. That is a
+        dead dependency; see PART 7 §13.
+
+--------------------------------------------------------------------------------
+2.7 BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-bootstrap.js
+    Owns window.GovernmentBootstrap.
+    Load-time dependencies (via _verifyGlobals / _verifyModules /
+      _verifyCrossDomain, all called inside init(), which is called
+      at auto-init if masterData is present):
+      window.generateId
+      window.markDataDirty
+      window.saveMasterData
+      window.getCurrentYearSafe                 (deprecated alias —
+                                                 see HAZARDS §7)
+      window.GovernmentConstants
+      window.GovernmentState
+      window.GovernmentRules
+      window.GovernmentQueries
+      window.GovernmentCommands
+      window.GovernmentEconomy
+      window.CharacterQueries.getCharacterFacts /
+        getAllCharacterFacts
+      window.CharacterCommands.addProfession
+      window.LocationQueries.getPlaceSummary
+      window.LocationCommands.assignLeader /
+        endLeaderTerm / assignGovernment
+      window.RoleQueries.getRoleSummary /
+        getRankSummary
+      window.SettlementQueries.getIndustryTaxRate
+      window.SettlementProsperityQueries.getProsperityValue
+      window.SettlementGovernmentCommands.setJusticeSeverity /
+        setWatch
+      window.IndustryQueries                    (presence only)
+      window.HouseholdQueries.getCharacterHousehold
+      window.HouseholdCommands                   (presence only)
+      window.masterData.data (governmentDepartments,
+        governmentTypes, governmentHistory — each must be an
+        array if present)
+    Auto-init: if window.masterData.data is already present at
+      script load, init() runs immediately. Otherwise the loader
+      calls window.GovernmentBootstrap.init() explicitly after
+      masterData has loaded.
+    init() is idempotent (returns
+      { success: true, alreadyInitialized: true } on repeat).
+    Exposes window.Government = { constants, state, rules, queries,
+      commands, economy }.
+    Consumed by: application bootstrap.
+
+--------------------------------------------------------------------------------
+2.8 VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-view-models.js
+    Owns window.GovernmentViewModels.
+    Load-time dependencies:
+      window.GovernmentConstants (C.GENDER_EITHER, C.GENDER_MALE,
+                                  C.GENDER_FEMALE)
+    Call-time dependencies: NONE (the module is pure presentation
+      shaping; it takes already-fetched projections as arguments
+      and does not call into State, Commands, or foreign queries).
+    Consumed by:
+      [load] government-ui-list.js
+      [load] modals-government.js
+      [load] modals-government-departments.js
+      [load] modals-government-positions.js
+      [load] modals-government-assign.js
+      [load] modals-government-economy.js
+    Notes:
+      - Every function is a pure mapper. Presentation defaults
+        ("Unknown", "None", "—", "Vacant", "Present") live here, not
+        in the domain. Domain defaults live in Constants.
+      - toGovernmentSummaryViewModel computes the sufficiency ratio
+        from (allocatedBudget, totalSalaryRequirement). It does NOT
+        compute salary itself; the caller passes the totals.
+      - toSalaryViewModel expects (position, salary, tier, history)
+        where `tier` is the object from Economy.getSalaryTier.
+      - toDepartmentDetailsViewModel / toPositionDetailsViewModel /
+        toAssignmentStatsViewModel take optional caps/limits so the
+        modal can decide how many rows to render.
+      - toGovernmentTypeOptions takes includeNone so the
+        assign-government modal can offer a "None" option.
+
+--------------------------------------------------------------------------------
+2.9 UI LIST
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-ui-list.js
+    Owns window.GovernmentUI.
+    Load-time dependencies:
+      window.GovernmentViewModels  (module guard: throws if absent)
+    Call-time dependencies:
+      window._escapeHtml           ([core] — formatting.js via
+                                    modals-core.js; falls back to
+                                    local implementation)
+      window._getIcon / window.Icons
+                                    ([core] — icons.js; falls back
+                                    to window.Icons[name] or '')
+      window.openEditGovernmentDepartmentModal,
+      window.openDeleteGovernmentDepartmentModal,
+      window.openEditPositionModal,
+      window.openDeletePositionModal,
+      window.openRemoveAssignmentModal
+                                    (from modals-government-*.js;
+                                    typeof-guarded — clicks are
+                                    no-ops when the modals are not
+                                    loaded)
+    Consumed by:
+      [load] modals-government-assign.js (renderCandidateList only)
+      Any dashboard / manager page that wants to render
+        department / position / assignment / candidate lists.
+    Notes:
+      - Takes already-shaped view models. Never queries the domain.
+        Never reads State.
+      - Renders one delegated click handler per container so
+        re-rendering does not stack listeners.
+      - Uses structural inline styles only (flex, gap, borders);
+        domain data is not styled inline.
+
+--------------------------------------------------------------------------------
+2.10 MODALS
+--------------------------------------------------------------------------------
+
+  js/systems/government/modals-government.js
+    Owns government type CRUD and place government assignment.
+    Load-time dependencies:
+      window.GovernmentConstants
+      window.GovernmentQueries
+      window.GovernmentCommands
+      window.GovernmentViewModels
+      window.GovernmentUI
+      window.LocationQueries
+      window.RoleQueries
+    Call-time dependencies (typeof-guarded):
+      window.openModal / window.closeTopModal / window.showToast /
+        window.confirmDialog   ([core] modals-core + ui)
+      window._escapeHtml / window._getIcon / window._showToast
+      window.buildIconOptions
+      window.buildLocationDropdown
+      window.openEditGovernmentTypeModal /
+        window.openDeleteGovernmentTypeModal (self-references)
+      window.Icons
+    Consumed by: any dashboard that opens the government-type UI.
+    Notes:
+      - Calls Commands.persist() via _commitAndPersist after every
+        successful command. Fails with a warning toast on persist
+        failure but does not roll back.
+      - _buildIconOptions / _buildLocationOptions /
+        _buildRankOptions delegate to window.* helpers when
+        available and fall back to local implementations otherwise.
+        These are the "UI-only" helpers, not domain data.
+
+  js/systems/government/modals-government-departments.js
+    Owns department create/edit/delete/details modals.
+    Load-time dependencies:
+      window.GovernmentQueries
+      window.GovernmentCommands
+      window.GovernmentViewModels
+      window.LocationQueries
+    Call-time dependencies (typeof-guarded):
+      window.openModal / window.closeTopModal / window.showToast /
+        window.confirmDialog
+      window._escapeHtml / window._getIcon / window._showToast
+      window.buildLocationDropdown
+      window.openAddPositionModal  (from
+        modals-government-positions.js — inside the details modal)
+    Notes:
+      - The details modal wires Edit / Add Position / Delete /
+        Close buttons inside onMount. Each routes to the
+        corresponding modal.
+      - Delete goes through confirmDialog and then
+        Commands.deleteDepartment(deptId, { cascade: true }).
+        The view model's detailLines inform the confirm message.
+
+  js/systems/government/modals-government-positions.js
+    Owns position CRUD and assign-character modals.
+    Load-time dependencies:
+      window.GovernmentConstants
+      window.GovernmentQueries
+      window.GovernmentCommands
+      window.GovernmentViewModels
+      window.RoleQueries
+    Call-time dependencies (typeof-guarded):
+      window.openModal / window.closeTopModal / window.showToast /
+        window.confirmDialog
+      window._escapeHtml / window._getIcon / window._showToast
+      window.openCharacterSelector or
+        window.openUnifiedCharacterSelector    (assign-character)
+      window.openEditPositionModal /
+        window.openDeletePositionModal /
+        window.openAssignCharacterToPositionModal
+        (self-references from the details modal)
+    Notes:
+      - openAssignCharacterToPositionModal delegates to the
+        character selector and, on select, calls
+        Commands.assignCharacterToPosition with
+        addRoleIfMissing: true. Persist runs via _commitAndPersist.
+      - Salary is NOT paid by this modal. That is
+        paySalaryForAssignment, invoked separately per
+        government-docs.txt §5.4.
+      - deletePosition confirm message text claims it removes
+        assignments, but the command refuses when active
+        assignments exist. See PART 7 §11.
+
+  js/systems/government/modals-government-assign.js
+    Owns bulk assignment, assignment history, succession plan,
+    statistics modals.
+    Load-time dependencies:
+      window.GovernmentConstants
+      window.GovernmentQueries
+      window.GovernmentCommands
+      window.GovernmentViewModels
+      window.GovernmentUI
+    Call-time dependencies (typeof-guarded):
+      window.openModal / window.closeTopModal / window.showToast
+      window._escapeHtml / window._getIcon / window._showToast
+    Notes:
+      - Bulk assignment uses a two-pass plan-then-apply in the
+        command layer. The modal collects the candidate checkboxes
+        and dispatches the batch through Commands.bulkAssignCharacters
+        with mode: 'best-effort'.
+      - Succession-plan and statistics modals are READ-ONLY. They do
+        not mutate anything.
+      - Assignment-history modal is READ-ONLY.
+
+  js/systems/government/modals-government-economy.js
+    Owns salary management, salary budget, industry tax, and
+    government-summary modals.
+    Load-time dependencies:
+      window.GovernmentConstants
+      window.GovernmentQueries
+      window.GovernmentCommands
+      window.GovernmentEconomy
+      window.GovernmentViewModels
+      window.LocationQueries
+    Call-time dependencies (typeof-guarded):
+      window.openModal / window.closeTopModal / window.showToast
+      window._escapeHtml / window._getIcon / window._showToast
+      window.Icons (via _getIcon)
+    Notes:
+      - Salary management does not call Commands.persist after the
+        salary override succeeds? It does — via _commitAndPersist.
+      - openFinancialReportModal and openEfficiencyScoreModal are
+        aliases for openGovernmentSummaryModal. See
+        government-docs.txt §7 Known deferrals point 5.
+
+--------------------------------------------------------------------------------
+2.11 SETTLEMENT-LAW FORMATTERS
+--------------------------------------------------------------------------------
+
+  js/systems/government/settlement-law-formatters.js
+    Owns window.SettlementLawFormatters.
+    Load-time dependencies: NONE.
+    Call-time dependencies:
+      window._getIcon or window.Icons     ([core] icons.js;
+                                            typeof-guarded)
+    Consumed by: any settlement-law UI that wants a law-type /
+      severity label or icon. This file is presentation-only.
+    Notes:
+      - Lives in js/systems/government/ but its name and purpose
+        describe settlement-law display. It has no Government
+        module dependencies and no dependency on
+        GovernmentConstants. Its name/label tables are their own
+        copies (see HAZARDS §7 §15).
+      - getLawTypeIcon / getLawSeverityIcon use window._getIcon
+        with an Icons[name] fallback. No Unicode glyphs.
+
+--------------------------------------------------------------------------------
+2.12 DEPRECATED FAÇADES
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-assignment.js
+    government-docs.txt §8 lists this file as DELETED. If the file
+    is still present, it is a compatibility façade whose exports
+    (isCharacterQualifiedForPosition, getQualifiedCandidates,
+    getSuccessionPlan, analyzeAssignmentHistory) have been
+    superseded by GovernmentQueries.getQualifiedCandidates /
+    getSuccessionPlan / analyzeAssignmentHistory.
+    Load-time dependencies (from the file's own header):
+      window.GovernmentRules
+      window.GovernmentQueries
+      window.CharacterQueries
+      window.RoleQueries
+    Call-time dependencies:
+      window.getCurrentYearSafe (deprecated alias — see HAZARDS §7)
+    Status: should not be loaded by any HTML. Any remaining caller
+      that references window.GovernmentAssignment is a bug. See
+      PART 7 §16.
+
+  js/systems/government/government-laws.js
+    government-docs.txt §8 lists this file as DELETED. If the file
+    is still present, it is a compatibility façade that delegates
+    civil-law CRUD and queries to SettlementCommands /
+    SettlementQueries.
+    Load-time dependencies (from the file's own header):
+      window.SettlementCommands       [UNVERIFIED — the settlement
+                                       file inventory uses
+                                       SettlementLawCommands, not
+                                       SettlementCommands]
+      window.SettlementQueries
+      window.LAW_TYPES / window.LAW_CATEGORIES /
+        window.LAW_DOMAINS / window.LAW_SEVERITY
+                                       (from crime-constants.js)
+    Status: should not be loaded by any HTML. See PART 7 §16.
+    Notes:
+      - The façade's load-time guard checks window.SettlementCommands
+        and window.SettlementQueries, not
+        SettlementLawCommands. That name (SettlementCommands) is
+        not in the settlement file inventory (see
+        stillwaters-settlement-docs.txt PART 2). Loading this
+        file in a modern settlement build would throw
+        "government-laws.js requires SettlementCommands" at load.
+        Another reason the file should be removed.
+
+  js/systems/government/government-system.js
+    government-docs.txt §8 lists this file as DELETED. If the file
+    is still present, it is a compatibility alias façade that binds
+    State, Queries, and Commands onto flat window.* names.
+    Load-time dependencies:
+      window.GovernmentState
+      window.GovernmentQueries
+      window.GovernmentCommands
+    Load-time issue:
+      The file binds window.invalidateGovernmentCache =
+        State.invalidateCache and window.refreshGovernmentData =
+        State.refreshFromMasterData. NEITHER method exists on the
+        current GovernmentState surface. _bind throws
+        "government-system.js: missing method invalidateCache" at
+        load.
+      This is consistent with government-docs.txt §8 declaring the
+      file DELETED. Any HTML that still loads it will fail at load.
+    Status: should not be loaded by any HTML. See PART 7 §16.
+
+
+================================================================================
+PART 3 — CORE / CHARACTER / LOCATION / SELECTOR / SETTLEMENT / OTHER
+          DEPENDENCIES
+================================================================================
+
+This section names, for each Government file, which other subsystems
+it depends on. Only load-time and prominent call-time dependencies
+are listed.
+
+Legend for each file:
+  core        — js/core/... files
+  char        — js/character/... files
+  loc         — js/location/... files
+  sel         — js/selectors/... files
+  settle      — js/settlement/... files
+  house       — js/households/... files
+  industry    — js/industry/... files
+  roles       — js/roles/... files
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  generateId
+    Used by:
+      [load] government-state.js
+      [call] government-commands.js (createDepartment,
+        addPosition, assignCharacterToPosition,
+        _applyAssignmentPlan, createGovernmentType,
+        assignLeader, endLeaderTerm, assignGovernmentToPlace)
+
+  getCurrentYearSafe
+    Used by:
+      [load] government-state.js
+      [call] government-commands.js (_now helper)
+      [call] government-economy.js (_now helper)
+      [call] government-queries.js (_now helper)
+      [call] government-bootstrap.js (_verifyGlobals)
+      [call] government-assignment.js (deprecated façade)
+    Notes:
+      - The canonical accessor is getCurrentYear (see
+        stillwaters-docs.txt and the character/location docs).
+        Government uses the DEPRECATED alias
+        getCurrentYearSafe throughout, matching the pattern
+        government-docs.txt §18 codifies. That is a divergence
+        from the character/location/settlement canonical
+        accessor and is flagged in HAZARDS §7.
+
+  markDataDirty
+    Used by:
+      [load] government-state.js (every mutation primitive)
+      [load] government-bootstrap.js (_verifyGlobals)
+      [call] government-commands.js (_commit tail)
+
+  saveMasterData
+    Used by:
+      [load] government-bootstrap.js (_verifyGlobals)
+      [call] government-commands.js (persist())
+
+  _escapeHtml / escapeHtml
+    Used by: government-ui-list.js, every modals-government-*.js
+    via _escapeHtml (delegates to window._escapeHtml when present,
+    local fallback otherwise).
+
+  _getIcon / Icons
+    Used by: government-ui-list.js, every modals-government-*.js,
+    settlement-law-formatters.js, via window._getIcon with an
+    Icons[name] fallback.
+
+  _showToast / showToast
+    Used by: every modals-government-*.js via _toast.
+
+  openModal / closeTopModal / confirmDialog
+    Used by: every modals-government-*.js.
+
+  buildLocationDropdown
+    Used by:
+      modals-government.js (_buildLocationOptions)
+      modals-government-departments.js (_buildLocationOptions)
+    Both are typeof-guarded; absence falls back to a local
+    implementation that reads LocationQueries.getPlaceSummaries.
+
+  buildIconOptions
+    Used by: modals-government.js (_buildIconOptions) —
+    typeof-guarded; falls back to iterating window.Icons keys.
+
+  logEvent
+    Used by: government-commands.js via _log — typeof-guarded.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  CharacterQueries.getCharacterFacts
+    Used by:
+      [load] government-queries.js (via _charFacts helper — the
+        helper is declared but only consulted indirectly through
+        Rules.checkPositionEligibility in getQualifiedCandidates;
+        the helper itself is not called in the supplied file —
+        see PART 7 §14)
+      [call] government-commands.js (assignCharacterToPosition,
+        _planAssignmentStandalone, endAssignment, removeAssignment,
+        assignLeader, paySalaryForAssignment)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  CharacterQueries.getAllCharacterFacts
+    Used by:
+      [load] government-queries.js (getQualifiedCandidates)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  CharacterCommands.addProfession
+    Used by:
+      [load] government-commands.js (method check at load;
+        called in assignCharacterToPosition and
+        _applyAssignmentPlan when the plan needs a role added)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  Cross-domain side note:
+    CharacterCommands.addProfession writes into the character
+    record's professions array. That is a Character-owned array.
+    Government does NOT write into it directly; it goes through
+    the sanctioned CharacterCommands API. Government-docs.txt §1
+    documents that cross-domain writes always go through the
+    owning domain's commands.
+
+--------------------------------------------------------------------------------
+3.3 LOCATION DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  LocationQueries.getPlaceSummary
+    Used by:
+      [load] government-queries.js (_placeSummary helper)
+      [call] government-commands.js (createDepartment logging)
+      [call] modals-government.js (openAssignGovernmentModal)
+      [call] modals-government-economy.js (openGovernmentBudgetModal,
+        openTaxRevenueModal, openGovernmentSummaryModal)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  LocationQueries.getPlaceSummaries
+    Used by: modals-government.js and
+    modals-government-departments.js as a fallback path inside
+    _buildLocationOptions when window.buildLocationDropdown is not
+    available.
+
+  LocationQueries.getCurrentLeader
+  LocationQueries.getLeaderHistory
+  LocationQueries.getActiveLeaderCount
+  LocationQueries.getLeadersByLocation
+  LocationQueries.getPlaceGovernmentSummary
+  LocationQueries.getPlacesUsingGovernmentType
+    Used by:
+      [load] government-queries.js (delegated from
+        GovernmentQueries.getCurrentLeader / getLeaderHistory /
+        getLeaderCount / getActiveLeaderCount /
+        getLeadersByLocation / getLocationGovernmentSummary)
+      [call] modals-government.js (getPlacesUsingGovernmentType
+        in openDeleteGovernmentTypeModal)
+
+  LocationCommands.assignLeader
+  LocationCommands.endLeaderTerm
+  LocationCommands.assignGovernment
+    Used by:
+      [load] government-commands.js (method checks at load;
+        called by GovernmentCommands.assignLeader / endLeaderTerm /
+        assignGovernmentToPlace, wrapped by
+        _wrapLocationResult)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  Cross-domain side note:
+    LocationCommands writes to place.leaderAssignments and
+    place.leaderId (Location-owned) and place.governmentTypeId /
+    place.governmentStyle (Location-owned). Government does NOT
+    write into those fields directly; it delegates to
+    LocationCommands. Government-docs.txt §1 documents this.
+
+--------------------------------------------------------------------------------
+3.4 SELECTOR DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  window.openCharacterSelector / openUnifiedCharacterSelector
+    Used by:
+      [call] modals-government-positions.js
+        (openAssignCharacterToPositionModal)
+    typeof-guarded; throws inside the modal's
+    _openCharacterSelector helper if neither is available.
+
+--------------------------------------------------------------------------------
+3.5 SETTLEMENT DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  SettlementQueries.getIndustryTaxRate
+    Used by:
+      [load] government-queries.js (getIndustryTaxRate →
+        GovernmentQueries.getGovernmentIndustrySummary)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+    Notes:
+      The supplied government-commands.js also loads
+      _SettlementQueries and throws at load if
+      window.SettlementQueries is missing, but does not
+      actually call it. See PART 7 §12.
+
+  SettlementQueries.getGovernmentSalaryBudget
+    Used by:
+      [call] government-queries.js
+        (getSalaryBudgetSufficiency)
+
+  SettlementProsperityQueries.getProsperityValue
+    Used by:
+      [load] government-economy.js (method check at load; called
+        in calculatePositionSalary)
+      [load] government-queries.js
+        (getSalaryBudgetSufficiency)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  SettlementGovernmentCommands.setJusticeSeverity
+  SettlementGovernmentCommands.setWatch
+    Used by:
+      [load] government-commands.js (method checks at load;
+        called by GovernmentCommands.updateJusticeSeverity /
+        updateWatch, wrapped by _wrapSettlementResult)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  Cross-domain side note:
+    SettlementGovernmentCommands writes justiceSeverity /
+    hasWatch / watchSize to Settlement-owned fields.
+    Government does NOT write into them directly; it delegates.
+
+--------------------------------------------------------------------------------
+3.6 HOUSEHOLD DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  HouseholdQueries.getCharacterHousehold
+    Used by:
+      [load] government-commands.js (loaded; called inside
+        paySalaryForAssignment to resolve the character's
+        household before crediting salary)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  HouseholdCommands.adjustWealth or
+  HouseholdCommands.creditWealth
+    Used by:
+      [call] government-commands.js
+        (paySalaryForAssignment — tries adjustWealth, falls back
+         to creditWealth, throws at call time when neither
+         exists)
+
+--------------------------------------------------------------------------------
+3.7 INDUSTRY DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  IndustryQueries.getIndustryTaxRevenue
+  IndustryQueries.getIndustryEnterpriseStats
+    Used by:
+      [load] government-queries.js (getIndustryTaxRevenue /
+        getIndustryEnterpriseStats / getGovernmentIndustrySummary /
+        getIndustryHealthScore)
+      [call] modals-government-economy.js (openTaxRevenueModal,
+        openGovernmentSummaryModal)
+    Notes:
+      IndustryQueries ITSELF is a load-time dependency of
+      government-queries.js (module guard throws if it is
+      absent). The individual methods are typeof-guarded at call
+      time (fall back to 0 / null).
+      Government-docs.txt §7 Known deferrals point 3 flags
+      IndustryQueries as a hard dependency with the option to
+      move it behind a flag.
+
+--------------------------------------------------------------------------------
+3.8 ROLES DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  RoleQueries.getRoleSummary
+  RoleQueries.getRankSummary
+    Used by:
+      [load] government-queries.js (via _roleSummary /
+        _rankSummary helpers; used in _projectPosition and
+        _projectAssignment, and in getQualifiedCandidates for
+        rankSummary)
+      [call] government-bootstrap.js (_verifyCrossDomain)
+
+  RoleQueries.getAllRankSummaries
+    Used by: modals-government.js (_buildRankOptions) —
+    typeof-guarded; absence yields an empty options list.
+
+  RoleQueries.getAllRoleSummaries
+    Used by: modals-government-positions.js
+    (_buildRoleOptions) — typeof-guarded; absence yields an
+    empty options list.
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) government-docs.txt §2 (canonical Government load order),
+  (b) module-level guards in the supplied code,
+  (c) government-bootstrap.js's verification surface,
+  (d) cross-domain dependencies documented in PART 3,
+  (e) stillwaters-load-order.txt for the shared prerequisites.
+
+Group labels:
+
+  G1..G5   — core / character / location / selector / settlement
+             prerequisites.
+  S1..S5   — government subsystem itself.
+  B1       — bootstrap.
+  S6..S10  — government UI + modals.
+
+--------------------------------------------------------------------------------
+GROUP G1 — CORE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+  js/core/constants/character-traits.js
+
+  Notes: Government itself reads none of these directly. Loaded as
+  part of the standard core bootstrap. Load them here so the
+  downstream subsystems (character, location, settlement) do not
+  fail their own load-time guards.
+
+--------------------------------------------------------------------------------
+GROUP G2 — CORE UTILITIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js provides window.escapeHtml, which every
+      modals-government-*.js delegates to via window._escapeHtml
+      when present. Load before the modals.
+    - icons.js provides window.Icons and window._getIcon, which
+      government-ui-list.js and every modals-government-*.js use.
+    - ids.js provides window.generateId, which
+      government-state.js and government-commands.js require at
+      load.
+    - collections.js and randomness.js are not read by
+      Government, but are loaded in the standard core bootstrap.
+
+--------------------------------------------------------------------------------
+GROUP G3 — CORE TIME AND STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+  js/core/storage-schema.js
+    ← AFTER: js/core/time.js
+
+  js/core/storage.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/storage-schema.js
+
+  initializeStorage()   (function call)
+    ← AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: initializeStorage()
+
+  Notes:
+    - getCurrentYearSafe, markDataDirty, saveMasterData all come
+      from these files. Government does not read storage-schema
+      directly, but storage.js depends on it.
+    - initializeStorage() installs masterData.data.* including
+      governmentDepartments, governmentTypes, governmentHistory
+      — but ONLY if they are declared by the schema. See PART 7
+      §14 for the schema-declaration question.
+
+--------------------------------------------------------------------------------
+GROUP G4 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    ← AFTER: js/core/formatting.js
+    ← AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    ← AFTER: js/core/formatting.js
+    ← AFTER: js/core/icons.js
+
+  Notes:
+    - ui.js provides window.showToast and window._showToast.
+    - modals-core.js provides window.openModal,
+      window.closeTopModal, window.confirmDialog.
+    - Both are used at call time by every modals-government-*.js.
+    - window._escapeHtml and window._getIcon are ALSO provided by
+      modals-core.js (helper re-exports). Government code reads
+      through these names when available.
+
+--------------------------------------------------------------------------------
+GROUP G5 — CHARACTER, LOCATION, SELECTOR, SETTLEMENT SUBSETS
+--------------------------------------------------------------------------------
+
+  ── Character ──
+  js/character/character-state.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: initializeStorage()
+
+  js/character/character-commands.js
+    ← AFTER: js/character/character-state.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/ids.js
+
+  js/character/character-queries.js
+    ← AFTER: js/character/character-state.js
+    ← AFTER: js/core/time.js
+
+  ── Location ──
+  js/location/location-state.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: js/core/collections.js
+    ← AFTER: initializeStorage()
+
+  js/location/location-hierarchy.js
+    ← AFTER: js/location/location-state.js
+
+  js/location/location-commands.js
+    ← AFTER: js/location/location-state.js
+    ← AFTER: js/location/location-hierarchy.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/ids.js
+    ← AFTER: js/core/storage.js
+
+  js/location/location-queries.js
+    ← AFTER: js/location/location-state.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/core/world.js
+
+  ── Selectors ──
+  js/selectors/selector-base.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/formatting.js
+
+  js/selectors/modals-char-selector.js
+    ← AFTER: js/selectors/selector-base.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/character/family-queries.js
+
+  ── Settlement (subset required by Government) ──
+  js/settlement/settlement-rank-queries.js
+    ← AFTER: js/settlement/settlement-rank-rules.js
+
+  js/settlement/settlement-queries.js
+    ← AFTER: js/settlement/settlement-rank-queries.js
+
+  js/settlement/settlement-government-commands.js
+    ← AFTER: js/settlement/settlement-queries.js
+    ← AFTER: js/settlement/settlement-government-rules.js
+    ← AFTER: js/settlement/settlement-command-commit.js
+    ← AFTER: js/core/time.js
+
+  js/settlement/settlement-prosperity-queries.js
+    ← AFTER: js/settlement/settlement-queries.js
+    ← AFTER: js/settlement/settlement-feature-queries.js
+    ← AFTER: js/settlement/settlement-employment-queries.js
+    ← AFTER: js/settlement/settlement-crime-queries.js
+    ← AFTER: js/settlement/settlement-education-queries.js
+    ← AFTER: js/settlement/settlement-religion-queries.js
+    ← AFTER: js/settlement/settlement-prosperity-definitions.js
+    ← AFTER: js/settlement/settlement-rank-rules.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/core/time.js
+
+  ── Household ──
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+  js/households/household-queries.js
+  js/households/household-commands.js
+    ← AFTER: js/households/household-state.js
+    ← AFTER: js/core/ids.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/storage.js
+
+  ── Industry ──
+  js/industry/industry-queries.js
+    ← (own prerequisites)
+
+  ── Roles ──
+  js/roles/role-queries.js
+    ← (own prerequisites)
+
+  Notes:
+    - CHARACTER: character-queries.js is a load-time dependency
+      of government-queries.js (getCharacterFacts /
+      getAllCharacterFacts). character-commands.js is a load-time
+      dependency of government-commands.js (addProfession method
+      check).
+    - LOCATION: location-queries.js is a load-time dependency of
+      government-queries.js and government-commands.js.
+      location-commands.js is a load-time dependency of
+      government-commands.js (assignLeader / endLeaderTerm /
+      assignGovernment method checks).
+    - SELECTOR: modals-char-selector.js is a call-time
+      dependency of modals-government-positions.js
+      (openCharacterSelector).
+    - SETTLEMENT: settlement-queries.js,
+      settlement-government-commands.js, and
+      settlement-prosperity-queries.js are all load-time
+      dependencies of government-queries.js,
+      government-commands.js, government-economy.js, and
+      government-bootstrap.js.
+    - HOUSEHOLD: household-queries.js and household-commands.js
+      are load-time dependencies of government-commands.js and
+      government-bootstrap.js.
+    - INDUSTRY: industry-queries.js is a load-time dependency
+      of government-queries.js. [UNVERIFIED] — the module is
+      not in the supplied batch.
+    - ROLES: role-queries.js is a load-time dependency of
+      government-queries.js, government-commands.js (indirectly
+      via Queries), government-economy.js? No — Economy reads
+      Queries which reads RoleQueries. The direct load-time
+      dependency is government-queries.js. Modals also read
+      RoleQueries directly (modals-government.js,
+      modals-government-positions.js). [UNVERIFIED] — the module
+      is not in the supplied batch.
+
+--------------------------------------------------------------------------------
+GROUP S1 — GOVERNMENT CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-constants.js
+    (no dependencies)
+
+  Notes:
+    - Must load before government-state.js (which reads
+      C.STATE_EVENTS) and government-rules.js (which reads all
+      thresholds).
+    - Must load before government-commands.js,
+      government-economy.js, government-view-models.js, and every
+      modals-government-*.js.
+
+--------------------------------------------------------------------------------
+GROUP S2 — GOVERNMENT STATE
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-state.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/core/ids.js                  (generateId)
+    ← AFTER: js/core/time.js                 (getCurrentYearSafe)
+    ← AFTER: js/core/storage.js              (markDataDirty)
+    ← AFTER: initializeStorage()              (masterData.data)
+
+  Notes:
+    - The module does not call hydrateFromMasterData at load. The
+      bootstrap calls it explicitly. If anything calls a public
+      read before hydration, it returns empty clones.
+    - Load BEFORE government-queries.js, government-commands.js,
+      and government-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP S3 — GOVERNMENT RULES
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-rules.js
+    ← AFTER: js/systems/government/government-constants.js
+
+  Notes:
+    - Load BEFORE government-queries.js and
+      government-commands.js and government-economy.js.
+
+--------------------------------------------------------------------------------
+GROUP S4 — GOVERNMENT QUERIES
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-state.js
+    ← AFTER: js/systems/government/government-rules.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/roles/role-queries.js         [UNVERIFIED]
+    ← AFTER: js/settlement/settlement-queries.js
+    ← AFTER: js/settlement/settlement-prosperity-queries.js
+    ← AFTER: js/industry/industry-queries.js   [UNVERIFIED]
+
+  Notes:
+    - Every cross-domain module in the load-time guard block is
+      HARD. Absence throws at load.
+    - Load BEFORE government-commands.js (which reads
+      getDepartmentDeletionImpact at call time),
+      government-economy.js (which reads getPosition /
+      getDepartment / getAssignmentsFor* / getPositionsForDepartment),
+      government-bootstrap.js (which verifies presence only),
+      and every modals-government-*.js.
+
+--------------------------------------------------------------------------------
+GROUP S5 — GOVERNMENT COMMANDS
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-state.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-rules.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/location/location-commands.js
+    ← AFTER: js/households/household-commands.js
+    ← AFTER: js/households/household-queries.js
+    ← AFTER: js/settlement/settlement-queries.js
+    ← AFTER: js/settlement/settlement-government-commands.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/storage.js
+
+  Notes:
+    - Method-level load-time checks: CharacterCommands.addProfession,
+      LocationCommands.assignLeader / endLeaderTerm /
+      assignGovernment,
+      SettlementGovernmentCommands.setJusticeSeverity / setWatch.
+    - Load BEFORE every modals-government-*.js (which read
+      window.GovernmentCommands at load time as a module guard).
+    - Load BEFORE government-bootstrap.js (which verifies presence
+      only).
+    - _SettlementQueries is a load-time dependency even though the
+      supplied code does not call it. See PART 7 §12.
+
+--------------------------------------------------------------------------------
+GROUP S6 — GOVERNMENT ECONOMY
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-economy.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-rules.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/location/location-queries.js (loaded but unused —
+                                              PART 7 §13)
+    ← AFTER: js/settlement/settlement-prosperity-queries.js
+    ← AFTER: js/core/time.js
+
+  Notes:
+    - Load-time method check:
+      SettlementProsperityQueries.getProsperityValue.
+    - Load BEFORE government-bootstrap.js (which verifies presence
+      only) and before modals-government-economy.js (which reads
+      window.GovernmentEconomy at load time as a module guard).
+
+--------------------------------------------------------------------------------
+GROUP S7 — GOVERNMENT BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-bootstrap.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-state.js
+    ← AFTER: js/systems/government/government-rules.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-economy.js
+    ← AFTER: js/core/ids.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/location/location-commands.js
+    ← AFTER: js/roles/role-queries.js         [UNVERIFIED]
+    ← AFTER: js/settlement/settlement-queries.js
+    ← AFTER: js/settlement/settlement-prosperity-queries.js
+    ← AFTER: js/settlement/settlement-government-commands.js
+    ← AFTER: js/industry/industry-queries.js   [UNVERIFIED]
+    ← AFTER: js/households/household-queries.js
+    ← AFTER: js/households/household-commands.js
+    ← AFTER: initializeStorage()
+
+  Notes:
+    - Auto-init runs immediately if masterData is present at load.
+      Otherwise the loader calls window.GovernmentBootstrap.init()
+      explicitly.
+    - Verifies every dependency in PART 2.7, and canonical-shape
+      arrays (governmentDepartments / governmentTypes /
+      governmentHistory are arrays if present).
+    - Load BEFORE every modals-government-*.js and before any
+      application bootstrap that touches window.Government.
+
+--------------------------------------------------------------------------------
+GROUP S8 — GOVERNMENT VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-view-models.js
+    ← AFTER: js/systems/government/government-constants.js
+
+  Notes:
+    - Only reads Constants. No cross-domain dependencies at load.
+    - Load BEFORE government-ui-list.js and every
+      modals-government-*.js.
+
+--------------------------------------------------------------------------------
+GROUP S9 — GOVERNMENT UI LIST
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-ui-list.js
+    ← AFTER: js/systems/government/government-view-models.js
+    ← AFTER: js/core/formatting.js (window._escapeHtml — soft)
+    ← AFTER: js/core/icons.js      (window._getIcon / Icons — soft)
+
+  Notes:
+    - Module guard: throws if GovernmentViewModels is missing.
+    - Load BEFORE modals-government-assign.js (which reads
+      window.GovernmentUI at load time as a module guard).
+
+--------------------------------------------------------------------------------
+GROUP S10 — GOVERNMENT MODALS
+--------------------------------------------------------------------------------
+
+  js/systems/government/modals-government.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-view-models.js
+    ← AFTER: js/systems/government/government-ui-list.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/roles/role-queries.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/ui.js
+
+  js/systems/government/modals-government-departments.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-view-models.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/ui.js
+    ← AFTER: js/systems/government/modals-government-positions.js
+        (for openAddPositionModal — call-time)
+
+  js/systems/government/modals-government-positions.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-view-models.js
+    ← AFTER: js/roles/role-queries.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/ui.js
+    ← after: js/selectors/modals-char-selector.js
+        (openCharacterSelector — call-time)
+
+  js/systems/government/modals-government-assign.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-view-models.js
+    ← AFTER: js/systems/government/government-ui-list.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/ui.js
+
+  js/systems/government/modals-government-economy.js
+    ← AFTER: js/systems/government/government-constants.js
+    ← AFTER: js/systems/government/government-queries.js
+    ← AFTER: js/systems/government/government-commands.js
+    ← AFTER: js/systems/government/government-economy.js
+    ← AFTER: js/systems/government/government-view-models.js
+    ← AFTER: js/location/location-queries.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/ui.js
+
+  Notes:
+    - All modals have load-time module guards (they throw if the
+      required module is missing). No load-time guard on
+      modals-core.js or ui.js — those throw at first modal open.
+    - Call-time soft dependencies (typeof-guarded):
+        window._escapeHtml
+        window._getIcon
+        window._showToast / window.showToast
+        window.openModal / window.closeTopModal / window.confirmDialog
+        window.buildIconOptions
+        window.buildLocationDropdown
+        window.openCharacterSelector / openUnifiedCharacterSelector
+    - Order among the five modals is unimportant, except
+      modals-government-departments.js reads
+      openAddPositionModal (from modals-government-positions.js)
+      at CALL time inside the details modal. Load positions
+      before departments if you want the "Add Position" button in
+      the details modal to work on first open. Otherwise it is a
+      no-op toast.
+
+--------------------------------------------------------------------------------
+GROUP S11 — SETTLEMENT-LAW FORMATTERS
+--------------------------------------------------------------------------------
+
+  js/systems/government/settlement-law-formatters.js
+    (no load-time dependencies; soft call-time on icons.js via
+     window._getIcon / window.Icons)
+
+  Notes:
+    - Load anywhere after icons.js. No ordering constraint.
+    - Consumed by settlement-law UI, not by any other Government
+      file in this batch.
+
+--------------------------------------------------------------------------------
+GROUP G6 — (DO NOT LOAD) DEPRECATED FAÇADES
+--------------------------------------------------------------------------------
+
+  js/systems/government/government-assignment.js
+  js/systems/government/government-laws.js
+  js/systems/government/government-system.js
+
+  Notes:
+    - government-docs.txt §8 lists these as DELETED.
+    - government-system.js throws at load with the current
+      GovernmentState surface because it binds
+      State.invalidateCache and State.refreshFromMasterData,
+      neither of which exists.
+    - government-laws.js throws at load because it requires
+      window.SettlementCommands, which is not the modern
+      SettlementLawCommands name.
+    - If any of these files still exist on disk, remove them or
+      remove every HTML reference. Do NOT load them.
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list. Function calls are marked.
+
+  — Group G1: core constants —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  — Group G2: core utilities —
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  — Group G3: core time and storage —
+  js/core/time.js
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                (function call)
+  js/core/accessors.js
+
+  — Group G4: core UI primitives —
+  js/core/ui.js
+  js/core/modals-core.js
+  js/core/world.js
+
+  — Group G5 — character subset —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  — Group G5 — location subset —
+  js/location/location-state.js
+  js/location/location-hierarchy.js
+  js/location/location-commands.js
+  js/location/location-queries.js
+
+  — Group G5 — selector subset (only if openCharacterSelector is
+     used by the government position-assignment modal) —
+  js/selectors/selector-base.js
+  js/selectors/modals-char-selector.js
+
+  — Group G5 — settlement subset —
+  js/settlement/settlement-rank-definitions.js
+  js/settlement/settlement-rank-rules.js
+  js/settlement/settlement-rank-queries.js
+  js/settlement/settlement-queries.js
+  js/settlement/settlement-command-commit.js
+  js/settlement/settlement-government-definitions.js
+  js/settlement/settlement-government-rules.js
+  js/settlement/settlement-government-commands.js
+  js/settlement/settlement-feature-definitions.js
+  js/settlement/settlement-feature-queries.js
+  js/settlement/settlement-employment-queries.js
+  js/settlement/settlement-religion-queries.js
+  js/settlement/settlement-crime-queries.js
+  js/settlement/settlement-education-definitions.js
+  js/settlement/settlement-education-queries.js
+  js/settlement/settlement-prosperity-definitions.js
+  js/settlement/settlement-prosperity-queries.js
+
+  — Group G5 — household subset —
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+  js/households/household-queries.js
+  js/households/household-commands.js
+
+  — Group G5 — industry and roles (not in this batch) —
+  js/industry/industry-queries.js        [UNVERIFIED]
+  js/roles/role-queries.js               [UNVERIFIED]
+
+  — Group S1: government constants —
+  js/systems/government/government-constants.js
+
+  — Group S2: government state —
+  js/systems/government/government-state.js
+
+  — Group S3: government rules —
+  js/systems/government/government-rules.js
+
+  — Group S4: government queries —
+  js/systems/government/government-queries.js
+
+  — Group S5: government commands —
+  js/systems/government/government-commands.js
+
+  — Group S6: government economy —
+  js/systems/government/government-economy.js
+
+  — Group S7: government bootstrap —
+  js/systems/government/government-bootstrap.js
+
+  — Group S8: government view models —
+  js/systems/government/government-view-models.js
+
+  — Group S9: government UI list —
+  js/systems/government/government-ui-list.js
+
+  — Group S10: government modals —
+  js/systems/government/modals-government.js
+  js/systems/government/modals-government-positions.js
+  js/systems/government/modals-government-departments.js
+  js/systems/government/modals-government-assign.js
+  js/systems/government/modals-government-economy.js
+
+  — Group S11: settlement-law formatters —
+  js/systems/government/settlement-law-formatters.js
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1. GovernmentConstants before every other Government module.
+    Failure without it: State, Rules, Queries, Commands, Economy,
+    View Models, and every modal throws at load ("requires
+    GovernmentConstants").
+
+ 2. Core ids.js, time.js, storage.js before GovernmentState.
+    Failure without it: GovernmentState throws at load ("requires
+    generateId / getCurrentYearSafe / markDataDirty").
+
+ 3. initializeStorage() before GovernmentState's first
+    hydrateFromMasterData call (usually from
+    government-bootstrap.js::init()).
+    Failure without it: the module throws "masterData.data not
+    available" on first hydrate.
+
+ 4. GovernmentState before GovernmentQueries.
+    Failure without it: GovernmentQueries throws at load
+    ("requires GovernmentState").
+
+ 5. GovernmentRules before GovernmentQueries.
+    Failure without it: GovernmentQueries throws at load
+    ("requires GovernmentRules").
+
+ 6. GovernmentQueries before GovernmentCommands.
+    Failure without it: GovernmentCommands throws at load
+    ("requires GovernmentQueries").
+
+ 7. Every cross-domain module in GovernmentCommands's load-time
+    guard block before GovernmentCommands.
+    Failure without them: GovernmentCommands throws at load
+    ("requires CharacterCommands" / "requires LocationCommands" /
+    "requires HouseholdCommands" / "requires SettlementQueries" /
+    "requires SettlementGovernmentCommands" etc).
+
+ 8. Every cross-domain METHOD in GovernmentCommands's method-check
+    block must exist at load.
+    Failure without it: GovernmentCommands throws at load
+    ("CharacterCommands.addProfession required" /
+    "LocationCommands.assignLeader required" /
+    "SettlementGovernmentCommands.setJusticeSeverity required" /
+    etc).
+
+ 9. Every cross-domain module in GovernmentQueries's load-time
+    guard block before GovernmentQueries.
+    Failure without them: GovernmentQueries throws at load
+    ("requires CharacterQueries" / "requires LocationQueries" /
+    "requires RoleQueries" / "requires SettlementQueries" /
+    "requires SettlementProsperityQueries" /
+    "requires IndustryQueries").
+
+10. GovernmentConstants, GovernmentRules, GovernmentQueries,
+    LocationQueries, SettlementProsperityQueries before
+    GovernmentEconomy.
+    Failure without them: GovernmentEconomy throws at load
+    ("requires GovernmentConstants" / etc).
+
+11. GovernmentConstants, GovernmentState, GovernmentRules,
+    GovernmentQueries, GovernmentCommands, GovernmentEconomy
+    before GovernmentBootstrap (the bootstrap verifies each).
+    Failure without them: GovernmentBootstrap.init() throws with
+    a clear message naming the missing module.
+
+12. Every cross-domain module in GovernmentBootstrap's
+    _verifyCrossDomain block before GovernmentBootstrap's first
+    init().
+    Failure without them: init() throws "government-bootstrap: X
+    required".
+
+13. GovernmentBootstrap before any application bootstrap that
+    expects window.Government.
+    Failure without it: window.Government is undefined.
+
+14. GovernmentConstants before GovernmentViewModels.
+    Failure without it: GovernmentViewModels throws at load
+    ("requires GovernmentConstants").
+
+15. GovernmentViewModels before GovernmentUI.
+    Failure without it: GovernmentUI throws at load ("requires
+    GovernmentViewModels").
+
+16. GovernmentViewModels before every modals-government-*.js.
+    Failure without them: each modal file throws at load
+    ("requires GovernmentViewModels").
+
+17. GovernmentUI before modals-government-assign.js.
+    Failure without it: modals-government-assign.js throws at load
+    ("requires GovernmentUI").
+
+18. GovernmentCommands before every modals-government-*.js.
+    Failure without them: each modal file throws at load
+    ("requires GovernmentCommands").
+
+19. GovernmentQueries before every modals-government-*.js.
+    Failure without them: each modal file throws at load
+    ("requires GovernmentQueries").
+
+20. GovernmentConstants before every modals-government-*.js (all
+    five modal files check it except
+    modals-government-departments.js, which reads it through
+    Queries / ViewModels / LocationQueries only — but load
+    Constants first anyway).
+
+21. GovernmentEconomy before modals-government-economy.js.
+    Failure without it: the modal throws at load ("requires
+    GovernmentEconomy").
+
+22. LocationQueries before modals-government.js and
+    modals-government-departments.js and
+    modals-government-economy.js.
+    Failure without it: each throws at load ("requires
+    LocationQueries").
+
+23. RoleQueries before modals-government.js and
+    modals-government-positions.js.
+    Failure without them: each throws at load ("requires
+    RoleQueries").
+
+24. modals-core.js and ui.js before any modals-government-*.js
+    is USED (not loaded). Absence produces a TypeError on first
+    modal open or toast.
+
+25. openCharacterSelector (or openUnifiedCharacterSelector)
+    available by the time the position-assignment modal opens.
+    Absence produces a structured throw inside
+    _openCharacterSelector ("requires a character selector").
+
+26. No file may load government-system.js,
+    government-assignment.js, or government-laws.js.
+    government-docs.txt §8 lists them as DELETED.
+    government-system.js throws at load (missing
+    State.invalidateCache / refreshFromMasterData).
+    government-laws.js throws at load (missing
+    SettlementCommands).
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+ 1. getCurrentYearSafe vs getCurrentYear.
+    Government uses the DEPRECATED getCurrentYearSafe accessor
+    throughout: government-state.js, government-commands.js,
+    government-economy.js, government-queries.js,
+    government-bootstrap.js, government-assignment.js (deprecated
+    façade). The canonical accessor is getCurrentYear (see
+    stillwaters-docs.txt, stillwaters-character-docs.txt,
+    stillwaters-location-docs.txt, stillwaters-settlement-docs.txt).
+    government-docs.txt §18 codifies getCurrentYearSafe for the
+    Government domain specifically. Do not change Government's
+    accessor without also updating §18 of the narrative doc;
+    otherwise the doc and code diverge.
+
+ 2. window.PlaceQueries.
+    Government reads window.LocationQueries.getPlaceSummary, not
+    window.PlaceQueries. The settlement subsystem uses
+    window.PlaceQueries. Both are read accessors for location
+    data; both must exist. [UNVERIFIED]: the exact module that
+    installs window.PlaceQueries (referenced by the settlement
+    subsystem) is not in the supplied files. Government does NOT
+    need window.PlaceQueries; it reads LocationQueries directly.
+
+ 3. window._getIcon, window._escapeHtml, window._showToast.
+    These are helper re-exports from modals-core.js. Government
+    code reads through them via typeof guards with local
+    fallbacks. If modals-core.js changes its re-export shape,
+    Government falls back to:
+      window.Icons[name]            (icons)
+      local _escapeHtml             (escapeHtml)
+      window.showToast              (toast, second fallback)
+      window.showToastMessage       (toast, third fallback)
+
+ 4. window.buildLocationDropdown.
+    Used by modals-government.js and
+    modals-government-departments.js. When absent, both modals
+    fall back to a local implementation that reads
+    LocationQueries.getPlaceSummaries. The local fallback appends
+    an "Unknown Location" option (value "unknown"); the
+    canonical helper may not. Do not remove the fallback without
+    verifying the helper's option shape.
+
+ 5. window.buildIconOptions.
+    Used by modals-government.js (add / edit government type).
+    When absent, the modal iterates window.Icons keys directly.
+    This is a UI-only helper, not a domain function.
+
+ 6. window.confirmDialog.
+    Used by modals-government.js (delete government type),
+    modals-government-departments.js (delete department), and
+    modals-government-positions.js (delete position). The
+    supplied modals require it and throw if it is missing —
+    this is a hard call-time dependency of the modals, not a
+    domain dependency. Load modals-core.js.
+
+ 7. government-state.js marker: markDataDirty is idempotent
+    inside mutation primitives. The commit tail's
+    markDataDirty call is additive, not duplicated in a way
+    that matters. Do NOT add saveMasterData to the mutation
+    primitives; the commit tail pattern (mark dirty in
+    primitive, save in Commands.persist) is the contract.
+
+ 8. SettlementQueries load-time dependency without use.
+    government-commands.js loads window.SettlementQueries and
+    throws at load if it is missing, but does not actually call
+    it in the supplied file. This is a dead load-time
+    dependency. Removing it would tighten the load order; adding
+    a use would be a functional change. Do not remove it without
+    updating the load order in PART 4 G5.
+
+ 9. LocationQueries load-time dependency without use in
+    government-economy.js.
+    Same story as §8. government-economy.js loads
+    window.LocationQueries and throws at load if it is missing,
+    but does not call it in the supplied file.
+
+10. GovernmentCommands's _SettlementQueries load-time check
+    assumes the modern SettlementQueries module. If a build
+    ships without Settlement, government-commands.js will not
+    load. Government-docs.txt §21 lists SettlementQueries as
+    required; if that changes, update the load order.
+
+11. modals-government-positions.js delete-position message.
+    The confirm message says "Deleting it will also remove all
+    assignments. Continue?" but the command
+    (Commands.deletePosition) refuses when active assignments
+    exist. The message is misleading. The command's refusal
+    comes first; the modal displays a toast on failure. This is
+    a stale string, not a functional bug — either update the
+    message to match the refusal, or add a cascade option to
+    deletePosition (out of scope of the current refactor).
+    [Follow-up item, not a blocker.]
+
+12. government-commands.js settlement mutation methods.
+    updateJusticeSeverity / updateWatch delegate to
+    SettlementGovernmentCommands.setJusticeSeverity / setWatch.
+    The Settlement commands write Settlement-owned fields
+    (justiceSeverity / hasWatch / watchSize) via
+    SettlementCommandCommit. Government does not persist
+    directly after these delegations — it relies on the
+    settlement commit. Do not add a second Commands.persist() in
+    these two methods; the settlement commit already handles
+    it.
+
+13. government-state.js validateIntegrity is warn-only.
+    It returns an array of warning strings and logs them via
+    console.warn. Bootstrap calls it inside try/catch; a throw
+    from validateIntegrity indicates a bug in State, not in
+    the canonical data. Referential issues (dangling parent,
+    assignment pointing to missing position, end-before-start)
+    are warnings only.
+
+14. government-queries.js _charFacts helper.
+    The helper is declared but the supplied file does not call
+    it in any of the exported query methods. It is dead code
+    today. Removing it is safe; leaving it is not a functional
+    bug.
+
+15. Settlement-law-formatters.js ownership.
+    The file lives under js/systems/government/ but its name
+    and purpose describe settlement-law display. It has no
+    Government-module dependency and no dependency on
+    GovernmentConstants. Its name/label tables are its own
+    copies (LAW_TYPE_NAMES / LAW_DOMAIN_NAMES /
+    LAW_CATEGORY_NAMES / LAW_SEVERITY_NAMES). The canonical
+    source for these enums is SettlementLawDefinitions
+    (js/settlement/settlement-law-definitions.js). A future
+    cleanup should either:
+      (a) move this file into js/settlement/, and
+      (b) derive its tables from SettlementLawDefinitions, OR
+      (c) accept the duplication as intentional
+          display-only fallback.
+    Do not change the label tables without also updating
+    settlement-law-formatters.js's header or
+    SettlementLawDefinitions.
+
+16. Deleted files still present in the tree.
+    government-docs.txt §8 lists these as DELETED:
+      js/systems/government/government-system.js
+      js/systems/government/government-assignment.js
+      js/systems/government/government-laws.js
+      js/systems/government/government-docs.txt
+    They were provided in this batch (except the docs file),
+    but the batch is not the current tree. Remove them from
+    any HTML that still references them:
+      - government-system.js throws at load
+        (missing State.invalidateCache /
+         State.refreshFromMasterData).
+      - government-laws.js throws at load
+        (missing window.SettlementCommands).
+      - government-assignment.js is a compatibility façade
+        whose exports (isCharacterQualifiedForPosition,
+        getQualifiedCandidates, getSuccessionPlan,
+        analyzeAssignmentHistory) have been superseded by
+        GovernmentQueries.getQualifiedCandidates /
+        getSuccessionPlan / analyzeAssignmentHistory.
+
+17. Legacy modal aliases.
+    openFinancialReportModal and openEfficiencyScoreModal are
+    aliases for openGovernmentSummaryModal. Both are kept in
+    modals-government-economy.js so old callers do not break.
+    Delete them once every caller migrates. See
+    government-docs.txt §7 Known deferrals point 5.
+
+18. IndustryQueries hard dependency.
+    government-queries.js throws at load if
+    window.IndustryQueries is missing. Only two of its methods
+    (getIndustryTaxRevenue / getIndustryEnterpriseStats) are
+    called, and both are typeof-guarded at call time. If a build
+    ships Government without Industry, either load a stub with
+    those two methods or hoist the IndustryQueries dependency
+    out of the module guard (see government-docs.txt §7 Known
+    deferrals point 3).
+
+19. RoleQueries and IndustryQueries are not in the supplied
+    batch.
+    Both are hard load-time dependencies of government-queries.js.
+    [UNVERIFIED]: the exact implementations and their own
+    prerequisites. Confirm they are loaded before
+    government-queries.js in your build.
+
+20. LocationCommands throw/boolean contract.
+    LocationCommands.assignLeader / endLeaderTerm /
+    assignGovernment may return `true` on success or throw on
+    failure. GovernmentCommands._wrapLocationResult normalises
+    both shapes into { success, data | reason, code }. If
+    LocationCommands adopts the standard { success, data } shape
+    in the future, _wrapLocationResult collapses to a
+    pass-through. See government-docs.txt §7 Known deferrals
+    point 1.
+
+21. Settings on Commands.persist.
+    persist() inspects the boolean return from
+    saveMasterData() and reports
+    { success: false, reason: 'save returned false', code:
+    C.CODES.SAVE_FAILED } on false. It does NOT throw. Callers
+    (every modal via _commitAndPersist) log a warning toast but
+    do not roll back. In-memory state is consistent; only the
+    disk write failed. This matches the settlement pattern
+    (stillwaters-settlement-docs.txt PART 7 §10) except that
+    Government does not throw on persist failure — different
+    from SettlementCommandCommit. Do not "fix" Government's
+    persist to throw without also updating every caller's
+    error-handling expectation.
+
+22. CustomEvent dispatch.
+    Every successful GovernmentCommands call fires one
+    window.CustomEvent (from C.EVENTS). Subscribers in other
+    domains read these events. Do not suppress the dispatch,
+    and do not add new events without updating C.EVENTS.
+    Cross-domain consumers subscribe instead of polling.
+
+23. Type-check pattern.
+    Government code uses `if (!result.success)` for command
+    results. It does NOT use `if (!result)` or `if (result)`.
+    The command result contract is { success: boolean, ... }.
+    A truthiness check would misfire on
+    { success: false, reason } which is truthy as an object.
+
+24. No fallback fabricated values.
+    The audit rule from government-docs.txt §6 anti-patterns
+    applies: no `value || 0`, `value || 50`, `value || []`,
+    `value || {}`, no `return 1250`, no
+    `typeof window.X !== 'undefined' ? ... : []` for required
+    dependencies. The supplied code respects this. Any
+    reintroduction is a regression.
+
+25. Domain-owned fields are refused.
+    government-commands.js's _validateFieldAllowlist rejects
+    updates containing cross-domain field names (from
+    C.DOMAIN_OWNED_FIELDS) with a message that names the owning
+    module. The refusal path is:
+
+      "Field \"X\" is owned by <owner>; use <owner> instead"
+
+    Callers that expect to set, e.g., `characterName` on an
+    assignment, will receive a validation failure. Use the
+    owning domain's commands.
+
+26. Salary payment is out of the assignment transaction.
+    GovernmentCommands.assignCharacterToPosition and
+    bulkAssignCharacters do NOT pay salary. The caller (modal
+    or a dedicated salary flow) calls
+    paySalaryForAssignment explicitly after a successful
+    assignment. See government-docs.txt §5.4. Do not "fix" by
+    adding salary payment inside the assignment command; that
+    couples Government to Household's write path and breaks
+    the independent failure modes the split exists to preserve.
+
+27. modals-government-*.js call Commands.persist() exactly once
+    per successful action.
+    Adding a second persist() call would produce two
+    saveMasterData() calls for a single logical mutation. The
+    pattern is: command → _commitAndPersist → toast → close.
+    Do not add persist() inside individual command bodies; the
+    only saveMasterData call site is Commands.persist.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
