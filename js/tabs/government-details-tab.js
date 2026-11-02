@@ -1,23 +1,53 @@
-// js/tabs/government-details-tab.js (updated with leader management)
+// js/tabs/government-details-tab.js
 /**
  * =============================================================================
  * GOVERNMENT DETAILS TAB (js/tabs/government-details-tab.js)
  * =============================================================================
- * 
+ *
  * PURPOSE: Provides a modular tab for viewing and editing government details
- *          associated with a specific location.
- * 
- * UPDATED: Added leader management UI using existing assignLeader/endLeaderTerm
- * 
- * DEPENDENCIES:
- *   - accessors.js (getPlaceById, getGovernmentTypeById, getGovernmentTypes, getCharacters)
+ *          associated with a specific location, including leadership.
+ *
+ * DEPENDENCIES (checked at load time):
+ *   - accessors.js        (getPlaceById, getGovernmentTypeById,
+ *                          getGovernmentTypes, getCharacterById)
  *   - government-state.js (GovernmentState)
- *   - government-commands.js (GovernmentCommands)
- *   - formatting.js (escapeHtml)
- *   - icons.js (Icons)
- *   - ui.js (showToast)
- *   - modals-core.js (openModal, confirmDialog)
- *   - modals-char-select.js (openCharacterSelector)
+ *   - government-commands.js (GovernmentCommands — for the leadership
+ *                          reads only; writes go through LocationCommands)
+ *   - location-commands.js (LocationCommands — assignLeader,
+ *                          endLeaderTerm, assignGovernment, persist)
+ *   - formatting.js       (escapeHtml)
+ *   - icons.js            (Icons)
+ *   - ui.js               (showToast)
+ *   - modals-core.js      (openModal, confirmDialog)
+ *   - modals-char-selector.js (openCharacterSelector)
+ *   - time.js             (getCurrentYear)
+ *
+ * WRITE PATH:
+ *   place.governmentTypeId / place.governmentStyle are Location-owned
+ *   (see GovernmentCommands DOMAIN_OWNED_FIELDS). They can only be
+ *   written through LocationCommands.assignGovernment(placeId, typeId,
+ *   style). This tab calls that command, then LocationCommands.persist().
+ *
+ *   place.leaderAssignments is also Location-owned. The tab reads it
+ *   via getPlaceById (which returns a deep clone — safe to read) and
+ *   writes only through LocationCommands.assignLeader / endLeaderTerm.
+ *
+ *   The previous revision of this file mutated the cloned place record
+ *   directly and called saveMasterData(). That write never reached
+ *   canonical data. Fixed here.
+ *
+ * MODAL KEY TRANSLATION:
+ *   modals-core.js reads titleHtml / contentHtml. The three _openModal
+ *   call sites in this file were written against the older key names
+ *   title / content. Without translation, modals-core.js falls back to
+ *   its defaults and the modal body is empty. The local _openModal
+ *   helper now forwards title → titleHtml and content → contentHtml.
+ *
+ * MODAL INPUT SCOPING:
+ *   Every onConfirm / onOpen reads its inputs via root.querySelector,
+ *   where root is the modal DOM element passed as the callback
+ *   parameter by modals-core.js. Two open leader modals no longer
+ *   cross-read each other's fields.
  * =============================================================================
  */
 
@@ -25,125 +55,174 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // =========================================================================
+
+    if (!window.LocationCommands) {
+        throw new Error(
+            'government-details-tab.js: location-commands.js must load first ' +
+            '(LocationCommands.assignLeader / endLeaderTerm / ' +
+            'assignGovernment / persist missing).'
+        );
+    }
+    if (!window.GovernmentState) {
+        throw new Error(
+            'government-details-tab.js: government-state.js must load first.'
+        );
+    }
+    if (!window.GovernmentCommands) {
+        throw new Error(
+            'government-details-tab.js: government-commands.js must load first.'
+        );
+    }
+    if (typeof window.openModal !== 'function') {
+        throw new Error(
+            'government-details-tab.js: modals-core.js must load first ' +
+            '(openModal missing).'
+        );
+    }
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'government-details-tab.js: formatting.js (escapeHtml) must ' +
+            'load first.'
+        );
+    }
+    if (!window.Icons || typeof window.Icons !== 'object') {
+        throw new Error(
+            'government-details-tab.js: icons.js must load first.'
+        );
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error(
+            'government-details-tab.js: time.js (getCurrentYear) must load ' +
+            'first.'
+        );
+    }
+
+    var LC = window.LocationCommands;
+    var GS = window.GovernmentState;
+
+    // =========================================================================
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+        return typeof window.getPlaceById === 'function'
+            ? window.getPlaceById(id)
+            : null;
     }
 
     function _getGovernmentTypeById(id) {
-        return typeof window.getGovernmentTypeById === 'function' ? window.getGovernmentTypeById(id) : null;
+        return typeof window.getGovernmentTypeById === 'function'
+            ? window.getGovernmentTypeById(id)
+            : null;
     }
 
     function _getGovernmentTypes() {
-        return typeof window.getGovernmentTypes === 'function' ? window.getGovernmentTypes() : [];
-    }
-
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
+        return typeof window.getGovernmentTypes === 'function'
+            ? window.getGovernmentTypes()
+            : [];
     }
 
     function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
+        return typeof window.getCharacterById === 'function'
+            ? window.getCharacterById(id)
+            : null;
     }
 
     function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof str !== 'string') return String(str);
-        return str.replace(/[&<>"']/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            if (m === '"') return '&quot;';
-            if (m === "'") return '&#039;';
-            return m;
-        });
+        return window.escapeHtml(str);
     }
 
     function _getIcon(name) {
-        if (typeof window.getIcon === 'function') return window.getIcon(name);
-        if (typeof window.Icons !== 'undefined' && window.Icons[name]) return window.Icons[name];
-        return '';
+        var svg = window.Icons[name];
+        return typeof svg === 'string' ? svg : '';
     }
 
     function _showToast(message, type) {
         if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+            window.showToast(message, type || 'info');
         }
     }
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        return null;
+    function _confirmDialog(message, title, onConfirm) {
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(message, title, onConfirm);
+        }
     }
 
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
+        _showToast('Character selector unavailable', 'error');
         return null;
     }
 
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-            return true;
+    /**
+     * Opens a modal through modals-core.js with key translation.
+     * modals-core.js reads titleHtml / contentHtml. The call sites in
+     * this file pass title / content. Translate at the boundary.
+     * If the caller already supplied the *Html variants, those win.
+     */
+    function _openModal(opts) {
+        var forwarded = {};
+        for (var k in opts) {
+            if (Object.prototype.hasOwnProperty.call(opts, k)) {
+                forwarded[k] = opts[k];
+            }
         }
-        return false;
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData();
-    }
-
-    function _getGovernmentState() {
-        return typeof window.GovernmentState !== 'undefined' ? window.GovernmentState : null;
-    }
-
-    function _getGovernmentCommands() {
-        return typeof window.GovernmentCommands !== 'undefined' ? window.GovernmentCommands : null;
+        if (forwarded.titleHtml === undefined && forwarded.title !== undefined) {
+            forwarded.titleHtml = forwarded.title;
+        }
+        if (forwarded.contentHtml === undefined && forwarded.content !== undefined) {
+            forwarded.contentHtml = forwarded.content;
+        }
+        return window.openModal(forwarded);
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        return window.getCurrentYear();
+    }
 
     // =========================================================================
-    // 2. RENDER FUNCTIONS
+    // 3. RENDER FUNCTIONS
     // =========================================================================
 
     function _renderLeaderItem(assignment, placeId) {
         var char = _getCharacterById(assignment.characterId);
-        var charName = char ? (char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown';
+        var charName = char
+            ? (char.name + (char.surname ? ' ' + char.surname : ''))
+            : 'Unknown';
         var isActive = assignment.isActive && !assignment.endYear;
 
-        var html = '<div class="gov-leader-item" data-leader-id="' + _escapeHtml(assignment.id) + '">';
+        var html = '<div class="gov-leader-item" data-leader-id="' +
+            _escapeHtml(assignment.id) + '">';
         html += '<div class="gov-leader-info">';
         html += '<span class="gov-leader-name">' + _escapeHtml(charName) + '</span>';
         if (assignment.title) {
-            html += ' <span class="gov-leader-title">(' + _escapeHtml(assignment.title) + ')</span>';
+            html += ' <span class="gov-leader-title">(' +
+                _escapeHtml(assignment.title) + ')</span>';
         }
         if (isActive) {
             html += ' <span class="gov-leader-status active">Active</span>';
-            html += ' <span class="gov-leader-since">since ' + (assignment.startYear || '?') + '</span>';
+            html += ' <span class="gov-leader-since">since ' +
+                (assignment.startYear || '?') + '</span>';
         } else {
             html += ' <span class="gov-leader-status ended">Ended</span>';
-            html += ' <span class="gov-leader-period">' + (assignment.startYear || '?') + ' - ' + (assignment.endYear || '?') + '</span>';
+            html += ' <span class="gov-leader-period">' +
+                (assignment.startYear || '?') + ' - ' +
+                (assignment.endYear || '?') + '</span>';
         }
         html += '</div>';
         if (isActive) {
             html += '<div class="gov-leader-actions">';
-            html += '<button class="gov-btn gov-btn-small gov-btn-end-leader" data-action="end-leader" data-leader-id="' + _escapeHtml(assignment.id) + '" data-char-id="' + _escapeHtml(assignment.characterId) + '">' + _getIcon('X') + ' End Term</button>';
+            html += '<button class="gov-btn gov-btn-small gov-btn-end-leader" ' +
+                'data-action="end-leader" ' +
+                'data-leader-id="' + _escapeHtml(assignment.id) + '" ' +
+                'data-char-id="' + _escapeHtml(assignment.characterId) + '">' +
+                _getIcon('X') + ' End Term' +
+                '</button>';
             html += '</div>';
         }
         html += '</div>';
@@ -152,38 +231,52 @@
 
     function _renderGovernmentDetails(place) {
         if (!place) {
-            return '<div class="gov-details-empty">Select a location to view government details.</div>';
+            return '<div class="gov-details-empty">' +
+                'Select a location to view government details.</div>';
         }
 
         var govTypeId = place.governmentTypeId || place.governmentType;
         var govType = govTypeId ? _getGovernmentTypeById(govTypeId) : null;
         var govStyle = place.governmentStyle || '';
         var leaderAssignments = place.leaderAssignments || [];
-        var activeLeaders = leaderAssignments.filter(function(a) { return a.isActive && !a.endYear; });
-        var endedLeaders = leaderAssignments.filter(function(a) { return !a.isActive || a.endYear; });
+        var activeLeaders = leaderAssignments.filter(function(a) {
+            return a.isActive && !a.endYear;
+        });
+        var endedLeaders = leaderAssignments.filter(function(a) {
+            return !a.isActive || a.endYear;
+        });
 
         var html = '<div class="gov-details-container">';
-        
+
         // Header
         html += '<div class="gov-details-header">';
-        html += '<h3>' + _escapeHtml(place.displayName || place.name) + ' - Government</h3>';
+        html += '<h3>' +
+            _escapeHtml(place.displayName || place.name) + ' - Government' +
+            '</h3>';
         html += '<div class="gov-details-actions">';
-        html += '<button class="gov-btn gov-btn-edit" data-action="edit-gov">' + _getIcon('EDIT') + ' Edit</button>';
+        html += '<button class="gov-btn gov-btn-edit" ' +
+            'data-action="edit-gov">' +
+            _getIcon('EDIT') + ' Edit' +
+            '</button>';
         html += '</div>';
         html += '</div>';
 
-        // Current government info
+        // Body
         html += '<div class="gov-details-body">';
+
+        // Government type
         html += '<div class="gov-details-field">';
         html += '<label>Government Type</label>';
         html += '<div class="gov-details-value">';
         if (govType) {
             html += '<strong>' + _escapeHtml(govType.name) + '</strong>';
             if (govType.icon) {
-                html += ' <span class="gov-type-icon">' + govType.icon + '</span>';
+                html += ' <span class="gov-type-icon">' +
+                    _escapeHtml(govType.icon) + '</span>';
             }
             if (govType.description) {
-                html += '<p class="gov-type-desc">' + _escapeHtml(govType.description) + '</p>';
+                html += '<p class="gov-type-desc">' +
+                    _escapeHtml(govType.description) + '</p>';
             }
         } else {
             html += '<span class="gov-details-none">None assigned</span>';
@@ -191,7 +284,7 @@
         html += '</div>';
         html += '</div>';
 
-        // Government style
+        // Style
         html += '<div class="gov-details-field">';
         html += '<label>Government Style</label>';
         html += '<div class="gov-details-value">';
@@ -203,37 +296,43 @@
         html += '</div>';
         html += '</div>';
 
-        // =============================================================
-        // LEADERSHIP SECTION - NEW UI
-        // =============================================================
+        // Leadership
         html += '<div class="gov-details-field gov-leadership-section">';
         html += '<div class="gov-leadership-header">';
         html += '<label>Leadership</label>';
-        html += '<button class="gov-btn gov-btn-small gov-btn-assign-leader" data-action="assign-leader">' + _getIcon('PLUS') + ' Assign Leader</button>';
+        html += '<button class="gov-btn gov-btn-small gov-btn-assign-leader" ' +
+            'data-action="assign-leader">' +
+            _getIcon('PLUS') + ' Assign Leader' +
+            '</button>';
         html += '</div>';
         html += '<div class="gov-details-value gov-leadership-value">';
 
         if (leaderAssignments.length === 0) {
-            html += '<div class="gov-leadership-empty">No leaders assigned. Assign a leader to govern this location.</div>';
+            html += '<div class="gov-leadership-empty">' +
+                'No leaders assigned. Assign a leader to govern this location.' +
+                '</div>';
         } else {
-            // Active leaders
             if (activeLeaders.length > 0) {
                 html += '<div class="gov-leadership-active">';
-                html += '<div class="gov-leadership-subheader">Current Leaders</div>';
+                html += '<div class="gov-leadership-subheader">' +
+                    'Current Leaders</div>';
                 for (var i = 0; i < activeLeaders.length; i++) {
                     html += _renderLeaderItem(activeLeaders[i], place.id);
                 }
                 html += '</div>';
             }
 
-            // Ended leaders (collapsible)
             if (endedLeaders.length > 0) {
                 html += '<div class="gov-leadership-ended">';
-                html += '<div class="gov-leadership-toggle" data-toggle="ended-leaders">';
-                html += '<span class="gov-leadership-toggle-label">Past Leaders (' + endedLeaders.length + ')</span>';
-                html += '<span class="gov-leadership-toggle-icon">' + _getIcon('TRIANGLE_RIGHT') + '</span>';
+                html += '<div class="gov-leadership-toggle" ' +
+                    'data-toggle="ended-leaders">';
+                html += '<span class="gov-leadership-toggle-label">' +
+                    'Past Leaders (' + endedLeaders.length + ')</span>';
+                html += '<span class="gov-leadership-toggle-icon">' +
+                    _getIcon('TRIANGLE_RIGHT') + '</span>';
                 html += '</div>';
-                html += '<div class="gov-leadership-ended-list" style="display:none;">';
+                html += '<div class="gov-leadership-ended-list" ' +
+                    'style="display:none;">';
                 for (var j = 0; j < endedLeaders.length; j++) {
                     html += _renderLeaderItem(endedLeaders[j], place.id);
                 }
@@ -245,11 +344,10 @@
         html += '</div>'; // end gov-details-value
         html += '</div>'; // end gov-details-field
 
-        // Government departments summary if available
-        var state = _getGovernmentState();
-        if (state) {
-            var depts = state.getDepartmentsByLocation ? state.getDepartmentsByLocation(place.id) : [];
-            if (depts && depts.length > 0) {
+        // Departments summary
+        if (GS && typeof GS.getDepartmentsByLocation === 'function') {
+            var depts = GS.getDepartmentsByLocation(place.id) || [];
+            if (depts.length > 0) {
                 html += '<div class="gov-details-field">';
                 html += '<label>Government Departments</label>';
                 html += '<div class="gov-details-value">';
@@ -258,10 +356,13 @@
                     var dept = depts[d];
                     if (dept.isDeprecated) continue;
                     html += '<li>' + _escapeHtml(dept.name);
-                    if (dept.assignments) {
-                        var active = dept.assignments.filter(function(a) { return !a.endYear; });
+                    if (Array.isArray(dept.assignments)) {
+                        var active = dept.assignments.filter(function(a) {
+                            return !a.endYear;
+                        });
                         if (active.length > 0) {
-                            html += ' <span class="gov-badge">' + active.length + ' active</span>';
+                            html += ' <span class="gov-badge">' +
+                                active.length + ' active</span>';
                         }
                     }
                     html += '</li>';
@@ -273,17 +374,16 @@
         }
 
         html += '</div>'; // end gov-details-body
-        
         html += '</div>'; // end gov-details-container
 
         return html;
     }
 
     // =========================================================================
-    // 3. LEADER ACTIONS (using existing commands)
+    // 4. LEADER ACTIONS (through LocationCommands)
     // =========================================================================
 
-    function _assignLeaderToLocation(placeId) {
+    function _assignLeaderToLocation(placeId, onComplete) {
         var place = _getPlaceById(placeId);
         if (!place) {
             _showToast('Location not found', 'error');
@@ -298,21 +398,18 @@
                 showDeceased: false
             },
             onSelect: function(characterId) {
-                var commands = _getGovernmentCommands();
-                if (!commands || !commands.assignLeader) {
-                    _showToast('Government commands not available', 'error');
-                    return;
-                }
-
-                // Prompt for title and start year
                 var content = '<div class="gov-leader-form">';
                 content += '<div class="form-group">';
                 content += '<label for="leader-title-input">Title</label>';
-                content += '<input type="text" id="leader-title-input" class="form-control" placeholder="e.g., Mayor, Governor, King" value="Leader">';
+                content += '<input type="text" id="leader-title-input" ' +
+                    'class="form-control" ' +
+                    'placeholder="e.g., Mayor, Governor, King" ' +
+                    'value="Leader">';
                 content += '</div>';
                 content += '<div class="form-group">';
                 content += '<label for="leader-year-input">Start Year</label>';
-                content += '<input type="number" id="leader-year-input" class="form-control" value="' + _getCurrentYear() + '">';
+                content += '<input type="number" id="leader-year-input" ' +
+                    'class="form-control" value="' + _getCurrentYear() + '">';
                 content += '</div>';
                 content += '</div>';
 
@@ -321,46 +418,65 @@
                     content: content,
                     confirmText: 'Assign',
                     cancelText: 'Cancel',
-                    onConfirm: function() {
-                        var titleInput = document.getElementById('leader-title-input');
-                        var yearInput = document.getElementById('leader-year-input');
-                        
-                        var title = titleInput ? titleInput.value.trim() || 'Leader' : 'Leader';
-                        var startYear = yearInput ? parseInt(yearInput.value) || _getCurrentYear() : _getCurrentYear();
-
-                        var result = commands.assignLeader(placeId, characterId, startYear, title);
-                        if (result) {
-                            _showToast('Leader assigned', 'success');
-                            // Refresh the tab
-                            if (typeof window.refreshGovernmentDetailsTab === 'function') {
-                                window.refreshGovernmentDetailsTab(placeId);
-                            }
+                    onConfirm: function(root) {
+                        var titleEl = root.querySelector('#leader-title-input');
+                        var yearEl = root.querySelector('#leader-year-input');
+                        if (!titleEl || !yearEl) {
+                            _showToast('Form not found in modal', 'error');
+                            return false;
                         }
+
+                        var title = titleEl.value.trim() || 'Leader';
+                        var startYear = parseInt(yearEl.value, 10);
+                        if (!Number.isFinite(startYear)) {
+                            startYear = _getCurrentYear();
+                        }
+
+                        var result = LC.assignLeader(placeId, characterId, startYear, title);
+                        if (!result || result.success !== true) {
+                            _showToast(
+                                (result && result.reason)
+                                    ? result.reason
+                                    : 'Failed to assign leader',
+                                'error'
+                            );
+                            return false;
+                        }
+
+                        var persistResult = LC.persist();
+                        if (persistResult && persistResult.success !== true) {
+                            _showToast(
+                                'Leader assigned, but save failed: ' +
+                                (persistResult.reason || 'unknown'),
+                                'warning'
+                            );
+                        } else {
+                            _showToast('Leader assigned', 'success');
+                        }
+
+                        if (typeof onComplete === 'function') {
+                            onComplete();
+                        }
+                        return true;
                     }
                 });
             }
         });
     }
 
-    function _endLeaderTerm(placeId, leaderId, characterId) {
-        var commands = _getGovernmentCommands();
-        if (!commands || !commands.endLeaderTerm) {
-            _showToast('Government commands not available', 'error');
-            return;
-        }
-
+    function _endLeaderTerm(placeId, characterId, onComplete) {
         var char = _getCharacterById(characterId);
-        var charName = char ? (char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown';
+        var charName = char
+            ? (char.name + (char.surname ? ' ' + char.surname : ''))
+            : 'Unknown';
 
         var content = '<div class="gov-leader-form">';
-        content += '<p>End leadership term for <strong>' + _escapeHtml(charName) + '</strong>?</p>';
+        content += '<p>End leadership term for <strong>' +
+            _escapeHtml(charName) + '</strong>?</p>';
         content += '<div class="form-group">';
         content += '<label for="leader-end-year-input">End Year</label>';
-        content += '<input type="number" id="leader-end-year-input" class="form-control" value="' + _getCurrentYear() + '">';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="leader-end-reason-input">Reason (optional)</label>';
-        content += '<input type="text" id="leader-end-reason-input" class="form-control" placeholder="e.g., Term ended, Resigned, Removed">';
+        content += '<input type="number" id="leader-end-year-input" ' +
+            'class="form-control" value="' + _getCurrentYear() + '">';
         content += '</div>';
         content += '</div>';
 
@@ -369,29 +485,53 @@
             content: content,
             confirmText: 'End Term',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var yearInput = document.getElementById('leader-end-year-input');
-                var reasonInput = document.getElementById('leader-end-reason-input');
-                
-                var endYear = yearInput ? parseInt(yearInput.value) || _getCurrentYear() : _getCurrentYear();
-                var reason = reasonInput ? reasonInput.value.trim() || 'Term ended' : 'Term ended';
-
-                var result = commands.endLeaderTerm(placeId, characterId, endYear);
-                if (result) {
-                    _showToast('Leadership term ended', 'info');
-                    if (typeof window.refreshGovernmentDetailsTab === 'function') {
-                        window.refreshGovernmentDetailsTab(placeId);
-                    }
+            onConfirm: function(root) {
+                var yearEl = root.querySelector('#leader-end-year-input');
+                if (!yearEl) {
+                    _showToast('Form not found in modal', 'error');
+                    return false;
                 }
+
+                var endYear = parseInt(yearEl.value, 10);
+                if (!Number.isFinite(endYear)) {
+                    endYear = _getCurrentYear();
+                }
+
+                var result = LC.endLeaderTerm(placeId, characterId, endYear);
+                if (!result || result.success !== true) {
+                    _showToast(
+                        (result && result.reason)
+                            ? result.reason
+                            : 'Failed to end leader term',
+                        'error'
+                    );
+                    return false;
+                }
+
+                var persistResult = LC.persist();
+                if (persistResult && persistResult.success !== true) {
+                    _showToast(
+                        'Term ended, but save failed: ' +
+                        (persistResult.reason || 'unknown'),
+                        'warning'
+                    );
+                } else {
+                    _showToast('Leadership term ended', 'info');
+                }
+
+                if (typeof onComplete === 'function') {
+                    onComplete();
+                }
+                return true;
             }
         });
     }
 
     // =========================================================================
-    // 4. EDIT GOVERNMENT MODAL (existing)
+    // 5. EDIT GOVERNMENT MODAL (through LocationCommands)
     // =========================================================================
 
-    function _openEditGovernmentModal(placeId) {
+    function _openEditGovernmentModal(placeId, onComplete) {
         var place = _getPlaceById(placeId);
         if (!place) {
             _showToast('Location not found', 'error');
@@ -410,20 +550,24 @@
         for (var i = 0; i < governmentTypes.length; i++) {
             var gt = governmentTypes[i];
             var selected = (gt.id === currentGovTypeId) ? ' selected' : '';
-            content += '<option value="' + _escapeHtml(gt.id) + '"' + selected + '>' + _escapeHtml(gt.name) + '</option>';
+            content += '<option value="' + _escapeHtml(gt.id) + '"' +
+                selected + '>' + _escapeHtml(gt.name) + '</option>';
         }
         content += '</select>';
         content += '</div>';
 
         content += '<div class="form-group">';
         content += '<label for="gov-style-input">Government Style (optional)</label>';
-        content += '<input type="text" id="gov-style-input" class="form-control" value="' + _escapeHtml(currentStyle) + '" placeholder="e.g., Constitutional, Absolute, Feudal">';
+        content += '<input type="text" id="gov-style-input" class="form-control" ' +
+            'value="' + _escapeHtml(currentStyle) + '" ' +
+            'placeholder="e.g., Constitutional, Absolute, Feudal">';
         content += '</div>';
 
         content += '<div class="form-group">';
-        content += '<label>Government Types</label>';
         content += '<div class="gov-types-help">';
-        content += '<p><small>To create or edit government types, use the <strong>Government Types</strong> manager in the main menu.</small></p>';
+        content += '<p><small>To create or edit government types, use the ' +
+            '<strong>Government Types</strong> manager in the main menu.' +
+            '</small></p>';
         content += '</div>';
         content += '</div>';
         content += '</div>';
@@ -433,44 +577,55 @@
             content: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var typeSelect = document.getElementById('gov-type-select');
-                var styleInput = document.getElementById('gov-style-input');
-                var newTypeId = typeSelect ? typeSelect.value : '';
-                var newStyle = styleInput ? styleInput.value.trim() : '';
-
-                place.governmentTypeId = newTypeId || null;
-                place.governmentStyle = newStyle || null;
-                place.updatedAt = Date.now();
-
-                _saveMasterData();
-
-                if (typeof window.invalidateAccessorCaches === 'function') {
-                    window.invalidateAccessorCaches();
-                }
-                if (typeof window.LocationState !== 'undefined' && 
-                    typeof window.LocationState.invalidateCache === 'function') {
-                    window.LocationState.invalidateCache();
+            onConfirm: function(root) {
+                var typeEl = root.querySelector('#gov-type-select');
+                var styleEl = root.querySelector('#gov-style-input');
+                if (!typeEl || !styleEl) {
+                    _showToast('Form not found in modal', 'error');
+                    return false;
                 }
 
-                _showToast('Government updated for ' + (place.displayName || place.name), 'success');
+                var newTypeId = typeEl.value || null;
+                var newStyle = styleEl.value.trim() || null;
 
-                if (typeof window.refreshGovernmentDetailsTab === 'function') {
-                    window.refreshGovernmentDetailsTab(placeId);
+                var result = LC.assignGovernment(placeId, newTypeId, newStyle);
+                if (!result || result.success !== true) {
+                    _showToast(
+                        (result && result.reason)
+                            ? result.reason
+                            : 'Failed to update government',
+                        'error'
+                    );
+                    return false;
                 }
+
+                var persistResult = LC.persist();
+                if (persistResult && persistResult.success !== true) {
+                    _showToast(
+                        'Government updated, but save failed: ' +
+                        (persistResult.reason || 'unknown'),
+                        'warning'
+                    );
+                } else {
+                    _showToast(
+                        'Government updated for ' +
+                        (place.displayName || place.name),
+                        'success'
+                    );
+                }
+
+                if (typeof onComplete === 'function') {
+                    onComplete();
+                }
+                return true;
             }
         });
     }
 
     // =========================================================================
-    // 5. MAIN EXPORTED FUNCTIONS
+    // 6. MAIN RENDER
     // =========================================================================
 
-    /**
-     * Renders the government details tab for a specific location
-     * @param {string} containerId - The ID of the container element
-     * @param {string} locationId - The ID of the location to display
-     */
     function renderGovernmentDetailsTab(containerId, locationId) {
         var container = document.getElementById(containerId);
         if (!container) {
@@ -482,87 +637,97 @@
         container.innerHTML = _renderGovernmentDetails(place);
         container.dataset.locationId = locationId || '';
 
-        // Set up event listeners - delegated
-        container.addEventListener('click', function(e) {
-            var target = e.target.closest('[data-action]');
-            if (!target) return;
+        // Actions (delegated, bound once)
+        if (!container._govDetailsBound) {
+            container._govDetailsBound = true;
 
-            var action = target.dataset.action;
-            var currentLocationId = container.dataset.locationId;
+            container.addEventListener('click', function(e) {
+                var target = e.target.closest('[data-action]');
+                if (!target) return;
 
-            switch (action) {
-                case 'edit-gov':
-                    if (currentLocationId) {
-                        _openEditGovernmentModal(currentLocationId);
-                    } else {
-                        _showToast('No location selected', 'warning');
-                    }
-                    break;
+                var action = target.dataset.action;
+                var currentLocationId = container.dataset.locationId;
+                var refresh = function() {
+                    renderGovernmentDetailsTab(containerId, currentLocationId);
+                };
 
-                case 'assign-leader':
-                    if (currentLocationId) {
-                        _assignLeaderToLocation(currentLocationId);
-                    } else {
-                        _showToast('No location selected', 'warning');
-                    }
-                    break;
-
-                case 'end-leader':
-                    if (currentLocationId) {
-                        var leaderId = target.dataset.leaderId;
-                        var charId = target.dataset.charId;
-                        if (leaderId && charId) {
-                            _endLeaderTerm(currentLocationId, leaderId, charId);
+                switch (action) {
+                    case 'edit-gov':
+                        if (currentLocationId) {
+                            _openEditGovernmentModal(currentLocationId, refresh);
+                        } else {
+                            _showToast('No location selected', 'warning');
                         }
-                    }
-                    break;
-            }
-        });
+                        break;
 
-        // Toggle for ended leaders (delegated)
-        container.addEventListener('click', function(e) {
-            var toggle = e.target.closest('[data-toggle="ended-leaders"]');
-            if (!toggle) return;
+                    case 'assign-leader':
+                        if (currentLocationId) {
+                            _assignLeaderToLocation(currentLocationId, refresh);
+                        } else {
+                            _showToast('No location selected', 'warning');
+                        }
+                        break;
 
-            var list = toggle.nextElementSibling;
-            if (list) {
+                    case 'end-leader':
+                        if (currentLocationId) {
+                            var charId = target.dataset.charId;
+                            if (charId) {
+                                _endLeaderTerm(currentLocationId, charId, refresh);
+                            }
+                        }
+                        break;
+                }
+            });
+
+            // Toggle for past leaders
+            container.addEventListener('click', function(e) {
+                var toggle = e.target.closest('[data-toggle="ended-leaders"]');
+                if (!toggle) return;
+
+                var list = toggle.nextElementSibling;
+                if (!list) return;
+
                 var isHidden = list.style.display === 'none';
                 list.style.display = isHidden ? 'block' : 'none';
                 var icon = toggle.querySelector('.gov-leadership-toggle-icon');
                 if (icon) {
-                    icon.innerHTML = isHidden ? _getIcon('TRIANGLE_DOWN') : _getIcon('TRIANGLE_RIGHT');
+                    icon.innerHTML = isHidden
+                        ? _getIcon('TRIANGLE_DOWN')
+                        : _getIcon('TRIANGLE_RIGHT');
                 }
-            }
-        });
+            });
+        }
     }
 
     /**
-     * Refreshes the government details tab
-     * @param {string} locationId - The ID of the location to display
+     * Refreshes the government details tab, locating its container by
+     * class. Falls back to the id-based render path if the class lookup
+     * misses (e.g. the caller renamed the container id).
      */
     function refreshGovernmentDetailsTab(locationId) {
         var container = document.querySelector('.gov-details-tab-container');
         if (!container) {
-            var containers = document.querySelectorAll('.gov-details-tab-container, #government-details-tab');
-            if (containers.length > 0) {
-                container = containers[0];
-            }
+            var candidates = document.querySelectorAll(
+                '.gov-details-tab-container, #government-details-tab'
+            );
+            if (candidates.length > 0) container = candidates[0];
         }
         if (container) {
-            renderGovernmentDetailsTab(container.id || 'government-details-tab', locationId);
+            renderGovernmentDetailsTab(
+                container.id || 'government-details-tab',
+                locationId
+            );
         }
     }
 
-    /**
-     * Opens the edit government modal programmatically
-     * @param {string} locationId - The ID of the location to edit
-     */
     function editGovernmentForLocation(locationId) {
-        _openEditGovernmentModal(locationId);
+        _openEditGovernmentModal(locationId, function() {
+            refreshGovernmentDetailsTab(locationId);
+        });
     }
 
     // =========================================================================
-    // 6. EXPORTS
+    // 7. EXPORTS
     // =========================================================================
 
     window.GovernmentDetailsTab = {
@@ -575,7 +740,6 @@
         _endLeader: _endLeaderTerm
     };
 
-    // Legacy aliases
     window.renderGovernmentDetailsTab = renderGovernmentDetailsTab;
     window.refreshGovernmentDetailsTab = refreshGovernmentDetailsTab;
 
