@@ -1,74 +1,1881 @@
-# Location Domain — Documentation
+================================================================================
+STILL WATERS — LOCATION SUBSYSTEM DOCUMENTATION AND LOAD ORDER
+================================================================================
 
-**Version 2.1 — post-refactor + Post-Refactor Follow-ups**
+Scope of this document:
+  - Every file in the location subsystem that was provided:
+      js/location/location-state.js
+      js/location/location-commands.js
+      js/location/location-hierarchy.js
+      js/location/location-queries.js
+      js/location/location-movement.js
+      js/location/location-view-models.js
+      js/location/location-ui-state.js
+      js/location/location-ui-list.js
+      js/location/location-presentation.js
+      js/location/modals-location-helper.js
+      js/location/modals-location.js
+      js/location/modals-moves.js
+      js/location/location-bootstrap.js
 
-**Covers:** state, commands, queries, hierarchy, movement, view-models, UI state, UI list, presentation, modals, bootstrap.
+  - Every core (js/core/) and character (js/character/) file the
+    location subsystem depends on, either at load time (module-level
+    guards) or at call time (typeof-guarded lookups), and how each
+    dependency is used.
 
-**Status:** refactored to match rank / role / relationship / education. All eleven compatibility issues from the location subsystem review are closed.
+  - The feature-state modules and selector modules the location
+    domain consumes or is consumed by in the documented application
+    load order.
 
-**Replaces:** `location-docs.txt` (v2.0, pre-follow-ups — delete after this file is in place).
+Cross-references:
+  - stillwaters-docs.txt (core-level documentation and load order).
+  - stillwaters-character-docs.txt (character-subsystem documentation).
+  - location-docs.txt (the location subsystem's own narrative doc).
 
----
+PATHS NOTE:
+  This document uses the paths shown in the repository tree, not the
+  paths written in individual file headers. Where a header says
+  `js/location/...` but the tree says `js/location/...`, the tree is
+  authoritative. All location files are at `js/location/...` in the
+  tree, and all core files are at `js/core/...` in the tree. There is
+  no `js/core/ui/` directory in the tree; `collapsible.js` lives at
+  `js/core/collapsible.js` and `ui.js` lives at `js/core/ui.js`. This
+  document uses tree paths.
 
-## 1. Ownership contract
+Anything not provable from the supplied files is marked [UNVERIFIED].
 
-The location domain owns the geographical hierarchy of the world. It does not own characters, households, governments, or any other domain that references locations.
 
-| Concept | Owner | Readers |
-|---|---|---|
-| Place records | `LocationState` | `LocationQueries` (projections) |
-| Location type records | `LocationState` | `LocationQueries` (projections) |
-| Indexes over places / types | `LocationState` | all location modules |
-| Change events | `LocationState` | subscribers via `LocationState.subscribe` |
-| Hierarchy semantics | `LocationHierarchy` | `LocationQueries`, `LocationMovement`, `LocationCommands` |
-| Movement rules | `LocationMovement` | UI, cross-domain callers |
-| Movement records | `CharacterQueries` (character-owned) | `LocationQueries` (projections) |
-| View-shaped records | `LocationViewModels` | `LocationUI` |
-| Transient UI state | `LocationUIState` | `LocationUI` |
-| DOM rendering | `LocationUI` | callers |
-| Cross-domain notifications | `LocationCommands` | `window` via `CustomEvent` |
-| Persistence flush | `LocationCommands.persist` | callers |
+================================================================================
+PART 1 — DEPENDENCIES
+================================================================================
 
-**One owner per concept.** Place and location type records live only in `masterData.data`. Location indexes are rebuildable. Nothing else.
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function or method throws/refuses if the
+                          dependency is missing when the function is
+                          invoked, and the module is loadable without
+                          it.
+  OPTIONAL              — the module checks for the dependency and
+                          falls back (usually skipping the feature or
+                          using a local fallback) when it is absent.
 
-**Cross-domain writes go through owning domain commands.**
+--------------------------------------------------------------------------------
+1.1 CORE FILES THE LOCATION SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
 
-| Write | Routes through |
-|---|---|
-| Character current location cleared on place delete | `CharacterCommands.updateCharacterFields` |
-| Character move appended | `CharacterCommands.updateCharacterFields` |
-| Culture validation on assign | `CultureQueries.getCulture` (read-only) |
+  js/core/time.js
+    Provides: TIME_CONSTANTS, getCurrentYear, isValidYear,
+              calculateAge.
+    Used for: current-year defaults in createPlace/recordMove/
+              assignLeader/endLeaderTerm/handleCharacterDeath;
+              age-at-year in location-movement.
+    Deprecated aliases NOT used: getCurrentYearSafe, _getCurrentYear.
 
-**No direct writes into another domain's canonical arrays.** No `masterData.data.characters` reach-in from the location domain.
+  js/core/ids.js
+    Provides: generateId (place, loctype, lead prefixes).
+    Used for: place ids, location-type ids, leader-assignment ids.
 
----
+  js/core/storage.js
+    Provides: masterData, markDataDirty, saveMasterData,
+              getLastSaveError, initializeStorage.
+    Used for: canonical collection access, dirty marker after every
+              mutation primitive, the persist boundary
+              (LocationCommands.persist), and the bootstrap-time
+              masterData availability check.
 
-## 2. Load order
+  js/core/accessors.js
+    Provides: invalidateAccessorCaches (via window.invalidateAccessorCaches).
+    Used for: invalidation of the id→record caches
+              (_placeMap, _locationTypeMap) after every mutation and
+              after hydration. Called from location-state.js.
 
-```html
-<!-- Core -->
-<script src="js/core/storage.js"></script>
-<script src="js/core/ids.js"></script>
-<script src="js/core/time.js"></script>
-<script src="js/core/accessors.js"></script>
-<script src="js/core/modals-core.js"></script>
-<script src="js/core/icons.js"></script>
+  js/core/collections.js
+    Provides: deepClone.
+    Used for: public reads from location-state.js MUST return deep
+              clones. collections.js is a HARD load-time dependency
+              of location-state.js. A missing collections.js makes
+              location-state.js throw at load.
 
-<!-- Character (cross-domain dependency) -->
-<script src="js/character/character-state.js"></script>
-<script src="js/character/character-commands.js"></script>
-<script src="js/character/character-queries.js"></script>
+  js/core/formatting.js
+    Provides: escapeHtml.
+    Used for: HTML escaping in location-ui-list.js, modals-location.js
+              and modals-moves.js (via modals-location-helper.js's
+              escapeHtml fallback), location-presentation.js (does not
+              escape), and by the bootstrap's UI dependency check.
 
-<!-- Location domain -->
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
-<script src="js/location/location-commands.js"></script>
-<script src="js/location/location-queries.js"></script>
-<script src="js/location/location-movement.js"></script>
-<script src="js/location/location-view-models.js"></script>
-<script src="js/location/location-ui-state.js"></script>
-<script src="js/location/location-ui-list.js"></script>
-<script src="js/location/location-presentation.js"></script>
-<script src="js/location/modals-location.js"></script>
-<script src="js/location/modals-moves.js"></script>
-<script src="js/location/location-bootstrap.js"></script>
+  js/core/icons.js
+    Provides: Icons.
+    Used for: location-ui-list.js icon injection. Required at load
+              time by location-ui-list.js. Required at load time by
+              location-bootstrap.js's UI dependency check (via
+              _requireGlobalObject('Icons')).
+
+  js/core/modals-core.js
+    Provides: openModal, closeTopModal.
+    Used for: every modal in modals-location.js and modals-moves.js.
+              openModal is required at load time by both modal files.
+              closeTopModal is used by modals-location-helper.js's
+              close() (with a typeof guard).
+
+  js/core/ui.js
+    Provides: showToast (and lockBodyScroll/unlockBodyScroll, which
+              the location subsystem does not use directly).
+    Used for: user-visible error and success toasts in the modals.
+              Optional: modals-location-helper.js's toast() is a
+              typeof-guarded call to window.showToast. The bootstrap
+              verifies showToast is present at load time.
+
+  js/core/world.js
+    Provides: getCurrentLocationId.
+    Used for: the semantic current-location resolver. Used by
+              location-queries.js (population and current-location
+              reads) and location-commands.js (deletePlace's
+              character-cleanup sweep). Verified at bootstrap time by
+              _verifyCrossDomain.
+
+  js/core/simulation-generators.js
+    Provides: randomRealisticAge, randomYear, randomFertilityModifier,
+              randomLifespan.
+    Not used by the location subsystem. Listed here only for
+    completeness of the core-file mapping; the location domain does
+    not reference it.
+
+  js/core/names.js
+    Not used by the location subsystem.
+
+  js/core/validation.js
+    Not used directly by the location subsystem. Validation.js
+    validates place records on import (via storage.js's import path),
+    which is the only interaction.
+
+  js/core/integrity.js
+    Provides: findBrokenPlaceHierarchy, repairBrokenPlaceHierarchy.
+    Not used directly by the location subsystem. Integrity.js reads
+    places via accessors.js, not via LocationState. The location
+    domain's own cycle-prevention lives in location-hierarchy.js and
+    location-commands.js.
+
+  js/core/maintenance.js
+    Not used by the location subsystem.
+
+  js/core/state.js
+    Provides: the compatibility facade. Requires LocationUIState (per
+    its own header) among other feature state modules. Reads
+    LocationUIState, not LocationState or LocationCommands. The
+    location subsystem does not depend on state.js; the dependency
+    flows the other direction.
+
+  js/core/ui-state.js
+    Not used directly by the location subsystem. UIState is a
+    generic per-panel UI state store; the location domain's UI state
+    lives in location-ui-state.js with its own localStorage key.
+
+  js/core/constants/constants.js
+    Provides: LOCAL_STORAGE_KEYS.LOCATION_TREE_STATE (and other keys).
+    Used (softly) by location-ui-state.js. When constants.js is
+    loaded, location-ui-state.js reads the canonical key name; when
+    it is not, it uses the fallback literal
+    'location_tree_expanded'. The canonical key value is
+    'location_tree_expanded' per constants.js.
+
+  js/core/constants/location-constants.js
+    Provides: LOCATION_LEVELS.
+    Not used by the location subsystem directly. The location domain
+    uses location types from masterData (each with its own priority
+    field), not LOCATION_LEVELS. LOCATION_LEVELS documents the five
+    canonical levels and is consumed by other domains.
+
+  Other constants files (age-constants.js, character-constants.js,
+  character-traits.js, relationship-constants.js)
+    Not used by the location subsystem.
+
+--------------------------------------------------------------------------------
+1.2 CHARACTER-SUBSYSTEM FILES THE LOCATION SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    Provides: the canonical character collection.
+    Used by: character-commands.js and character-queries.js, which
+             the location domain loads as its character-side
+             dependencies.
+
+  js/character/character-commands.js
+    Provides: CharacterCommands.updateCharacterFields (per-record
+              writes), CharacterCommands.updateCharacters (batch
+              writes).
+    Used by: location-commands.js (recordMove, bulkRecordMoves,
+             deletePlace's character cleanup). Required at load time
+             by location-commands.js.
+
+  js/character/character-queries.js
+    Provides: CharacterQueries.getAllCharacters,
+              CharacterQueries.getCharacterById,
+              CharacterQueries.getCurrentLocationId,
+              CharacterQueries.getMoveHistory.
+    Used by: location-queries.js (population, current-location reads),
+             location-commands.js (deletePlace cleanup),
+             location-movement.js (move validation), location-view-
+             models.js (single-move and bulk-move modals).
+    Required at load time by location-commands.js,
+    location-queries.js, location-movement.js, and
+    location-view-models.js. Verified at bootstrap time by
+    _verifyCrossDomain.
+
+  js/character/character-lifecycle.js
+    Provides: registerDeathHandler (via window.registerDeathHandler,
+              installed by this file).
+    Used by: location-commands.js's DEATH HANDLER REGISTRATION
+             block. Under the documented load order,
+             character-lifecycle.js loads before location-commands.js
+             so the registration succeeds. If it does not,
+             location-commands.js skips registration with a debug
+             log and the caller must wire LocationCommands.
+             handleCharacterDeath manually.
+
+  Other character files (family-*, children-*, mortality-*, etc.)
+    Not used directly by the location subsystem. LocationCommands'
+    character-cleanup sweep goes through CharacterCommands;
+    LocationQueries' population reads go through CharacterQueries.
+    Family and children data is not read by any location module.
+
+--------------------------------------------------------------------------------
+1.3 HOUSEHOLD SUBSYSTEM FILES THE LOCATION SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/households/household-commands.js
+    Provides: HouseholdCommands.clearLocationReferences(placeId).
+    Used by: location-commands.js's deletePlace household cleanup
+             step. Resolved at CALL time via _householdCommands(),
+             which returns the module or null. If HouseholdCommands is
+             absent, the cleanup step reports status: 'unavailable' and
+             the delete proceeds.
+
+  Note: no other household file is used by the location subsystem.
+        The location domain does not read household records; it only
+        asks household-commands.js to clear household.locationId
+        references on place delete.
+
+--------------------------------------------------------------------------------
+1.4 CULTURE AND RELIGION SUBSYSTEM FILES THE LOCATION SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/culture/culture-queries.js
+    Provides: CultureQueries.getCulture(cultureId).
+    Used by: location-commands.js (createPlace, updatePlaceCulture),
+             location-view-models.js (resolveCultureLabel).
+    Both usages are CALL-TIME lookups guarded by
+    `typeof window.CultureQueries === 'undefined' || typeof
+    window.CultureQueries.getCulture !== 'function'` checks. If
+    CultureQueries is absent, the corresponding command returns a
+    structured failure ("CultureQueries required to assign a culture")
+    and resolveCultureLabel returns null. No load-time dependency.
+
+  Note: no other culture file is used by the location subsystem.
+        Culture state and rendering live in the culture domain.
+
+  Note: no religion file is used by the location subsystem.
+
+--------------------------------------------------------------------------------
+1.5 SELECTOR SUBSYSTEM FILES THE LOCATION SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/selectors/locationDropdown.js
+    Overwrites window.getLocationCountry and window.getLocationDistrict
+    with a SUPERSET of world.js's versions (accepts place object OR
+    place id). Under the documented load order, locationDropdown.js
+    loads AFTER world.js, so its version wins the runtime race. The
+    location subsystem does not call these functions, so this
+    shadowing does not affect it.
+
+  The location subsystem itself does not call any selector. The
+  selectors are consumed by the modals of OTHER domains (character,
+  household) that pick a location. The location modals do not open
+  selectors. See modals-location.js and modals-moves.js.
+
+  Note: no location file requires any selector at load time.
+
+--------------------------------------------------------------------------------
+1.6 FEATURE-STATE MODULES THE LOCATION SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/location/location-ui-state.js
+    Owns window.LocationUIState. This IS a file of the location
+    domain. See Part 2's catalog entry. js/core/state.js reads it;
+    the location subsystem reads it directly (location-ui-list.js
+    consumes it).
+
+  js/core/census-state.js
+  js/core/matchmaker-state.js
+  js/core/misc-state.js
+  js/households/household-state.js
+  js/roles/role-state.js
+  js/ranks/rank-state.js
+  js/names/name-state.js
+    Not used by the location subsystem. They are required only by
+    js/core/state.js, which the location domain does not depend on.
+
+--------------------------------------------------------------------------------
+1.7 LOCATION-SUBSYSTEM FILE DEPENDENCY MATRIX
+--------------------------------------------------------------------------------
+
+Columns:
+  CORE   — required core files (load-time unless marked "(call)")
+  CHAR   — required character files (load-time unless marked)
+  FEAT   — other location files or domain files (load-time unless
+           marked)
+  OPT    — optional dependencies (called only when the feature is
+           used; fallbacks apply)
+
+location-state.js
+  CORE   storage.js (markDataDirty — load-time guard),
+         collections.js (deepClone — load-time guard;
+         accessors.js (invalidateAccessorCaches — call-time)).
+  CHAR   None.
+  FEAT   None.
+  OPT    None.
+  Notes  Two load-time guards: markDataDirty and deepClone.
+         LocationState has no domain-level load-time dependency; it
+         reads masterData.data.places and .locationTypes directly.
+
+location-commands.js
+  CORE   time.js (getCurrentYear — load-time guard),
+         ids.js (generateId — load-time guard),
+         storage.js (markDataDirty, saveMasterData, getLastSaveError
+         — all load-time guards).
+  CHAR   character-state.js (indirect — the guard checks
+         CharacterCommands, not CharacterState directly),
+         character-commands.js (load-time guard; also the batch
+         path — updateCharacters — verified at load if present),
+         character-queries.js (load-time guard;
+         getAllCharacters, getCharacterById, getCurrentLocationId
+         required).
+  FEAT   location-state.js (load-time guard),
+         location-hierarchy.js (load-time guard).
+  OPT    world.js (getCurrentLocationId — semantic resolution in
+         deletePlace cleanup; call-time),
+         household-commands.js (clearLocationReferences — call-time,
+         optional),
+         culture-queries.js (getCulture — call-time, optional;
+         guarded with typeof check),
+         character-lifecycle.js (registerDeathHandler — call-time;
+         the registration block checks for the function).
+
+location-hierarchy.js
+  CORE   None at pure-core level.
+  CHAR   None.
+  FEAT   location-state.js (load-time guard),
+         location-queries.js (CALL-TIME only — the module loads
+         before queries in the documented HTML order; every function
+         that reaches LocationQueries calls _requireQueries() first).
+  OPT    None.
+
+location-queries.js
+  CORE   time.js (getCurrentYear — NOT directly used; the module
+         does not call it. See Notes.)
+  CHAR   character-queries.js (load-time guard;
+         getAllCharacters, getCharacterById, getCurrentLocationId,
+         getMoveHistory required).
+  FEAT   location-state.js (load-time guard).
+  OPT    world.js (getCurrentLocationId — call-time; semantic
+         resolution. Falls back to CharacterQueries.
+         getCurrentLocationId when absent).
+  Notes  Header mentions time.js in a note about TimeQueries, but no
+         function reads window.getCurrentYear. The module does not
+         import time.js. If you load the location subsystem without
+         time.js, location-queries.js loads fine — but location-
+         commands.js will throw when it tries to load because of its
+         own getCurrentYear guard.
+
+location-movement.js
+  CORE   time.js (getCurrentYear, calculateAge — load-time guards).
+  CHAR   character-queries.js (load-time guard;
+         getCharacterById, getMoveHistory required).
+  FEAT   location-state.js (load-time guard),
+         location-queries.js (load-time guard; getPlace,
+         areInSameCountry required),
+         location-hierarchy.js (load-time guard;
+         getHierarchyDistance required).
+  OPT    rank-queries.js (RankQueries.getRank — call-time, optional;
+         guarded with typeof check). Not a location file, but
+         documented here.
+
+location-view-models.js
+  CORE   time.js (getCurrentYear — load-time guard).
+  CHAR   character-queries.js (load-time guard; getCharacterById,
+         getAllCharacters required).
+  FEAT   location-queries.js (load-time guard),
+         location-hierarchy.js (load-time guard),
+         location-movement.js (load-time guard).
+  OPT    culture-queries.js (getCulture — call-time, optional;
+         resolveCultureLabel returns null when absent).
+
+location-ui-state.js
+  CORE   constants.js (LOCAL_STORAGE_KEYS.LOCATION_TREE_STATE —
+         SOFT: falls back to 'location_tree_expanded' when constants.js
+         is not loaded).
+  CHAR   None.
+  FEAT   None.
+  OPT    None.
+
+location-ui-list.js
+  CORE   icons.js (window.Icons — load-time guard),
+         formatting.js (escapeHtml — SOFT: local fallback in
+         _escapeHtml).
+  CHAR   None.
+  FEAT   location-view-models.js (load-time guard),
+         location-ui-state.js (load-time guard).
+  OPT    None.
+
+location-presentation.js
+  CORE   None at pure-core level.
+  CHAR   None.
+  FEAT   location-queries.js (load-time guard).
+  OPT    None.
+  Notes  No formatting.js dependency: the module produces plain text
+         and does NOT escape. The header says "No domain resolution. No
+         dependency fallbacks." Escaping is the caller's concern.
+
+modals-location-helper.js
+  CORE   formatting.js (escapeHtml — SOFT: local fallback),
+         modals-core.js (closeTopModal — SOFT: no-op if absent),
+         ui.js (showToast — SOFT: no-op if absent).
+  CHAR   None.
+  FEAT   location-commands.js (persist — load-time guard; this is the
+         ONLY hard dependency).
+  OPT    None.
+
+modals-location.js
+  CORE   modals-core.js (openModal — load-time guard).
+  CHAR   None.
+  FEAT   location-view-models.js (load-time guard),
+         location-queries.js (load-time guard),
+         location-commands.js (load-time guard),
+         modals-location-helper.js (window.LocationModals.
+         escapeHtml/toast/close/runCommand — load-time guard).
+  OPT    formatting.js, ui.js (via the helper's soft fallbacks).
+
+modals-moves.js
+  CORE   modals-core.js (openModal — load-time guard).
+  CHAR   None.
+  FEAT   location-view-models.js (load-time guard),
+         location-commands.js (load-time guard),
+         modals-location-helper.js (window.LocationModals.
+         escapeHtml/toast/close/runCommand — load-time guard).
+  OPT    formatting.js, ui.js (via the helper's soft fallbacks).
+
+location-bootstrap.js
+  CORE   storage.js (saveMasterData — load-time guard; also
+         markDataDirty, getCurrentYear, calculateAge, generateId,
+         openModal, closeTopModal, Icons, getIcon, escapeHtml,
+         showToast, getCurrentLocationId — all load-time guards).
+  CHAR   character-commands.js (load-time guard;
+         CharacterCommands.updateCharacters and
+         .updateCharacterFields both verified),
+         character-queries.js (load-time guard;
+         getAllCharacters, getCharacterById, getCurrentLocationId,
+         getMoveHistory verified).
+  FEAT   location-state.js (load-time guard,
+         hydrateFromMasterData + state surface),
+         location-commands.js (load-time guard, commands surface
+         verified),
+         location-queries.js (load-time guard, queries surface
+         verified),
+         location-hierarchy.js (load-time guard, hierarchy surface
+         verified),
+         location-movement.js (load-time guard, movement surface
+         verified).
+  OPT    None.
+  Notes  The bootstrap auto-runs init() if window.masterData is
+         already present at load time; otherwise the caller must
+         invoke window.LocationBootstrap.init() after masterData is
+         available.
+
+
+================================================================================
+PART 2 — MODULE CATALOGUE
+================================================================================
+
+2.1 location-state.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-state.js
+  Owner of: window.LocationState (domain index layer).
+
+  Scope:
+    - Derived indexes over masterData.data.places and
+      masterData.data.locationTypes.
+    - Subscriptions and change notification (non-reentrant publish
+      queue).
+    - Explicit hydration (hydrateFromMasterData) and manual refresh
+      (refresh).
+    - Live-reference access for LocationCommands and
+      LocationHierarchy (via _getPlaceCanonical and friends).
+    - Mutation primitives (_addPlace, _removePlace,
+      _addLocationType, _removeLocationType) reserved for
+      LocationCommands.
+
+  Out of scope:
+    - Canonical record storage (lives in masterData.data).
+    - Persistence (markDataDirty is called; saveMasterData is called
+      by LocationCommands.persist).
+    - Queries (LocationQueries interprets).
+    - UI state (LocationUIState owns that).
+
+  Exports:
+    hydrateFromMasterData, refresh,
+    getPlaceById, getLocationTypeById, getPlacesByParentId,
+    getPlacesByTypeId, getAllPlaceIds, getAllLocationTypeIds,
+    subscribe, publish,
+    _getPlaceCanonical, _getLocationTypeCanonical,
+    _getPlacesByParentIdCanonical, _getPlacesByTypeIdCanonical,
+    _addPlace, _removePlace, _addLocationType, _removeLocationType.
+
+  Contracts:
+    - Public reads return deep clones via window.deepClone. Nested
+      arrays (leaderAssignments, demolitionHistory) are cloned; a
+      caller mutating a nested field does not corrupt canonical data.
+    - collections.js is a HARD load-time dependency.
+    - Every mutation primitive calls window.markDataDirty() AND
+      window.invalidateAccessorCaches() after a successful write.
+      The accessor cache (accessors.js _placeMap / _locationTypeMap)
+      is invalidated so getPlaceById / getLocationTypeById return
+      fresh records.
+    - hydrateFromMasterData also calls invalidateAccessorCaches,
+      because the in-memory catalogue is replaced wholesale.
+    - Listens for masterDataUpdated and re-hydrates indexes; this
+      closes the cross-tab reload correctness gap.
+    - Collision guard: throws at load if window.LocationState is
+      already defined and does not have hydrateFromMasterData.
+
+  Load order:
+    After storage.js, collections.js, and accessors.js (the guard
+    checks markDataDirty and deepClone at load; accessors.js is
+    call-time).
+    Before every other location module.
+
+2.2 location-commands.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-commands.js
+  Owner of: window.LocationCommands.
+
+  Scope:
+    - Every location-domain mutation, in one place:
+      createPlace, updatePlace, deletePlace,
+      createLocationType, updateLocationType, deleteLocationType,
+      recordMove, bulkRecordMoves,
+      assignGovernment, assignLeader, endLeaderTerm,
+      updatePlaceCulture,
+      handleCharacterDeath (the death hook).
+
+  Out of scope:
+    - Storage (uses markDataDirty and saveMasterData; does not touch
+      localStorage directly).
+    - Character mutation (routes through CharacterCommands).
+    - Household mutation (routes through HouseholdCommands).
+    - Culture lookups (routes through CultureQueries).
+
+  Exports:
+    persist,
+    createPlace, updatePlace, deletePlace,
+    createLocationType, updateLocationType, deleteLocationType,
+    recordMove, bulkRecordMoves,
+    assignGovernment, assignLeader, endLeaderTerm,
+    updatePlaceCulture,
+    handleCharacterDeath.
+
+  Contracts:
+    - Persist contract (Pattern A from storage.js):
+      persist() calls saveMasterData() and inspects the boolean
+      return. On false, it calls getLastSaveError() and returns the
+      actual failure message. No silent success.
+    - Commands mutate in memory, hydrate, mark dirty, and publish.
+      The caller (modal, batch, annual pipeline) calls persist()
+      exactly once per batch.
+    - Result envelope: _ok() refuses to let the payload overwrite
+      the success field. bulkRecordMoves uses `succeededList` (not
+      `success`) to avoid the collision.
+    - deletePlace dispatches:
+        1. character cleanup (required — CharacterCommands is a
+           load-time dependency),
+        2. household cleanup (optional — HouseholdCommands.
+           clearLocationReferences at call time),
+        3. no residence cleanup (ResidenceSystem owns residence
+           lifecycle; deleting a place does not delete its
+           residences).
+    - Character cleanup resolves each character's current location
+      semantically (World.getCurrentLocationId with
+      CharacterQueries.getCurrentLocationId as fallback) and clears
+      BOTH currentLocationId (when resolved location is being removed)
+      AND moves entries pointing at removed places. Batched through
+      CharacterCommands.updateCharacters (one commit) when the batch
+      API is present; falls back to per-character
+      updateCharacterFields otherwise.
+    - Cross-domain leader cleanup: handleCharacterDeath ends every
+      active leader assignment held by the character across every
+      place, and clears place.leaderId when it pointed at the
+      character. Registers itself at load via
+      window.registerDeathHandler (from character-lifecycle.js).
+      Under the documented load order, character-lifecycle.js loads
+      before this file, so the registration succeeds. If not, the
+      registration is skipped with a debug log and the caller must
+      wire handleCharacterDeath.
+
+  Load order:
+    After location-state.js, location-hierarchy.js,
+    character-commands.js, character-queries.js, time.js, ids.js,
+    storage.js.
+    Before location-queries.js, location-movement.js,
+    location-view-models.js, location-bootstrap.js. Also before the
+    modal files.
+
+2.3 location-hierarchy.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-hierarchy.js
+  Owner of: window.LocationHierarchy.
+
+  Scope:
+    - Ancestry / descent relationships (delegates to LocationQueries
+      for the actual walks).
+    - Structural validation (cycle prevention, type-priority rules).
+    - Nearest ancestor at priority, depth, inheritance chain.
+
+  Exports:
+    validateHierarchy, isValidParentType,
+    isAncestorOf, areInSameCountry, findLowestCommonAncestor,
+    getLocationDepth, getNearestAncestorAtPriority,
+    getDescendantsAtPriority, hasChildAtPriority,
+    getRegionId, getCountyId, getCountryId, isRootPlace,
+    getInheritanceChain,
+    getTypeHierarchy, getAncestorAtPriority,
+    getImmediateAncestorAtPriority,
+    getRegionName, getCountyName,
+    getHierarchyDistance, areLocationsRelated, getCommonAncestor,
+    getHierarchyPath.
+
+  Contracts:
+    - Only LocationState is a load-time dependency.
+    - LocationQueries is a CALL-TIME dependency. Every function that
+      reaches into LocationQueries calls _requireQueries() first,
+      which throws a clear error when the queries module is missing.
+    - This is intentional: the documented HTML order is
+      state → hierarchy → commands → queries. The hierarchy module
+      loads before the queries module, so a load-time check for
+      queries would throw at load. Resolving at call time is the
+      correct dependency shape.
+    - Public functions that only touch LocationState (isRootPlace)
+      work without LocationQueries.
+
+  Load order:
+    After location-state.js.
+    Before location-commands.js (which load-requires
+    LocationHierarchy.validateHierarchy), location-movement.js,
+    location-view-models.js, location-bootstrap.js.
+    Before location-queries.js in the documented HTML order (the
+    reverse dependency is call-time only).
+
+2.4 location-queries.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-queries.js
+  Owner of: window.LocationQueries.
+
+  Scope:
+    - Hierarchy interpretation (walks, ancestry, projection).
+    - Search and filtering.
+    - Population analytics.
+    - Movement interpretation (delegates to CharacterQueries).
+    - Place projections (summary, government, leadership).
+    - Cross-domain read composition.
+
+  Exports:
+    getPlace, getAllPlaces, getPlacesByParent, getPlacesByType,
+    getRootPlaces,
+    getPlaceSummary, getPlaceSummaries,
+    getPlacesUsingGovernmentType, getPlaceGovernmentSummary,
+    getLocationTypes, getLocationType, getLocationTypePriority,
+    getLocationTypeName,
+    getPlaceHierarchy, getPlaceChildren, getAllSubLocationIds,
+    getParentChain, getLocationAtPriority, getCountryId,
+    getLocationCountry, getLocationDistrict,
+    isAncestorOf, areInSameCountry, findLowestCommonAncestor,
+    getPopulationCount, getOwnPopulation,
+    getMoveHistory, getLastMove, getCurrentLocation,
+    getCurrentLocationId, getCurrentLocationName, getLocationAtYear,
+    getCurrentLeader, getLeaderHistory, getActiveLeaderCount,
+    getLeadersByLocation,
+    searchLocations, getLocationStatistics,
+    getGlobalLocationStatistics, compareLocations,
+    getLargestLocations, getPopulationPerNodeRanking,
+    getMoveStatistics.
+
+  Contracts:
+    - Current-location resolution: getCurrentLocationId,
+      getCurrentLocation, getCurrentLocationName, getMoveStatistics,
+      getPopulationCount, and getOwnPopulation resolve via
+      _resolveCurrentLocationId, which prefers
+      World.getCurrentLocationId (semantic: explicit field, then
+      latest move, then birthplace) and falls back to
+      CharacterQueries.getCurrentLocationId (raw field only).
+    - Does not throw for a missing World.getCurrentLocationId; the
+      fallback is the documented behavior.
+    - Loads after location-commands.js in the documented HTML order.
+      The queries module does not require commands.
+    - getPopulationCount uses getAllSubLocationIds (includes self and
+      all descendants) and filters characters by resolved location.
+    - No caching; every read recomputes.
+
+  Load order:
+    After location-state.js and character-queries.js.
+    Before location-movement.js, location-view-models.js,
+    location-ui-list.js, location-presentation.js,
+    location-bootstrap.js, and the modal files.
+    Before location-hierarchy.js in the CALL-TIME ordering (the
+    hierarchy module loads before queries but resolves queries at
+    call time). Before the modals.
+
+2.5 location-movement.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-movement.js
+  Owner of: window.LocationMovement.
+
+  Scope:
+    - Movement validation (canMoveTo, validateMoveSequence).
+    - Travel restrictions (getTravelRestrictions).
+    - Travel time estimation (getTravelTime).
+    - Move statistics (getYearsBetweenMoves,
+      getAverageMoveFrequency, getMostFrequentDestination).
+
+  Exports:
+    MIN_TRAVEL_AGE,
+    canMoveTo, validateMoveSequence,
+    isLocationAccessible, getTravelRestrictions,
+    getTravelTime,
+    getYearsBetweenMoves, getAverageMoveFrequency,
+    getMostFrequentDestination.
+
+  Contracts:
+    - Does not mutate. Mutation goes through LocationCommands.
+    - Uses window.getCurrentYear and window.calculateAge from
+      time.js. The deprecated getCurrentYearSafe alias is not used.
+    - CharacterQueries.getAgeAt does not exist; age-at-year is
+      resolved via window.calculateAge directly. See the header's
+      note.
+    - RankQueries.getRank is the canonical method (not getRankById).
+      Call-time optional; when absent, the noble-status warning is
+      skipped.
+
+  Load order:
+    After location-state.js, location-queries.js,
+    location-hierarchy.js, character-queries.js, time.js.
+    Before location-view-models.js, location-bootstrap.js. Also
+    before any modal that renders travel restrictions.
+
+2.6 location-view-models.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-view-models.js
+  Owner of: window.LocationViewModels.
+
+  Scope:
+    - Render-ready projections of domain query results.
+    - The ONLY place in the location domain that fabricates a
+      display default ((unnamed), (unknown location), etc.).
+    - Filtering, tree construction, hierarchy rows, move rows,
+      location cards, single-move model, bulk-move model, move-
+      history model.
+
+  Exports:
+    displayName, formatPopulation,
+    buildLocationTree, buildHierarchyRows, buildMoveRows,
+    buildLocationCard,
+    buildMoveCharacterModel, buildBulkMoveModel,
+    buildMoveHistoryModel.
+
+  Contracts:
+    - Reads via LocationQueries, LocationHierarchy,
+      LocationMovement, CharacterQueries, time.js.
+    - Does not mutate, does not touch DOM, does not call Commands.
+    - Current-location resolution in buildMoveCharacterModel and
+      buildBulkMoveModel uses LocationQueries.getCurrentLocationId
+      (semantic). CharacterQueries.getCharactersAtLocation is no
+      longer required at load; enumeration uses
+      CharacterQueries.getAllCharacters plus
+      LocationQueries.getCurrentLocationId.
+    - resolveCultureLabel returns null when CultureQueries is
+      absent; it does not fabricate a label. Callers decide what to
+      render.
+    - Uses window.getCurrentYear, not the deprecated alias.
+
+  Load order:
+    After location-queries.js, location-hierarchy.js,
+    location-movement.js, character-queries.js, time.js.
+    Before location-ui-list.js, the modal files, and
+    location-bootstrap.js.
+
+2.7 location-ui-state.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-ui-state.js
+  Owner of: window.LocationUIState.
+
+  Scope:
+    - Transient UI state for the location views: expansion,
+      selection, view mode, filters.
+    - Persists the expansion map to localStorage under the
+      canonical key (LOCAL_STORAGE_KEYS.LOCATION_TREE_STATE,
+      fallback literal 'location_tree_expanded').
+
+  Exports:
+    subscribe, reset,
+    isExpanded, setExpanded, toggleExpanded, expandAll,
+    collapseAll,
+    getSelectedLocationId, setSelectedLocationId,
+    setSelectedPlace, hasSelectedPlace,
+    getViewMode, setViewMode,
+    getFilters, setFilters,
+    selectedPlaceId get/set, currentPlaceId get/set,
+    collapsedNodes get/set.
+
+  Contracts:
+    - No dependency on LocationState or LocationCommands. This is
+      the module's whole point: transient state independent of the
+      domain.
+    - Compatibility surface preserved for js/core/state.js:
+      selectedPlaceId, currentPlaceId, collapsedNodes,
+      setSelectedPlace, hasSelectedPlace, reset.
+    - reset() clears in-memory state AND removes the persisted
+      expansion key from localStorage. Same contract as the previous
+      core module's reset(), extended to also remove the persisted
+      key.
+    - collapsedNodes semantics: reading returns keys that are NOT
+      expanded; writing removes the keys mentioned (as true) from
+      the expanded map, leaving unmentioned keys untouched.
+    - No emoji, no icons; this module produces no HTML.
+
+  Load order:
+    Any time after constants.js (soft). Does not depend on any other
+    location file.
+    Before location-ui-list.js and js/core/state.js.
+
+2.8 location-ui-list.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-ui-list.js
+  Owner of: window.LocationUI.
+
+  Scope:
+    - Renders prepared ViewModels (LocationViewModels).
+    - Tree rendering, hierarchy list, move list, location card.
+    - Expand-all / collapse-all controls.
+    - Delegated click handling for tree toggles and row selection.
+
+  Exports:
+    renderLocationList, renderHierarchyList, renderMoveList,
+    renderLocationCard, expandAll, collapseAll.
+
+  Contracts:
+    - No domain reads; the module only consumes
+      LocationViewModels.build* results and LocationUIState.
+    - No inline styles; classes only.
+    - Icons are read from window.Icons[name] directly. Unknown names
+      throw. The prior getIcon fallback (Icons.CIRCLE) is removed;
+      a wrong icon name is a programming error, not a UI state.
+    - Uses TRIANGLE_DOWN and ARROW_RIGHT for toggle icons; both
+      exist in icons.js. The prior CHEVRON_* names did not exist and
+      silently fell back to CIRCLE.
+    - Delegated click handler bound once per container. Subsequent
+      renders reuse the handler.
+    - escapeHtml falls back to a local implementation when
+      formatting.js is absent (bare test harness). In production,
+      formatting.js is loaded.
+
+  Load order:
+    After location-view-models.js, location-ui-state.js, icons.js.
+    Before any caller that renders the tree, hierarchy list, or move
+    list. Before the modal files (they consume the same view-model
+    layer, not LocationUI directly).
+
+2.9 location-presentation.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-presentation.js
+  Owner of: window.LocationPresentation.
+
+  Scope:
+    - Thin formatting helpers producing plain strings.
+    - Display labels for places, countries, hierarchies, and
+      grouping.
+
+  Exports:
+    getPlaceLabel, getCountryLabel, getHierarchyDisplay,
+    getGroupingLabel.
+
+  Contracts:
+    - No domain resolution. No fallback strings invented for missing
+      places; getPlaceLabel returns null for a missing place. The
+      fallback ('Other Locations') is a presentation decision, not a
+      domain fallback.
+    - Does NOT escape. Callers are responsible for HTML escaping.
+    - Load-time depends on LocationQueries (for getPlaceHierarchy in
+      getGroupingLabel).
+
+  Load order:
+    After location-queries.js. Before any caller that needs display
+    strings for grouping labels. Independent of the modal files.
+
+2.10 modals-location-helper.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/modals-location-helper.js
+  Owner of: window.LocationModals.{escapeHtml, toast, close,
+            runCommand} (additive — modals-location.js also installs
+            its own entry points on the same namespace).
+
+  Scope:
+    - Shared helpers for modals-location.js and modals-moves.js.
+    - escapeHtml: prefers formatting.js, falls back to a local
+      implementation.
+    - toast: calls window.showToast if present, no-op otherwise.
+    - close: calls window.closeTopModal if present, no-op otherwise.
+    - runCommand(commandFn, onSuccess, options): invokes commandFn,
+      persists via LocationCommands.persist() on success, toasts on
+      failure, closes the modal unless options.keepOpen.
+
+  Exports:
+    escapeHtml, toast, close, runCommand (installed on the
+    window.LocationModals namespace).
+
+  Contracts:
+    - The ONLY hard dependency is LocationCommands.persist. The
+      load-time guard throws if window.LocationCommands or its
+      persist method is missing.
+    - escapeHtml, toast, and close are soft: the modals continue
+      to work in a bare test harness that lacks formatting.js or
+      ui.js.
+    - runCommand NEVER reports success unless BOTH the command and
+      persist succeeded. A throw in either is toasted and returns
+      false.
+    - A throw in onSuccess is logged and swallowed; the modal has
+      already closed. onSuccess is a notification, not a step in
+      the close sequence.
+
+  Load order:
+    After location-commands.js. Before modals-location.js and
+    modals-moves.js.
+
+2.11 modals-location.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/modals-location.js
+  Owner of: window.LocationModals entry points and flat window.open*
+            aliases.
+
+  Scope:
+    - UI form orchestration for place and location-type CRUD.
+    - openAddPlaceModal, openEditPlaceModal, openDeletePlaceModal,
+      openViewHierarchyModal,
+      openAddLocationTypeModal, openEditLocationTypeModal,
+      openDeleteLocationTypeModal.
+
+  Contracts:
+    - Every write path calls LocationCommands.<command>() then, on
+      success, LocationCommands.persist() once via runCommand.
+    - Modal callback inputs: every onConfirm receives the modal DOM
+      element as its parameter. Input reads are scoped to
+      root.querySelector('.<form-class>').
+    - Form classes: .location-form (add/edit place),
+      .location-delete-form (delete place), .location-type-form
+      (add/edit type), .location-type-delete (delete type).
+    - No inline styles.
+    - Confirm and cancel buttons are plain text. Icons appear only
+      inside content when needed.
+    - Delegated click handler for the hierarchy-modal selection list
+      is wired synchronously in onMount, scoped to the modal root.
+    - HARD load-time deps: LocationViewModels, LocationQueries,
+      LocationCommands, modals-core.js (openModal),
+      modals-location-helper.js (window.LocationModals.
+      escapeHtml/toast/close/runCommand).
+
+  Load order:
+    After location-view-models.js, location-queries.js,
+    location-commands.js, modals-core.js,
+    modals-location-helper.js.
+
+2.12 modals-moves.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/modals-moves.js
+  Owner of: window.MovesModals and flat window.open* aliases.
+
+  Scope:
+    - UI form orchestration for movement.
+    - openMoveCharacterModal, openBulkMoveModal,
+      openMoveHistoryModal.
+
+  Contracts:
+    - Same persist contract as modals-location.js: runCommand from
+      modals-location-helper.js.
+    - Modal callback inputs scoped to root.querySelector.
+    - Form classes: .move-form (single move), .bulk-move-form (bulk
+      move). Move history has no form class; it is read-only.
+    - Bulk-move wiring is synchronous in onMount, scoped to the
+      modal root. The character list uses delegated events so
+      re-rendering does not stack listeners. Two open bulk-move
+      modals are fully independent.
+    - _close is NOT aliased in this file. Every close path goes
+      through _runCommand's internal close() call.
+    - HARD load-time deps: LocationViewModels, LocationCommands,
+      modals-core.js (openModal), modals-location-helper.js
+      (window.LocationModals.escapeHtml/toast/close/runCommand).
+
+  Load order:
+    After location-view-models.js, location-commands.js,
+    modals-core.js, modals-location-helper.js.
+
+2.13 location-bootstrap.js
+--------------------------------------------------------------------------------
+
+  Location: js/location/location-bootstrap.js
+  Owner of: window.LocationBootstrap and window.Location (the domain
+            namespace).
+
+  Scope:
+    - Load-time verification of every required module, global, and
+      cross-domain method.
+    - Canonical data shape verification.
+    - Hydration of LocationState indexes from canonical data.
+    - Exposure of window.Location as the domain namespace
+      ({ state, commands, queries, hierarchy, movement }).
+    - Idempotent init().
+
+  Exports:
+    window.LocationBootstrap.init,
+    window.Location (installed by init).
+
+  Contracts:
+    - Does NOT register lifecycle hooks. Direct dispatch model.
+    - Does NOT flush storage. Persistence is LocationCommands.persist.
+    - Does NOT mutate canonical data. Hydration only.
+    - Verifies the following at init (all LOAD-TIME guards):
+        - generateId, markDataDirty, saveMasterData, getCurrentYear,
+          calculateAge (globals),
+        - LocationState, LocationCommands, LocationQueries,
+          LocationHierarchy, LocationMovement (modules),
+        - CharacterCommands.updateCharacters,
+          CharacterCommands.updateCharacterFields,
+          CharacterQueries.getAllCharacters,
+          CharacterQueries.getCharacterById,
+          CharacterQueries.getCurrentLocationId,
+          CharacterQueries.getMoveHistory,
+          getCurrentLocationId (World) — cross-domain surface,
+        - masterData.data.places (array), masterData.data.locationTypes
+          (array) — canonical data shape,
+        - Icons, getIcon, openModal, closeTopModal, escapeHtml,
+          showToast — UI dependencies,
+        - Full LocationState surface (hydrateFromMasterData + every
+          read and primitive),
+        - Full LocationCommands surface (persist + every command,
+          including updatePlaceCulture and handleCharacterDeath),
+        - Full LocationQueries surface,
+        - Full LocationHierarchy surface,
+        - Full LocationMovement surface.
+    - init() is idempotent. Re-invocation re-hydrates and returns
+      { success: true, alreadyInitialized: true }.
+    - Auto-runs init() at load if window.masterData is already
+      present. Logs errors but does not throw (the auto path is
+      best-effort; the caller can invoke init() explicitly).
+
+  Load order:
+    LAST in the location script group.
+    After every other location module plus every core and character
+    dependency above.
+    After initializeStorage() has been called.
+
+
+================================================================================
+PART 3 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks (which throw if a dependency is not
+      loaded),
+  (b) call-time window.X lookups in code,
+  (c) the location-bootstrap.js verification list,
+  (d) location-commands.js's own load-time guards,
+  (e) the documented core and character load order (see
+      stillwaters-docs.txt and stillwaters-character-docs.txt),
+  (f) location-docs.txt's own load-order section, extended for
+      cross-domain dependencies that doc does not cover.
+
+The groups below are ordered. Each group depends on the ones before
+it. Groups L0..L9 are the location subsystem. Groups C0..C3 and R0..R3
+are the core and character prerequisites.
+
+--------------------------------------------------------------------------------
+GROUP C0 — CORE FILES REQUIRED BY THE LOCATION SUBSYSTEM
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/location-constants.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/time.js
+  js/core/randomness.js
+  js/core/storage.js
+
+  Rationale per file:
+    - constants.js: soft dependency via location-ui-state.js's
+      LOCAL_STORAGE_KEYS lookup. The module falls back to the literal
+      when constants.js is absent. Loading it first gives every
+      module the canonical key names.
+    - location-constants.js: the LOCATION_LEVELS table. Not directly
+      read by location files, but part of the same constants
+      bootstrap and required by other domains.
+    - formatting.js: escapeHtml, consumed by location-ui-list.js,
+      modals-location-helper.js, and every modal via the helper's
+      fallback.
+    - icons.js: window.Icons, required at load time by
+      location-ui-list.js and by location-bootstrap.js's UI
+      dependency check.
+    - collections.js: deepClone, required at load time by
+      location-state.js.
+    - ids.js: generateId, required at load time by
+      location-commands.js.
+    - time.js: getCurrentYear, calculateAge, required at load time
+      by location-commands.js, location-movement.js,
+      location-view-models.js.
+    - randomness.js: not used directly by location files. Included
+      because it is loaded in every production bootstrap alongside
+      time.js and the character subsystem requires it. Including it
+      here keeps the location-subsystem dependency list
+      self-consistent with the documented overall load order.
+    - storage.js: masterData, markDataDirty, saveMasterData,
+      getLastSaveError, initializeStorage. Required at load time by
+      location-state.js (markDataDirty) and location-commands.js
+      (markDataDirty, saveMasterData, getLastSaveError).
+
+  BOOTSTRAP CALL:
+    After storage.js is loaded and before any location file loads,
+    the application MUST invoke window.initializeStorage(). This
+    populates window.masterData, which location-state.js and
+    location-bootstrap.js check for.
+
+  If initializeStorage() is not called before location-state.js
+  loads, location-state.js's load-time dependency guards pass
+  (markDataDirty and deepClone are present) but its first call to
+  hydrateFromMasterData throws "masterData.data.places is not
+  available." The location-bootstrap.js auto-init also throws on its
+  canonical-data check. Order:
+    storage.js  →  initializeStorage()  →  location-state.js
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE FILES THE LOCATION SUBSYSTEM LOADS FOR CALL-TIME USE
+--------------------------------------------------------------------------------
+
+  js/core/accessors.js
+  js/core/modals-core.js
+  js/core/ui.js
+  js/core/world.js
+
+  Rationale:
+    - accessors.js: window.invalidateAccessorCaches, called by
+      location-state.js at every mutation and every hydration.
+      Call-time only (typeof guard), but load it before the location
+      state module for cleanliness.
+    - modals-core.js: openModal and closeTopModal, required at load
+      time by modals-location.js and modals-moves.js. Loaded here so
+      the modal files' load-time guards pass.
+    - ui.js: showToast, used by modals-location-helper.js (soft) and
+      verified by location-bootstrap.js's UI dependency check.
+    - world.js: getCurrentLocationId, used by location-queries.js
+      and location-commands.js as the semantic current-location
+      resolver. Verified by location-bootstrap.js's cross-domain
+      check.
+
+  Note: the location subsystem does not depend on the following
+  core files and they need not be loaded on a location-only page:
+    js/core/constants/age-constants.js
+    js/core/constants/character-constants.js
+    js/core/constants/character-traits.js
+    js/core/constants/relationship-constants.js
+    js/core/exportUtils.js
+    js/core/integrity.js
+    js/core/maintenance.js
+    js/core/names.js
+    js/core/responsive.js
+    js/core/simulation-generators.js
+    js/core/collapsible.js
+    js/core/tab-manager.js
+    js/core/ui-state.js
+    js/core/validation.js
+  Load them if your page needs them for other reasons; they are not
+  required by the location subsystem.
+
+--------------------------------------------------------------------------------
+GROUP R1 — CHARACTER FILES REQUIRED BY THE LOCATION SUBSYSTEM
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  Rationale:
+    - character-state.js is the canonical collection every other
+      character module reads.
+    - character-commands.js exports CharacterCommands.
+      updateCharacterFields and CharacterCommands.updateCharacters,
+      both required at load time by location-commands.js.
+    - character-queries.js exports CharacterQueries.
+      getAllCharacters, .getCharacterById, .getCurrentLocationId,
+      .getMoveHistory, all required at load time by
+      location-commands.js, location-queries.js,
+      location-movement.js, location-view-models.js.
+
+  character-state.js itself requires accessors.js
+  (getCharacters) at load, so Group C1 must precede this group.
+
+--------------------------------------------------------------------------------
+GROUP R2 — CHARACTER FILES THAT MAY REGISTER DEATH HANDLERS BEFORE
+            LOCATION-COMMANDS LOADS
+--------------------------------------------------------------------------------
+
+  js/character/character-lifecycle.js
+
+  Rationale:
+    - location-commands.js's DEATH HANDLER REGISTRATION block calls
+      window.registerDeathHandler at load time to register
+      LocationCommands.handleCharacterDeath.
+    - window.registerDeathHandler is installed by
+      character-lifecycle.js at ITS load time.
+    - Under the documented load order,
+      character-lifecycle.js loads BEFORE location-commands.js.
+      That is the only ordering in which the registration succeeds.
+    - If character-lifecycle.js is not loaded before
+      location-commands.js, the registration is skipped with a debug
+      log, and the caller must wire LocationCommands.
+      handleCharacterDeath manually.
+
+  character-lifecycle.js requires:
+    - character-state.js
+    - character-commands.js
+    - mortality-rules.js (js/character/mortality-rules.js)
+    - time.js (getCurrentYear, isValidYear)
+    - randomness.js (window.random)
+
+  If you load character-lifecycle.js, you must also load
+  mortality-rules.js. character-lifecycle.js throws at load without
+  it. Because the location subsystem does not require
+  character-lifecycle.js for its own operation (the death handler
+  registration is best-effort), you may skip this entire group if you
+  do not intend to register the leader-cleanup death handler. The
+  location subsystem still works; the caller wires
+  handleCharacterDeath itself if they want leader cleanup.
+
+  Under the FULL documented load order (with the whole character
+  subsystem present), the full character block loads:
+    character-state.js → character-commands.js → character-queries.js
+    → mortality-rules.js → character-lifecycle.js.
+
+--------------------------------------------------------------------------------
+GROUP H1 — HOUSEHOLD FILES USED BY LOCATION-COMMANDS (CALL-TIME ONLY)
+--------------------------------------------------------------------------------
+
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-queries.js
+  js/households/household-commands.js
+
+  Rationale:
+    - location-commands.js optionally calls HouseholdCommands.
+      clearLocationReferences in deletePlace's household cleanup
+      step. This is a CALL-TIME lookup via _householdCommands(),
+      which returns the module or null.
+    - If HouseholdCommands is absent, the location subsystem still
+      works: deletePlace's result reports
+      householdReconciliation.status === 'unavailable', and the
+      delete proceeds.
+    - Loading household-commands.js requires the household domain
+      to be present (household-state, household-rules,
+      household-queries). That is the domain's own load order, not
+      the location domain's. Load them here only if your page needs
+      household cascade cleanup on place delete.
+
+  Skip this group if your page does not load the household domain.
+
+--------------------------------------------------------------------------------
+GROUP CU1 — CULTURE FILES USED BY LOCATION-COMMANDS AND VIEW MODELS
+            (CALL-TIME ONLY)
+--------------------------------------------------------------------------------
+
+  js/culture/culture-queries.js
+    (and its own dependencies: culture-constants.js,
+    culture-state.js, at minimum)
+
+  Rationale:
+    - location-commands.js (createPlace, updatePlaceCulture) and
+      location-view-models.js (resolveCultureLabel) call
+      CultureQueries.getCulture at call time, guarded by typeof
+      checks.
+    - If CultureQueries is absent, the commands return structured
+      failures ("CultureQueries required to assign a culture") and
+      resolveCultureLabel returns null. The location subsystem still
+      works, but you cannot assign a culture to a place.
+    - CultureQueries requires its own dependencies (culture-
+      constants, culture-state, etc.). Load the culture domain per
+      its own load order.
+
+  Skip this group if your page does not use culture assignment.
+
+--------------------------------------------------------------------------------
+GROUP L1 — LOCATION STATE
+--------------------------------------------------------------------------------
+
+  js/location/location-state.js
+
+  Rationale:
+    - Requires storage.js (markDataDirty) and collections.js
+      (deepClone) at load time.
+    - Calls window.invalidateAccessorCaches at mutation time and at
+      hydration time (call-time; guarded by typeof).
+    - Owns window.LocationState. The collision guard throws if
+      window.LocationState is already installed by another module
+      without hydrateFromMasterData.
+    - Must load before location-hierarchy.js,
+      location-commands.js, location-queries.js,
+      location-movement.js, location-view-models.js,
+      location-bootstrap.js.
+
+  Precondition: initializeStorage() has run, so window.masterData
+  exists. The module does not hydrate at load; it awaits the
+  bootstrap's call to hydrateFromMasterData or an explicit
+  LocationBootstrap.init(). But the state module's own load-time
+  guards do not check masterData; the load itself succeeds.
+
+--------------------------------------------------------------------------------
+GROUP L2 — LOCATION HIERARCHY
+--------------------------------------------------------------------------------
+
+  js/location/location-hierarchy.js
+
+  Rationale:
+    - Requires location-state.js at load time.
+    - LocationQueries is a CALL-TIME dependency: the module loads
+      without it, and every function that reaches into
+      LocationQueries calls _requireQueries() first.
+    - Must load before location-commands.js (which requires
+      LocationHierarchy.validateHierarchy at load), location-
+      movement.js, location-view-models.js,
+      location-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP L3 — LOCATION COMMANDS
+--------------------------------------------------------------------------------
+
+  js/location/location-commands.js
+
+  Rationale:
+    - Requires at load time: location-state.js,
+      location-hierarchy.js, character-commands.js,
+      character-queries.js, time.js, ids.js, storage.js
+      (markDataDirty, saveMasterData, getLastSaveError).
+    - batch character update (CharacterCommands.updateCharacters)
+      is verified at load if present; a warning is logged and a
+      per-character fallback path is used if absent. Under the full
+      documented character load order, it is present.
+    - Registers its death handler via window.registerDeathHandler at
+      load time if that function exists. Under the documented load
+      order, character-lifecycle.js loads before this file (Group
+      R2), so the registration succeeds.
+    - Must load before location-queries.js, location-movement.js,
+      location-view-models.js, modals-location-helper.js,
+      modals-location.js, modals-moves.js, location-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP L4 — LOCATION QUERIES
+--------------------------------------------------------------------------------
+
+  js/location/location-queries.js
+
+  Rationale:
+    - Requires location-state.js and character-queries.js at load
+      time.
+    - Loads AFTER location-commands.js in the documented HTML order
+      (this is the reverse of the load-time dependency, which does
+      not exist — location-commands.js does not require
+      LocationQueries at load).
+    - Prefers World.getCurrentLocationId at call time for
+      current-location resolution; falls back to
+      CharacterQueries.getCurrentLocationId.
+    - Must load before location-movement.js,
+      location-view-models.js, location-ui-list.js,
+      location-presentation.js, modals-location.js, modals-moves.js
+      (the modal files require view-models and commands, not
+      queries directly, but location-view-models requires queries),
+      location-bootstrap.js.
+
+  Note: location-hierarchy.js loads before this file, but resolves
+  LocationQueries at call time. That is not a contradiction; the
+  HTML order reflects the load-time dependency graph, not the
+  call-time one.
+
+--------------------------------------------------------------------------------
+GROUP L5 — LOCATION MOVEMENT AND VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/location/location-movement.js
+  js/location/location-view-models.js
+
+  Rationale:
+    - location-movement.js requires location-state.js,
+      location-queries.js, location-hierarchy.js,
+      character-queries.js, time.js.
+    - location-view-models.js requires location-queries.js,
+      location-hierarchy.js, location-movement.js,
+      character-queries.js, time.js.
+    - Both load before location-ui-list.js, the modal files, and
+      location-bootstrap.js.
+    - Load order between these two is unimportant; both depend on
+      the same upstream stack.
+
+--------------------------------------------------------------------------------
+GROUP L6 — LOCATION UI STATE
+--------------------------------------------------------------------------------
+
+  js/location/location-ui-state.js
+
+  Rationale:
+    - Owns window.LocationUIState.
+    - Reads LOCAL_STORAGE_KEYS.LOCATION_TREE_STATE (soft dependency
+      on constants.js; falls back to the literal).
+    - No other location file is required; and it does not depend on
+      state, queries, commands, or view models.
+    - Must load before location-ui-list.js (load-time guard) and
+      before js/core/state.js (which requires it per its own
+      header; the location subsystem itself does not care).
+
+--------------------------------------------------------------------------------
+GROUP L7 — LOCATION UI LIST AND PRESENTATION
+--------------------------------------------------------------------------------
+
+  js/location/location-ui-list.js
+  js/location/location-presentation.js
+
+  Rationale:
+    - location-ui-list.js requires location-view-models.js,
+      location-ui-state.js, icons.js (window.Icons), and
+      formatting.js (soft escapeHtml fallback).
+    - location-presentation.js requires location-queries.js.
+    - Both load before the modal files (though the modals do not
+      require them at load — the modals require view-models and
+      commands, not LocationUI or LocationPresentation).
+    - Order between them does not matter.
+
+--------------------------------------------------------------------------------
+GROUP L8 — LOCATION MODAL HELPER AND MODALS
+--------------------------------------------------------------------------------
+
+  js/location/modals-location-helper.js
+  js/location/modals-location.js
+  js/location/modals-moves.js
+
+  Rationale:
+    - modals-location-helper.js requires location-commands.js
+      (persist) at load time. Load it first in this group.
+    - modals-location.js requires location-view-models.js,
+      location-queries.js, location-commands.js, modals-core.js
+      (openModal), modals-location-helper.js (window.LocationModals
+      helper surface). Load it after the helper.
+    - modals-moves.js requires location-view-models.js,
+      location-commands.js, modals-core.js (openModal),
+      modals-location-helper.js. Load it after the helper.
+    - Order between modals-location.js and modals-moves.js does not
+      matter.
+    - All three install on the same window.LocationModals namespace;
+      modals-location-helper.js creates the namespace,
+      modals-location.js adds entry points and flat aliases.
+
+--------------------------------------------------------------------------------
+GROUP L9 — LOCATION BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/location/location-bootstrap.js
+
+  Rationale:
+    - Verifies every module, method, global, and canonical-data
+      surface that the location subsystem needs.
+    - Loads LAST in the location script group.
+    - Auto-runs init() if window.masterData is present at load time.
+      Otherwise the caller invokes window.LocationBootstrap.init()
+      after initializeStorage() has run.
+
+--------------------------------------------------------------------------------
+GROUP A1 — APPLICATION BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  Between Group L0 and Group L1, the application must call:
+    window.initializeStorage();
+
+  After Group L9, if the bootstrap auto-init did not run (because
+  masterData was not yet installed), the caller invokes:
+    window.LocationBootstrap.init();
+
+  After LocationBootstrap.init() returns, window.Location is
+  available as the domain namespace:
+    window.Location.state     → LocationState
+    window.Location.commands  → LocationCommands
+    window.Location.queries   → LocationQueries
+    window.Location.hierarchy → LocationHierarchy
+    window.Location.movement  → LocationMovement
+
+
+================================================================================
+PART 4 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list. Group comments are inline. Bootstrap calls are
+marked "(function call)" — they are invocations, not script loads.
+
+  — Group C0: core prerequisites —
+  js/core/constants/constants.js
+  js/core/constants/location-constants.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/time.js
+  js/core/randomness.js
+  js/core/storage.js
+
+  — Group C0 bootstrap call —
+  initializeStorage()      (function call)
+
+  — Group C1: additional core prerequisites —
+  js/core/accessors.js
+  js/core/modals-core.js
+  js/core/ui.js
+  js/core/world.js
+
+  — Group R1: character prerequisites —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  — Group R2: character lifecycle (optional — see notes) —
+  js/character/mortality-rules.js
+  js/character/character-lifecycle.js
+
+  — Group H1: household (optional — see notes) —
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-queries.js
+  js/households/household-commands.js
+
+  — Group CU1: culture (optional — see notes) —
+  js/culture/culture-constants.js
+  js/culture/culture-state.js
+  js/culture/culture-queries.js
+
+  — Group L1: location state —
+  js/location/location-state.js
+
+  — Group L2: location hierarchy —
+  js/location/location-hierarchy.js
+
+  — Group L3: location commands —
+  js/location/location-commands.js
+
+  — Group L4: location queries —
+  js/location/location-queries.js
+
+  — Group L5: movement and view models —
+  js/location/location-movement.js
+  js/location/location-view-models.js
+
+  — Group L6: location UI state —
+  js/location/location-ui-state.js
+
+  — Group L7: location UI list and presentation —
+  js/location/location-ui-list.js
+  js/location/location-presentation.js
+
+  — Group L8: location modals —
+  js/location/modals-location-helper.js
+  js/location/modals-location.js
+  js/location/modals-moves.js
+
+  — Group L9: location bootstrap —
+  js/location/location-bootstrap.js
+
+  — Group A1: application bootstrap (function calls) —
+  window.LocationBootstrap.init()      (function call, if not
+                                        auto-invoked by the bootstrap)
+
+
+================================================================================
+PART 5 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1. constants.js before location-ui-state.js.
+    Failure without it: none (soft fallback to the literal storage
+    key). Loading it first gives the canonical key.
+
+ 2. storage.js and a successful initializeStorage() call before
+    location-state.js.
+    Failure without it: location-state.js's load-time guard passes
+    (markDataDirty exists), but its first hydrateFromMasterData call
+    throws "masterData.data.places is not available."
+
+ 3. collections.js before location-state.js.
+    Failure without it: location-state.js throws at load ("deepClone
+    missing"). The prior local fallback (one-level shallow clone) is
+    removed deliberately; deep-clone correctness is not optional.
+
+ 4. icons.js before location-ui-list.js.
+    Failure without it: location-ui-list.js throws at load ("Icons
+    missing").
+
+ 5. formatting.js, icons.js, modals-core.js before
+    modals-location.js and modals-moves.js (via the helper's soft
+    fallbacks for formatting.js; hard for modals-core.js).
+    Failure without modals-core.js: the modal files throw at load
+    ("openModal missing").
+
+ 6. time.js before location-commands.js, location-movement.js,
+    location-view-models.js.
+    Failure without it: each throws at load ("getCurrentYear
+    missing").
+
+ 7. ids.js before location-commands.js.
+    Failure without it: location-commands.js throws at load
+    ("generateId missing").
+
+ 8. accessors.js before location-state.js.
+    Failure without it: the load-time guard passes (accessors.js is
+    not required at load), but every mutation calls
+    window.invalidateAccessorCaches (typeof-guarded). The accessor
+    cache (getPlaceById / getLocationTypeById) stays stale after
+    every location write, and downstream readers see the
+    pre-mutation shape.
+
+ 9. world.js before location-queries.js and location-commands.js.
+    Failure without it: the semantic current-location resolver is
+    unavailable; the two modules fall back to the raw-field
+    resolver (CharacterQueries.getCurrentLocationId) and under-count
+    populations and miss characters placed via moves. Not a
+    load-time throw, but a correctness regression. Verified at
+    bootstrap time by _verifyCrossDomain.
+
+10. character-state.js, character-commands.js, character-queries.js
+    before location-commands.js, location-queries.js,
+    location-movement.js, location-view-models.js.
+    Failure without them: each location file throws at load
+    ("CharacterCommands.updateCharacterFields missing", etc.).
+
+11. character-lifecycle.js before location-commands.js (for the
+    death handler registration).
+    Failure without it: location-commands.js's death handler
+    registration block is skipped with a debug log; the caller must
+    wire LocationCommands.handleCharacterDeath manually. Not a load-
+    time throw.
+
+12. mortality-rules.js before character-lifecycle.js.
+    Failure without it: character-lifecycle.js throws at load
+    ("MortalityRules missing"). Only relevant if you load
+    character-lifecycle.js.
+
+13. location-state.js before location-hierarchy.js.
+    Failure without it: location-hierarchy.js throws at load.
+
+14. location-state.js, location-queries.js, location-hierarchy.js,
+    character-queries.js, time.js before location-movement.js.
+    Failure without them: location-movement.js throws at load.
+
+15. location-hierarchy.js before location-commands.js.
+    Failure without it: location-commands.js throws at load
+    ("LocationHierarchy missing").
+
+16. location-queries.js before location-view-models.js.
+    Failure without it: location-view-models.js throws at load.
+
+17. location-view-models.js, location-ui-state.js, icons.js before
+    location-ui-list.js.
+    Failure without them: location-ui-list.js throws at load.
+
+18. location-commands.js before modals-location-helper.js.
+    Failure without it: modals-location-helper.js throws at load
+    ("LocationCommands missing").
+
+19. modals-location-helper.js before modals-location.js and
+    modals-moves.js.
+    Failure without it: both modal files throw at load
+    ("window.LocationModals.escapeHtml/toast/close/runCommand
+    missing").
+
+20. location-commands.js before LocationCommands.persist is called
+    by any modal's runCommand.
+    Failure without it: this is a runtime call, not a load-time
+    check. The location-bootstrap.js cross-domain verification also
+    checks LocationCommands.persist's existence at init time.
+
+21. location-bootstrap.js loads LAST in the location script group.
+    Failure without it: the bootstrap's verification pass runs
+    against an incomplete surface and throws. Under the documented
+    load order, every module is present by the time the bootstrap
+    loads.
+
+22. location-queries.js loads AFTER location-commands.js in the HTML
+    order (the commands module does not require queries at load).
+    This is the documented HTML ordering. Do not reorder to
+    commands-before-queries; the reverse is what the
+    location-hierarchy.js header documents.
+
+    Actually — re-reading: the location-hierarchy header documents
+    the order as `state → hierarchy → commands → queries`. That is
+    the HTML order. location-commands.js does not require
+    LocationQueries at load. location-hierarchy.js resolves
+    LocationQueries at call time. So the canonical order is
+    state → hierarchy → commands → queries. The HTML order in this
+    document matches.
+
+23. No dependencies flow FROM core INTO the location subsystem. The
+    location domain depends on core (and character and household and
+    culture), but no core module depends on location files. js/core/
+    state.js requires LocationUIState (which is a location file), but
+    that dependency is state.js → location-ui-state.js, not the
+    reverse; the location subsystem does not require state.js.
+
+
+================================================================================
+PART 6 — KNOWN HAZARDS
+================================================================================
+
+ 1. initializeStorage() must run BEFORE location-state.js. Not just
+    storage.js — the function call. location-state.js loads fine
+    with storage.js present but masterData absent; the failure
+    surfaces on the first hydrateFromMasterData, which the bootstrap
+    calls. If your bootstrap loads the location files but forgets
+    the initializeStorage() call, LocationBootstrap.init() throws
+    "masterData.data.places is not available."
+
+ 2. deepClone is a HARD dependency of location-state.js. The prior
+    fallback was one-level shallow for nested objects, which
+    allowed a caller to corrupt canonical data through a public
+    read. Do not reintroduce a fallback. See CLONE STRATEGY in the
+    module header.
+
+ 3. The current-location resolver is overloaded.
+    window.getCurrentLocationId returns a string only when world.js
+    is loaded. In a reduced environment it returns whatever
+    CharacterQueries.getCurrentLocationId returns (also a string),
+    or a function from character-queries.js that takes a character
+    id — the two functions have different signatures. The location
+    subsystem resolves this by calling _resolveCurrentLocationId,
+    which prefers World.getCurrentLocationId(character) and falls
+    back to CharacterQueries.getCurrentLocationId(character.id). Do
+    not call window.getCurrentLocationId directly from location
+    code; go through _resolveCurrentLocationId.
+
+ 4. Cross-tab reload. location-state.js listens for
+    masterDataUpdated and re-hydrates. storage.js invalidates the
+    accessor cache before dispatching, and location-state.js also
+    invalidates at hydration. Redundant but harmless, and defense
+    in depth. A reload that corrupts canonical data is logged and
+    the prior indexes are preserved (last-known-good). See MASTER
+    DATA RELOAD in the location-state header.
+
+ 5. Death handler registration. location-commands.js registers
+    LocationCommands.handleCharacterDeath via
+    window.registerDeathHandler at load. Under the documented load
+    order, character-lifecycle.js loads before location-commands.js
+    and the registration succeeds. If character-lifecycle.js is
+    missing (reduced environment), the registration block is skipped
+    with a debug log, and the caller must wire the death hook
+    manually. Do not add a load-time dependency on
+    character-lifecycle.js from location-commands.js; the
+    registration path is deliberately best-effort.
+
+ 6. Household cleanup on place delete. HouseholdCommands.
+    clearLocationReferences is a CALL-TIME optional dependency.
+    Under a full application load, it is present and the delete
+    clears household.locationId. In a location-only harness, it is
+    absent and the result reports status: 'unavailable'. Do not
+    add a load-time dependency; the location subsystem must work
+    without the household domain.
+
+ 7. Culture is a call-time optional dependency. createPlace and
+    updatePlaceCulture refuse with a structured failure when
+    CultureQueries is missing; resolveCultureLabel returns null.
+    Do not fabricate a culture label from a culture id.
+
+ 8. Icon names. location-ui-list.js reads window.Icons[name]
+    directly and throws on unknown names. The prior getIcon fallback
+    (Icons.CIRCLE) masked a real bug: CHEVRON_DOWN and
+    CHEVRON_RIGHT did not exist and every toggle rendered as a
+    circle. Do not re-introduce getIcon in the toggle renderer; the
+    correct names are TRIANGLE_DOWN (expanded) and ARROW_RIGHT
+    (collapsed).
+
+ 9. getPlaceChildren(placeId, recursive) semantic. In
+    LocationQueries, recursive=true returns all descendants (no
+    self). In LocationHierarchy's getDescendantsAtPriority, it
+    walks LocationQueries.getPlaceChildren with recursive=true and
+    filters by type priority. Do not confuse the two; the
+    hierarchy module's "descendants at priority" does not include
+    the source place.
+
+10. Place or type id derivation. new place ids use
+    window.generateId('place'). new type ids use
+    window.generateId('loctype'). new leader assignment ids use
+    window.generateId('lead'). Do not fabricate ids in application
+    code.
+
+11. Leader assignment isActive semantics. The location queries
+    module's getCurrentLeader treats isActive === true as active;
+    it ALSO treats isActive === false with endYear === null/
+    undefined as active (backward compatibility with records
+    created before isActive was introduced). The
+    LocationCommands.handleCharacterDeath path sets isActive = false
+    AND endYear = <year> together, so the fallback does not affect
+    it. If you write leader assignments from your own code, set
+    isActive AND endYear together; do not rely on the fallback.
+
+12. The location domain does not own residence lifecycle.
+    deletePlace does NOT delete residence records. ResidenceSystem
+    owns residences; place deletion leaves residences in place.
+    Callers who want residence cleanup on place delete must
+    orchestrate it themselves.
+
+13. The location domain does not own character moves. Moves are
+    character-owned (character.moves array). LocationCommands.
+    recordMove and bulkRecordMoves write through
+    CharacterCommands.updateCharacterFields; LocationQueries.
+    getMoveHistory reads through CharacterQueries.getMoveHistory.
+    Do not mutate character.moves directly from location code.
+
+14. ui-state.js (core) vs location-ui-state.js. The core ui-state
+    is a generic per-panel UI store, not a location module. The
+    location domain uses its own location-ui-state.js with a
+    dedicated localStorage key. js/core/state.js reads
+    location-ui-state.js; the location subsystem does not read
+    core ui-state.js.
+
+15. state.js (core) does not own LocationState. The core state
+    facade's LocationState-like names (selectedPlaceId,
+    currentPlaceId, collapsedNodes, setSelectedPlace,
+    hasSelectedPlace, reset) are aliases to LocationUIState, not to
+    LocationState or LocationCommands. Do not reach for
+    window.selectedPlaceId expecting a domain record; you will get
+    a UI selection id (or a view of the expansion map).
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
