@@ -60,13 +60,7 @@
         <div class="tab-pane" id="tab-governmenttypes"></div>
 
         <!-- RANKS -->
-        <div class="tab-pane" id="tab-ranks">
-            <div class="empty-state">
-                <div class="icon" id="empty-ranks-icon"></div>
-                <div class="message">Rank data will appear here</div>
-                <div class="sub-message">(placeholder – coming soon)</div>
-            </div>
-        </div>
+        <div class="tab-pane" id="tab-ranks"></div>
 
         <!-- CENSUS -->
         <div class="tab-pane" id="tab-census">
@@ -133,9 +127,12 @@
                     characters: [],
                     places: [],
                     ranks: [],
+                    rankInheritanceRules: {},
                     roles: [],
                     locationTypes: [],
                     governmentTypes: [],
+                    governmentDepartments: [],
+                    governmentHistory: [],
                     households: [],
                     residences: [],
                     currentYear: 1250
@@ -159,7 +156,6 @@
 <script src="js/core/accessors.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
-<script src="js/core/state.js"></script>
 <script src="js/core/integrity.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/ui.js"></script>
@@ -178,16 +174,28 @@
 <script src="js/selectors/modals-household-selector.js"></script>
 
 <!-- ============================================================ -->
+<!-- CHARACTER PREREQUISITES (required by location + rank)         -->
+<!-- ============================================================ -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+
+<!-- ============================================================ -->
 <!-- LOCATION SYSTEM                                               -->
 <!-- ============================================================ -->
 <script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
 <script src="js/location/location-queries.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
 <script src="js/location/location-ui-list.js"></script>
+<script src="js/location/location-presentation.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
 <script src="js/location/modals-location.js"></script>
 <script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
 
 <!-- ============================================================ -->
 <!-- LOCATION TYPE MANAGER                                         -->
@@ -195,59 +203,47 @@
 <script src="js/tabs/location-type-manager-tab.js"></script>
 
 <!-- ============================================================ -->
-<!-- GOVERNMENT SYSTEM                                             -->
-<!-- ============================================================ -->
-<script src="js/government/government-state.js"></script>
-<script src="js/government/government-commands.js"></script>
-<script src="js/government/government-queries.js"></script>
-<script src="js/government/government-economy.js"></script>
-<script src="js/government/government-assignment.js"></script>
-<script src="js/government/government-laws.js"></script>
-<script src="js/government/government-system.js"></script>
-<script src="js/government/modals-government.js"></script>
-
-<!-- ============================================================ -->
-<!-- GOVERNMENT TYPE MANAGER                                       -->
-<!-- ============================================================ -->
-<script src="js/tabs/government-type-manager-tab.js"></script>
-
-<!-- ============================================================ -->
-<!-- SETTLEMENT SYSTEM                                             -->
-<!-- ============================================================ -->
-<script src="js/settlement/settlement-state.js"></script>
-<script src="js/settlement/settlement-commands-core.js"></script>
-<script src="js/settlement/settlement-ranks.js"></script>
-<script src="js/settlement/settlement-features.js"></script>
-<script src="js/settlement/settlement-economy-core.js"></script>
-<script src="js/settlement/settlement-prosperity.js"></script>
-<script src="js/settlement/settlement-enterprises.js"></script>
-<script src="js/settlement/settlement-government.js"></script>
-<script src="js/settlement/settlement-budget.js"></script>
-<script src="js/settlement/settlement-commands-writes.js"></script>
-<script src="js/settlement/settlement-commands-annual.js"></script>
-<script src="js/settlement/settlement-queries.js"></script>
-<script src="js/settlement/settlement-crud.js"></script>
-<script src="js/settlement/settlement-ui-list.js"></script>
-<script src="js/settlement/modals-settlement-core.js"></script>
-<script src="js/settlement/modals-settlement-economy.js"></script>
-<script src="js/settlement/modals-settlement-roles.js"></script>
-
-<!-- ============================================================ -->
 <!-- RANK SYSTEM                                                   -->
 <!-- ============================================================ -->
-<script src="js/ranks/rank-constants.js"></script>
-<script src="js/ranks/rank-state.js"></script>
-<script src="js/ranks/rank-queries.js"></script>
-<script src="js/ranks/rank-assignments.js"></script>
-<script src="js/ranks/rank-commands.js"></script>
-<script src="js/ranks/rank-issues.js"></script>
-<script src="js/ranks/rank-ui-list.js"></script>
-<script src="js/ranks/modals-rank.js"></script>
+<script src="js/core/rank/rank-constants.js"></script>
+<script src="js/core/rank/rank-rules.js"></script>
+<script src="js/core/rank/rank-state.js"></script>
+<script src="js/core/rank/rank-queries.js"></script>
+<script src="js/core/rank/rank-assignment.js"></script>
+<script src="js/core/rank/rank-commands.js"></script>
+<script src="js/core/rank/rank-issues.js"></script>
+<script src="js/core/rank/rank-ui-list.js"></script>
+<script src="js/core/rank/modals-rank.js"></script>
+<script src="js/core/rank/rank-bootstrap.js"></script>
 
 <!-- ============================================================ -->
 <!-- RANK TAB MANAGER                                              -->
 <!-- ============================================================ -->
 <script src="js/tabs/rank-manager-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM                                             -->
+<!-- ============================================================ -->
+<script src="js/government/government-constants.js"></script>
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-rules.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-bootstrap.js"></script>
+<script src="js/government/government-view-models.js"></script>
+<script src="js/government/government-ui-list.js"></script>
+<script src="js/government/modals-government-positions.js"></script>
+<script src="js/government/modals-government.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
+<script src="js/government/modals-government-assign.js"></script>
+<script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/settlement-law-formatters.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT TYPE MANAGER                                       -->
+<!-- ============================================================ -->
+<script src="js/tabs/government-type-manager-tab.js"></script>
 
 <!-- ============================================================ -->
 <!-- ORCHESTRATOR                                                  -->
@@ -256,47 +252,74 @@
     (function() {
         'use strict';
 
-        // --- Inject Icons from icons.js into the DOM ---
+        // -----------------------------------------------------------------
+        // 1. Icon injection
+        // -----------------------------------------------------------------
+        // Only names that actually exist in icons.js are used. Missing
+        // names render empty rather than a guessed fallback (see the same
+        // pattern in location-ui-list.js and the three manager tabs).
         function injectIcons() {
             if (typeof window.Icons === 'undefined') {
-                console.warn('Icons not loaded yet, retrying...');
                 setTimeout(injectIcons, 100);
                 return;
             }
 
             var iconMap = {
-                'icon-locationtypes': window.Icons.LOCATION || window.Icons.CIRCLE,
-                'icon-governmenttypes': window.Icons.GEAR || window.Icons.CIRCLE,
-                'icon-ranks': window.Icons.RANK || window.Icons.CROWN || window.Icons.CIRCLE,
-                'icon-census': window.Icons.CENSUS || window.Icons.CIRCLE,
-                'icon-history': window.Icons.BOOK || window.Icons.CIRCLE,
-                'icon-relations': window.Icons.FRIENDSHIP || window.Icons.CIRCLE,
-                'icon-settings': window.Icons.GEAR || window.Icons.CIRCLE,
-                'empty-ranks-icon': window.Icons.RANK || window.Icons.CROWN || window.Icons.CIRCLE,
-                'empty-census-icon': window.Icons.CENSUS || window.Icons.CIRCLE,
-                'empty-history-icon': window.Icons.BOOK || window.Icons.CIRCLE,
-                'empty-relations-icon': window.Icons.FRIENDSHIP || window.Icons.CIRCLE,
-                'empty-settings-icon': window.Icons.GEAR || window.Icons.CIRCLE
+                'icon-locationtypes':      window.Icons.LOCATION,
+                'icon-governmenttypes':    window.Icons.GEAR,
+                'icon-ranks':              window.Icons.CROWN,
+                'icon-census':             window.Icons.PERSON,
+                'icon-history':            window.Icons.BOOK,
+                'icon-relations':          window.Icons.CIRCLE_DOT,
+                'icon-settings':           window.Icons.GEAR,
+                'empty-census-icon':       window.Icons.PERSON,
+                'empty-history-icon':      window.Icons.BOOK,
+                'empty-relations-icon':    window.Icons.CIRCLE_DOT,
+                'empty-settings-icon':     window.Icons.GEAR
             };
 
             for (var id in iconMap) {
+                if (!Object.prototype.hasOwnProperty.call(iconMap, id)) continue;
                 var el = document.getElementById(id);
-                if (el) {
-                    el.innerHTML = iconMap[id];
+                var svg = iconMap[id];
+                if (el && typeof svg === 'string' && svg.length > 0) {
+                    el.innerHTML = svg;
                 }
             }
         }
 
-        // --- Tab switching ---
+        // -----------------------------------------------------------------
+        // 2. Tab switching
+        // -----------------------------------------------------------------
         var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
         var tabPanes = {
-            locationtypes: document.getElementById('tab-locationtypes'),
+            locationtypes:   document.getElementById('tab-locationtypes'),
             governmenttypes: document.getElementById('tab-governmenttypes'),
-            ranks: document.getElementById('tab-ranks'),
-            census: document.getElementById('tab-census'),
-            history: document.getElementById('tab-history'),
-            relations: document.getElementById('tab-relations'),
-            settings: document.getElementById('tab-settings')
+            ranks:           document.getElementById('tab-ranks'),
+            census:          document.getElementById('tab-census'),
+            history:         document.getElementById('tab-history'),
+            relations:       document.getElementById('tab-relations'),
+            settings:        document.getElementById('tab-settings')
+        };
+
+        // Only tabs whose pane is rendered on demand need a renderer.
+        // The plain-HTML panes are left alone.
+        var TAB_RENDERERS = {
+            locationtypes: function () {
+                if (window.LocationTypeManager) {
+                    window.LocationTypeManager.renderTypeList('tab-locationtypes');
+                }
+            },
+            governmenttypes: function () {
+                if (window.GovernmentTypeManager) {
+                    window.GovernmentTypeManager.renderTypeList('tab-governmenttypes');
+                }
+            },
+            ranks: function () {
+                if (window.RankManager) {
+                    window.RankManager.renderRankList('tab-ranks');
+                }
+            }
         };
 
         function switchTab(tabId) {
@@ -308,14 +331,9 @@
                     tabPanes[key].classList.toggle('active', key === tabId);
                 }
             });
-            if (tabId === 'locationtypes' && window.LocationTypeManager) {
-                window.LocationTypeManager.renderTypeList('tab-locationtypes');
-            }
-            if (tabId === 'governmenttypes' && window.GovernmentTypeManager) {
-                window.GovernmentTypeManager.renderTypeList('tab-governmenttypes');
-            }
-            if (tabId === 'ranks' && window.RankManager) {
-                window.RankManager.renderRankList('tab-ranks');
+            var renderer = TAB_RENDERERS[tabId];
+            if (typeof renderer === 'function') {
+                renderer();
             }
         }
 
@@ -325,16 +343,29 @@
             });
         });
 
-        // --- Topbar buttons ---
+        // -----------------------------------------------------------------
+        // 3. Set Year
+        // -----------------------------------------------------------------
+        // Write via the canonical path (markDataDirty → debounced save).
+        // The previous handler did a manual localStorage.setItem AND
+        // called saveMasterData(true); both bypassed the debounce and the
+        // save-error tracking. saveMasterData's boolean parameter is
+        // ignored — see the DOMAIN PERSIST CONTRACT in storage.js.
         document.getElementById('setYearBtn').addEventListener('click', function() {
             var val = parseInt(document.getElementById('yearInput').value, 10);
-            if (!isNaN(val) && window.masterData) {
-                window.masterData.data.currentYear = val;
-                try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
-                if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
+            if (isNaN(val)) return;
+            if (!window.masterData || !window.masterData.data) return;
+            window.masterData.data.currentYear = val;
+            if (typeof window.markDataDirty === 'function') {
+                window.markDataDirty();
+            } else if (typeof window.saveMasterData === 'function') {
+                window.saveMasterData();
             }
         });
 
+        // -----------------------------------------------------------------
+        // 4. Export
+        // -----------------------------------------------------------------
         document.getElementById('exportBtn').addEventListener('click', function() {
             var data = window.masterData;
             if (!data) { alert('No data to export'); return; }
@@ -347,6 +378,9 @@
             URL.revokeObjectURL(url);
         });
 
+        // -----------------------------------------------------------------
+        // 5. Import
+        // -----------------------------------------------------------------
         document.getElementById('importBtn').addEventListener('click', function() {
             document.getElementById('fileInput').click();
         });
@@ -359,32 +393,78 @@
                 try {
                     var imported = JSON.parse(e.target.result);
                     var dataToImport = null;
-                    if (imported.data && imported.version) dataToImport = imported;
-                    else if (imported.places || imported.characters) dataToImport = { version: '2.0', lastUpdated: new Date().toISOString(), data: imported };
-                    else if (imported.data) dataToImport = { version: '2.0', lastUpdated: new Date().toISOString(), data: imported.data };
+                    if (imported.data && imported.version) {
+                        dataToImport = imported;
+                    } else if (imported.places || imported.characters) {
+                        dataToImport = {
+                            version: '2.0',
+                            lastUpdated: new Date().toISOString(),
+                            data: imported
+                        };
+                    } else if (imported.data) {
+                        dataToImport = {
+                            version: '2.0',
+                            lastUpdated: new Date().toISOString(),
+                            data: imported.data
+                        };
+                    }
                     if (!dataToImport) { alert('Invalid format'); return; }
+
                     window.masterData = dataToImport;
-                    try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
-                    if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
-                    if (typeof LocationState !== 'undefined' && LocationState.invalidateCache) LocationState.invalidateCache();
-                    if (typeof GovernmentState !== 'undefined' && GovernmentState.invalidateCache) GovernmentState.invalidateCache();
-                    if (window.LocationTypeManager) {
-                        window.LocationTypeManager.renderTypeList('tab-locationtypes');
+
+                    // Persist via the canonical path. saveMasterData
+                    // returns a boolean (Pattern A); inspect it.
+                    var saveOk = true;
+                    if (typeof window.saveMasterData === 'function') {
+                        saveOk = window.saveMasterData();
                     }
-                    if (window.GovernmentTypeManager) {
-                        window.GovernmentTypeManager.renderTypeList('tab-governmenttypes');
+                    if (saveOk === false) {
+                        var err = (typeof window.getLastSaveError === 'function')
+                            ? window.getLastSaveError()
+                            : null;
+                        alert('Import parsed but save failed: ' +
+                            (err && err.message ? err.message : 'unknown error'));
                     }
-                    if (window.RankManager) {
-                        window.RankManager.renderRankList('tab-ranks');
+
+                    // Refresh every domain index that caches canonical data.
+                    if (window.LocationState && typeof window.LocationState.refresh === 'function') {
+                        window.LocationState.refresh();
                     }
+                    if (window.GovernmentState && typeof window.GovernmentState.hydrateFromMasterData === 'function') {
+                        window.GovernmentState.hydrateFromMasterData();
+                    }
+                    if (window.RankState && typeof window.RankState.hydrateFromMasterData === 'function') {
+                        var d = window.masterData.data || {};
+                        window.RankState.hydrateFromMasterData(
+                            Array.isArray(d.ranks) ? d.ranks : [],
+                            (d.rankInheritanceRules
+                                && typeof d.rankInheritanceRules === 'object'
+                                && !Array.isArray(d.rankInheritanceRules))
+                                ? d.rankInheritanceRules
+                                : {}
+                        );
+                    }
+
+                    // Re-render only the currently visible tab.
+                    Object.keys(TAB_RENDERERS).forEach(function(key) {
+                        var btn = document.querySelector('.tab-btn[data-tab="' + key + '"]');
+                        if (btn && btn.classList.contains('active')) {
+                            TAB_RENDERERS[key]();
+                        }
+                    });
+
                     alert('Import successful!');
-                } catch(err) { alert('Invalid JSON: ' + err.message); }
+                } catch(err) {
+                    alert('Invalid JSON: ' + err.message);
+                }
             };
             reader.readAsText(file);
             this.value = '';
         });
 
-        // --- Initial render ---
+        // -----------------------------------------------------------------
+        // 6. Initial render
+        // -----------------------------------------------------------------
         injectIcons();
 
         if (window.LocationTypeManager) {
