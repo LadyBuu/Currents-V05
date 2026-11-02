@@ -2,32 +2,56 @@
  * =============================================================================
  * STILL WATERS - RELIGION FOLLOWERS TAB (js/tabs/religion-followers-tab.js)
  * =============================================================================
- * 
- * A modular tab for managing followers of a religion.
- * 
+ *
+ * LOCATION: js/tabs/religion-followers-tab.js
+ *
+ * A TabManager-rendered tab for managing the followers of a religion.
+ *
  * FEATURES:
- *   - View all followers of a religion
- *   - Filter followers by gender, status, location, age group
- *   - Search followers by name
- *   - Sort followers by name, age, location
- *   - Assign/unassign followers to/from religion
- *   - View follower details (age, gender, location, conversion history)
- *   - View conversion history for followers
- *   - Show follower statistics
+ *   - List followers (living + deceased) with filters and sorting
+ *   - Search by name
+ *   - Filter by gender, status, location
+ *   - Sort by name, age (asc/desc), location
+ *   - Assign a single follower (character selector → assignReligionToCharacter)
  *   - Bulk assign followers
- * 
- * DEPENDENCIES:
- *   - ReligionState, ReligionQueries, ReligionCommands
- *   - CharacterState, CharacterQueries
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - openCharacterSelector (from modals-char-selector.js)
- * 
- * ICON POLICY: Uses icons.js via _getIcon() - NO EMOJIS
- * 
+ *   - Remove a follower
+ *   - View conversion history per character
+ *   - Show living / deceased counts
+ *
+ * REGISTRATION (TabManager):
+ *   TabManager.register('religion', 'followers', renderAdapter)
+ *
+ *   renderAdapter(container, context) → renderFollowersTab(container, context.religion)
+ *
+ * DEPENDENCIES (all resolved at call time — no load-time guards):
+ *   - TabManager            (js/core/tab-manager.js)
+ *   - ReligionQueries       (js/religion/religion-queries.js)
+ *   - ReligionCommands      (js/religion/religion-commands.js)
+ *   - ReligionFormat        (js/religion/religion-format.js)
+ *   - formatting.js         (escapeHtml)
+ *   - icons.js              (Icons — chrome icons via _getIcon with
+ *                            CIRCLE fallback; no emoji)
+ *   - ui.js                 (showToast)
+ *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
+ *   - modals-char-selector  (openCharacterSelector)
+ *   - time.js               (getCurrentYear, calculateAge) — required at
+ *                            call time; throws if missing
+ *   - accessors.js          (getCharacterById, getCharacters,
+ *                            getPlaceById, getPlaceName)
+ *
+ * TIME CONTRACT: window.getCurrentYear() (canonical). No 1250 fallback.
+ *               No deprecated alias.
+ *
+ * AGE CONTRACT: window.calculateAge(birthYear, isDeceased, deathYear) —
+ *               takes SCALARS. Passing a character object yields null.
+ *               The followers list passes scalars; do not "simplify".
+ *
+ * INLINE STYLES: none. All classes are in css/religion-tabs.css.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
@@ -35,21 +59,23 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _getIcon(name) {
         if (window.Icons && window.Icons[name]) return window.Icons[name];
-        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
         return '';
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') window._showToast(msg, type);
-        else if (typeof window.showToast === 'function') window.showToast(msg, type);
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
     function _openModal(options) {
@@ -64,15 +90,9 @@
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             window.confirmDialog(message, title, onConfirm);
-        } else if (typeof window._confirmDialog === 'function') {
-            window._confirmDialog(message, title, onConfirm);
-        } else if (confirm(message)) {
+        } else if (typeof confirm === 'function' && confirm(message)) {
             onConfirm();
         }
-    }
-
-    function _getReligionState() {
-        return typeof window.ReligionState !== 'undefined' ? window.ReligionState : null;
     }
 
     function _getReligionQueries() {
@@ -83,772 +103,904 @@
         return typeof window.ReligionCommands !== 'undefined' ? window.ReligionCommands : null;
     }
 
+    function _getReligionFormat() {
+        return typeof window.ReligionFormat !== 'undefined' ? window.ReligionFormat : null;
+    }
+
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
-        return null;
+        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
     }
 
     function _getCharacters() {
-        if (typeof window.getCharacters === 'function') return window.getCharacters();
-        return [];
+        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
     }
 
     function _getPlaceName(id) {
         if (typeof window.getPlaceName === 'function') return window.getPlaceName(id);
         if (typeof window.getPlaceById === 'function') {
-            var place = window.getPlaceById(id);
-            if (place) return place.displayName;
+            var p = window.getPlaceById(id);
+            if (p) return p.displayName;
         }
         return 'Unknown';
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getFollowers(religionId, options) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getFollowers === 'function') {
-            return window.ReligionQueries.getFollowers(religionId, options);
-        }
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getFollowers === 'function') {
-            return window.ReligionState.getFollowers(religionId, options);
-        }
-        return [];
-    }
-
-    function _getFollowerCount(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getFollowerCount === 'function') {
-            return window.ReligionQueries.getFollowerCount(religionId);
-        }
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getFollowerCount === 'function') {
-            return window.ReligionState.getFollowerCount(religionId);
-        }
-        return 0;
-    }
-
-    function _getCharacterReligionHistory(characterId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getCharacterReligionHistory === 'function') {
-            return window.ReligionQueries.getCharacterReligionHistory(characterId);
-        }
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getCharacterReligionHistory === 'function') {
-            return window.ReligionState.getCharacterReligionHistory(characterId);
-        }
-        return [];
-    }
-
-    function _getCurrentLocationId(character) {
-        if (typeof window.getCurrentLocationId === 'function') {
-            return window.getCurrentLocationId(character);
-        }
-        return character.currentLocationId || character.birthplaceId || null;
     }
 
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
+        if (typeof window.openUnifiedCharacterSelector === 'function') {
+            return window.openUnifiedCharacterSelector(options);
+        }
         return null;
     }
 
-    function _getConversionReasonName(reason) {
-        if (typeof window.getConversionReasonName === 'function') {
-            return window.getConversionReasonName(reason);
+    // =========================================================================
+    // 2. TIME / AGE / FORMAT (canonical accessors only)
+    // =========================================================================
+
+    function _getCurrentYear() {
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'religion-followers-tab.js requires time.js (getCurrentYear).'
+            );
         }
-        var names = {
-            'marriage': 'Marriage',
-            'personal': 'Personal Choice',
-            'forced': 'Forced Conversion',
-            'political': 'Political Reasons',
-            'family': 'Family Pressure',
-            'other': 'Other'
-        };
-        return names[reason] || reason;
+        return window.getCurrentYear();
     }
 
-    function _getGenderSymbol(gender) {
-        if (gender === 'male') return '♂';
-        if (gender === 'female') return '♀';
-        return '⚥';
+    /**
+     * Age for a character projection. calculateAge takes SCALARS, not a
+     * character object. Passing the object returns null (the function
+     * validates typeof birthYear === 'number').
+     */
+    function _ageOf(character) {
+        if (!character) return null;
+        if (typeof window.calculateAge !== 'function') return null;
+        return window.calculateAge(
+            character.birthYear,
+            character.isDeceased === true,
+            character.deathYear
+        );
     }
 
-    function _calculateAge(birthYear, isDeceased, deathYear) {
-    // Delegates to time.js — do not reimplement age logic here.
-    if (typeof window.calculateAge === 'function') {
-        return window.calculateAge(birthYear, isDeceased, deathYear);
+    /**
+     * Current location id for a character projection. Prefers the
+     * semantic resolver if loaded; falls back to the raw field.
+     */
+    function _currentLocationIdOf(character) {
+        if (!character) return null;
+        if (typeof window.getCurrentLocationId === 'function') {
+            try {
+                var resolved = window.getCurrentLocationId(character);
+                if (typeof resolved === 'string' && resolved.length > 0) return resolved;
+            } catch (e) {
+                // fall through
+            }
+        }
+        var raw = character.currentLocationId;
+        if (typeof raw === 'string' && raw.length > 0) return raw;
+        if (typeof character.birthplaceId === 'string' && character.birthplaceId.length > 0) {
+            return character.birthplaceId;
+        }
+        return null;
     }
-    return null;
-}
 
-    var _followerState = {
-        searchTerm: '',
-        genderFilter: 'all',
-        statusFilter: 'all',
-        locationFilter: 'all',
+    function _genderName(gender) {
+        switch (gender) {
+            case 'male': return 'Male';
+            case 'female': return 'Female';
+            default: return 'Unknown';
+        }
+    }
+
+    function _conversionReasonName(reason) {
+        var fmt = _getReligionFormat();
+        if (fmt && typeof fmt.getConversionReasonName === 'function') {
+            return fmt.getConversionReasonName(reason);
+        }
+        return reason || '';
+    }
+
+    function _getConversionHistory(characterId) {
+        var RQ = _getReligionQueries();
+        if (RQ && typeof RQ.getCharacterReligionHistory === 'function') {
+            return RQ.getCharacterReligionHistory(characterId) || [];
+        }
+        return [];
+    }
+
+    // =========================================================================
+    // 3. TAB-LOCAL UI STATE
+    // =========================================================================
+    //
+    // Filters are per-instance and reset every time the tab renders. The
+    // tab is re-rendered fresh by TabManager on activation, so a stable
+    // per-instance state object does not survive across activations.
+    // That is intentional: this tab does not persist its filters, matching
+    // every other TabManager-rendered tab.
+
+    var _state = {
+        search: '',
+        gender: 'all',
+        status: 'all',
+        location: 'all',
         sortBy: 'name'
     };
 
+    function _resetState() {
+        _state.search = '';
+        _state.gender = 'all';
+        _state.status = 'all';
+        _state.location = 'all';
+        _state.sortBy = 'name';
+    }
+
     // =========================================================================
-    // 2. RENDER FUNCTION
+    // 4. RENDER
     // =========================================================================
 
     function renderFollowersTab(container, religion) {
-        if (!religion) {
-            container.innerHTML = '<div style="padding:20px;color:var(--dim);">No religion loaded</div>';
+        if (!container) return;
+
+        if (!religion || typeof religion !== 'object' || !religion.id) {
+            container.innerHTML =
+                '<div class="rt-empty">Select a religion to view its followers.</div>';
             return;
         }
 
-        var RS = _getReligionState();
         var RQ = _getReligionQueries();
         var RC = _getReligionCommands();
 
-        if (!RS || !RQ || !RC) {
-            container.innerHTML = '<div style="padding:20px;color:var(--danger);">Religion system not available</div>';
+        if (!RQ || !RC) {
+            container.innerHTML =
+                '<div class="rt-unavailable">Religion system not available.</div>';
             return;
         }
 
-        var followers = _getFollowers(religion.id, { includeDeceased: true });
-        var livingFollowers = followers.filter(function(c) { return !c.isDeceased; });
-        var followerCount = followers.length;
-        var livingCount = livingFollowers.length;
-        var deceasedCount = followerCount - livingCount;
+        // Fresh render → fresh filter state. A re-render from an action
+        // (remove, assign) calls renderFollowersTab again, which resets
+        // filters; that is acceptable UX. Users who want to keep filters
+        // keep the panel open; a switch away and back resets — same as
+        // before this rewrite.
+        _resetState();
 
-        var isDeprecated = religion.isDeprecated || false;
-
-        var personIcon = _getIcon('PERSON');
-        var plusIcon = _getIcon('PLUS');
-        var trashIcon = _getIcon('TRASH');
-        var searchIcon = _getIcon('SEARCH');
-        var checkIcon = _getIcon('CHECK_SIMPLE');
-        var crossIcon = _getIcon('X_HEAVY');
-
-        // Apply filters and sorting
-        var filtered = filterFollowers(followers);
-
-        // Get unique locations for filter
-        var locations = {};
+        var followers = RQ.getFollowers(religion.id, { includeDeceased: true }) || [];
+        var livingCount = 0;
         for (var i = 0; i < followers.length; i++) {
-            var locId = _getCurrentLocationId(followers[i]);
-            if (locId) {
-                var locName = _getPlaceName(locId);
-                if (locName) {
-                    locations[locId] = locName;
-                }
+            if (followers[i] && followers[i].isDeceased !== true) livingCount++;
+        }
+        var deceasedCount = followers.length - livingCount;
+
+        var isDeprecated = religion.isDeprecated === true;
+
+        // Unique current locations across followers.
+        var locationMap = Object.create(null);
+        for (var k = 0; k < followers.length; k++) {
+            var c = followers[k];
+            if (!c) continue;
+            var locId = _currentLocationIdOf(c);
+            if (!locId) continue;
+            if (!locationMap[locId]) {
+                locationMap[locId] = _getPlaceName(locId);
             }
         }
 
         var locationOptions = '<option value="all">All Locations</option>';
-        for (var id in locations) {
-            if (locations.hasOwnProperty(id)) {
-                var selected = (_followerState.locationFilter === id) ? 'selected' : '';
-                locationOptions += '<option value="' + id + '" ' + selected + '>' + _escapeHtml(locations[id]) + '</option>';
-            }
+        var sortedLocIds = Object.keys(locationMap).sort(function (a, b) {
+            return String(locationMap[a]).localeCompare(String(locationMap[b]));
+        });
+        for (var li = 0; li < sortedLocIds.length; li++) {
+            var lid = sortedLocIds[li];
+            locationOptions += '<option value="' + _escapeHtml(lid) + '">' +
+                _escapeHtml(locationMap[lid]) + '</option>';
         }
 
-        var html = 
-            '<div class="religion-followers-tab" style="padding:4px;">' +
+        var filtered = _filterFollowers(followers);
 
-            // Header with stats
-            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:12px;">' +
-            '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
-            '<span style="font-size:0.7rem;font-weight:bold;color:var(--accent);">' + personIcon + ' Followers</span>' +
-            '<span style="font-size:0.55rem;color:var(--dim);">(' + followerCount + ')</span>' +
-            '<div style="display:flex;gap:8px;font-size:0.5rem;color:var(--dim);">' +
-            '<span style="color:var(--success);">● ' + livingCount + ' living</span>' +
-            (deceasedCount > 0 ? '<span style="color:var(--dim);">● ' + deceasedCount + ' deceased</span>' : '') +
-            '</div>' +
-            '</div>' +
-            (!isDeprecated ? 
-                '<div style="display:flex;gap:6px;">' +
-                '<button id="assignFollowerBtn" class="btn primary small" style="padding:4px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">' + plusIcon + ' Add Follower</button>' +
-                '<button id="bulkAssignBtn" class="btn small" style="padding:4px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">Bulk Add</button>' +
-                '</div>' : '') +
-            '</div>' +
+        var html =
+            '<div class="rt-tab">' +
 
-            // Filters
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0 8px 0;">' +
-            '<div style="flex:1;min-width:100px;">' +
-            '<input type="text" id="followersSearchInput" placeholder="Search followers..." value="' + _escapeHtml(_followerState.searchTerm) + '" style="width:100%;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '</div>' +
-            '<select id="followersGenderFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            '<option value="all" ' + (_followerState.genderFilter === 'all' ? 'selected' : '') + '>All Genders</option>' +
-            '<option value="male" ' + (_followerState.genderFilter === 'male' ? 'selected' : '') + '>Male</option>' +
-            '<option value="female" ' + (_followerState.genderFilter === 'female' ? 'selected' : '') + '>Female</option>' +
-            '</select>' +
-            '<select id="followersStatusFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            '<option value="all" ' + (_followerState.statusFilter === 'all' ? 'selected' : '') + '>All Status</option>' +
-            '<option value="living" ' + (_followerState.statusFilter === 'living' ? 'selected' : '') + '>Living</option>' +
-            '<option value="deceased" ' + (_followerState.statusFilter === 'deceased' ? 'selected' : '') + '>Deceased</option>' +
-            '</select>' +
-            '<select id="followersLocationFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            locationOptions +
-            '</select>' +
-            '<select id="followersSortBy" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            '<option value="name" ' + (_followerState.sortBy === 'name' ? 'selected' : '') + '>Sort: Name</option>' +
-            '<option value="age_desc" ' + (_followerState.sortBy === 'age_desc' ? 'selected' : '') + '>Sort: Age ↓</option>' +
-            '<option value="age_asc" ' + (_followerState.sortBy === 'age_asc' ? 'selected' : '') + '>Sort: Age ↑</option>' +
-            '<option value="location" ' + (_followerState.sortBy === 'location' ? 'selected' : '') + '>Sort: Location</option>' +
-            '</select>' +
-            '<button id="clearFollowersFilters" class="btn small" style="padding:4px 8px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Clear</button>' +
+            // ---- Header ----
+            '<div class="rt-tab__header">' +
+              '<div class="rt-tab__header-title">Followers' +
+                '<span class="rt-tab__header-count">(' + followers.length + ')</span>' +
+              '</div>' +
+              '<div class="rt-tab__header-actions">' +
+                '<span class="rt-badge rt-badge--accent">' + livingCount + ' living</span>' +
+                (deceasedCount > 0
+                  ? '<span class="rt-badge">' + deceasedCount + ' deceased</span>'
+                  : '') +
+                (!isDeprecated
+                  ? '<button type="button" class="rt-btn rt-btn--primary assign-follower-btn">Add Follower</button>' +
+                    '<button type="button" class="rt-btn bulk-assign-btn">Bulk Add</button>'
+                  : '') +
+              '</div>' +
             '</div>' +
 
-            // Followers list
-            (filtered.length > 0 ?
-                renderFollowerList(filtered, religion) :
-                '<div style="padding:20px;text-align:center;color:var(--dim);font-size:0.6rem;">' + personIcon + ' No followers found' +
-                (followers.length > 0 ? ' matching your filters' : ' in this religion') +
-                '</div>'
-            ) +
+            // ---- Filters ----
+            '<div class="rt-tab__filters">' +
+              '<div class="rt-search">' +
+                '<input type="text" class="followers-search"' +
+                  ' placeholder="Search followers..."' +
+                  ' value="' + _escapeHtml(_state.search) + '">' +
+              '</div>' +
+              '<select class="followers-gender-filter">' +
+                '<option value="all">All Genders</option>' +
+                '<option value="male">Male</option>' +
+                '<option value="female">Female</option>' +
+              '</select>' +
+              '<select class="followers-status-filter">' +
+                '<option value="all">All Status</option>' +
+                '<option value="living">Living</option>' +
+                '<option value="deceased">Deceased</option>' +
+              '</select>' +
+              '<select class="followers-location-filter">' + locationOptions + '</select>' +
+              '<select class="followers-sort-by">' +
+                '<option value="name">Sort: Name</option>' +
+                '<option value="age_desc">Sort: Age ↓</option>' +
+                '<option value="age_asc">Sort: Age ↑</option>' +
+                '<option value="location">Sort: Location</option>' +
+              '</select>' +
+              '<button type="button" class="rt-clear clear-followers-filters">Clear</button>' +
+            '</div>' +
+
+            // ---- List / empty ----
+            (filtered.length > 0
+              ? _renderList(filtered, religion)
+              : _renderEmpty(followers.length > 0)) +
 
             '</div>';
 
         container.innerHTML = html;
 
-        attachFollowersTabHandlers(container, religion);
+        // Set current filter selections after innerHTML assignment.
+        _syncFilterSelects(container);
+
+        _attachHandlers(container, religion);
+    }
+
+    function _syncFilterSelects(container) {
+        var g = container.querySelector('.followers-gender-filter');
+        if (g) g.value = _state.gender;
+        var s = container.querySelector('.followers-status-filter');
+        if (s) s.value = _state.status;
+        var l = container.querySelector('.followers-location-filter');
+        if (l) l.value = _state.location;
+        var sort = container.querySelector('.followers-sort-by');
+        if (sort) sort.value = _state.sortBy;
+    }
+
+    function _renderEmpty(hadFollowers) {
+        var msg = hadFollowers
+            ? 'No followers match your filters.'
+            : 'This religion has no followers yet.';
+        var hint = hadFollowers
+            ? '<span class="rt-empty__sub">Adjust the filters above.</span>'
+            : '';
+        return '<div class="rt-empty">' + msg + hint + '</div>';
     }
 
     // =========================================================================
-    // 3. FILTER FOLLOWERS
+    // 5. FILTER / SORT
     // =========================================================================
 
-    function filterFollowers(followers) {
-        var search = _followerState.searchTerm.toLowerCase();
-        var gender = _followerState.genderFilter;
-        var status = _followerState.statusFilter;
-        var location = _followerState.locationFilter;
-        var sortBy = _followerState.sortBy;
+    function _filterFollowers(followers) {
+        var search = _state.search ? _state.search.toLowerCase() : '';
+        var gender = _state.gender;
+        var status = _state.status;
+        var location = _state.location;
+        var sortBy = _state.sortBy;
 
-        var result = followers.slice();
+        var out = [];
+        for (var i = 0; i < followers.length; i++) {
+            var c = followers[i];
+            if (!c) continue;
 
-        // Search filter
-        if (search) {
-            result = result.filter(function(c) {
-                var name = (c.name + ' ' + (c.surname || '')).toLowerCase();
-                return name.indexOf(search) !== -1;
-            });
+            if (search) {
+                var full = String((c.name || '') + ' ' + (c.surname || '')).toLowerCase();
+                if (full.indexOf(search) === -1) continue;
+            }
+
+            if (gender !== 'all' && c.gender !== gender) continue;
+
+            if (status === 'living' && c.isDeceased === true) continue;
+            if (status === 'deceased' && c.isDeceased !== true) continue;
+
+            if (location !== 'all') {
+                var locId = _currentLocationIdOf(c);
+                if (locId !== location) continue;
+            }
+
+            out.push(c);
         }
 
-        // Gender filter
-        if (gender !== 'all') {
-            result = result.filter(function(c) { return c.gender === gender; });
-        }
-
-        // Status filter
-        if (status === 'living') {
-            result = result.filter(function(c) { return !c.isDeceased; });
-        } else if (status === 'deceased') {
-            result = result.filter(function(c) { return c.isDeceased; });
-        }
-
-        // Location filter
-        if (location !== 'all') {
-            result = result.filter(function(c) {
-                return _getCurrentLocationId(c) === location;
-            });
-        }
-
-        // Sort
+        // Sort comparators must pass SCALARS to calculateAge; the helper
+        // _ageOf does that. Do NOT replace _ageOf(c) with calculateAge(c).
         if (sortBy === 'name') {
-            result.sort(function(a, b) {
-                return (a.name || '').localeCompare(b.name || '');
+            out.sort(function (a, b) {
+                return String(a.name || '').localeCompare(String(b.name || ''));
             });
         } else if (sortBy === 'age_desc') {
-            result.sort(function(a, b) {
-                return _calculateAge(b) - _calculateAge(a);
+            out.sort(function (a, b) {
+                var aa = _ageOf(a);
+                var ba = _ageOf(b);
+                var av = (aa === null) ? -1 : aa;
+                var bv = (ba === null) ? -1 : ba;
+                return bv - av;
             });
         } else if (sortBy === 'age_asc') {
-            result.sort(function(a, b) {
-                return _calculateAge(a) - _calculateAge(b);
+            out.sort(function (a, b) {
+                var aa = _ageOf(a);
+                var ba = _ageOf(b);
+                var av = (aa === null) ? Infinity : aa;
+                var bv = (ba === null) ? Infinity : ba;
+                return av - bv;
             });
         } else if (sortBy === 'location') {
-            result.sort(function(a, b) {
-                var locA = _getPlaceName(_getCurrentLocationId(a)) || '';
-                var locB = _getPlaceName(_getCurrentLocationId(b)) || '';
-                return locA.localeCompare(locB);
+            out.sort(function (a, b) {
+                var la = _getPlaceName(_currentLocationIdOf(a)) || '';
+                var lb = _getPlaceName(_currentLocationIdOf(b)) || '';
+                return la.localeCompare(lb);
+            });
+        } else {
+            out.sort(function (a, b) {
+                return String(a.name || '').localeCompare(String(b.name || ''));
             });
         }
 
-        return result;
+        return out;
     }
 
     // =========================================================================
-    // 4. RENDER FOLLOWER LIST
+    // 6. LIST
     // =========================================================================
 
-    function renderFollowerList(followers, religion) {
-        var trashIcon = _getIcon('TRASH');
-        var personIcon = _getIcon('PERSON');
-        var locationIcon = _getIcon('LOCATION');
-        var bookIcon = _getIcon('BOOK');
-
-        var isDeprecated = religion.isDeprecated || false;
-
-        var html = '<div style="display:flex;flex-direction:column;gap:4px;max-height:400px;overflow-y:auto;padding-right:4px;">';
+    function _renderList(followers, religion) {
+        var isDeprecated = religion.isDeprecated === true;
+        var html = '<div class="rt-tab__body">';
 
         for (var i = 0; i < followers.length; i++) {
-            var char = followers[i];
-            var age = _calculateAge(char);
-            var genderSymbol = _getGenderSymbol(char.gender);
-            var locationName = _getPlaceName(_getCurrentLocationId(char)) || 'Unknown';
-            var isDeceased = char.isDeceased || false;
+            var c = followers[i];
+            var age = _ageOf(c);
+            var locId = _currentLocationIdOf(c);
+            var locName = locId ? _getPlaceName(locId) : '—';
+            var isDeceased = c.isDeceased === true;
 
-            // Get conversion history
-            var history = _getCharacterReligionHistory(char.id);
-            var conversionCount = history ? history.length : 0;
-            var lastConversion = (history && history.length > 0) ? history[history.length - 1] : null;
-            var lastConversionYear = lastConversion ? lastConversion.year : (char.birthYear || 'Unknown');
+            var history = _getConversionHistory(c.id);
+            var conversionCount = history.length;
+            var lastConversion = conversionCount > 0
+                ? history[conversionCount - 1]
+                : null;
+
+            var rowClasses = ['rt-follower-row'];
+            if (isDeceased) rowClasses.push('rt-follower-row--deceased');
 
             html +=
-                '<div class="follower-row" data-character-id="' + char.id + '" style="' +
-                'display:flex;justify-content:space-between;align-items:center;' +
-                'padding:6px 10px;background:var(--bg3);border-radius:4px;' +
-                'border-left:3px solid ' + (isDeceased ? 'var(--dim)' : 'var(--success)') + ';' +
-                '">' +
-                '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;">' +
-                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-                '<span style="font-size:0.6rem;">' + genderSymbol + '</span>' +
-                '<span style="font-size:0.7rem;font-weight:bold;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</span>' +
-                '<span style="font-size:0.5rem;color:var(--dim);">(' + age + 'y)</span>' +
-                (isDeceased ? '<span style="font-size:0.45rem;color:var(--dim);">†</span>' : '') +
-                (conversionCount > 1 ? '<span style="font-size:0.45rem;color:var(--accent);background:var(--accent-dim);padding:1px 6px;border-radius:8px;">' + conversionCount + ' conversions</span>' : '') +
-                '</div>' +
-                '<div style="display:flex;gap:12px;font-size:0.5rem;color:var(--dim);flex-wrap:wrap;">' +
-                '<span>' + locationIcon + ' ' + _escapeHtml(locationName) + '</span>' +
-                (lastConversion ? '<span>' + bookIcon + ' ' + (lastConversion.toReligionName || 'Converted') + ' (' + lastConversionYear + ')</span>' : '') +
-                '</div>' +
-                '</div>' +
-                (isDeprecated ? '' :
-                    '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-                    '<button class="view-history-btn" data-char-id="' + char.id + '" style="background:transparent;border:none;color:var(--accent);cursor:pointer;font-size:0.6rem;padding:2px 6px;" title="View History">' + bookIcon + '</button>' +
-                    '<button class="remove-follower-btn" data-char-id="' + char.id + '" style="background:transparent;border:none;color:var(--danger);cursor:pointer;font-size:0.6rem;padding:2px 6px;" title="Remove">' + trashIcon + '</button>' +
-                    '</div>'
-                ) +
+                '<div class="' + rowClasses.join(' ') + '"' +
+                  ' data-character-id="' + _escapeHtml(c.id) + '">' +
+                  '<div class="rt-follower-row__body">' +
+                    '<div class="rt-follower-row__top">' +
+                      '<span class="rt-follower-row__name">' +
+                        _escapeHtml(c.name || '') + ' ' +
+                        _escapeHtml(c.surname || '') +
+                      '</span>' +
+                      '<span class="rt-follower-row__gender">' +
+                        _escapeHtml(_genderName(c.gender)) +
+                      '</span>' +
+                      '<span class="rt-follower-row__age">' +
+                        (age === null ? 'age ?' : age + 'y') +
+                      '</span>' +
+                      (isDeceased
+                        ? '<span class="rt-follower-row__deceased">deceased</span>'
+                        : '') +
+                      (conversionCount > 1
+                        ? '<span class="rt-follower-row__conversion-count">' +
+                          conversionCount + ' conversions</span>'
+                        : '') +
+                    '</div>' +
+                    '<div class="rt-follower-row__meta">' +
+                      '<span>' + _escapeHtml(locName) + '</span>' +
+                      (lastConversion
+                        ? '<span>' +
+                          _escapeHtml(lastConversion.toReligionName || 'Converted') +
+                          ' (' +
+                          _escapeHtml(String(lastConversion.year || '?')) +
+                          ')</span>'
+                        : '') +
+                    '</div>' +
+                  '</div>' +
+                  (isDeprecated
+                    ? ''
+                    : '<div class="rt-follower-row__actions">' +
+                        '<button type="button" class="rt-btn rt-btn--icon view-history-btn"' +
+                          ' data-char-id="' + _escapeHtml(c.id) + '"' +
+                          ' title="View conversion history">History</button>' +
+                        '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger remove-follower-btn"' +
+                          ' data-char-id="' + _escapeHtml(c.id) + '"' +
+                          ' title="Remove from religion">Remove</button>' +
+                      '</div>') +
                 '</div>';
         }
 
         html += '</div>';
-
         return html;
     }
 
     // =========================================================================
-    // 5. EVENT HANDLERS
+    // 7. HANDLERS
     // =========================================================================
 
-    function attachFollowersTabHandlers(container, religion) {
+    function _attachHandlers(container, religion) {
         var RC = _getReligionCommands();
-
         if (!RC) return;
 
-        // Search
-        var searchInput = document.getElementById('followersSearchInput');
-        if (searchInput) {
-            searchInput._searchTimeout = null;
-            searchInput.oninput = function() {
-                if (searchInput._searchTimeout) {
-                    clearTimeout(searchInput._searchTimeout);
-                }
-                searchInput._searchTimeout = setTimeout(function() {
-                    _followerState.searchTerm = searchInput.value;
-                    renderFollowersTab(container, religion);
-                }, 300);
-            };
+        function rerender() {
+            renderFollowersTab(container, religion);
         }
 
-        // Gender filter
-        var genderFilter = document.getElementById('followersGenderFilter');
-        if (genderFilter) {
-            genderFilter.onchange = function() {
-                _followerState.genderFilter = this.value;
-                renderFollowersTab(container, religion);
-            };
+        // ---- Search (debounced) ----
+        var search = container.querySelector('.followers-search');
+        if (search) {
+            var timer = null;
+            search.addEventListener('input', function () {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(function () {
+                    timer = null;
+                    _state.search = search.value || '';
+                    _applyFiltersInPlace(container, religion);
+                }, 200);
+            });
         }
 
-        // Status filter
-        var statusFilter = document.getElementById('followersStatusFilter');
-        if (statusFilter) {
-            statusFilter.onchange = function() {
-                _followerState.statusFilter = this.value;
-                renderFollowersTab(container, religion);
-            };
+        var genderSel = container.querySelector('.followers-gender-filter');
+        if (genderSel) {
+            genderSel.addEventListener('change', function () {
+                _state.gender = genderSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
         }
 
-        // Location filter
-        var locationFilter = document.getElementById('followersLocationFilter');
-        if (locationFilter) {
-            locationFilter.onchange = function() {
-                _followerState.locationFilter = this.value;
-                renderFollowersTab(container, religion);
-            };
+        var statusSel = container.querySelector('.followers-status-filter');
+        if (statusSel) {
+            statusSel.addEventListener('change', function () {
+                _state.status = statusSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
         }
 
-        // Sort by
-        var sortBy = document.getElementById('followersSortBy');
-        if (sortBy) {
-            sortBy.onchange = function() {
-                _followerState.sortBy = this.value;
-                renderFollowersTab(container, religion);
-            };
+        var locSel = container.querySelector('.followers-location-filter');
+        if (locSel) {
+            locSel.addEventListener('change', function () {
+                _state.location = locSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
         }
 
-        // Clear filters
-        var clearBtn = document.getElementById('clearFollowersFilters');
+        var sortSel = container.querySelector('.followers-sort-by');
+        if (sortSel) {
+            sortSel.addEventListener('change', function () {
+                _state.sortBy = sortSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
+        }
+
+        var clearBtn = container.querySelector('.clear-followers-filters');
         if (clearBtn) {
-            clearBtn.onclick = function() {
-                _followerState.searchTerm = '';
-                _followerState.genderFilter = 'all';
-                _followerState.statusFilter = 'all';
-                _followerState.locationFilter = 'all';
-                _followerState.sortBy = 'name';
-                renderFollowersTab(container, religion);
-            };
+            clearBtn.addEventListener('click', function () {
+                _state.search = '';
+                _state.gender = 'all';
+                _state.status = 'all';
+                _state.location = 'all';
+                _state.sortBy = 'name';
+                rerender();
+            });
         }
 
-        // Assign follower button
-        var assignBtn = document.getElementById('assignFollowerBtn');
+        // ---- Assign follower ----
+        var assignBtn = container.querySelector('.assign-follower-btn');
         if (assignBtn) {
-            assignBtn.onclick = function() {
-                openAssignFollowerModal(religion, function() {
-                    renderFollowersTab(container, religion);
-                });
-            };
+            assignBtn.addEventListener('click', function () {
+                _openAssignFollower(religion, rerender);
+            });
         }
 
-        // Bulk assign button
-        var bulkBtn = document.getElementById('bulkAssignBtn');
+        // ---- Bulk assign ----
+        var bulkBtn = container.querySelector('.bulk-assign-btn');
         if (bulkBtn) {
-            bulkBtn.onclick = function() {
-                openBulkAssignModal(religion, function() {
-                    renderFollowersTab(container, religion);
-                });
-            };
+            bulkBtn.addEventListener('click', function () {
+                _openBulkAssign(religion, rerender);
+            });
         }
 
-        // View history buttons
-        var historyBtns = container.querySelectorAll('.view-history-btn');
-        for (var i = 0; i < historyBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var charId = this.dataset.charId;
-                    openConversionHistoryModal(charId);
-                };
-            })(historyBtns[i]);
-        }
+        // ---- Row actions (delegated per-listener, not per-row) ----
+        var body = container.querySelector('.rt-tab__body');
+        if (body) {
+            body.addEventListener('click', function (e) {
+                var target = e.target;
+                if (!target || typeof target.closest !== 'function') return;
 
-        // Remove follower buttons
-        var removeBtns = container.querySelectorAll('.remove-follower-btn');
-        for (var i = 0; i < removeBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var charId = this.dataset.charId;
-                    var char = _getCharacterById(charId);
-                    if (!char) return;
-                    _confirmDialog(
-                        'Remove "' + char.name + ' ' + (char.surname || '') + '" from ' + (religion.displayName || religion.name) + '?',
-                        'Remove Follower',
-                        function() {
-                            var result = RC.removeReligionFromCharacter(charId);
-                            if (result.success) {
-                                _showToast('Follower removed', 'info');
-                                renderFollowersTab(container, religion);
-                            } else {
-                                _showToast('Failed to remove follower: ' + result.reason, 'error');
-                            }
-                        }
-                    );
-                };
-            })(removeBtns[i]);
-        }
-    }
-
-    // =========================================================================
-    // 6. ASSIGN FOLLOWER MODAL
-    // =========================================================================
-
-    function openAssignFollowerModal(religion, onSuccess) {
-        var RC = _getReligionCommands();
-
-        if (!RC) {
-            _showToast('ReligionCommands not available', 'error');
-            return;
-        }
-
-        _openCharacterSelector({
-            title: 'Assign Follower to ' + (religion.displayName || religion.name),
-            filters: {
-                showDeceased: false,
-                status: 'all'
-            },
-            onSelect: function(character) {
-                if (!character) return;
-
-                // Check if already a follower
-                if (character.religionId === religion.id) {
-                    _showToast('Character is already a follower', 'info');
+                var historyBtn = target.closest('.view-history-btn');
+                if (historyBtn) {
+                    e.preventDefault();
+                    var cid = historyBtn.getAttribute('data-char-id');
+                    if (cid) _openConversionHistory(cid);
                     return;
                 }
 
-                var startYear = prompt('Year of conversion:', _getCurrentYear());
-                if (startYear === null) return;
-                var year = parseInt(startYear) || _getCurrentYear();
+                var removeBtn = target.closest('.remove-follower-btn');
+                if (removeBtn) {
+                    e.preventDefault();
+                    var rid = removeBtn.getAttribute('data-char-id');
+                    if (rid) _confirmRemove(rid, religion, RC, rerender);
+                }
+            });
+        }
+    }
 
-                var reason = prompt('Reason (marriage, personal, forced, political, family, other):', 'personal');
-                if (reason === null) return;
+    function _applyFiltersInPlace(container, religion) {
+        // Re-render only the list body, keeping filter selections intact.
+        var RQ = _getReligionQueries();
+        if (!RQ) return;
+        var followers = RQ.getFollowers(religion.id, { includeDeceased: true }) || [];
+        var filtered = _filterFollowers(followers);
 
-                var result = RC.assignReligionToCharacter(character.id, religion.id, {
-                    year: year,
-                    reason: reason || 'personal',
-                    notes: 'Assigned via religion manager'
-                });
+        var existing = container.querySelector('.rt-tab__body');
+        var empty = container.querySelector('.rt-empty');
 
-                if (result.success) {
-                    _showToast('Follower assigned: ' + character.name, 'success');
-                    _closeTopModal();
-                    if (onSuccess) onSuccess();
-                } else {
-                    _showToast('Failed to assign follower: ' + result.reason, 'error');
+        var newHtml = filtered.length > 0
+            ? _renderList(filtered, religion)
+            : _renderEmpty(followers.length > 0);
+
+        if (existing) {
+            var tmp = document.createElement('div');
+            tmp.innerHTML = newHtml;
+            var newBody = tmp.firstChild;
+            existing.parentNode.replaceChild(newBody, existing);
+        } else if (empty) {
+            var tmp2 = document.createElement('div');
+            tmp2.innerHTML = newHtml;
+            var newBody2 = tmp2.firstChild;
+            empty.parentNode.replaceChild(newBody2, empty);
+        }
+
+        // The row-delegated click handler was bound to the OLD .rt-tab__body.
+        // Re-attach to the new one. Only the row-action handler is
+        // re-attached here; the filter controls and buttons are untouched.
+        _reattachRowActions(container, religion);
+    }
+
+    function _reattachRowActions(container, religion) {
+        var RC = _getReligionCommands();
+        if (!RC) return;
+        var body = container.querySelector('.rt-tab__body');
+        if (!body) return;
+        // The handler is idempotent if we mark the element.
+        if (body.__rtHandled) return;
+        body.__rtHandled = true;
+
+        body.addEventListener('click', function (e) {
+            var target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
+
+            var historyBtn = target.closest('.view-history-btn');
+            if (historyBtn) {
+                e.preventDefault();
+                var cid = historyBtn.getAttribute('data-char-id');
+                if (cid) _openConversionHistory(cid);
+                return;
+            }
+
+            var removeBtn = target.closest('.remove-follower-btn');
+            if (removeBtn) {
+                e.preventDefault();
+                var rid = removeBtn.getAttribute('data-char-id');
+                if (rid) {
+                    _confirmRemove(rid, religion, RC, function () {
+                        renderFollowersTab(container, religion);
+                    });
                 }
             }
         });
     }
 
     // =========================================================================
-    // 7. BULK ASSIGN MODAL
+    // 8. ASSIGN / REMOVE / HISTORY
     // =========================================================================
 
-    function openBulkAssignModal(religion, onSuccess) {
-        var RC = _getReligionCommands();
-        var allCharacters = _getCharacters();
+    function _confirmRemove(characterId, religion, RC, onDone) {
+        var char = _getCharacterById(characterId);
+        if (!char) {
+            _showToast('Character not found', 'error');
+            return;
+        }
+        var displayName = (char.name || '') + ' ' + (char.surname || '');
+        _confirmDialog(
+            'Remove "' + displayName.trim() + '" from ' +
+            (religion.displayName || religion.name) + '?',
+            'Remove Follower',
+            function () {
+                var result = RC.removeReligionFromCharacter(characterId);
+                if (result && result.success) {
+                    _showToast('Follower removed', 'info');
+                    if (typeof onDone === 'function') onDone();
+                } else {
+                    _showToast(
+                        'Failed to remove follower: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                }
+            }
+        );
+    }
 
-        // Get characters not already in this religion
-        var available = allCharacters.filter(function(c) {
-            return !c.isDeceased && c.religionId !== religion.id;
+    function _openAssignFollower(religion, onDone) {
+        var RC = _getReligionCommands();
+        if (!RC) {
+            _showToast('ReligionCommands not available', 'error');
+            return;
+        }
+
+        var selector = _openCharacterSelector({
+            title: 'Assign Follower to ' + (religion.displayName || religion.name),
+            filters: { showDeceased: false },
+            onSelect: function (character) {
+                if (!character || !character.id) return;
+
+                if (character.religionId === religion.id) {
+                    _showToast('Character is already a follower', 'info');
+                    return;
+                }
+
+                var yearInput = prompt('Year of conversion:', _getCurrentYear());
+                if (yearInput === null) return;
+                var year = parseInt(yearInput, 10);
+                if (Number.isNaN(year)) year = _getCurrentYear();
+
+                var reasonInput = prompt(
+                    'Reason (marriage, personal, forced, political, family, other):',
+                    'personal'
+                );
+                if (reasonInput === null) return;
+
+                var result = RC.assignReligionToCharacter(character.id, religion.id, {
+                    year: year,
+                    reason: reasonInput || 'personal',
+                    notes: 'Assigned via religion editor'
+                });
+
+                if (result && result.success) {
+                    _showToast('Follower assigned: ' + character.name, 'success');
+                    if (typeof onDone === 'function') onDone();
+                } else {
+                    _showToast(
+                        'Failed to assign follower: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                }
+            }
         });
+        if (!selector) {
+            _showToast('Character selector not available', 'error');
+        }
+    }
+
+    function _openBulkAssign(religion, onDone) {
+        var RC = _getReligionCommands();
+        if (!RC) {
+            _showToast('ReligionCommands not available', 'error');
+            return;
+        }
+
+        var all = _getCharacters();
+        var available = [];
+        for (var i = 0; i < all.length; i++) {
+            var c = all[i];
+            if (!c || !c.id) continue;
+            if (c.isDeceased === true) continue;
+            if (c.religionId === religion.id) continue;
+            available.push(c);
+        }
 
         if (available.length === 0) {
             _showToast('No available characters to assign', 'info');
             return;
         }
 
-        var personIcon = _getIcon('PERSON');
-        var checkIcon = _getIcon('CHECK_SIMPLE');
+        // Sort available by name for a stable list.
+        available.sort(function (a, b) {
+            return String(a.name || '').localeCompare(String(b.name || ''));
+        });
 
-        var html = 
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Select characters to assign to <strong>' + _escapeHtml(religion.displayName || religion.name) + '</strong></p>' +
-            '<p style="font-size:0.55rem;color:var(--dim);">' + available.length + ' characters available</p>' +
-            '<div style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">' +
-            available.map(function(c) {
-                var age = _calculateAge(c);
-                var genderSymbol = _getGenderSymbol(c.gender);
-                var locName = _getPlaceName(_getCurrentLocationId(c)) || 'Unknown';
-                return '<label style="display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--bg3);border-radius:4px;cursor:pointer;font-size:0.6rem;">' +
-                    '<input type="checkbox" class="bulk-char-checkbox" value="' + c.id + '" checked style="width:14px;height:14px;">' +
-                    '<span>' + genderSymbol + '</span>' +
-                    '<span>' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</span>' +
-                    '<span style="color:var(--dim);">(' + age + 'y, ' + _escapeHtml(locName) + ')</span>' +
-                    '</label>';
-            }).join('') +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Year</label>' +
-            '<input type="number" id="bulkYear" value="' + _getCurrentYear() + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Reason</label>' +
-            '<select id="bulkReason" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '<option value="personal">Personal Choice</option>' +
-            '<option value="family">Family Pressure</option>' +
-            '<option value="political">Political Reasons</option>' +
-            '<option value="forced">Forced Conversion</option>' +
-            '<option value="other">Other</option>' +
-            '</select>' +
-            '</div>' +
-            '<div style="display:flex;gap:8px;">' +
-            '<button id="bulkSelectAll" class="btn small" style="padding:4px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Select All</button>' +
-            '<button id="bulkSelectNone" class="btn small" style="padding:4px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Select None</button>' +
-            '</div>' +
+        var listHtml = '';
+        for (var j = 0; j < available.length; j++) {
+            var ch = available[j];
+            var age = _ageOf(ch);
+            var locName = _getPlaceName(_currentLocationIdOf(ch)) || '—';
+            listHtml +=
+                '<label class="rt-bulk-item">' +
+                  '<input type="checkbox" class="bulk-char-checkbox"' +
+                    ' value="' + _escapeHtml(ch.id) + '" checked>' +
+                  '<span class="rt-bulk-item__name">' +
+                    _escapeHtml(ch.name || '') + ' ' + _escapeHtml(ch.surname || '') +
+                  '</span>' +
+                  '<span class="rt-bulk-item__meta">' +
+                    (age === null ? 'age ?' : age + 'y') +
+                    ' · ' + _escapeHtml(locName) +
+                  '</span>' +
+                '</label>';
+        }
+
+        var content =
+            '<div class="rt-form">' +
+              '<p class="rt-form__hint">Select characters to assign to <strong>' +
+                _escapeHtml(religion.displayName || religion.name) +
+              '</strong> (' + available.length + ' available).</p>' +
+              '<div class="rt-bulk-list">' + listHtml + '</div>' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="bulkYear">Year</label>' +
+                  '<input type="number" id="bulkYear" value="' + _getCurrentYear() + '">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="bulkReason">Reason</label>' +
+                  '<select id="bulkReason">' +
+                    '<option value="personal">Personal Choice</option>' +
+                    '<option value="family">Family Pressure</option>' +
+                    '<option value="political">Political Reasons</option>' +
+                    '<option value="forced">Forced Conversion</option>' +
+                    '<option value="other">Other</option>' +
+                  '</select>' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__grid-2">' +
+                '<button type="button" class="rt-btn bulk-select-all">Select All</button>' +
+                '<button type="button" class="rt-btn bulk-select-none">Select None</button>' +
+              '</div>' +
             '</div>';
 
         _openModal({
-            title: 'Bulk Assign Followers',
-            content: html,
+            titleHtml: 'Bulk Assign Followers',
+            contentHtml: content,
             confirmText: 'Assign Selected',
             cancelText: 'Cancel',
-            onOpen: function() {
-                var selectAllBtn = document.getElementById('bulkSelectAll');
-                if (selectAllBtn) {
-                    selectAllBtn.onclick = function() {
-                        var checkboxes = document.querySelectorAll('.bulk-char-checkbox');
-                        for (var i = 0; i < checkboxes.length; i++) {
-                            checkboxes[i].checked = true;
-                        }
-                    };
+            onMount: function (root) {
+                var allBtn = root.querySelector('.bulk-select-all');
+                if (allBtn) {
+                    allBtn.addEventListener('click', function () {
+                        var boxes = root.querySelectorAll('.bulk-char-checkbox');
+                        for (var k = 0; k < boxes.length; k++) boxes[k].checked = true;
+                    });
                 }
-                var selectNoneBtn = document.getElementById('bulkSelectNone');
-                if (selectNoneBtn) {
-                    selectNoneBtn.onclick = function() {
-                        var checkboxes = document.querySelectorAll('.bulk-char-checkbox');
-                        for (var i = 0; i < checkboxes.length; i++) {
-                            checkboxes[i].checked = false;
-                        }
-                    };
+                var noneBtn = root.querySelector('.bulk-select-none');
+                if (noneBtn) {
+                    noneBtn.addEventListener('click', function () {
+                        var boxes = root.querySelectorAll('.bulk-char-checkbox');
+                        for (var k = 0; k < boxes.length; k++) boxes[k].checked = false;
+                    });
                 }
             },
-            onConfirm: function() {
-                var checkboxes = document.querySelectorAll('.bulk-char-checkbox:checked');
-                var selected = [];
-                for (var i = 0; i < checkboxes.length; i++) {
-                    selected.push(checkboxes[i].value);
+            onConfirm: function (root) {
+                var boxes = root.querySelectorAll('.bulk-char-checkbox:checked');
+                var selectedIds = [];
+                for (var k = 0; k < boxes.length; k++) {
+                    selectedIds.push(boxes[k].value);
                 }
-
-                if (selected.length === 0) {
+                if (selectedIds.length === 0) {
                     _showToast('No characters selected', 'warning');
                     return false;
                 }
 
-                var year = parseInt(document.getElementById('bulkYear').value) || _getCurrentYear();
-                var reason = document.getElementById('bulkReason').value;
+                var yearInput = root.querySelector('#bulkYear');
+                var year = parseInt(yearInput ? yearInput.value : '', 10);
+                if (Number.isNaN(year)) year = _getCurrentYear();
+
+                var reasonSel = root.querySelector('#bulkReason');
+                var reason = reasonSel ? reasonSel.value : 'personal';
 
                 var successCount = 0;
                 var failCount = 0;
-
-                for (var i = 0; i < selected.length; i++) {
-                    var result = RC.assignReligionToCharacter(selected[i], religion.id, {
+                for (var n = 0; n < selectedIds.length; n++) {
+                    var res = RC.assignReligionToCharacter(selectedIds[n], religion.id, {
                         year: year,
                         reason: reason,
-                        notes: 'Bulk assigned via religion manager'
+                        notes: 'Bulk assigned via religion editor'
                     });
-                    if (result.success) {
-                        successCount++;
-                    } else {
-                        failCount++;
-                    }
+                    if (res && res.success) successCount++;
+                    else failCount++;
                 }
 
-                _closeTopModal();
-                _showToast('Assigned ' + successCount + ' followers' + (failCount > 0 ? ' (' + failCount + ' failed)' : ''), 'success');
-                if (onSuccess) onSuccess();
+                _showToast(
+                    'Assigned ' + successCount + ' follower' +
+                    (successCount === 1 ? '' : 's') +
+                    (failCount > 0 ? ' (' + failCount + ' failed)' : ''),
+                    failCount > 0 ? 'warning' : 'success'
+                );
+                if (typeof onDone === 'function') onDone();
                 return true;
             }
         });
     }
 
-    // =========================================================================
-    // 8. CONVERSION HISTORY MODAL
-    // =========================================================================
-
-    function openConversionHistoryModal(characterId) {
-        var history = _getCharacterReligionHistory(characterId);
-        var character = _getCharacterById(characterId);
-
-        if (!character) {
+    function _openConversionHistory(characterId) {
+        var char = _getCharacterById(characterId);
+        if (!char) {
             _showToast('Character not found', 'error');
             return;
         }
+        var history = _getConversionHistory(characterId);
+        var displayName = ((char.name || '') + ' ' + (char.surname || '')).trim();
 
-        var personIcon = _getIcon('PERSON');
-        var bookIcon = _getIcon('BOOK');
-
-        var html = 
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<div style="padding:8px 12px;background:var(--bg2);border-radius:6px;font-size:0.7rem;">' +
-            personIcon + ' <strong>' + _escapeHtml(character.name) + ' ' + _escapeHtml(character.surname || '') + '</strong>' +
-            ' <span style="font-size:0.55rem;color:var(--dim);">(' + history.length + ' conversions)</span>' +
-            '</div>';
+        var html = '<div class="rt-form">' +
+          '<p class="rt-form__hint"><strong>' +
+            _escapeHtml(displayName) +
+          '</strong> — ' + history.length +
+          ' conversion' + (history.length === 1 ? '' : 's') +
+          '</p>';
 
         if (history.length === 0) {
-            html += '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.6rem;">No conversion history</div>';
+            html += '<div class="rt-empty">No conversion history recorded.</div>';
         } else {
-            html += '<div style="display:flex;flex-direction:column;gap:4px;max-height:300px;overflow-y:auto;">';
-
-            // Display in reverse order (most recent first)
+            html += '<div class="rt-tab__body">';
             for (var i = history.length - 1; i >= 0; i--) {
-                var event = history[i];
-                var fromName = event.fromReligionName || 'None';
-                var toName = event.toReligionName || 'None';
-                var year = event.year || 'Unknown';
-                var reason = _getConversionReasonName(event.reason || 'other');
-                var isCurrent = (event.toReligionId === character.religionId && i === history.length - 1);
+                var ev = history[i] || {};
+                var fromName = ev.fromReligionName || 'None';
+                var toName = ev.toReligionName || 'None';
+                var year = ev.year === undefined || ev.year === null ? '?' : String(ev.year);
+                var reason = _conversionReasonName(ev.reason || 'other');
+                var isCurrent = (ev.toReligionId === char.religionId && i === history.length - 1);
 
-                html +=
-                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg3);border-radius:4px;' + (isCurrent ? 'border-left:3px solid var(--accent);' : '') + '">' +
-                    '<div style="font-size:0.55rem;">' +
-                    '<span>' + _escapeHtml(fromName) + ' → ' + _escapeHtml(toName) + '</span>' +
-                    '<span style="color:var(--dim);margin-left:8px;">' + year + '</span>' +
-                    (event.inherited ? '<span style="font-size:0.45rem;color:var(--accent);margin-left:4px;">(inherited)</span>' : '') +
-                    '</div>' +
-                    '<span style="font-size:0.45rem;color:var(--dim);">' + _escapeHtml(reason) + '</span>' +
-                    (event.notes ? '<span style="font-size:0.4rem;color:var(--dim);margin-left:8px;">' + _escapeHtml(event.notes) + '</span>' : '') +
-                    '</div>';
+                html += '<div class="rt-history-row' +
+                  (isCurrent ? ' rt-history-row--current' : '') + '">' +
+                  '<span>' + _escapeHtml(fromName) +
+                    '<span class="rt-history-row__arrow">→</span>' +
+                    _escapeHtml(toName) +
+                  '</span>' +
+                  '<span class="rt-history-row__year">' + _escapeHtml(year) + '</span>' +
+                  '<span class="rt-history-row__reason">' + _escapeHtml(reason) + '</span>' +
+                '</div>';
             }
-
             html += '</div>';
         }
-
         html += '</div>';
 
         _openModal({
-            title: 'Conversion History',
-            content: html,
+            titleHtml: 'Conversion History',
+            contentHtml: html,
             confirmText: 'Close',
             cancelText: ''
         });
     }
 
     // =========================================================================
-    // 9. TAB DEFINITION
+    // 9. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
 
-    var ReligionFollowersTab = {
-        label: 'Followers',
-        icon: 'PERSON',
+    function renderAdapter(container, context) {
+        var religion = (context && context.religion) ? context.religion : null;
+        renderFollowersTab(container, religion);
+    }
+
+    if (typeof window.TabManager !== 'undefined' && window.TabManager) {
+        window.TabManager.register('religion', 'followers', renderAdapter);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'religion-followers-tab.js: TabManager is not loaded; the ' +
+            'followers tab was not registered. Load tab-manager.js first.'
+        );
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
+    // =========================================================================
+
+    window.ReligionFollowersTab = {
+        id: 'followers',
         render: renderFollowersTab,
-        save: function(religion) {
-            return religion;
-        },
-        validate: function(religion) {
-            return { valid: true };
-        }
+        renderAdapter: renderAdapter
     };
 
-    // =========================================================================
-    // 10. REGISTER FUNCTION
-    // =========================================================================
-
-    function registerReligionFollowersTab() {
-        if (typeof window.ReligionEditorTabs === 'undefined') {
-            return false;
-        }
-
-        var result = window.ReligionEditorTabs.registerTab('followers', ReligionFollowersTab);
-        return result;
-    }
-
-    // =========================================================================
-    // 11. EXPORTS
-    // =========================================================================
-
-    window.ReligionFollowersTab = ReligionFollowersTab;
-    window.registerReligionFollowersTab = registerReligionFollowersTab;
-
-    if (typeof window.ReligionEditorTabs !== 'undefined') {
-        registerReligionFollowersTab();
-    }
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionFollowersTab: ReligionFollowersTab,
-            registerReligionFollowersTab: registerReligionFollowersTab
-        };
+        module.exports = { ReligionFollowersTab: window.ReligionFollowersTab };
     }
-
 })();
