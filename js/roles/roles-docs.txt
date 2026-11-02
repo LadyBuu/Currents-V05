@@ -1,84 +1,1698 @@
-# Still Waters — Role System
+================================================================================
+STILL WATERS — ROLE SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
 
-**Location:** `js/systems/roles/`
-**Last regenerated from:** the code in this folder after the ownership refactor
-and the state/persistence fixes.
+Scope of this document:
+  - Every role file provided in this batch (8 files):
+      js/systems/roles/role-constants.js
+      js/systems/roles/role-state.js
+      js/systems/roles/role-queries.js
+      js/systems/roles/role-commands.js
+      js/systems/roles/role-system.js
+      js/systems/roles/role-ui-list.js
+      js/systems/roles/modals-roles.js
+      js/core/modals/modals-role-select.js
+  - The skill taxonomy file the role subsystem depends on:
+      js/skill/skill-utils.js
+  - Every core, character, and cross-domain file the role
+    subsystem depends on, at LOAD time (module-level guards) or at
+    CALL time (typeof-guarded lookups), and how each is used.
+  - The dependency graph across role layers (skill-utils →
+    constants → state → queries → commands → shim → UI list →
+    modals).
+  - Cross-references to the role subsystem's own narrative doc
+    (roles-docs.txt).
 
----
+PATHS NOTE:
+  The role subsystem's own narrative doc (roles-docs.txt §3) uses
+  the following paths:
+    - js/skill/skill-utils.js
+    - js/core/ui/role-ui-list.js       (for role-ui-list.js)
+    - js/core/modals/modals-role-select.js
+  The files in this batch are at:
+    - js/systems/roles/role-ui-list.js
+    - js/core/modals/modals-role-select.js
+  modals-role-select.js's own header says
+  "js/core/modals/modals-role-select.js" (consistent with the doc).
+  role-ui-list.js's own header says
+  "js/systems/roles/role-ui-list.js" (NOT consistent with
+  roles-docs.txt §3 which says js/core/ui/role-ui-list.js). This
+  document uses the tree path (js/systems/roles/role-ui-list.js)
+  and flags the discrepancy in PART 7 §1.
 
-## 1. Overview
+Anything not provable from the supplied files is marked [UNVERIFIED].
 
-The role domain owns the **catalogue** of what a character can hold:
-role records, categories, salary policy, literacy requirements, gender
-restrictions, and the set of specializations a role offers.
 
-It does not own:
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
 
-- a character's profession record or skill level
-  → `CharacterCommands`
-- the apprenticeship that trains a character toward a role
-  → `ApprenticeshipCommands`
-- the relationship edge between master and apprentice
-  → `ProfessionalCommands`
-- the skill taxonomy
-  → `SkillUtils`
+The role subsystem follows the same layer chain as the reference
+subsystems (rank / culture / location / settlement / government /
+religion):
 
-The role catalogue answers "what does a Blacksmith role look like." It
-does not answer "is Bruna a Blacksmith" or "is Bruna being trained by
-João."
+  SKILL TAXONOMY (no role deps; provides SkillUtils)
+    js/skill/skill-utils.js
 
----
+  CONSTANTS (depends on SkillUtils at load)
+    js/systems/roles/role-constants.js
 
-## 2. Files
+  STATE (owns canonical catalogue + derived indexes)
+    js/systems/roles/role-state.js
 
-| File | Purpose |
-|------|---------|
-| `role-constants.js` | Categories, salary policy, literacy vocabulary, teaching thresholds (mirrored from `SkillUtils`). Pure constants. |
-| `role-state.js` | The authoritative in-memory role collection. Derived indexes, subscriptions, persistence sync, cross-tab reload, clone-on-read. |
-| `role-queries.js` | Read-only projections: role collections, categories, character-role joins, statistics. Clone-on-read on both the `RoleState` path and the bootstrap accessor fallback path. |
-| `role-commands.js` | Write operations: role CRUD, category management, specialization catalogue, character assignment, salary, literacy. |
-| `role-system.js` | Compatibility shim. One-way aliases onto the canonical modules for legacy callers. |
-| `role-ui-list.js` | UI: role list, role card, role detail panel, master-filter toggle. |
-| `modals-roles.js` | UI: create/edit/delete role, assign role to character(s), edit skill, list roles, category manager. |
-| `modals-role-select.js` | UI: reusable role picker for cross-system use. Read-only. Lives under `js/core/modals/`. |
+  QUERIES (read-only; composes State + CharacterState +
+           CharacterCommands + CharacterQueries)
+    js/systems/roles/role-queries.js
 
-Note: `role-rules.js` is listed in no revision of this documentation
-prior to the deletion described here. It was deleted as dead code — it
-was never called by `role-commands.js`, which validated inline.
-Specialization membership validation now lives in
-`apprenticeship-commands.js::_validateSpecialization`, which is the sole
-validator for the apprenticeship domain's use of
-`role.specializations`. There is no `RoleRules` module in this tree.
+  COMMANDS (writes via State + CharacterCommands; the only
+            saveMasterData site)
+    js/systems/roles/role-commands.js
 
----
+  COMPATIBILITY SHIM (one-way aliases onto the canonical modules;
+                       loads AFTER role-queries.js)
+    js/systems/roles/role-system.js
 
-## 3. Load Order
+  UI LIST (DOM rendering; consumes RoleQueries)
+    js/systems/roles/role-ui-list.js
 
-```html
-<!-- Core -->
-<script src="js/core/formatting.js"></script>
-<script src="js/core/ui.js"></script>
-<script src="js/core/icons.js"></script>
-<script src="js/core/ids.js"></script>
-<script src="js/core/time.js"></script>
-<script src="js/core/accessors.js"></script>
-<script src="js/core/storage.js"></script>
+  MODALS (DOM + commands; batch persist per successful action)
+    js/systems/roles/modals-roles.js
+    js/core/modals/modals-role-select.js
 
-<!-- Skill taxonomy -->
-<script src="js/skill/skill-utils.js"></script>
 
-<!-- Character (role commands delegate profession writes here) -->
-<script src="js/character/character-state.js"></script>
-<script src="js/character/character-commands.js"></script>
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
 
-<!-- Roles -->
-<script src="js/systems/roles/role-constants.js"></script>
-<script src="js/systems/roles/role-state.js"></script>
-<script src="js/systems/roles/role-queries.js"></script>
-<script src="js/systems/roles/role-commands.js"></script>
-<script src="js/systems/roles/role-system.js"></script>
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws/refuses if the dependency
+                          is missing when invoked; the module loads
+                          without it.
+  OPTIONAL              — the module checks and falls back.
 
-<!-- UI -->
-<script src="js/core/ui/role-ui-list.js"></script>
-<script src="js/systems/roles/modals-roles.js"></script>
-<script src="js/core/modals/modals-role-select.js"></script>
+Cross-domain references are labeled with their subsystem:
+  [core]        js/core/...
+  [character]   js/character/...
+  [skill]       js/skill/skill-utils.js
+  [formatting]  js/core/formatting.js
+  [ui]          js/core/ui.js
+  [icons]       js/core/icons.js
+  [modals]      js/core/modals-core.js
+  [accessors]   js/core/accessors.js
+  [ids]         js/core/ids.js
+  [time]        js/core/time.js
+  [storage]     js/core/storage.js
+
+--------------------------------------------------------------------------------
+2.1 SKILL TAXONOMY — skill-utils.js
+--------------------------------------------------------------------------------
+
+  js/skill/skill-utils.js
+    Owns: window.SkillUtils
+      ({ getTier, getSkillLevelName, getTierId,
+         getStageFromLevel, getStageIdFromLevel,
+         canTeach, getTeachingThreshold, getThresholds,
+         clampLevel, isValidLevel, TIERS }).
+    Load-time dependencies: NONE. Pure constants + pure functions.
+    Call-time dependencies:  NONE.
+    Consumed by:
+      [load] role-constants.js        (getThresholds — HARD GUARD;
+                                        missing -> throw at load)
+      [call] role-ui-list.js          (getSkillLevelName,
+                                        getTeachingThreshold,
+                                        getThresholds, getTier — via
+                                        _skillLabel, _masterTierName,
+                                        _renderCharactersWithRole)
+      [call] role-queries.js          (getTier, getSkillLevelName,
+                                        getTeachingThreshold,
+                                        getThresholds — via
+                                        _getTierName, _getTierKey,
+                                        _getTeachingThreshold,
+                                        _allTierKeys)
+      [call] modals-roles.js          (getSkillLevelName,
+                                        getTeachingThreshold — via
+                                        _skillLabel)
+      [call] role-system.js           (getTier — via
+                                        getTeachingThresholdName; the
+                                        guard requires the method
+                                        exists)
+      [call] modals-role-select.js    (not directly; icons come from
+                                        Icons, tier name is not read)
+    Notes:
+      - Pure, deterministic, no window reads.
+      - Canonical tier boundaries:
+          0        Untrained
+          1  - 25  Novice
+          26 - 50  Apprentice
+          51 - 75  Journeyman
+          76 - 90  Expert
+          91 - 100 Master
+        (getThresholds returns this map.)
+      - TEACHING_THRESHOLD = JOURNEYMAN (51). Anyone at or above 51
+        can teach.
+      - TIERS is frozen; getTier returns a frozen tier object.
+      - getStageFromLevel / getStageIdFromLevel are legacy aliases;
+        they return the SAME canonical tier object as getTier.
+      - There is one tier taxonomy in the application. Do not
+        re-declare thresholds elsewhere.
+
+--------------------------------------------------------------------------------
+2.2 CONSTANTS — role-constants.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-constants.js
+    Owns: window.RoleConstants
+      ({ UNCATEGORIZED_ID, UNCATEGORIZED_NAME,
+         DEFAULT_ROLE_CATEGORIES, BASE_SALARY_BY_CATEGORY,
+         DEFAULT_SALARY, MIN_SALARY, MAX_SALARY,
+         SALARY_SKILL_MULTIPLIER_MIN, SALARY_SKILL_MULTIPLIER_MAX,
+         SALARY_EXPERIENCE_BONUS_PER_YEAR,
+         SALARY_EXPERIENCE_BONUS_CAP, SALARY_EXPERIENCE_YEARS_CAP,
+         SALARY_URBAN_MODIFIER, SALARY_RURAL_MODIFIER,
+         LITERACY_LEVELS, LITERACY_LEVEL_NAMES,
+         LITERACY_LEVEL_THRESHOLDS, REQUIRABLE_LITERACY_LEVELS,
+         TEACHING_THRESHOLDS }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.SkillUtils          [skill] via skill-utils.js
+        (method guard: SkillUtils.getThresholds)
+    Call-time dependencies:  NONE.
+    Consumed by:
+      [load] role-state.js             (RoleConstants — via the
+                                        whole namespace)
+      [load] role-queries.js           (not directly; the module
+                                        requires RoleState, which
+                                        requires RoleConstants)
+      [load] role-commands.js          (RoleConstants — via the
+                                        whole namespace)
+      [load] modals-roles.js           (RoleConstants — via the
+                                        whole namespace)
+      [load] modals-role-select.js     (RoleConstants — via the
+                                        whole namespace)
+      [load] role-ui-list.js           (RoleConstants — via the
+                                        whole namespace)
+      [load] role-system.js            (RoleConstants — via the
+                                        whole namespace)
+    Notes:
+      - The module runs a load-time consistency check
+        (_validateConsistency): DEFAULT_ROLE_CATEGORIES and
+        BASE_SALARY_BY_CATEGORY must describe the SAME set of
+        category keys. Missing entries or orphans throw.
+      - Salary bounds must satisfy MIN_SALARY <= DEFAULT_SALARY <=
+        MAX_SALARY; SALARY_SKILL_MULTIPLIER_MIN <= MAX.
+      - TEACHING_THRESHOLDS is a MIRROR of
+        SkillUtils.getThresholds(), not a re-declaration.
+      - REQUIRABLE_LITERACY_LEVELS excludes 'none' deliberately:
+        a role either has no requirement (requiresLiteracy=false) or
+        requires one of the four real levels.
+      - The module contains no icons, no presentation data, no UI
+        state, no storage, no behaviour.
+
+--------------------------------------------------------------------------------
+2.3 STATE — role-state.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-state.js
+    Owns: window.RoleState (collision guard: __owner ===
+      'roles/role-state.js'; another module claiming the name
+      throws).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.RoleConstants        [core] via role-constants.js
+    Call-time dependencies (via window.X):
+      window.masterData           [core] via storage.js — read at
+                                    init/hydrate; write target for
+                                    _syncToMasterData
+      window.markDataDirty        [core] via storage.js — called
+                                    by every local mutation;
+                                    missing -> throw at first
+                                    mutation
+      window.invalidateAccessorCaches
+                                  [core] via accessors.js —
+                                    typeof-guarded; called at every
+                                    local mutation and at hydration
+      window.addEventListener     browser — listens for
+                                    masterDataUpdated
+    Consumed by:
+      [load] role-queries.js          (RoleState — via the whole
+                                        namespace)
+      [load] role-commands.js         (RoleState — via the whole
+                                        namespace)
+      [load] role-ui-list.js          (RoleState — via the whole
+                                        namespace)
+      [load] modals-roles.js          (RoleState — via the whole
+                                        namespace)
+      [load] modals-role-select.js    (RoleState — via the whole
+                                        namespace)
+      [load] role-system.js           (RoleState — via the whole
+                                        namespace)
+    Notes:
+      - ACCESSOR CACHE CONTRACT: every local mutation invalidates
+        the cache via window.invalidateAccessorCaches (typeof-guarded).
+        The reload path also invalidates. See the module header.
+      - CROSS-TAB RELOAD: listens for masterDataUpdated. The reload
+        path does NOT mark data dirty (the inbound data IS the
+        canonical truth). It DOES invalidate the accessor cache.
+        Duplicate ids are dropped-and-logged on the reload path;
+        init() throws on duplicates.
+      - INITIALISATION: RoleState.init() must be called AFTER
+        masterData is loaded. Public readers throw before init().
+        This is deliberate.
+      - PUBLIC READS ARE CLONES. The only way to reach a live
+        record is _cache.byId, used by RoleCommands via
+        updateRole / deleteRole. Subscriber payloads are
+        deep-frozen copies.
+      - MUTATION PRIMITIVES: every mutation runs _normaliseRole on
+        the affected records — including deleteCategory's
+        role-reassignment, which used to bypass normalisation.
+      - FACADE COMPATIBILITY: selectedRoleId, roleSearchTerm,
+        reset() are session-only ephemeral UI state. reset() clears
+        ONLY _uiState, NOT _roles or _categories. This matches the
+        core/state.js facade's runtime-only contract.
+      - The module exposes _cloneRoleForRead as a stable shape
+        contract for role-queries.js's load-time field-parity check.
+        Do NOT use it to read live records.
+
+--------------------------------------------------------------------------------
+2.4 QUERIES — role-queries.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-queries.js
+    Owns: window.RoleQueries
+      ({ findRoleById, findRoleByName, getRoles,
+         getRolesByCategory, searchRoles,
+         getRoleCategoriesWithCounts, getRoleSpecializations,
+         getAllRoleSpecializations, getCharactersWithRoleIds,
+         getCharactersWithRole, getCharactersWithRoleDetails,
+         getOccupiedLocationIds, getEligibleCharactersForRole,
+         getSkillLevel, getRoleStatistics,
+         getRoleStatisticsBatch, getRankSummary }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.getRoles             [core] via accessors.js
+      window.CharacterState       [character]
+      window.CharacterCommands    [character]
+      window.CharacterQueries     [character]
+      window.RoleState            [core] via role-state.js
+    Load-time check (HARD): a one-time clone field-parity check
+      (_verifyCloneFieldParity) compares _cloneRoleRecord's field
+      list against RoleState._cloneRoleForRead. Divergence throws
+      at load.
+    Call-time dependencies:
+      window.getRankById          [core] via accessors.js — for
+                                    getRankSummary
+      window.SkillUtils           [skill] — OPTIONAL; missing ->
+                                    tier keys/names are empty
+                                    strings, tier counts are all
+                                    zero (never fabricated)
+      window.RoleState.getAllRoles (throws if init() hasn't run —
+                                    falls back to the captured
+                                    accessors.getRoles reference)
+    Consumed by:
+      [load] role-commands.js         (RoleQueries — via the
+                                        _validCategory lookup path
+                                        via RoleState; not directly
+                                        called by role-commands; see
+                                        Notes)
+      [load] role-ui-list.js          (RoleQueries — via the whole
+                                        namespace)
+      [load] modals-roles.js          (RoleQueries — via the whole
+                                        namespace)
+      [load] modals-role-select.js    (RoleQueries — via the whole
+                                        namespace)
+      [load] role-system.js           (RoleQueries — via the whole
+                                        namespace)
+    Notes:
+      - STATISTICS PERFORMANCE: getRoleStatisticsBatch(roleIds)
+        does ONE scan of CharacterState.getAllCharacters() and
+        calls CharacterCommands.getProfessions once per character,
+        not once per holder. getRoleStatistics(roleId) delegates to
+        the batch with a one-element array. Prior revisions called
+        getProfessions per holder, producing O(roles × characters ×
+        avg professions) cost when called per role.
+      - BOOTSTRAP PATH: _readCanonicalRoles prefers
+        RoleState.getAllRoles() (clones). Falls back to a captured
+        accessors.getRoles reference (cloned per record via
+        _cloneRoleRecord) only when RoleState is not yet
+        initialised. Both paths return detached records.
+      - CLONE FIELD SYNC: _cloneRoleRecord's field list must match
+        RoleState._cloneRoleForRead's. The load-time
+        _verifyCloneFieldParity enforces this.
+      - getCharactersWithRole / getCharactersWithRoleDetails
+        return character PROJECTIONS via
+        CharacterQueries.getCharacterSummary. No live character
+        objects leave this module.
+      - getOccupiedLocationIds and getEligibleCharactersForRole
+        take a caller-supplied getLocation resolver. This module
+        does not know how location is resolved.
+      - getRankSummary reads window.getRankById from accessors.js.
+        Returns { id, name, priority, symbol } or null. Priority
+        defaults to 3 when missing.
+
+--------------------------------------------------------------------------------
+2.5 COMMANDS — role-commands.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-commands.js
+    Owns: window.RoleCommands
+      ({ persist, createRole, updateRole, deleteRole, setRoles,
+         addCategory, updateCategory, deleteCategory,
+         addRoleSpecialization, removeRoleSpecialization,
+         assignRoleToCharacter, removeRoleFromCharacter,
+         updateCharacterSkill, recordCharacterSkillProgress,
+         bulkAssignRole, updateRoleSalary,
+         updateRoleLiteracyRequirement }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.RoleConstants                 [core]
+      window.RoleState                     [core]
+      window.RoleQueries                   [core]
+      window.CharacterCommands             [character]
+      window.getCharacterById              [core] via accessors.js
+      window.generateId                    [core] via ids.js
+      window.getCurrentYear                [core] via time.js
+    Load-time METHOD checks (throw at load if missing):
+      CharacterCommands.addProfession
+      CharacterCommands.updateProfession
+      CharacterCommands.removeProfession
+      CharacterCommands.removeProfessionFromAll
+      CharacterCommands.getProfession
+    Call-time dependencies:
+      window.saveMasterData                [core] via storage.js —
+                                            via persist();
+                                            missing -> { success:
+                                            false }
+      window.getLastSaveError              [core] via storage.js —
+                                            via persist() failure
+                                            path (typeof-guarded)
+      window.dispatchEvent / CustomEvent   browser — via _notify;
+                                            wrapped in try/catch
+      window.RoleState.getCategories       [core] — via
+                                            _validCategory;
+                                            typeof-guarded
+    Consumed by:
+      [load] role-ui-list.js               (RoleCommands — via the
+                                            whole namespace)
+      [load] modals-roles.js               (RoleCommands — via the
+                                            whole namespace)
+      [load] role-system.js                (RoleCommands — via the
+                                            whole namespace)
+    Notes:
+      - PERSIST CONTRACT (Pattern A + getLastSaveError): persist()
+        inspects saveMasterData()'s boolean return; on false, reads
+        getLastSaveError().message. Missing getLastSaveError is
+        tolerated (typeof-guarded); the reason falls back to the
+        generic 'saveMasterData returned false'. This is the SAME
+        pattern rank and religion use. Government and Culture
+        diverge (see HAZARDS §9).
+      - BULK ASSIGN RESULT SHAPE (from the header): bulkAssignRole
+        returns { success: boolean, assignedCount, failedCount,
+        errors }. success is true iff EVERY character was assigned
+        without error. Prior revisions returned { success: number,
+        failed: number }, which collided with the boolean `success`
+        convention.
+      - SKILL WRITES: two commands exist:
+          updateCharacterSkill(cid, rid, level)      (override;
+                                                       can lower)
+          recordCharacterSkillProgress(cid, rid, level)
+                                                       (progression;
+                                                        cannot lower;
+                                                        success with
+                                                        unchanged: true
+                                                        when no-op)
+      - ROLE ASSIGNMENT PROVENANCE: assignRoleToCharacter accepts
+        and forwards options.learnedVia and options.institutionId to
+        CharacterCommands.addProfession / updateProfession. Prior
+        revisions silently dropped both; education's graduation
+        path depends on this forwarding.
+      - _validCategory consults RoleState.getCategories() (includes
+        persisted custom categories) first, then falls back to
+        RoleConstants.DEFAULT_ROLE_CATEGORIES. Prior revisions
+        validated only against the static defaults, making every
+        custom category unusable for new roles.
+      - _getCurrentYear does NOT fall back to 1250. time.js is
+        required and the command throws if getCurrentYear is
+        unavailable. This is the ONLY module in the tree that used
+        to break the "no magic year" invariant.
+      - _notify fires CustomEvent for cross-domain listeners:
+        roleCreated, roleUpdated, roleDeleted, rolesSet,
+        categoryAdded, categoryUpdated, categoryDeleted,
+        roleSpecializationAdded, roleSpecializationRemoved,
+        roleAssigned, roleRemoved, characterSkillUpdated,
+        characterSkillProgressed, rolesBulkAssigned,
+        roleSalaryUpdated, roleLiteracyUpdated.
+
+--------------------------------------------------------------------------------
+2.6 SHIM — role-system.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-system.js
+    Owns: legacy flat window.* aliases (getAllRoles, getRoles,
+      createRole, updateRole, deleteRole, etc.) onto the canonical
+      modules.
+    Load-time dependencies (HARD — throw at load if missing):
+      window.RoleConstants        [core]
+      window.RoleState            [core]
+      window.RoleQueries          [core]
+      window.RoleCommands         [core]
+      window.SkillUtils           [skill]
+    Load-time check (HARD): a REQUIRED_FUNCTIONS block names every
+      specific function it aliases. If any is missing, the whole
+      shim refuses to install (partial aliasing is more dangerous
+      than no aliasing).
+    Call-time dependencies:
+      window.accessorsGetRoles / window.accessorsGetRoleById
+                                  (re-export of accessors.js
+                                   functions; captured at shim
+                                   load; used only by callers
+                                   that need live records)
+    Consumed by: legacy call sites (compatibility only).
+    Notes:
+      - CLONE SEMANTICS: every read alias returns CLONES. The
+        first window.getAllRoles call fires a one-shot
+        console.warn so a debugging session that starts with
+        "why did my push do nothing" resolves fast.
+      - window.getRoleById is aliased to RoleState.getRole
+        (clones), NOT accessors.getRoleById (live). This closes the
+        apprenticeship-commands.js fallback hazard the queries
+        header warns against.
+      - window.accessorsGetRoles and window.accessorsGetRoleById
+        are the explicit live-accessor re-exports. Callers that
+        specifically need the live records use these; everyone else
+        uses the clone-returning aliases.
+      - LOAD ORDER IS CRITICAL: role-system.js MUST load AFTER
+        role-queries.js. role-queries.js captures window.getRoles
+        at its own load time (before this shim overwrites it) and
+        uses the captured reference internally. If load order flips,
+        the capture in role-queries.js will resolve to this shim's
+        alias, and any call to getRoles() will recurse until stack
+        overflow. See HAZARDS §2.
+
+--------------------------------------------------------------------------------
+2.7 UI LIST — role-ui-list.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-ui-list.js
+    Owns: window.RoleUI
+      ({ renderRoleDetailPanel, renderRoleList, renderRoleCard,
+         renderMasterFilterToggle }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window._escapeHtml      [core] via formatting.js
+      window._showToast       [core] via ui.js
+      window.Icons            [core] via icons.js
+      window.SkillUtils       [skill]
+      window.RoleConstants    [core]
+      window.RoleState        [core]
+      window.RoleQueries      [core]
+      window.RoleCommands     [core]
+    Call-time dependencies (soft):
+      window.openDeleteRoleModal  — via the detail panel's Delete
+                                    button; missing -> toast-and-
+                                    return (typeof-guarded)
+      document.getElementById / container.querySelector
+                                  browser DOM
+    Consumed by: any dashboard page that calls RoleUI.render*.
+    Notes:
+      - STATISTICS BATCHING: renderRoleList and
+        renderRoleDetailPanel call RoleQueries.getRoleStatisticsBatch
+        ONCE per render for the full role id set, not
+        getRoleStatistics once per row. renderRoleCard accepts
+        options.stats so a caller rendering N cards can share the
+        batch; without it, the single-role fallback is the correct
+        cost for one card.
+      - ICON LOOKUP: _icon throws on unknown names. role.icon ||
+        'CIRCLE' resolves the fallback BEFORE _icon is called.
+      - MASTER FILTER LABEL: renderMasterFilterToggle's default
+        label reads the Master tier name via _masterTierName, which
+        falls back to 'Masters' when SkillUtils is missing.
+      - No inline styles are strictly avoided; the module uses
+        inline styles extensively as a documented deferral (see
+        HAZARDS §8).
+
+--------------------------------------------------------------------------------
+2.8 MODALS — modals-roles.js
+--------------------------------------------------------------------------------
+
+  js/systems/roles/modals-roles.js
+    Owns: nine flat window.open* functions
+      (openCreateRoleModal, openEditRoleModal, openDeleteRoleModal,
+       openAssignRoleModal, openBulkAssignRoleModal,
+       openViewCharactersWithRoleModal, openEditRoleSkillModal,
+       openListRolesModal, openCategoryManagerModal).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.openModal           [modals] via modals-core.js
+      window.closeTopModal       [modals] via modals-core.js
+      window.escapeHtml          [formatting] via formatting.js
+      window.Icons               [icons] via icons.js
+      window.SkillUtils          [skill]
+      window.RoleConstants       [core]
+      window.RoleState           [core]
+      window.RoleQueries         [core]
+      window.RoleCommands        [core]
+      window.CharacterQueries    [character]
+      window.getCharacterById    [core] via accessors.js
+      window.getCharacters       [core] via accessors.js
+    Call-time dependencies (soft):
+      window._showToast          [core] via ui.js — deprecated
+                                  alias; _showToast falls back to
+                                  showToast
+      window.getCurrentPlace     [core] via world.js — via
+                                  _getCurrentLocationOrNull
+      window.getCurrentLocationId [core] via world.js — via
+                                  _getCurrentLocationOrNull
+      window.confirmDialog       [modals] via modals-core.js —
+                                  via _confirmThen; missing ->
+                                  window.confirm fallback
+      window.calculateAge        [core] via time.js — via
+                                  _calculateAgeOrNull
+      window.getCurrentYear      [core] via time.js — required;
+                                  _getCurrentYear throws if
+                                  missing
+    Consumed by: any dashboard that opens role modals.
+    Notes:
+      - MODAL CALLBACK API: onMount and onConfirm callbacks receive
+        the modal DOM element as their ONLY argument (root). Every
+        input is read via root.querySelector('#id'), never
+        document.getElementById. This is the Phase 8.1 fix;
+        modals-role-select.js has the same contract (its mount hook
+        uses onMount, not the onOpen compatibility alias).
+      - PERSISTENCE: every write modal calls RoleCommands.persist()
+        exactly once via _persistAndWarn. A failed persist is a
+        warning toast, not a thrown error and not a rollback; the
+        in-memory write is already done.
+      - CHARACTER PROJECTION CONTRACT: reads ONLY the fields
+        character-queries.js guarantees:
+          id, name, surname, gender, birthYear, isDeceased.
+        It does NOT read character.professions off the projection —
+        professions go through
+        CharacterQueries.getCharacterProfessions(id), which
+        delegates to CharacterCommands.getProfessions. Prior
+        revisions read the projection field directly and produced a
+        silently-wrong role count when the projection stripped
+        professions.
+      - CATEGORY SOURCE: _getCategoriesOrEmpty() returns {} if
+        RoleState.getCategories() throws (RoleState not yet
+        initialised). Category dropdowns render empty rather than
+        failing the modal.
+      - CROSS-MODAL CONFIRM: _confirmThen calls
+        window.confirmDialog(message, 'Confirm', onConfirm) — the
+        THREE-argument form. Passing onConfirm as the second
+        argument sends the callback into the title slot and leaves
+        the confirm callback undefined.
+      - ICON POLICY: _icon is STRICT — throws on unknown names.
+        (modals-role-select.js::_iconOr falls back to CIRCLE; that
+        is a different module with a different tolerance policy,
+        documented there.)
+      - Bulk assignment result shape (from the header):
+        bulkAssignRole returns { success, assignedCount,
+        failedCount, errors }. The modal reads assignedCount for
+        the success message and failedCount for the partial-
+        failure warning. It does NOT read .success for the "did
+        anything succeed" check; assignedCount === 0 is that check.
+
+--------------------------------------------------------------------------------
+2.9 MODALS — modals-role-select.js
+--------------------------------------------------------------------------------
+
+  js/core/modals/modals-role-select.js
+    Owns: three flat window.* functions
+      (openRoleSelector, openRolePickerForPosition,
+       openRoleManagementModal).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.openModal           [modals] via modals-core.js
+      window.closeTopModal       [modals] via modals-core.js
+      window._escapeHtml         [formatting] via formatting.js
+      window._showToast          [ui] via ui.js
+      window.Icons               [icons] via icons.js
+      window.RoleConstants       [core]
+      window.RoleState           [core]
+      window.RoleQueries         [core]
+    Consumed by: government position modals, household position
+      modals, residence staff pickers, apprenticeship pickers.
+    Notes:
+      - MODULE IS READ-ONLY. Never mutates roles. Never depends on
+        RoleCommands. Does not create roles; callers pick from the
+        existing catalogue.
+      - PREVIOUS REVISION (fixed): every call site previously used
+        `title:` / `content:` (silently ignored by modals-core.js)
+        and used `onOpen:` (compatibility alias) instead of
+        `onMount:`. This batch is the FIXED version: titleHtml /
+        contentHtml and onMount.
+      - ICON FALLBACK POLICY: _iconOr falls back to Icons.CIRCLE
+        when the specific icon is missing. Icons.CIRCLE must be
+        present; its absence throws. This is a DIFFERENT tolerance
+        policy than modals-roles.js::_icon (which throws on any
+        unknown). Both are documented in their respective headers.
+      - SCOPED DOM READS: every query is modalEl.querySelector.
+        No document.getElementById.
+      - CALLBACK SHAPE: onSelect receives { role: <role|null> }
+        (role is null only when allowNone was set and the caller
+        picked "No role required"). onCancel fires when the modal
+        closes without a selection (Close button, X, overlay,
+        Escape).
+
+
+================================================================================
+PART 3 — CORE / CHARACTER / SKILL DEPENDENCIES
+================================================================================
+
+Legend:
+  core        — js/core/... files
+  char        — js/character/... files
+  skill       — js/skill/skill-utils.js
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+    Used by:
+      [load] role-ui-list.js         (_escapeHtml — LOAD-TIME
+                                      GUARD)
+      [load] modals-roles.js         (escapeHtml — LOAD-TIME
+                                      GUARD)
+      [load] modals-role-select.js   (_escapeHtml — LOAD-TIME
+                                      GUARD)
+
+  js/core/ui.js
+    Used by:
+      [load] role-ui-list.js         (_showToast — LOAD-TIME
+                                      GUARD)
+      [load] modals-roles.js         (_showToast / showToast —
+                                      _showToast function
+                                      prefers _showToast, falls
+                                      back to showToast)
+      [load] modals-role-select.js   (_showToast — LOAD-TIME
+                                      GUARD)
+
+  js/core/icons.js
+    Used by:
+      [load] role-ui-list.js         (Icons — LOAD-TIME GUARD;
+                                      _icon throws on unknown)
+      [load] modals-roles.js         (Icons — LOAD-TIME GUARD;
+                                      _icon throws on unknown)
+      [load] modals-role-select.js   (Icons — LOAD-TIME GUARD;
+                                      _iconOr falls back to
+                                      Icons.CIRCLE)
+
+  js/core/ids.js
+    Used by:
+      [load] role-commands.js        (generateId — LOAD-TIME
+                                      GUARD)
+
+  js/core/time.js
+    Used by:
+      [load] role-commands.js        (getCurrentYear — LOAD-TIME
+                                      GUARD; NO 1250 fallback)
+      [call] modals-roles.js         (getCurrentYear — required;
+                                      _getCurrentYear throws if
+                                      missing)
+      [call] modals-roles.js         (calculateAge — soft, via
+                                      _calculateAgeOrNull;
+                                      missing -> null -> "?"
+                                      display)
+
+  js/core/storage.js
+    Used by:
+      [call] role-state.js           (masterData — read at
+                                      hydrate; markDataDirty —
+                                      called at every local
+                                      mutation; missing ->
+                                      throw at first mutation)
+      [call] role-commands.js        (saveMasterData — via
+                                      persist(); getLastSaveError
+                                      — via persist() failure
+                                      path, typeof-guarded)
+
+  js/core/modals-core.js
+    Used by:
+      [load] modals-roles.js         (openModal, closeTopModal —
+                                      LOAD-TIME GUARDS)
+      [load] modals-role-select.js   (openModal, closeTopModal —
+                                      LOAD-TIME GUARDS)
+      [call] modals-roles.js         (confirmDialog — via
+                                      _confirmThen; missing ->
+                                      window.confirm fallback)
+
+  js/core/accessors.js
+    Used by:
+      [load] role-queries.js         (getRoles — LOAD-TIME GUARD;
+                                      captured once at module
+                                      load as _canonicalGetRoles,
+                                      used only by the bootstrap
+                                      fallback path)
+      [load] role-commands.js        (getCharacterById — LOAD-TIME
+                                      GUARD)
+      [load] modals-roles.js         (getCharacterById,
+                                      getCharacters — LOAD-TIME
+                                      GUARDS)
+      [call] role-queries.js         (getRankById — via
+                                      getRankSummary;
+                                      typeof-guarded)
+      [call] role-state.js           (invalidateAccessorCaches —
+                                      typeof-guarded)
+
+  js/core/world.js
+    Used by:
+      [call] modals-roles.js         (getCurrentPlace,
+                                      getCurrentLocationId — via
+                                      _getCurrentLocationOrNull;
+                                      typeof-guarded; missing ->
+                                      null -> location filter
+                                      degrades)
+
+  js/core/constants/constants.js
+  js/core/collections.js
+  js/core/randomness.js
+  js/core/validation.js
+  js/core/integrity.js
+  js/core/maintenance.js
+  js/core/ui-state.js
+  js/core/responsive.js
+  js/core/collapsible.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+  js/core/simulation-generators.js
+  js/core/names.js
+    Used by: none of the role files provided in this batch.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  CharacterState
+    Used by:
+      [load] role-queries.js         (LOAD-TIME GUARD on the
+                                      namespace; getAllCharacters,
+                                      getCharactersByProfession read
+                                      at call time)
+      [load] role-commands.js        (load-time check on the
+                                      method list; CharacterCommands
+                                      namespace guard; no direct
+                                      CharacterState reads)
+    Notes:
+      - role-queries reads CharacterState.getAllCharacters via
+        getEligibleCharactersForRole, getOccupiedLocationIds,
+        getRoleStatisticsBatch, getCharactersWithRoleIds.
+      - role-queries reads
+        CharacterState.getCharactersByProfession via
+        getCharactersWithRoleIds / getCharactersWithRole.
+
+  CharacterQueries
+    Used by:
+      [load] role-queries.js         (LOAD-TIME GUARD on the
+                                      namespace; getCharacterSummary
+                                      read at call time via
+                                      getCharactersWithRoleDetails)
+      [load] modals-roles.js         (LOAD-TIME GUARD on the
+                                      namespace;
+                                      getCharacterProfessions read
+                                      at call time via
+                                      _professionCountFor)
+    Notes:
+      - getCharacterSummary returns a character projection. Role
+        queries return the projection to callers. No live
+        character object leaves this module.
+      - getCharacterProfessions delegates to
+        CharacterCommands.getProfessions. Prior revisions of
+        modals-roles read character.professions off the projection
+        directly; that field is not contract-guaranteed.
+
+  CharacterCommands
+    Used by:
+      [load] role-queries.js         (LOAD-TIME GUARD on the
+                                      namespace; getProfessions,
+                                      getProfession read at call
+                                      time)
+      [load] role-commands.js        (LOAD-TIME GUARD on the
+                                      namespace; five profession
+                                      methods verified at load:
+                                      addProfession, updateProfession,
+                                      removeProfession,
+                                      removeProfessionFromAll,
+                                      getProfession)
+    Notes:
+      - CharacterCommands is the sole writer of character
+        profession records. Role never writes them directly.
+      - All five profession methods are LOAD-TIME METHOD CHECKS of
+        role-commands.js. Character-commands.js must expose every
+        one before role-commands.js loads.
+
+--------------------------------------------------------------------------------
+3.3 SKILL DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/skill/skill-utils.js
+    Used by:
+      [load] role-constants.js       (getThresholds — LOAD-TIME
+                                      METHOD GUARD; missing ->
+                                      throw at load)
+      [load] role-ui-list.js         (LOAD-TIME GUARD on the
+                                      namespace)
+      [load] modals-roles.js         (LOAD-TIME GUARD on the
+                                      namespace)
+      [load] role-system.js          (LOAD-TIME GUARD on the
+                                      namespace; getTier method
+                                      check)
+      [call] role-queries.js         (getTier, getSkillLevelName,
+                                      getTeachingThreshold,
+                                      getThresholds — soft;
+                                      missing -> tier keys/names
+                                      empty, tier counts all
+                                      zero; never fabricated)
+    Notes:
+      - SkillUtils is the single source of truth for tier
+        classification. No role file re-declares thresholds.
+      - role-constants.js MIRRORS TEACHING_THRESHOLDS from
+        SkillUtils.getThresholds() (do not re-declare; read).
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks in the supplied files,
+  (b) call-time window.X lookups in code,
+  (c) roles-docs.txt §3 (the role subsystem's own documented
+      order), corrected for tree paths,
+  (d) the canonical core / character load orders from
+      stillwaters-docs.txt and character-doc.txt.
+
+Group labels:
+
+  C1..C5   — core prerequisites.
+  S1       — skill taxonomy.
+  R1..R2   — character prerequisites.
+  RO1..RO8 — role subsystem.
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - No role file reads these directly. Loaded as part of the
+      standard core bootstrap.
+
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: _escapeHtml / escapeHtml required at load by
+      role-ui-list.js, modals-roles.js, modals-role-select.js.
+    - icons.js: Icons required at load by role-ui-list.js,
+      modals-roles.js, modals-role-select.js.
+    - ids.js: generateId required at load by role-commands.js.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - getCurrentYear required at load by role-commands.js (no
+      fallback year).
+    - calculateAge used at call time by modals-roles.js (soft).
+    - getCurrentYear used at call time by modals-roles.js
+      (_getCurrentYear throws if missing).
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  js/core/world.js
+  js/core/names.js
+
+  Notes:
+    - storage.js provides masterData (role-state.js reads it),
+      markDataDirty (role-state.js mutations), saveMasterData
+      (role-commands.js persist), getLastSaveError
+      (role-commands.js persist failure path).
+    - accessors.js provides getRoles (role-queries.js captures
+      once), getCharacterById (role-commands.js +
+      modals-roles.js), getCharacters (modals-roles.js),
+      getRankById (role-queries.js getRankSummary), and
+      invalidateAccessorCaches (role-state.js).
+    - world.js provides getCurrentPlace / getCurrentLocationId
+      (modals-roles.js location resolver — soft).
+    - initializeStorage() MUST run before RoleState.init().
+      Under the documented full-app order this holds.
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  Notes:
+    - ui.js provides _showToast and showToast. Every modals-*.js
+      and role-ui-list.js requires _showToast at load.
+    - modals-core.js provides openModal and closeTopModal (LOAD-
+      TIME GUARDS of modals-roles.js and modals-role-select.js)
+      and confirmDialog (call-time soft dependency of
+      modals-roles.js's _confirmThen).
+
+--------------------------------------------------------------------------------
+GROUP S1 — SKILL TAXONOMY
+--------------------------------------------------------------------------------
+
+  js/skill/skill-utils.js
+
+  Notes:
+    - No dependencies. Pure constants + pure functions.
+    - Load BEFORE role-constants.js (which HARD-GUARDS on
+      SkillUtils.getThresholds).
+    - Load BEFORE role-ui-list.js and modals-roles.js (both
+      LOAD-TIME GUARD on the SkillUtils namespace).
+    - Load BEFORE role-system.js (LOAD-TIME GUARD; getTier method
+      check).
+    - Optional to role-queries.js (soft; missing -> no tier names).
+
+--------------------------------------------------------------------------------
+GROUP R1 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: initializeStorage()
+
+  js/character/character-commands.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+    (must expose the five profession methods listed in role-
+    commands.js's load-time method checks)
+
+  js/character/character-queries.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+
+  Notes:
+    - CharacterCommands must expose the five profession methods
+      (addProfession, updateProfession, removeProfession,
+      removeProfessionFromAll, getProfession) BEFORE
+      role-commands.js loads. Missing any method throws at
+      role-commands.js load.
+    - CharacterQueries must expose getCharacterSummary (used by
+      role-queries.js) and getCharacterProfessions (used by
+      modals-roles.js).
+
+--------------------------------------------------------------------------------
+GROUP RO1 — ROLE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-constants.js
+    <- AFTER: js/skill/skill-utils.js    (LOAD-TIME GUARD —
+                                          SkillUtils.getThresholds
+                                          is a method check;
+                                          missing -> throw)
+
+  Notes:
+    - Load BEFORE role-state.js (LOAD-TIME GUARD),
+      role-queries.js (indirect via RoleState), role-commands.js
+      (LOAD-TIME GUARD), role-ui-list.js, modals-roles.js,
+      modals-role-select.js, role-system.js.
+
+--------------------------------------------------------------------------------
+GROUP RO2 — ROLE STATE
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-state.js
+    <- AFTER: js/systems/roles/role-constants.js  (LOAD-TIME
+                                                    GUARD)
+    <- after: js/core/storage.js                  (call-time —
+                                                    masterData;
+                                                    markDataDirty)
+    <- after: initializeStorage()                  (call-time —
+                                                    masterData.data
+                                                    must exist before
+                                                    RoleState.init())
+    <- after: js/core/accessors.js                (call-time,
+                                                    typeof-guarded —
+                                                    invalidateAccessor
+                                                    Caches)
+
+  Notes:
+    - Load BEFORE role-queries.js, role-commands.js,
+      role-ui-list.js, modals-roles.js, modals-role-select.js,
+      role-system.js.
+    - RoleState.init() must be called AFTER masterData loads. Under
+      the documented full-app order, the application bootstrap
+      calls RoleState.init() between initializeStorage() and the
+      first role read.
+
+--------------------------------------------------------------------------------
+GROUP RO3 — ROLE QUERIES
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-queries.js
+    <- AFTER: js/core/accessors.js                (LOAD-TIME GUARD
+                                                    — getRoles)
+    <- AFTER: js/character/character-state.js     (LOAD-TIME GUARD)
+    <- AFTER: js/character/character-commands.js  (LOAD-TIME GUARD)
+    <- AFTER: js/character/character-queries.js   (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-state.js      (LOAD-TIME GUARD)
+    <- after: js/skill/skill-utils.js             (call-time, soft —
+                                                    tier keys/names)
+    <- after: js/core/accessors.js                (call-time, soft —
+                                                    getRankById via
+                                                    getRankSummary)
+
+  Notes:
+    - Load BEFORE role-commands.js (indirect — RoleState guard
+      chain), role-ui-list.js (LOAD-TIME GUARD),
+      modals-roles.js (LOAD-TIME GUARD), modals-role-select.js
+      (LOAD-TIME GUARD), role-system.js (LOAD-TIME GUARD AND the
+      critical capture-before-alias ordering — see HAZARDS §2).
+
+--------------------------------------------------------------------------------
+GROUP RO4 — ROLE COMMANDS
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-commands.js
+    <- AFTER: js/systems/roles/role-constants.js  (LOAD-TIME
+                                                    GUARD)
+    <- AFTER: js/systems/roles/role-state.js      (LOAD-TIME
+                                                    GUARD)
+    <- AFTER: js/systems/roles/role-queries.js    (LOAD-TIME
+                                                    GUARD)
+    <- AFTER: js/character/character-commands.js  (LOAD-TIME
+                                                    GUARD; five
+                                                    profession
+                                                    method checks)
+    <- AFTER: js/core/accessors.js                (LOAD-TIME GUARD
+                                                    — getCharacterById)
+    <- AFTER: js/core/ids.js                      (LOAD-TIME GUARD
+                                                    — generateId)
+    <- AFTER: js/core/time.js                     (LOAD-TIME GUARD
+                                                    — getCurrentYear)
+    <- after: js/core/storage.js                  (call-time —
+                                                    saveMasterData;
+                                                    getLastSaveError)
+
+  Notes:
+    - Load BEFORE role-ui-list.js, modals-roles.js, role-system.js.
+
+--------------------------------------------------------------------------------
+GROUP RO5 — ROLE SYSTEM SHIM
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-system.js
+    <- AFTER: js/systems/roles/role-constants.js  (LOAD-TIME
+                                                    GUARD)
+    <- AFTER: js/systems/roles/role-state.js      (LOAD-TIME
+                                                    GUARD)
+    <- AFTER: js/systems/roles/role-queries.js    (LOAD-TIME
+                                                    GUARD AND
+                                                    CRITICAL — see
+                                                    HAZARDS §2:
+                                                    role-queries.js
+                                                    captures
+                                                    window.getRoles
+                                                    BEFORE this file
+                                                    aliases it; if the
+                                                    order flips, calls
+                                                    recurse to stack
+                                                    overflow)
+    <- AFTER: js/systems/roles/role-commands.js   (LOAD-TIME GUARD)
+    <- AFTER: js/skill/skill-utils.js             (LOAD-TIME GUARD;
+                                                    getTier method
+                                                    check)
+
+  Notes:
+    - Must load AFTER role-queries.js. This is the LOAD-ORDER-
+      CRITICAL constraint for the role subsystem.
+    - Load BEFORE any legacy caller that reads window.getRoles /
+      window.getAllRoles / window.getRole / window.getRoleById /
+      window.createRole / window.updateRole / window.deleteRole /
+      etc.
+
+--------------------------------------------------------------------------------
+GROUP RO6 — ROLE UI LIST
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-ui-list.js
+    <- AFTER: js/core/formatting.js               (LOAD-TIME GUARD
+                                                    — _escapeHtml)
+    <- AFTER: js/core/ui.js                       (LOAD-TIME GUARD
+                                                    — _showToast)
+    <- AFTER: js/core/icons.js                    (LOAD-TIME GUARD
+                                                    — Icons)
+    <- AFTER: js/skill/skill-utils.js             (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-constants.js  (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-state.js      (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-queries.js    (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-commands.js   (LOAD-TIME GUARD)
+    <- after: window.openDeleteRoleModal          (call-time, soft —
+                                                    toast-and-return
+                                                    if missing)
+
+  Notes:
+    - Load BEFORE any dashboard that calls RoleUI.render*.
+
+--------------------------------------------------------------------------------
+GROUP RO7 — ROLE MODALS (modals-roles.js)
+--------------------------------------------------------------------------------
+
+  js/systems/roles/modals-roles.js
+    <- AFTER: js/core/modals-core.js              (LOAD-TIME GUARD
+                                                    — openModal,
+                                                    closeTopModal)
+    <- AFTER: js/core/formatting.js               (LOAD-TIME GUARD
+                                                    — escapeHtml)
+    <- AFTER: js/core/ui.js                       (LOAD-TIME GUARD
+                                                    — _showToast)
+    <- AFTER: js/core/icons.js                    (LOAD-TIME GUARD
+                                                    — Icons)
+    <- AFTER: js/skill/skill-utils.js             (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-constants.js  (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-state.js      (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-queries.js    (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-commands.js   (LOAD-TIME GUARD)
+    <- AFTER: js/character/character-queries.js   (LOAD-TIME GUARD
+                                                    —
+                                                    getCharacter
+                                                    Professions)
+    <- AFTER: js/core/accessors.js                (LOAD-TIME GUARD
+                                                    — getCharacterById,
+                                                    getCharacters)
+    <- AFTER: js/core/time.js                     (LOAD-TIME GUARD
+                                                    — getCurrentYear;
+                                                    calculateAge is
+                                                    call-time soft)
+    <- AFTER: js/core/world.js                    (call-time, soft —
+                                                    _getCurrentLocation
+                                                    OrNull)
+    <- after: js/selectors/modals-char-selector.js
+        (not required; modals-roles.js's assign-role modal is an
+         inline picker and does NOT use openCharacterSelector)
+
+  Notes:
+    - modals-roles.js provides the flat exports
+      window.openCreateRoleModal, window.openEditRoleModal,
+      window.openDeleteRoleModal, window.openAssignRoleModal,
+      window.openBulkAssignRoleModal,
+      window.openViewCharactersWithRoleModal,
+      window.openEditRoleSkillModal, window.openListRolesModal,
+      window.openCategoryManagerModal.
+
+--------------------------------------------------------------------------------
+GROUP RO8 — ROLE SELECT MODALS (modals-role-select.js)
+--------------------------------------------------------------------------------
+
+  js/core/modals/modals-role-select.js
+    <- AFTER: js/core/modals-core.js              (LOAD-TIME GUARD
+                                                    — openModal,
+                                                    closeTopModal)
+    <- AFTER: js/core/formatting.js               (LOAD-TIME GUARD
+                                                    — _escapeHtml)
+    <- AFTER: js/core/ui.js                       (LOAD-TIME GUARD
+                                                    — _showToast)
+    <- AFTER: js/core/icons.js                    (LOAD-TIME GUARD
+                                                    — Icons;
+                                                    Icons.CIRCLE
+                                                    required)
+    <- AFTER: js/systems/roles/role-constants.js  (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-state.js      (LOAD-TIME GUARD)
+    <- AFTER: js/systems/roles/role-queries.js    (LOAD-TIME GUARD)
+
+  Notes:
+    - This module is READ-ONLY. It does NOT require RoleCommands.
+    - Provides window.openRoleSelector,
+      window.openRolePickerForPosition,
+      window.openRoleManagementModal.
+    - Load BEFORE any cross-system caller: government position
+      modals, household position modals, residence staff pickers,
+      apprenticeship pickers.
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list. Function calls are marked.
+
+  — Group C1: core constants —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  — Group C2: core utilities —
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  — Group C3: core time —
+  js/core/time.js
+
+  — Group C4: core storage —
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                  (function call)
+  js/core/accessors.js
+  js/core/world.js
+  js/core/names.js
+
+  — Group C5: core UI primitives —
+  js/core/ui.js
+  js/core/modals-core.js
+
+  — Group S1: skill taxonomy —
+  js/skill/skill-utils.js
+
+  — Group R1: character prerequisites —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  — Group RO1: role constants —
+  js/systems/roles/role-constants.js
+
+  — Group RO2: role state —
+  js/systems/roles/role-state.js
+
+  — Group RO3: role queries —
+  js/systems/roles/role-queries.js
+
+  — Group RO4: role commands —
+  js/systems/roles/role-commands.js
+
+  — Group RO5: role system shim —
+  js/systems/roles/role-system.js
+
+  — Group RO6: role UI list —
+  js/systems/roles/role-ui-list.js
+
+  — Group RO7: role modals —
+  js/systems/roles/modals-roles.js
+
+  — Group RO8: role select modals —
+  js/core/modals/modals-role-select.js
+
+  — Application bootstrap (function calls) —
+  RoleState.init()                     (function call, after
+                                        masterData.data exists)
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1.  skill-utils.js before role-constants.js.
+     Failure without it: role-constants.js throws at load
+     ("role-constants.js requires skill-utils.js to be loaded
+     first").
+
+ 2.  role-constants.js before role-state.js, role-commands.js,
+     modals-roles.js, modals-role-select.js, role-ui-list.js,
+     role-system.js.
+     Failure without it: role-state.js throws at load
+     ("role-state.js requires role-constants.js to be loaded
+     first"); role-commands.js throws at load; modals-roles.js
+     throws at load; modals-role-select.js throws at load;
+     role-ui-list.js throws at load; role-system.js throws at
+     load.
+
+ 3.  role-state.js before role-queries.js, role-commands.js,
+     role-ui-list.js, modals-roles.js, modals-role-select.js,
+     role-system.js.
+     Failure without it: each throws at load
+     ("role-queries.js: missing required dependencies: RoleState"
+     etc.).
+
+ 4.  role-queries.js before role-commands.js, role-ui-list.js,
+     modals-roles.js, modals-role-select.js, role-system.js.
+     Failure without it: each throws at load.
+
+ 5.  role-queries.js before role-system.js — CRITICAL LOAD-ORDER
+     CONSTRAINT.
+     Failure without it: role-system.js aliases
+     window.getRoles = RoleQueries.getRoles. role-queries.js
+     captures window.getRoles at its own load time as
+     _canonicalGetRoles. If role-system.js loads FIRST, the
+     capture resolves to the shim's alias (RoleQueries.getRoles
+     itself), and any call to getRoles recurses to stack
+     overflow. See HAZARDS §2.
+
+ 6.  role-commands.js before role-ui-list.js, modals-roles.js,
+     role-system.js.
+     Failure without it: each throws at load.
+
+ 7.  js/core/accessors.js before role-queries.js and
+     role-commands.js and modals-roles.js.
+     Failure without it: role-queries.js throws at load
+     ("missing required dependencies: getRoles");
+     role-commands.js throws at load ("role-commands.js
+     requires accessors.js (getCharacterById)");
+     modals-roles.js throws at load.
+
+ 8.  js/character/character-state.js before role-queries.js.
+     Failure without it: role-queries.js throws at load
+     ("missing required dependencies: CharacterState").
+
+ 9.  js/character/character-commands.js before role-queries.js
+     and role-commands.js.
+     Failure without it: role-queries.js throws at load
+     ("missing required dependencies: CharacterCommands");
+     role-commands.js throws at load
+     ("role-commands.js requires character-commands.js").
+
+ 10. js/character/character-queries.js before role-queries.js
+     and modals-roles.js.
+     Failure without it: role-queries.js throws at load
+     ("missing required dependencies: CharacterQueries");
+     modals-roles.js throws at load
+     ("modals-roles.js requires CharacterQueries").
+
+ 11. The five profession methods on CharacterCommands
+     (addProfession, updateProfession, removeProfession,
+     removeProfessionFromAll, getProfession) must exist at
+     role-commands.js load time.
+     Failure without it: role-commands.js throws at load naming
+     the first missing method.
+
+ 12. js/core/ids.js before role-commands.js.
+     Failure without it: role-commands.js throws at load
+     ("role-commands.js requires ids.js (generateId)").
+
+ 13. js/core/time.js before role-commands.js.
+     Failure without it: role-commands.js throws at load
+     ("role-commands.js requires time.js (getCurrentYear)").
+
+ 14. js/core/formatting.js before role-ui-list.js,
+     modals-roles.js, modals-role-select.js.
+     Failure without it: each throws at load.
+
+ 15. js/core/ui.js before role-ui-list.js, modals-roles.js,
+     modals-role-select.js.
+     Failure without it: each throws at load.
+
+ 16. js/core/icons.js before role-ui-list.js, modals-roles.js,
+     modals-role-select.js.
+     Failure without it: each throws at load.
+
+ 17. js/core/modals-core.js before modals-roles.js and
+     modals-role-select.js.
+     Failure without it: each throws at load.
+
+ 18. js/skill/skill-utils.js before role-constants.js (already
+     R1), role-ui-list.js, modals-roles.js, role-system.js.
+     Failure without it: each throws at load.
+
+ 19. initializeStorage() before RoleState.init().
+     Failure without it: _syncToMasterData throws at first
+     mutation ("masterData is not available"); the reload path
+     skips with a console.warn.
+
+ 20. RoleState.init() before any public read on RoleState.
+     Failure without it: every read throws ("RoleState.init()
+     must be called after masterData loads"). This is deliberate.
+
+ 21. role-state.js's clone field list must match role-queries.js's
+     _cloneRoleRecord field list.
+     Failure without it: the load-time _verifyCloneFieldParity in
+     role-queries.js throws.
+
+ 22. js/core/world.js before the first call to modals-roles.js's
+     _getCurrentLocationOrNull that needs to resolve a location.
+     Failure without it: no load-time throw (world.js is a
+     call-time soft dependency); the resolver degrades to null,
+     which the assign-role modal reports as "Unknown" location.
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+ 1.  roles-docs.txt §3 path drift for role-ui-list.js.
+     roles-docs.txt §3 says `js/core/ui/role-ui-list.js`; the
+     file is at `js/systems/roles/role-ui-list.js` (its own
+     header says so too). Do not load the file from
+     js/core/ui/ — that path does not exist in the tree.
+
+ 2.  role-queries.js captures window.getRoles BEFORE
+     role-system.js aliases it. This is intentional and
+     load-order-critical.
+     If role-system.js loads BEFORE role-queries.js:
+       - role-queries.js captures window.getRoles = the shim's
+         alias, which is RoleQueries.getRoles itself.
+       - Every call to getRoles recurses to stack overflow.
+     There is no runtime guard for this; the capture-and-document
+     IS the guard. roles-docs.txt §3 places role-queries.js
+     before role-system.js. Any future change to that order must
+     also remove or rewrite the aliasing in role-system.js.
+     See role-system.js's LOAD ORDER (IMPORTANT) section.
+
+ 3.  role-system.js's read aliases return CLONES, not live
+     records.
+     Legacy callers that used to mutate the returned array or a
+     role object will silently no-op. The first
+     window.getAllRoles call fires a one-shot console.warn so
+     the semantic change is discoverable. Callers that need the
+     live array use window.accessorsGetRoles;
+     window.accessorsGetRoleById is the live-record accessor.
+     See CLONE SEMANTICS in role-system.js's header.
+
+ 4.  window.getRoleById reconciliation.
+     accessors.js exports getRoleById (live). RoleState exports
+     getRole (clones). Prior revisions left window.getRoleById
+     aliased to accessors.getRoleById, which meant
+     apprenticeship-commands.js's fallback (if RoleState
+     unavailable, use window.getRoleById) resolved to the LIVE
+     record even when RoleState was available. The shim now
+     aliases window.getRoleById to RoleState.getRole (clones).
+     The live accessor is re-exported as
+     window.accessorsGetRoleById. See GETROLEBYID
+     RECONCILIATION in role-system.js's header.
+
+ 5.  RoleState.reset() clears ONLY ephemeral UI state.
+     reset() clears _uiState.selectedRoleId and
+     _uiState.roleSearchTerm. It does NOT clear _roles or
+     _categories. This matches core/state.js's runtime-state-only
+     contract. Do not assume reset() reloads canonical data.
+
+ 6.  RoleState's reload path does NOT mark data dirty.
+     When masterDataUpdated fires, RoleState re-hydrates indexes
+     but does NOT call markDataDirty. The inbound data IS the
+     canonical truth; scheduling a save would be a redundant
+     write. Prior revisions contradicted this contract.
+     The accessor cache IS invalidated on reload — that is a
+     cache refresh, not a local mutation.
+
+ 7.  Duplicate role ids on the reload path are dropped and
+     logged, not thrown. The init() path throws on duplicates.
+     A cross-tab reload is inbound data; a corrupt write in
+     another tab must not break the current tab. A first boot
+     with duplicate ids is a load-order or corruption bug and
+     must surface as an error.
+
+ 8.  modals-roles.js and role-ui-list.js use inline styles.
+     This is a documented deferral. Do not assume either file is
+     CSS-only. Extracting ~200 lines of layout to a stylesheet
+     is a follow-up PR.
+
+ 9.  Persistence divergence across domains.
+       - SettlementCommandCommit throws on persist failure.
+       - GovernmentCommands.persist returns { success: false }
+         but does not throw (does not read getLastSaveError).
+       - ReligionCommands.persist returns { success, reason? }
+         and DOES read getLastSaveError.
+       - RankCommands.persist returns { success, reason? } and
+         DOES read getLastSaveError.
+       - RoleCommands.persist returns { success, reason? } and
+         DOES read getLastSaveError (typeof-guarded).
+       - CultureCommands.persist returns { success, reason? }
+         but does NOT read getLastSaveError; reports the generic
+         'saveMasterData returned false'.
+       Do not unify without updating every caller's
+       error-handling.
+
+ 10. bulkAssignRole's `success` field is a BOOLEAN, not a
+     count.
+     shape: { success: boolean, assignedCount, failedCount,
+     errors }. success is true iff EVERY character was assigned
+     without error. assignedCount is the number of successes.
+     modals-roles.js reads assignedCount for the "did anything
+     succeed" check, not .success. Prior revisions returned
+     { success: number, failed: number }, which collided with the
+     boolean convention. Do not reintroduce the numeric shape.
+
+ 11. Two skill writes exist with different semantics.
+       updateCharacterSkill(cid, rid, level)      — override;
+                                                     can raise OR
+                                                     lower; blind
+                                                     write.
+       recordCharacterSkillProgress(cid, rid, level)
+                                                    — progression;
+                                                     can raise;
+                                                     NEVER lowers;
+                                                     returns
+                                                     { unchanged:
+                                                       true } for
+                                                     no-op.
+     No progression system may reduce a character's canonical
+     role skill. An administrator can, deliberately. Do not
+     "simplify" by routing progression through the override.
+
+ 12. role-commands.js is the ONLY module that used to fall back
+     to year 1250.
+     Prior revisions had _getCurrentYear return 1250 when
+     getCurrentYear was unavailable. That violated the core's
+     explicit invariant ("no magic year 1250") and made it the
+     only module in the tree that broke it. The current revision
+     requires time.js and throws at load if getCurrentYear is
+     missing. Do not reintroduce the fallback.
+
+ 13. Role assignment provenance fields are forwarded, not
+     interpreted.
+     assignRoleToCharacter accepts options.learnedVia and
+     options.institutionId and forwards them to
+     CharacterCommands.addProfession / updateProfession. Role
+     does not interpret them. Education's graduation path
+     depends on this forwarding. Prior revisions silently dropped
+     both fields, which meant education's graduation role grant
+     lost its provenance. Do not strip them again.
+
+ 14. _validCategory consults live RoleState categories.
+     role-commands.js validates category ids against
+     RoleState.getCategories() (which includes persisted custom
+     categories), then falls back to
+     RoleConstants.DEFAULT_ROLE_CATEGORIES. Prior revisions
+     validated only against the static defaults, making every
+     custom category unusable for new roles. Do not
+     reintroduce the static-only check.
+
+ 15. modals-roles.js character projection contract.
+     The file reads ONLY the following character fields from the
+     projection:
+       id, name, surname, gender, birthYear, isDeceased.
+     Professions are read via
+     CharacterQueries.getCharacterProfessions(id), which
+     delegates to CharacterCommands.getProfessions. Prior
+     revisions read character.professions directly and produced
+     a silently-wrong role count when the projection stripped
+     professions. If any of the six projection fields is removed,
+     the reads here break silently — that is the contract
+     character-queries.js::CHARACTER PROJECTION CONTRACT exists
+     to enforce.
+
+ 16. modals-roles.js _confirmThen uses the THREE-argument
+     confirmDialog form.
+     window.confirmDialog(message, title, onConfirm). The old
+     two-argument form passed onConfirm as the title and left the
+     confirm callback undefined; the dialog appeared and closed
+     but the callback never ran. Do not change to the
+     two-argument form.
+
+ 17. modals-roles.js category source returns {} if RoleState has
+     not initialized.
+     _getCategoriesOrEmpty catches the RoleState.getCategories
+     throw and returns {}. Category dropdowns render empty
+     rather than failing the modal. In a normal load order this
+     is unreachable (role UI mounts after role bootstrap).
+
+ 18. modals-roles.js icon policy is STRICT.
+     _icon throws on unknown names. This is deliberate — an
+     unknown icon name is a data error that should surface at
+     render. (modals-role-select.js::_iconOr falls back to
+     CIRCLE; that is a different module with a different
+     tolerance policy.)
+
+ 19. modals-role-select.js is READ-ONLY.
+     It does NOT require RoleCommands. It does not create roles.
+     Callers pick from the existing catalogue. Do not add write
+     paths to this module.
+
+ 20. modals-role-select.js::_iconOr falls back to Icons.CIRCLE.
+     Icons.CIRCLE MUST be present. If it is not, the module
+     throws. Do not reintroduce an inline Unicode fallback.
+
+ 21. role-ui-list.js statistics batching is the correct cost.
+     renderRoleList and renderRoleDetailPanel call
+     RoleQueries.getRoleStatisticsBatch ONCE per render for the
+     full role id set. renderRoleCard accepts options.stats for
+     callers rendering N cards. Do not regress to per-role
+     getRoleStatistics calls in a loop; that is the O(roles ×
+     characters × avg professions) cost the batch API was
+     introduced to avoid.
+
+ 22. role-ui-list.js::_masterTierName guards against missing
+     SkillUtils.
+     The default master-filter label reads the Master tier name
+     via SkillUtils. If SkillUtils is missing, the label falls
+     back to the literal 'Masters'. Prior revisions called
+     SU.getTier(...).name unguarded and would throw on a
+     SkillUtils load-order regression.
+
+ 23. role-queries.js _cloneRoleRecord field list must stay in
+     sync with RoleState._cloneRoleForRead.
+     The load-time _verifyCloneFieldParity throws on divergence.
+     Any field added to one must be added to the other in the
+     same change. This is not optional.
+
+ 24. role-system.js's REQUIRED_FUNCTIONS block throws if any
+     aliased function is missing.
+     Prior revisions could install `window.foo = undefined`,
+     which produces a TypeError far from the load site. The
+     current revision refuses to install if ANY alias would
+     resolve to undefined. Adding a new alias requires adding the
+     corresponding function to REQUIRED_FUNCTIONS.
+
+ 25. role-system.js's REQUIRED_MODULES block checks namespace
+     presence. The REQUIRED_FUNCTIONS block checks the specific
+     functions the shim aliases. Both run at load. Neither
+     tolerates absence.
+
+ 26. modals-roles.js and modals-role-select.js use titleHtml /
+     contentHtml / onMount (not title / content / onOpen).
+     modals-core.js reads ONLY titleHtml / contentHtml. It
+     provides onOpen as a compatibility alias for onMount, but
+     the canonical name is onMount. Every call site in this
+     batch uses the canonical forms.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
