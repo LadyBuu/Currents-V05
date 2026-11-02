@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <title>Still Waters · Nexus of Tools</title>
+
+    <!-- Theme tokens MUST load first. -->
+    <link rel="stylesheet" href="css/themes.css" />
+
+    <!-- Nexus-specific styles. -->
+    <link rel="stylesheet" href="css/nexus.css" />
+</head>
+<body>
+
+<div class="dashboard">
+
+    <!-- HEADER -->
+    <header class="heraldic-header">
+        <div class="title-glow">
+            <span class="icon-symbol" data-icon="STAR_4" aria-hidden="true"></span>
+            <span>STILL WATERS</span>
+            <span class="icon-symbol" data-icon="STAR_4" aria-hidden="true"></span>
+        </div>
+        <div class="sub">chronicle · dynasty · ledger</div>
+
+        <!-- TOPBAR CONTROLS (theme, settings) -->
+        <div class="topbar-controls">
+            <button class="topbar-btn" id="settingsBtn" type="button" aria-haspopup="dialog" aria-expanded="false">
+                <span class="icon-symbol" data-icon="GEAR" aria-hidden="true"></span>
+                Settings
+            </button>
+            <div class="theme-toggle" role="group" aria-label="Theme">
+                <button class="topbar-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+                    <span class="icon-symbol" data-icon="CIRCLE_DOT" aria-hidden="true"></span>
+                    <span id="themeName">Dark</span>
+                </button>
+                <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+            </div>
+        </div>
+    </header>
+
+    <!-- INFO BANNER -->
+    <div class="info-banner">
+        <span>
+            <span class="icon-symbol" data-icon="CIRCLE_DOT" aria-hidden="true"></span>
+            Nexus of dominion tools
+        </span>
+        <span id="storageStatus" class="version-tag">
+            <span class="icon-symbol" data-icon="REFRESH" aria-hidden="true"></span>
+            <span id="storageStatusText">Checking storage…</span>
+        </span>
+    </div>
+
+    <!-- RECENTLY VISITED (hidden if empty) -->
+    <section id="recentSection" class="recent-section" hidden>
+        <div class="recent-label">
+            <span class="icon-symbol" data-icon="TIMELINE" aria-hidden="true"></span>
+            Recently visited
+        </div>
+        <div class="recent-chips" id="recentChips"></div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- PRIMARY TOOLS                                                -->
+    <!-- ============================================================ -->
+    <div class="divider">
+        <span class="divider-line"></span>
+        <span class="divider-text">
+            <span class="icon-symbol" data-icon="CROWN" aria-hidden="true"></span>
+            CHRONICLES &amp; RULERSHIP
+            <span class="icon-symbol" data-icon="SWORD" aria-hidden="true"></span>
+        </span>
+        <span class="divider-line"></span>
+    </div>
+
+    <div class="tool-grid" id="primaryToolsGrid">
+        <a class="tool-card" href="CharacterManager.html" data-icon="PERSON" data-label="Character Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Character Manager</div>
+            <div class="card-desc">Full character editor: identity, location, family, partners, friendships, roles, ranks &amp; mortality.</div>
+            <div class="badge-strip"><span class="badge">CRUD</span><span class="badge">genealogy</span><span class="badge">relationships</span></div>
+        </a>
+
+        <a class="tool-card" href="Census_v03.html" data-icon="CENSUS" data-label="Census &amp; Analytics">
+            <div class="card-icon"></div>
+            <div class="card-title">Census &amp; Analytics</div>
+            <div class="card-desc">Population pyramids, location demographics, filters, presets — living/deceased breakdown.</div>
+            <div class="badge-strip"><span class="badge">charts</span><span class="badge">pyramid</span><span class="badge">filtering</span></div>
+        </a>
+
+        <a class="tool-card" href="Household_v03.html" data-icon="HOUSEHOLD" data-label="Household Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Household Manager</div>
+            <div class="card-desc">Household economy, departments, head of household, membership &amp; analytics (health, loyalty, crime risk).</div>
+            <div class="badge-strip"><span class="badge">wealth</span><span class="badge">staff</span><span class="badge">analytics</span></div>
+        </a>
+
+        <a class="tool-card" href="RankManager_v03.html" data-icon="RANK" data-label="Rank Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Rank Manager</div>
+            <div class="card-desc">Nobility hierarchy, inheritance rules, symbols, numbered titles, issue detection &amp; fixing.</div>
+            <div class="badge-strip"><span class="badge">peerage</span><span class="badge">succession</span><span class="badge">analytics</span></div>
+        </a>
+
+        <a class="tool-card" href="RolesManager_v03.html" data-icon="ROLES" data-label="Roles Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Roles Manager</div>
+            <div class="card-desc">Professions &amp; vocations, skill tracking, apprenticeship management, educational institutions.</div>
+            <div class="badge-strip"><span class="badge">apprenticeship</span><span class="badge">education</span><span class="badge">skill</span></div>
+        </a>
+
+        <a class="tool-card" href="Matchmaker_v03.html" data-icon="MATCHMAKER" data-label="Matchmaker">
+            <div class="card-icon"></div>
+            <div class="card-title">Matchmaker</div>
+            <div class="card-desc">Romance, friendship, polygyny, apprenticeship matching, heartbreak &amp; adoption proposals.</div>
+            <div class="badge-strip"><span class="badge">alliances</span><span class="badge">bonds</span><span class="badge">fate</span></div>
+        </a>
+
+        <!-- NEW: Location Manager -->
+        <a class="tool-card" href="LocationManager.html" data-icon="LOCATION" data-label="Location Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Location Manager</div>
+            <div class="card-desc">Place hierarchy, types, movement history, leadership assignments, capital/status flags.</div>
+            <div class="badge-strip"><span class="badge">geography</span><span class="badge">hierarchy</span><span class="badge">leadership</span></div>
+        </a>
+
+        <!-- NEW: Settlement Manager -->
+        <a class="tool-card" href="SettlementManager.html" data-icon="HOUSEHOLD" data-label="Settlement Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Settlement Manager</div>
+            <div class="card-desc">Rank, features, economy, crime, prosperity, employment, budget — the full settlement domain.</div>
+            <div class="badge-strip"><span class="badge">economy</span><span class="badge">prosperity</span><span class="badge">features</span></div>
+        </a>
+
+        <!-- NEW: Religion Manager -->
+        <a class="tool-card" href="ReligionManager.html" data-icon="STAR_4" data-label="Religion Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Religion Manager</div>
+            <div class="card-desc">Religions, gods, laws, places of worship, followers, inheritance rules, leadership.</div>
+            <div class="badge-strip"><span class="badge">faith</span><span class="badge">doctrine</span><span class="badge">followers</span></div>
+        </a>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- WORLD & EVENTS                                               -->
+    <!-- ============================================================ -->
+    <div class="divider">
+        <span class="divider-line"></span>
+        <span class="divider-text">
+            <span class="icon-symbol" data-icon="WORLD" aria-hidden="true"></span>
+            REALMS &amp; CATASTROPHES
+            <span class="icon-symbol" data-icon="WARNING" aria-hidden="true"></span>
+        </span>
+        <span class="divider-line"></span>
+    </div>
+
+    <div class="tool-grid" id="worldToolsGrid">
+        <a class="tool-card" href="WorldManager_v03.html" data-icon="WORLD" data-label="World Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">World Manager</div>
+            <div class="card-desc">Location hierarchy (countries, districts), government types, settlement specializations, place editor.</div>
+            <div class="badge-strip"><span class="badge">geography</span><span class="badge">government</span><span class="badge">settlement</span></div>
+        </a>
+
+        <a class="tool-card" href="GovernmentManager.html" data-icon="CROWN" data-label="Government Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Government Manager</div>
+            <div class="card-desc">Government types, departments, positions, structure hierarchy — full administration editor.</div>
+            <div class="badge-strip"><span class="badge">departments</span><span class="badge">positions</span><span class="badge">hierarchy</span></div>
+        </a>
+
+        <a class="tool-card" href="EventsManager_v03.html" data-icon="EVENTS" data-label="Events Hub">
+            <div class="card-icon"></div>
+            <div class="card-title">Events Hub</div>
+            <div class="card-desc">Disasters, crimes, social events — trigger plagues, famines, executions, vendettas.</div>
+            <div class="badge-strip"><span class="badge">disaster</span><span class="badge">crime</span><span class="badge">social</span></div>
+        </a>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- LIFE & LEGACY                                                -->
+    <!-- ============================================================ -->
+    <div class="divider">
+        <span class="divider-line"></span>
+        <span class="divider-text">
+            <span class="icon-symbol" data-icon="HEART" aria-hidden="true"></span>
+            BLOOD &amp; BEREAVEMENT
+            <span class="icon-symbol" data-icon="DEATHSTARS" aria-hidden="true"></span>
+        </span>
+        <span class="divider-line"></span>
+    </div>
+
+    <div class="tool-grid" id="lifeToolsGrid">
+        <a class="tool-card" href="Stork_v03.html" data-icon="STORK" data-label="Stork Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Stork Manager</div>
+            <div class="card-desc">Biological children, surrogacy arrangements, adoption tracking — heir generation.</div>
+            <div class="badge-strip"><span class="badge">birth</span><span class="badge">surrogacy</span><span class="badge">adoption</span></div>
+        </a>
+
+        <a class="tool-card" href="Deathstars_v03.html" data-icon="DEATHSTARS" data-label="Deathstars">
+            <div class="card-icon"></div>
+            <div class="card-title">Deathstars</div>
+            <div class="card-desc">Mortality management: cause of death, execution, murder, natural demise &amp; lifespan tracking.</div>
+            <div class="badge-strip"><span class="badge">death cause</span><span class="badge">mortality</span><span class="badge">funeral</span></div>
+        </a>
+
+        <a class="tool-card" href="Tree_v03.html" data-icon="FAMILY_TREE" data-label="Family &amp; Social Circles">
+            <div class="card-icon"></div>
+            <div class="card-title">Family &amp; Social Circles</div>
+            <div class="card-desc">Interactive family tree, social circles (friends, colleagues), relationship pathfinder.</div>
+            <div class="badge-strip"><span class="badge">genealogy</span><span class="badge">ancestry</span><span class="badge">connection</span></div>
+        </a>
+
+        <a class="tool-card" href="Timeline_v01.html" data-icon="TIMELINE" data-label="Timeline">
+            <div class="card-icon"></div>
+            <div class="card-title">Timeline</div>
+            <div class="card-desc">World events, births, deaths, marriages, apprenticeships — filter by year/type.</div>
+            <div class="badge-strip"><span class="badge">chronicle</span><span class="badge">history</span></div>
+        </a>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- DATA WEAVING                                                 -->
+    <!-- ============================================================ -->
+    <div class="divider">
+        <span class="divider-line"></span>
+        <span class="divider-text">
+            <span class="icon-symbol" data-icon="EDIT" aria-hidden="true"></span>
+            DATA WEAVING
+            <span class="icon-symbol" data-icon="SHIELD" aria-hidden="true"></span>
+        </span>
+        <span class="divider-line"></span>
+    </div>
+
+    <div class="tool-grid" id="dataToolsGrid">
+        <a class="tool-card" href="BulkImporter_v03.html" data-icon="BULK_IMPORT" data-label="Bulk Importer">
+            <div class="card-icon"></div>
+            <div class="card-title">Bulk Importer</div>
+            <div class="card-desc">Batch import characters via CSV/Excel, column mapping to in-game fields (name, birth, gender, notes).</div>
+            <div class="badge-strip"><span class="badge">csv/xlsx</span><span class="badge">mass creation</span></div>
+        </a>
+
+        <a class="tool-card" href="Diagnostics_v03.html" data-icon="DIAGNOSTICS" data-label="Diagnostics &amp; Repair">
+            <div class="card-icon"></div>
+            <div class="card-title">Diagnostics &amp; Repair</div>
+            <div class="card-desc">Audit data integrity: orphaned characters, broken relationships, rank/role fixes, data wipe tools.</div>
+            <div class="badge-strip"><span class="badge">integrity</span><span class="badge">repair</span><span class="badge">audit</span></div>
+        </a>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- TESTING GROUND                                               -->
+    <!-- ============================================================ -->
+    <div class="divider test-divider">
+        <span class="divider-line"></span>
+        <span class="divider-text">
+            <span class="icon-symbol" data-icon="DIAGNOSTICS" aria-hidden="true"></span>
+            TESTING GROUND
+            <span class="icon-symbol" data-icon="GEAR" aria-hidden="true"></span>
+        </span>
+        <span class="divider-line"></span>
+    </div>
+
+    <div class="tool-grid" id="testingToolsGrid">
+        <a class="tool-card test-card" href="js/testing/householdTest.html" data-icon="HOUSEHOLD" data-label="Household Modals Test">
+            <div class="card-icon"></div>
+            <div class="card-title">Household Modals Test</div>
+            <div class="card-desc">Interactive test ground for all household modals: create, edit, members, departments, analytics, selectors.</div>
+            <div class="badge-strip">
+                <span class="badge test">CRUD</span>
+                <span class="badge test">members</span>
+                <span class="badge test">departments</span>
+                <span class="badge test">analytics</span>
+            </div>
+        </a>
+
+        <a class="tool-card test-card" href="js/testing/residenceTest.html" data-icon="LOCATION" data-label="Residence Modals Test">
+            <div class="card-icon"></div>
+            <div class="card-title">Residence Modals Test</div>
+            <div class="card-desc">Interactive test ground for all residence modals: add, edit, details, vacancy, units, assignment, history.</div>
+            <div class="badge-strip">
+                <span class="badge test">CRUD</span>
+                <span class="badge test">vacancy</span>
+                <span class="badge test">units</span>
+                <span class="badge test">history</span>
+            </div>
+        </a>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- FOOTER                                                       -->
+    <!-- ============================================================ -->
+    <footer class="footer-note">
+        <span>
+            <span class="icon-symbol" data-icon="REFRESH" aria-hidden="true"></span>
+            all tools load shared data from localStorage (<code>masterData</code>) — export/import available inside each manager
+        </span>
+        <br/>
+        <span>
+            <span class="icon-symbol" data-icon="ARROW_DOUBLE_H" aria-hidden="true"></span>
+            click any card to launch tool &nbsp;|&nbsp;
+            <span class="icon-symbol" data-icon="ARROW_DOUBLE_H" aria-hidden="true"></span>
+            responsive layout works on desktop &amp; mobile
+        </span>
+    </footer>
+</div>
+
+<!-- ============================================================ -->
+<!-- SETTINGS PANEL                                               -->
+<!-- ============================================================ -->
+<div class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <div class="settings-panel__backdrop" id="settingsBackdrop"></div>
+    <div class="settings-panel__sheet">
+        <header class="settings-panel__header">
+            <h2 id="settingsTitle">Nexus Settings</h2>
+            <button class="settings-panel__close" id="settingsClose" type="button" aria-label="Close settings">×</button>
+        </header>
+
+        <div class="settings-panel__body">
+            <section class="settings-group">
+                <h3 class="settings-group__title">Display</h3>
+
+                <label class="settings-row">
+                    <span class="settings-row__label">Compact grid</span>
+                    <input type="checkbox" id="settingCompactGrid" />
+                </label>
+                <p class="settings-row__hint">
+                    Tighter card padding and smaller gaps.
+                </p>
+
+                <label class="settings-row">
+                    <span class="settings-row__label">Show tool paths</span>
+                    <input type="checkbox" id="settingShowPaths" />
+                </label>
+                <p class="settings-row__hint">
+                    Displays each card's target URL under its description.
+                </p>
+            </section>
+
+            <section class="settings-group">
+                <h3 class="settings-group__title">Storage</h3>
+
+                <div class="settings-row settings-row--static">
+                    <span class="settings-row__label">Canonical data</span>
+                    <span class="settings-row__value" id="settingStorageCounts">—</span>
+                </div>
+
+                <button class="settings-button" id="settingClearRecent" type="button">
+                    Clear recently visited
+                </button>
+
+                <button class="settings-button settings-button--danger" id="settingClearUI" type="button">
+                    Clear UI settings only
+                </button>
+                <p class="settings-row__hint">
+                    Removes theme, recently visited, and filter/sort persistence. <strong>Does not touch</strong> your canonical save (<code>stillwaters_master</code>).
+                </p>
+            </section>
+
+            <section class="settings-group">
+                <h3 class="settings-group__title">About</h3>
+                <p class="settings-row__hint">
+                    Still Waters · v3 unified console.<br/>
+                    All tools share the same canonical data. Export from any manager before wiping.
+                </p>
+            </section>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- CORE SCRIPTS (minimal — only what the nexus needs)           -->
+<!-- ============================================================ -->
+<script src="js/core/icons.js"></script>
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+
+<!-- ============================================================ -->
+<!-- THEME SWITCHER (runs early so the page paints correctly)     -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var STORAGE_KEY = 'stillwaters_theme';
+
+    var THEMES = [
+        { id: 'dark',            label: 'Dark' },
+        { id: 'light',           label: 'Light' },
+        { id: 'vaporwave',       label: 'Vaporwave' },
+        { id: 'pastel',          label: 'Pastel' },
+        { id: 'carnival',        label: 'Carnival' },
+        { id: 'maximal',         label: 'Maximal' },
+        { id: 'gits',            label: 'GITS' },
+        { id: 'nouveau',         label: 'Nouveau' },
+        { id: 'ukiyo-e',         label: 'Ukiyo-e' },
+        { id: 'nature',          label: 'Nature' },
+        { id: 'kmt',             label: 'KMT' },
+        { id: 'gaslight',        label: 'Gaslight' },
+        { id: 'grotesque',       label: 'Grotesque' },
+        { id: 'illuminated',     label: 'Illuminated' },
+        { id: 'discowing',       label: 'Discowing' },
+        { id: 'choc-cake',       label: 'Choc Cake' },
+        { id: 'dada',            label: 'Dada' },
+        { id: 'brutalist',       label: 'Brutalist' },
+        { id: 'orchestrion',     label: 'Orchestrion' },
+        { id: 'rococo',          label: 'Rococo' },
+        { id: 'nautical-tile',   label: 'Nautical Tile' }
+    ];
+
+    var byId = {};
+    for (var i = 0; i < THEMES.length; i++) byId[THEMES[i].id] = THEMES[i];
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+
+    function apply(id) {
+        if (!byId[id]) id = 'dark';
+        document.documentElement.setAttribute('data-theme', id);
+        themeName.textContent = byId[id].label;
+        try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
+    }
+
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < THEMES.length; i++) {
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                THEMES[i].id + '">' + THEMES[i].label + '</button></li>';
+        }
+        themeMenu.innerHTML = html;
+    }
+
+    function openMenu() {
+        themeMenu.hidden = false;
+        themeBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeMenu() {
+        themeMenu.hidden = true;
+        themeBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    themeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (themeMenu.hidden) openMenu(); else closeMenu();
+    });
+    themeMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-theme-id]');
+        if (!btn) return;
+        apply(btn.getAttribute('data-theme-id'));
+        closeMenu();
+    });
+    document.addEventListener('click', function (e) {
+        if (themeMenu.hidden) return;
+        if (themeMenu.contains(e.target)) return;
+        if (e.target === themeBtn) return;
+        closeMenu();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !themeMenu.hidden) closeMenu();
+    });
+
+    var saved = null;
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+    buildMenu();
+
+    if (saved && byId[saved]) {
+        apply(saved);
+    } else {
+        var mq = window.matchMedia('(prefers-color-scheme: light)');
+        apply(mq.matches ? 'light' : 'dark');
+        mq.addEventListener('change', function (ev) {
+            var check;
+            try { check = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+            if (!check) apply(ev.matches ? 'light' : 'dark');
+        });
+    }
+
+    window.ThemeSwitcher = { apply: apply, themes: THEMES.slice() };
+})();
+</script>
+
+<!-- ============================================================ -->
+<!-- NEXUS ORCHESTRATOR                                           -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    // -----------------------------------------------------------------
+    // Storage keys (UI-only; canonical data is untouched)
+    // -----------------------------------------------------------------
+    var KEY_RECENT_TOOLS   = 'stillwaters_recent_tools';
+    var KEY_COMPACT_GRID   = 'stillwaters_nexus_compact_grid';
+    var KEY_SHOW_PATHS     = 'stillwaters_nexus_show_paths';
+    var MAX_RECENT_TOOLS   = 4;
+
+    // -----------------------------------------------------------------
+    // Safe localStorage helpers
+    // -----------------------------------------------------------------
+    function readLS(key, fallback) {
+        try {
+            var v = localStorage.getItem(key);
+            return v === null ? fallback : v;
+        } catch (e) { return fallback; }
+    }
+    function writeLS(key, value) {
+        try { localStorage.setItem(key, value); } catch (e) {}
+    }
+    function removeLS(key) {
+        try { localStorage.removeItem(key); } catch (e) {}
+    }
+
+    // -----------------------------------------------------------------
+    // Icon injection (waits for icons.js if it hasn't run yet)
+    // -----------------------------------------------------------------
+    function injectIcons() {
+        if (typeof window.Icons === 'undefined') {
+            setTimeout(injectIcons, 50);
+            return;
+        }
+
+        var nodes = document.querySelectorAll('[data-icon]');
+        for (var i = 0; i < nodes.length; i++) {
+            var node = nodes[i];
+            var name = node.getAttribute('data-icon');
+            var svg = window.Icons[name] || window.Icons.CIRCLE || '';
+            node.innerHTML = svg;
+        }
+    }
+    injectIcons();
+
+    // -----------------------------------------------------------------
+    // Recently visited
+    // -----------------------------------------------------------------
+    function getRecentTools() {
+        var raw = readLS(KEY_RECENT_TOOLS, '[]');
+        try {
+            var arr = JSON.parse(raw);
+            if (!Array.isArray(arr)) return [];
+            return arr.filter(function (entry) {
+                return entry && typeof entry.href === 'string'
+                    && typeof entry.label === 'string';
+            });
+        } catch (e) { return []; }
+    }
+
+    function rememberTool(href, label) {
+        var arr = getRecentTools();
+        arr = arr.filter(function (entry) { return entry.href !== href; });
+        arr.unshift({ href: href, label: label, visitedAt: Date.now() });
+        if (arr.length > MAX_RECENT_TOOLS) arr = arr.slice(0, MAX_RECENT_TOOLS);
+        writeLS(KEY_RECENT_TOOLS, JSON.stringify(arr));
+    }
+
+    function renderRecent() {
+        var section = document.getElementById('recentSection');
+        var chips   = document.getElementById('recentChips');
+        if (!section || !chips) return;
+
+        var arr = getRecentTools();
+        if (arr.length === 0) {
+            section.hidden = true;
+            chips.innerHTML = '';
+            return;
+        }
+
+        section.hidden = false;
+        var html = '';
+        for (var i = 0; i < arr.length; i++) {
+            var t = arr[i];
+            html += '<a class="recent-chip" href="' + escapeAttr(t.href) + '">' +
+                    escapeHtml(t.label) + '</a>';
+        }
+        chips.innerHTML = html;
+    }
+
+    // -----------------------------------------------------------------
+    // Storage health check
+    // -----------------------------------------------------------------
+    function updateStorageStatus() {
+        var el = document.getElementById('storageStatusText');
+        if (!el) return;
+
+        if (!window.masterData || !window.masterData.data) {
+            el.textContent = 'No canonical data loaded';
+            return;
+        }
+
+        var d = window.masterData.data;
+        var parts = [];
+        if (Array.isArray(d.characters)) parts.push(d.characters.length + ' characters');
+        if (Array.isArray(d.places))     parts.push(d.places.length + ' places');
+        if (Array.isArray(d.religions))  parts.push(d.religions.length + ' religions');
+        if (d.settlementData && typeof d.settlementData === 'object') {
+            parts.push(Object.keys(d.settlementData).length + ' settlements');
+        }
+
+        el.textContent = parts.length === 0
+            ? 'Empty save'
+            : parts.join(' · ');
+    }
+
+    // -----------------------------------------------------------------
+    // Card click → remember, then navigate
+    // -----------------------------------------------------------------
+    function attachCardHandlers() {
+        var cards = document.querySelectorAll('.tool-card[href]');
+        for (var i = 0; i < cards.length; i++) {
+            (function (card) {
+                card.addEventListener('click', function () {
+                    var href = card.getAttribute('href');
+                    var label = card.getAttribute('data-label')
+                        || (card.querySelector('.card-title') || {}).textContent
+                        || href;
+                    if (href) rememberTool(href, label);
+                });
+            })(cards[i]);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Grid compact toggle
+    // -----------------------------------------------------------------
+    function applyCompactGrid(on) {
+        document.body.classList.toggle('nexus-compact-grid', on);
+    }
+
+    // -----------------------------------------------------------------
+    // Show tool paths
+    // -----------------------------------------------------------------
+    function applyShowPaths(on) {
+        document.body.classList.toggle('nexus-show-paths', on);
+    }
+
+    function injectPathLabels() {
+        var cards = document.querySelectorAll('.tool-card[href]');
+        for (var i = 0; i < cards.length; i++) {
+            var card = cards[i];
+            if (card.querySelector('.tool-path')) continue;
+            var href = card.getAttribute('href');
+            if (!href) continue;
+            var el = document.createElement('div');
+            el.className = 'tool-path';
+            el.textContent = href;
+            card.appendChild(el);
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Settings panel
+    // -----------------------------------------------------------------
+    function openSettings() {
+        var panel = document.getElementById('settingsPanel');
+        var btn   = document.getElementById('settingsBtn');
+        if (!panel) return;
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        refreshSettingsValues();
+    }
+
+    function closeSettings() {
+        var panel = document.getElementById('settingsPanel');
+        var btn   = document.getElementById('settingsBtn');
+        if (!panel) return;
+        panel.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+    }
+
+    function refreshSettingsValues() {
+        var compactEl = document.getElementById('settingCompactGrid');
+        var pathsEl   = document.getElementById('settingShowPaths');
+        var countsEl  = document.getElementById('settingStorageCounts');
+
+        if (compactEl) compactEl.checked = readLS(KEY_COMPACT_GRID, 'false') === 'true';
+        if (pathsEl)   pathsEl.checked   = readLS(KEY_SHOW_PATHS, 'false') === 'true';
+
+        if (countsEl) {
+            if (!window.masterData || !window.masterData.data) {
+                countsEl.textContent = '—';
+            } else {
+                var d = window.masterData.data;
+                countsEl.textContent =
+                    (Array.isArray(d.characters) ? d.characters.length : 0) + ' chars · ' +
+                    (Array.isArray(d.places) ? d.places.length : 0) + ' places · ' +
+                    (d.settlementData && typeof d.settlementData === 'object'
+                        ? Object.keys(d.settlementData).length : 0) + ' settlements';
+            }
+        }
+    }
+
+    function attachSettingsHandlers() {
+        var settingsBtn    = document.getElementById('settingsBtn');
+        var settingsClose  = document.getElementById('settingsClose');
+        var settingsBack   = document.getElementById('settingsBackdrop');
+        var compactEl      = document.getElementById('settingCompactGrid');
+        var pathsEl        = document.getElementById('settingShowPaths');
+        var clearRecentBtn = document.getElementById('settingClearRecent');
+        var clearUIBtn     = document.getElementById('settingClearUI');
+
+        if (settingsBtn)   settingsBtn.addEventListener('click', openSettings);
+        if (settingsClose) settingsClose.addEventListener('click', closeSettings);
+        if (settingsBack)  settingsBack.addEventListener('click', closeSettings);
+
+        document.addEventListener('keydown', function (e) {
+            var panel = document.getElementById('settingsPanel');
+            if (e.key === 'Escape' && panel && !panel.hidden) closeSettings();
+        });
+
+        if (compactEl) {
+            compactEl.addEventListener('change', function () {
+                var on = compactEl.checked === true;
+                writeLS(KEY_COMPACT_GRID, on ? 'true' : 'false');
+                applyCompactGrid(on);
+            });
+        }
+
+        if (pathsEl) {
+            pathsEl.addEventListener('change', function () {
+                var on = pathsEl.checked === true;
+                writeLS(KEY_SHOW_PATHS, on ? 'true' : 'false');
+                if (on) injectPathLabels();
+                applyShowPaths(on);
+            });
+        }
+
+        if (clearRecentBtn) {
+            clearRecentBtn.addEventListener('click', function () {
+                removeLS(KEY_RECENT_TOOLS);
+                renderRecent();
+                refreshSettingsValues();
+            });
+        }
+
+        if (clearUIBtn) {
+            clearUIBtn.addEventListener('click', function () {
+                // Explicit list — never wipe stillwaters_master or theme.
+                var keysToClear = [
+                    'stillwaters_ui_state',
+                    'stillwaters_recent_tools',
+                    'stillwaters_nexus_compact_grid',
+                    'stillwaters_nexus_show_paths',
+                    'stillwaters_filter_character_filters',
+                    'stillwaters_filter_location_filters',
+                    'stillwaters_filter_presets',
+                    'census_presets',
+                    'census_current_view',
+                    'census_selected_location',
+                    'census_filters_collapsed',
+                    'timeline_filters',
+                    'timeline_collapsed',
+                    'location_tree_expanded',
+                    'character_tree_state_v3',
+                    'rank_tree_state',
+                    'household_tree_state',
+                    'identityTab_collapsed',
+                    'heartbreak_collapsed',
+                    'adoption_agency_state'
+                ];
+                for (var i = 0; i < keysToClear.length; i++) {
+                    removeLS(keysToClear[i]);
+                }
+                // Theme is a preference; clear it too so the OS preference
+                // takes over again.
+                removeLS('stillwaters_theme');
+                try { window.location.reload(); } catch (e) {}
+            });
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Utilities
+    // -----------------------------------------------------------------
+    function escapeHtml(value) {
+        if (value === null || value === undefined) return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    function escapeAttr(value) {
+        return escapeHtml(value);
+    }
+
+    // -----------------------------------------------------------------
+    // Boot
+    // -----------------------------------------------------------------
+    function boot() {
+        // Apply saved settings.
+        applyCompactGrid(readLS(KEY_COMPACT_GRID, 'false') === 'true');
+        var showPaths = readLS(KEY_SHOW_PATHS, 'false') === 'true';
+        if (showPaths) injectPathLabels();
+        applyShowPaths(showPaths);
+
+        // Initialize storage if the schema is loaded (it will be, unless
+        // this page is opened standalone).
+        if (typeof window.initializeStorage === 'function') {
+            try { window.initializeStorage(); } catch (e) {
+                console.error('[nexus] storage init failed:', e);
+            }
+        } else if (typeof window.loadMasterData === 'function') {
+            try { window.loadMasterData(); } catch (e) {}
+        }
+
+        updateStorageStatus();
+        renderRecent();
+        attachCardHandlers();
+        attachSettingsHandlers();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+})();
+</script>
+
+</body>
+</html>
