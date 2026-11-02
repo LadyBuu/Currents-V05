@@ -1,1114 +1,844 @@
 /**
  * =============================================================================
- * SETTLEMENT INDUSTRY TAB - UI for settlement enterprise management
+ * STILL WATERS - SETTLEMENT INDUSTRY TAB
+ * js/tabs/settlement-industry-tab.js
  * =============================================================================
- * 
- * FIXED: Uses proper industry system functions from IndustryState, IndustryQueries,
- *        IndustryCommands, IndustryTypes, and IndustryProcessor
- * 
+ *
+ * INDUSTRY TAB RENDERER.
+ *
+ * Renders the settlement's enterprises — public and private — as a
+ * settlement-scoped list, with actions that open the industry modals for
+ * create / details / process. The tab is a *view* over the industry
+ * domain's own read and write surfaces; it does not own enterprise data.
+ *
+ * It is a UI module. It:
+ *   - reads through IndustryQueries and IndustryViewModels
+ *   - opens the industry modals via IndustryModals (modals-industry.js)
+ *   - opens the industry list via IndustryModals.openEnterpriseListModal
+ *   - does not read canonical settlement data directly
+ *   - does not read canonical industry data directly (IndustryQueries only)
+ *   - does not compute domain values
+ *   - does not create settlement records
+ *   - does not create enterprise records
+ *   - does not mutate canonical settlement data
+ *   - does not mutate canonical industry data
+ *   - does not persist
+ *   - does not fabricate missing domain values
+ *   - does not render raw null/undefined as "null" or "undefined"
+ *   - does not use a recursion guard
+ *   - does not use setTimeout to guess when the DOM is ready
+ *
+ * Contract reference: Settlement Architecture Contracts §15 (ViewModel
+ * Contract), §16 (UI Contract), §13 (Enterprise Ownership Contract),
+ * §32 (Completion Standard). Industry: industry-doc.txt §1 (Ownership
+ * Contract), §2 (Load Order).
+ *
+ * RENDERER CONTRACT
+ * -----------------
+ *   Registered via SettlementTabs.registerTabRenderer('industry', fn).
+ *   SettlementTabs invokes fn(container, context):
+ *
+ *     container  HTMLElement       already emptied by SettlementTabs
+ *     context    {
+ *       locationId  string|null    selected settlement id
+ *       data        Object|null    canonical settlement record
+ *       viewModel   Object|null    buildSettlementSummary result
+ *     }
+ *
+ *   SettlementTabs has already validated locationId and data before
+ *   calling the renderer.
+ *
+ * ENTERPRISE OWNERSHIP (settlement-docs §13)
+ * ------------------------------------------
+ *   Enterprises are owned by the Industry domain. Settlement does not
+ *   maintain authoritative `stateEnterpriseIds` or `publicEnterpriseIds`
+ *   arrays. The Settlement UI reads enterprise data through
+ *   IndustryQueries:
+ *
+ *     getEnterprisesByLocation(locationId)   enterprises at this location
+ *     getLocationEnterprisesSummary(locId)   summary projection for a list
+ *     getPublicEnterprises(locationId)       ownershipType === 'public'
+ *     getPrivateEnterprises(locationId)      ownershipType === 'private'
+ *     getStateEnterprises(locationId)        ownerType === 'state'
+ *
+ *   The tab reads these; it does not maintain a parallel settlement-side
+ *   enterprise list. This matches the §13 contract exactly.
+ *
+ * PUBLIC vs. PRIVATE
+ * ------------------
+ *   `ownershipType` is the settlement-facing concept. It is set to
+ *   'public' when the enterprise's owner is a settlement or state (place
+ *   owner type) and 'private' when the owner is a character, a household,
+ *   or none. The industry domain enforces this coherence via
+ *   IndustryRules.canApplyOwnershipChange.
+ *
+ *   The tab groups enterprises into two sections:
+ *
+ *     Public    ownershipType === 'public'
+ *     Private   ownershipType === 'private'
+ *
+ *   This is the same split the old tab attempted; the difference is that
+ *   the old tab read `enterprise.isPublic` (a derived field that Phase 3
+ *   removed from the canonical record), and the value was always
+ *   `undefined` on new records. The new tab reads `ownershipType`, which
+ *   is the canonical stored field.
+ *
+ * PER-ENTERPRISE ACTIONS
+ * ----------------------
+ *   Every mutating action is delegated to a modals-industry.js export:
+ *
+ *     Details   openEnterpriseDetailsModal(enterpriseId, onSuccess)
+ *     Edit      openEditEnterpriseModal(enterpriseId, onSuccess)
+ *     Process   openEnterpriseDetailsModal → the modal hosts Process Year
+ *               (so the tab does not need a "Process" button on the row)
+ *     Create    openCreateEnterpriseModal(onSuccess, { locationId,
+ *                                               ownerType, ownerId })
+ *
+ *   The tab does not call IndustryCommands directly. The modals own
+ *   persistence (IndustryCommands.persist() once per successful batch).
+ *
+ * WHY THE TAB DELEGATES PROCESSING TO THE MODAL
+ * ---------------------------------------------
+ *   Process Year is a mutating action that touches the enterprise's
+ *   wealth, debt, status, history, and (for household-owned enterprises)
+ *   the owning household's wealth. It is not a simple toggle.
+ *   IndustryProcessor.processAnnualEnterprise is the correct entry
+ *   point, but the user should see a confirmation and understand what is
+ *   about to happen — which is exactly what the details modal's Process
+ *   Year button provides. Adding a second "Process" button on the tab
+ *   row would duplicate the confirmation flow, or worse, skip it.
+ *
+ *   If the user wants to process a single enterprise, the row's
+ *   "Details" button opens the details modal, and Process Year is one
+ *   click from there.
+ *
+ * AGGREGATE PROCESSING
+ * --------------------
+ *   The tab offers a top-level "Process All Enterprises" button that
+ *   calls IndustryProcessor.processAllEnterprises() directly. Unlike
+ *   per-enterprise processing, batch processing has no confirmation in
+ *   the modals either — it is the caller's job to decide when to run it.
+ *   The tab confirms once with window.confirmDialog, then calls the
+ *   processor, which persists once at the end.
+ *
+ *   The result is reported back to the user in a toast that includes
+ *   processed / skipped / failed counts. On partial failure, the failures
+ *   are summarised; the full list is available in the returned result,
+ *   which the tab discards (a toast is the right level of detail for
+ *   a batch action the user did not ask to inspect individually).
+ *
+ * LOCATION SCOPING
+ * ----------------
+ *   The tab only shows enterprises whose `locationId` equals the
+ *   settlement's locationId. IndustryQueries.getEnterprisesByLocation
+ *   returns exactly that set. Enterprises whose owner is the settlement
+ *   but whose location is elsewhere (rare: an out-of-settlement
+ *   headquarters) are not shown. That matches "the settlement's
+ *   enterprises" as the user expects.
+ *
+ * ICON POLICY
+ * -----------
+ *   No emojis. No inline SVG. Chrome icons come from window.getIcon if it
+ *   is loaded; when icons.js is not on the page, the renderer falls back
+ *   to plain text labels.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Rewritten against the industry module set and the settlement
+ *       module set.
+ *     - Signature changed from (containerId, locationId, summary) to
+ *       (container, context), matching settlement-tabs.js.
+ *     - Recursion guard (_rendering) and modal-open flag removed (§20
+ *       prohibits recursion guards).
+ *     - The tab no longer re-implements create / edit / details / worker
+ *       management. Every mutating flow is delegated to the
+ *       modals-industry.js export for that flow. The old tab
+ *       re-implemented all four inline, roughly doubling the industry
+ *       domain's modal code, and the copies drifted from the canonical
+ *       versions (different field allowlists, different default-value
+ *       resolution, different owner-selector wiring).
+ *     - The tab reads through IndustryQueries only. The old tab read
+ *       `enterprise.isPublic`, `enterprise.workerCount`, `enterprise.type`,
+ *       `enterprise.typeName`, and `enterprise.ownerName` directly off
+ *       the enterprise record. Those fields are derived (removed from
+ *       the canonical shape in Phase 3 by industry-migration.js) and
+ *       were silently undefined on new records. The new tab reads the
+ *       summary projection from IndustryQueries.getEnterpriseSummary,
+ *       which resolves each derived field on read.
+ *     - The tab no longer calls IndustryState.getAllEnterprises()
+ *       directly. It goes through IndustryQueries.getEnterprisesByLocation
+ *       / getLocationEnterprisesSummary, which use the IndustryState
+ *       location index.
+ *     - The tab no longer calls IndustryCommands.createEnterprise,
+ *       updateEnterprise, addWorkerToEnterprise, removeWorkerFromEnterprise,
+ *       or setWorkerWage directly. Those go through modals-industry.js,
+ *       which owns the confirmation, validation, and persist calls.
+ *     - The "Process All" button calls
+ *       IndustryProcessor.processAllEnterprises() after a single
+ *       confirmation. The tab does not call IndustryCommands.persist()
+ *       directly — the processor calls it once at the end of the batch.
+ *     - All numeric values route through _fmtNumber. All text values
+ *       route through _fmtText. No raw null/undefined reaches the DOM.
+ *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
+ *       is not called by the tab — the per-enterprise year display comes
+ *       from the summary projection via the details modal, not from
+ *       this tab.
+ *   Previous revisions:
+ *     - Pre-refactor implementation against SettlementState /
+ *       SettlementCrud / IndustryState / IndustryQueries / IndustryCommands,
+ *       roughly 1,100 lines, most of which duplicated the industry
+ *       domain's modals or re-derived canonical record fields.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
-    var _rendering = false;
-    var _modalOpen = false;
-
-    // =========================================================================
-    // 2. DEPENDENCY CHECK
-    // =========================================================================
-
-    function _checkDependencies() {
-        var missing = [];
-        
-        if (typeof window.IndustryState === 'undefined') missing.push('IndustryState');
-        if (typeof window.IndustryQueries === 'undefined') missing.push('IndustryQueries');
-        if (typeof window.IndustryCommands === 'undefined') missing.push('IndustryCommands');
-        if (typeof window.IndustryTypes === 'undefined') missing.push('IndustryTypes');
-        if (typeof window.IndustryProcessor === 'undefined') missing.push('IndustryProcessor');
-        
-        if (missing.length > 0) {
-            console.warn('[Industry Tab] Missing dependencies:', missing.join(', '));
-            return false;
+    function _getIndustryQueries() {
+        var Q = window.IndustryQueries;
+        if (!Q || typeof Q.getEnterprisesByLocation !== 'function') {
+            throw new Error(
+                'settlement-industry-tab: IndustryQueries is missing. ' +
+                'Load industry-queries.js before this tab.'
+            );
         }
-        return true;
+        return Q;
+    }
+
+    function _getIndustryViewModels() {
+        var VMs = window.IndustryViewModels;
+        if (!VMs || typeof VMs.buildListRow !== 'function') {
+            throw new Error(
+                'settlement-industry-tab: IndustryViewModels is missing. ' +
+                'Load industry-view-models.js before this tab.'
+            );
+        }
+        return VMs;
+    }
+
+    function _getIndustryProcessor() {
+        var P = window.IndustryProcessor;
+        if (!P || typeof P.processAllEnterprises !== 'function') {
+            throw new Error(
+                'settlement-industry-tab: IndustryProcessor is missing. ' +
+                'Load industry-processor.js before this tab.'
+            );
+        }
+        return P;
+    }
+
+    function _getIndustryModals() {
+        var M = window.IndustryModals;
+        if (!M || typeof M.openEnterpriseDetailsModal !== 'function') {
+            throw new Error(
+                'settlement-industry-tab: IndustryModals is missing. ' +
+                'Load modals-industry.js before this tab.'
+            );
+        }
+        return M;
+    }
+
+    function _getPlaceQueries() {
+        return window.PlaceQueries || null;
+    }
+
+    function _getTabs() {
+        return window.SettlementTabs || null;
     }
 
     // =========================================================================
-    // 3. DIRECT ACCESSORS - USING INDUSTRY SYSTEM FUNCTIONS
+    // 2. HELPERS
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
-    function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        }
+    function _unknown() {
+        return '<span class="value-unknown">—</span>';
     }
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
+    function _fmtNumber(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString());
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
-        }
+    function _fmtGold(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString()) + 'g';
     }
 
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
+    function _fmtSignedGold(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        var sign = value >= 0 ? '+' : '';
+        return _escapeHtml(sign + value.toLocaleString()) + 'g';
+    }
+
+    function _fmtText(value) {
+        if (value === null || value === undefined || value === '') {
+            return _unknown();
         }
-        if (confirm(message)) {
-            onConfirm();
-        }
+        return _escapeHtml(value);
     }
 
     function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
+        if (typeof window.getIcon === 'function') {
+            try {
+                var icon = window.getIcon(name);
+                if (typeof icon === 'string') return icon;
+            } catch (e) {
+                // getIcon exists but threw; fall through to ''.
+            }
         }
         return '';
     }
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    function _placeName(locationId) {
+        var pq = _getPlaceQueries();
+        if (!pq || typeof pq.getPlaceById !== 'function') return null;
+        var place = pq.getPlaceById(locationId);
+        return place ? (place.displayName || place.name || null) : null;
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getSettlementData(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementData) {
-            return SettlementState.getSettlementData(locationId);
+    function _toast(message, type) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
         }
-        return null;
     }
 
-    function _getLocationPopulationCount(locationId) {
-        if (typeof window.getLocationPopulationCount === 'function') {
-            return window.getLocationPopulationCount(locationId);
-        }
-        return 0;
-    }
-
-    // =========================================================================
-    // 4. INDUSTRY SYSTEM ACCESSORS - USING PROPER FUNCTIONS
-    // =========================================================================
-
-    function _getAllEnterprises() {
-        if (typeof window.IndustryState !== 'undefined' && window.IndustryState.getAllEnterprises) {
-            return window.IndustryState.getAllEnterprises();
-        }
-        throw new Error('IndustryState.getAllEnterprises not available');
-    }
-
-    function _getEnterprise(id) {
-        if (typeof window.IndustryState !== 'undefined' && window.IndustryState.getEnterprise) {
-            return window.IndustryState.getEnterprise(id);
-        }
-        throw new Error('IndustryState.getEnterprise not available');
-    }
-
-    function _getEnterpriseSummary(id) {
-        if (typeof window.IndustryQueries !== 'undefined' && window.IndustryQueries.getEnterpriseSummary) {
-            return window.IndustryQueries.getEnterpriseSummary(id);
-        }
-        throw new Error('IndustryQueries.getEnterpriseSummary not available');
-    }
-
-    function _getLocationEnterprisesSummary(locationId) {
-        if (typeof window.IndustryQueries !== 'undefined' && window.IndustryQueries.getLocationEnterprisesSummary) {
-            return window.IndustryQueries.getLocationEnterprisesSummary(locationId);
-        }
-        throw new Error('IndustryQueries.getLocationEnterprisesSummary not available');
-    }
-
-    function _getEnterpriseTypes() {
-        if (typeof window.IndustryTypes !== 'undefined' && window.IndustryTypes.getEnterpriseTypes) {
-            return window.IndustryTypes.getEnterpriseTypes();
-        }
-        throw new Error('IndustryTypes.getEnterpriseTypes not available');
-    }
-
-    function _getEnterpriseCategories() {
-        if (typeof window.IndustryTypes !== 'undefined' && window.IndustryTypes.getEnterpriseCategories) {
-            return window.IndustryTypes.getEnterpriseCategories();
-        }
-        throw new Error('IndustryTypes.getEnterpriseCategories not available');
-    }
-
-    // =========================================================================
-    // 5. INDUSTRY COMMANDS - USING PROPER FUNCTIONS
-    // =========================================================================
-
-    function _createEnterprise(data) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.createEnterprise) {
-            return window.IndustryCommands.createEnterprise(data);
-        }
-        throw new Error('IndustryCommands.createEnterprise not available');
-    }
-
-    function _updateEnterprise(id, updates) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.updateEnterprise) {
-            return window.IndustryCommands.updateEnterprise(id, updates);
-        }
-        throw new Error('IndustryCommands.updateEnterprise not available');
-    }
-
-    function _deleteEnterprise(id) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.deleteEnterprise) {
-            return window.IndustryCommands.deleteEnterprise(id);
-        }
-        throw new Error('IndustryCommands.deleteEnterprise not available');
-    }
-
-    function _addWorkerToEnterprise(id, workerId, wage) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.addWorkerToEnterprise) {
-            return window.IndustryCommands.addWorkerToEnterprise(id, workerId, wage);
-        }
-        throw new Error('IndustryCommands.addWorkerToEnterprise not available');
-    }
-
-    function _removeWorkerFromEnterprise(id, workerId) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.removeWorkerFromEnterprise) {
-            return window.IndustryCommands.removeWorkerFromEnterprise(id, workerId);
-        }
-        throw new Error('IndustryCommands.removeWorkerFromEnterprise not available');
-    }
-
-    function _processAnnualEnterprise(id) {
-        if (typeof window.IndustryProcessor !== 'undefined' && window.IndustryProcessor.processAnnualEnterprise) {
-            return window.IndustryProcessor.processAnnualEnterprise(id);
-        }
-        throw new Error('IndustryProcessor.processAnnualEnterprise not available');
-    }
-
-    function _processAllEnterprises() {
-        if (typeof window.IndustryProcessor !== 'undefined' && window.IndustryProcessor.processAllEnterprises) {
-            return window.IndustryProcessor.processAllEnterprises();
-        }
-        throw new Error('IndustryProcessor.processAllEnterprises not available');
-    }
-
-    // =========================================================================
-    // 6. PUBLIC ENTERPRISE FUNCTIONS
-    // =========================================================================
-
-    /**
-     * Creates a public enterprise (settlement-owned)
-     * Uses the ownershipType field to mark it as public
-     */
-    function _createPublicEnterprise(locationId, data) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.createEnterprise) {
-            data.ownershipType = 'public';
-            data.ownerType = 'settlement';
-            data.ownerId = locationId;
-            var result = window.IndustryCommands.createEnterprise(data);
-            
-            // Track in settlement data if available
-            if (result && result.success) {
-                if (typeof SettlementState !== 'undefined' && SettlementState._addPublicEnterprise) {
-                    SettlementState._addPublicEnterprise(locationId, result.data.id);
-                }
-                return result;
-            }
-            return result;
-        }
-        throw new Error('IndustryCommands.createEnterprise not available');
-    }
-
-    /**
-     * Converts a private enterprise to public
-     * Uses the ownershipType field to mark it as public
-     */
-    function _convertEnterpriseToPublic(id, locationId) {
-        if (typeof window.IndustryCommands !== 'undefined' && window.IndustryCommands.updateEnterprise) {
-            var updates = {
-                ownershipType: 'public',
-                ownerType: 'settlement',
-                ownerId: locationId
-            };
-            // Also need to get location name if available
-            var place = _getPlaceById(locationId);
-            if (place) {
-                updates.ownerName = place.displayName;
-            }
-            return window.IndustryCommands.updateEnterprise(id, updates);
-        }
-        throw new Error('IndustryCommands.updateEnterprise not available');
-    }
-
-    // =========================================================================
-    // 7. ICON HELPERS
-    // =========================================================================
-
-    function _icon(name) {
-        return _getIcon(name);
-    }
-
-    // =========================================================================
-    // 8. MAIN RENDER FUNCTION
-    // =========================================================================
-
-    function renderSettlementIndustry(containerId, locationId, summary) {
-        if (_rendering) {
+    function _confirm(message, title, onConfirm) {
+        if (typeof window.confirmDialog === 'function') {
+            window.confirmDialog(message, title, onConfirm);
             return;
         }
-        _rendering = true;
-
-        try {
-            var container = document.getElementById(containerId);
-            if (!container) {
-                _rendering = false;
-                return;
-            }
-
-            // CHECK DEPENDENCIES FIRST
-            if (!_checkDependencies()) {
-                container.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center;color:var(--danger);">' +
-                    '<div style="font-size:2rem;margin-bottom:12px;">⚠️</div>' +
-                    '<div style="font-size:0.8rem;font-weight:bold;">Industry System Not Loaded</div>' +
-                    '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">Required modules: IndustryState, IndustryQueries, IndustryCommands, IndustryTypes, IndustryProcessor</div>' +
-                    '</div>';
-                _rendering = false;
-                return;
-            }
-
-            var data = _getSettlementData(locationId);
-            if (!data) {
-                if (typeof SettlementCrud !== 'undefined' && SettlementCrud.createSettlementData) {
-                    data = SettlementCrud.createSettlementData(locationId);
+        if (window.confirm(title + '\n\n' + message)) {
+            try { onConfirm(); } catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('settlement-industry-tab: onConfirm threw:', e);
                 }
             }
+        }
+    }
 
-            if (!data) {
-                container.innerHTML = '<div class="empty-state">No settlement data found. Select a location with a settlement.</div>';
-                _rendering = false;
-                return;
-            }
-
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                container.innerHTML = '<div class="empty-state">Location not found</div>';
-                _rendering = false;
-                return;
-            }
-
-            var enterpriseSummaries = _getLocationEnterprisesSummary(locationId);
-            var population = _getLocationPopulationCount(locationId);
-
-            var publicEnterprises = [];
-            var privateEnterprises = [];
-
-            for (var i = 0; i < enterpriseSummaries.length; i++) {
-                var e = enterpriseSummaries[i];
-                if (e.ownershipType === 'public' || e.isPublic) {
-                    publicEnterprises.push(e);
-                } else {
-                    privateEnterprises.push(e);
-                }
-            }
-
-            var GEAR = _icon('GEAR') || '⚙️';
-            var COIN = _icon('COIN') || '💰';
-            var PERSON = _icon('PERSON') || '👤';
-            var INFO = _icon('CIRCLE_DOT') || 'ℹ️';
-            var LOC = _icon('LOCATION') || '📍';
-            var REFRESH = _icon('REFRESH') || '🔄';
-            var TRASH = _icon('TRASH') || '🗑️';
-            var EDIT = _icon('EDIT') || '✏️';
-            var PLUS = _icon('PLUS') || '➕';
-
-            var content = '<div style="padding: 4px;">';
-
-            // HEADER
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--border);">' +
-                '<div>' +
-                '<div style="font-size: 0.8rem; font-weight: bold; color: var(--accent-light);">' + GEAR + ' Industry & Enterprises</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place.displayName) + ' · ' + enterpriseSummaries.length + ' enterprises</div>' +
-                '</div>' +
-                '<div style="text-align: right;">' +
-                '<div style="font-size: 0.65rem; color: var(--text);">Public: <strong style="color: var(--accent-light);">' + publicEnterprises.length + '</strong> · Private: <strong style="color: var(--text);">' + privateEnterprises.length + '</strong></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">Population: ' + population.toLocaleString() + '</div>' +
-                '</div>' +
-                '</div>';
-
-            // ACTION BUTTONS
-            content += '<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;">' +
-                '<button class="industry-action-btn" data-action="create-public" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer; color: var(--accent-light);">' + PLUS + ' Public Enterprise</button>' +
-                '<button class="industry-action-btn" data-action="create-private" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + PLUS + ' Private Enterprise</button>' +
-                '<button class="industry-action-btn" data-action="process-all" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + REFRESH + ' Process All</button>' +
-                '<button class="industry-action-btn" data-action="refresh" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + REFRESH + ' Refresh</button>' +
-                '</div>';
-
-            // STATISTICS SUMMARY
-            if (enterpriseSummaries.length > 0) {
-                var totalWealth = 0;
-                var totalDebt = 0;
-                var totalWorkers = 0;
-                var profitable = 0;
-
-                for (var i = 0; i < enterpriseSummaries.length; i++) {
-                    var e = enterpriseSummaries[i];
-                    totalWealth += e.wealth || 0;
-                    totalDebt += e.debt || 0;
-                    totalWorkers += e.workerCount || 0;
-                    if ((e.annualProfit || 0) > 0) profitable++;
-                }
-
-                content += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-                    '<div style="background: var(--bg2); padding: 10px; border-radius: 6px; text-align: center; border: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.5rem; color: var(--dim);">' + COIN + ' Total Wealth</div>' +
-                    '<div style="font-size: 0.9rem; font-weight: bold; color: ' + (totalWealth >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + totalWealth + 'g</div>' +
-                    '</div>' +
-                    '<div style="background: var(--bg2); padding: 10px; border-radius: 6px; text-align: center; border: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.5rem; color: var(--dim);">Total Debt</div>' +
-                    '<div style="font-size: 0.9rem; font-weight: bold; color: ' + (totalDebt > 0 ? 'var(--danger-lt)' : 'var(--success)') + ';">' + totalDebt + 'g</div>' +
-                    '</div>' +
-                    '<div style="background: var(--bg2); padding: 10px; border-radius: 6px; text-align: center; border: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.5rem; color: var(--dim);">' + PERSON + ' Workers</div>' +
-                    '<div style="font-size: 0.9rem; font-weight: bold; color: var(--text);">' + totalWorkers + '</div>' +
-                    '</div>' +
-                    '<div style="background: var(--bg2); padding: 10px; border-radius: 6px; text-align: center; border: 1px solid var(--border);">' +
-                    '<div style="font-size: 0.5rem; color: var(--dim);">Profitable</div>' +
-                    '<div style="font-size: 0.9rem; font-weight: bold; color: var(--success);">' + profitable + '/' + enterpriseSummaries.length + '</div>' +
-                    '</div>' +
-                    '</div>';
-            }
-
-            // PUBLIC ENTERPRISES
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + LOC + ' Public Enterprises (' + publicEnterprises.length + ')</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 6px;">Settlement-owned enterprises that generate revenue for the settlement budget.</div>';
-
-            if (publicEnterprises.length === 0) {
-                content += '<div style="text-align: center; padding: 12px; color: var(--dim); font-size: 0.6rem;">No public enterprises</div>';
-            } else {
-                for (var i = 0; i < publicEnterprises.length; i++) {
-                    var e = publicEnterprises[i];
-                    content += _renderEnterpriseItem(e, 'public', locationId);
-                }
-            }
-
-            content += '</div>';
-
-            // PRIVATE ENTERPRISES
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + LOC + ' Private Enterprises (' + privateEnterprises.length + ')</div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim); margin-bottom: 6px;">Privately owned enterprises. Can be converted to public ownership.</div>';
-
-            if (privateEnterprises.length === 0) {
-                content += '<div style="text-align: center; padding: 12px; color: var(--dim); font-size: 0.6rem;">No private enterprises</div>';
-            } else {
-                for (var i = 0; i < privateEnterprises.length; i++) {
-                    var e = privateEnterprises[i];
-                    content += _renderEnterpriseItem(e, 'private', locationId);
-                }
-            }
-
-            content += '</div>';
-
-            // INFO FOOTER
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                INFO + ' Public enterprises are owned by the settlement. Their profits go to the settlement treasury. Private enterprises are owned by characters or households.' +
-                '</div>';
-
-            content += '</div>';
-
-            container.innerHTML = content;
-
-            _attachActionListeners(container, locationId);
-
-        } catch (e) {
-            console.error('[Industry Tab] Render error:', e);
-            var container = document.getElementById(containerId);
-            if (container) {
-                container.innerHTML = '<div class="empty-state" style="padding:40px;text-align:center;color:var(--danger);">' +
-                    '<div style="font-size:1.5rem;margin-bottom:12px;">⚠️</div>' +
-                    '<div style="font-size:0.8rem;">Error loading industry data</div>' +
-                    '<div style="font-size:0.6rem;color:var(--dim);margin-top:8px;">' + _escapeHtml(e.message) + '</div>' +
-                    '</div>';
-            }
-        } finally {
-            _rendering = false;
+    function _requestRefresh() {
+        var tabs = _getTabs();
+        if (tabs && typeof tabs.requestRender === 'function') {
+            tabs.requestRender('industry');
         }
     }
 
     // =========================================================================
-    // 9. RENDER ENTERPRISE ITEM
+    // 3. ACTION HANDLERS
     // =========================================================================
 
-    function _renderEnterpriseItem(summary, type, locationId) {
-        var isPublic = (type === 'public');
-        var profit = summary.annualProfit || 0;
-        var profitColor = profit >= 0 ? 'var(--success)' : 'var(--danger)';
-        var profitPrefix = profit >= 0 ? '+' : '';
-        var statusColor = summary.status === 'active' ? 'var(--success)' :
-                         summary.status === 'bankrupt' ? 'var(--danger)' :
-                         'var(--warn)';
+    function _handleCreate(locationId) {
+        var modals = _getIndustryModals();
+        if (typeof modals.openCreateEnterpriseModal !== 'function') {
+            _toast(
+                'Create Enterprise modal is not available.',
+                'error'
+            );
+            return;
+        }
 
-        var GEAR = _icon('GEAR') || '⚙️';
-        var COIN = _icon('COIN') || '💰';
-        var PERSON = _icon('PERSON') || '👤';
-        var INFO = _icon('CIRCLE_DOT') || 'ℹ️';
-        var EDIT = _icon('EDIT') || '✏️';
-        var TRASH = _icon('TRASH') || '🗑️';
+        // Pre-fill the settlement as the location. Leave ownerType unset —
+        // the user picks whether this is a public (settlement-owned) or
+        // private enterprise. The create modal's owner selector is the
+        // place that decides.
+        modals.openCreateEnterpriseModal(function () {
+            _requestRefresh();
+        }, {
+            locationId: locationId
+        });
+    }
 
-        var html = '<div class="enterprise-item" data-enterprise-id="' + summary.id + '" style="' +
-            'background: var(--bg); border: 1px solid var(--border); border-left: 3px solid ' + (isPublic ? 'var(--accent)' : 'var(--bg4)') + ';' +
-            'border-radius: 6px; padding: 10px 14px; margin-bottom: 6px;' +
-            '">' +
-            '<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 6px;">' +
-            '<div style="flex: 1; min-width: 0;">' +
-            '<div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">' +
-            '<span style="font-size: 0.7rem; font-weight: bold; color: var(--text);">' + _escapeHtml(summary.name) + '</span>' +
-            '<span style="font-size: 0.5rem; color: var(--dim); padding: 1px 6px; border: 1px solid var(--border); border-radius: 8px;">' + _escapeHtml(summary.type || 'Unknown') + '</span>' +
-            '<span style="font-size: 0.5rem; color: ' + statusColor + '; padding: 1px 6px; border: 1px solid ' + statusColor + '; border-radius: 8px;">' + _escapeHtml(summary.status || 'active') + '</span>' +
-            (isPublic ? '<span style="font-size: 0.5rem; color: var(--accent); padding: 1px 6px; border: 1px solid var(--accent); border-radius: 8px;">Public</span>' : '') +
+    function _handleCreatePublic(locationId) {
+        var modals = _getIndustryModals();
+        if (typeof modals.openCreateEnterpriseModal !== 'function') {
+            _toast('Create Enterprise modal is not available.', 'error');
+            return;
+        }
+
+        // Pre-fill owner as the settlement. The modal will set
+        // ownershipType to 'public' from the ownerType because the
+        // industry rules reject a public enterprise owned by a
+        // character/household.
+        modals.openCreateEnterpriseModal(function () {
+            _requestRefresh();
+        }, {
+            locationId: locationId,
+            ownerType: 'settlement',
+            ownerId: locationId
+        });
+    }
+
+    function _handleDetails(enterpriseId) {
+        var modals = _getIndustryModals();
+        if (typeof modals.openEnterpriseDetailsModal !== 'function') {
+            _toast('Enterprise Details modal is not available.', 'error');
+            return;
+        }
+        modals.openEnterpriseDetailsModal(enterpriseId, function () {
+            _requestRefresh();
+        });
+    }
+
+    function _handleEdit(enterpriseId) {
+        var modals = _getIndustryModals();
+        if (typeof modals.openEditEnterpriseModal !== 'function') {
+            _toast('Edit Enterprise modal is not available.', 'error');
+            return;
+        }
+        modals.openEditEnterpriseModal(enterpriseId, function () {
+            _requestRefresh();
+        });
+    }
+
+    function _handleProcessAll(locationId) {
+        var processor = _getIndustryProcessor();
+
+        _confirm(
+            'Process all enterprises in this settlement for the current ' +
+            'year?\n\n' +
+            'Each active enterprise will run its annual economics: income, ' +
+            'expenses, wages, interest, and (for household-owned ' +
+            'enterprises) the transfer to the owning household.\n\n' +
+            'This action cannot be undone.',
+            'Process All Enterprises',
+            function () {
+                var result;
+                try {
+                    result = processor.processAllEnterprises();
+                } catch (err) {
+                    _toast(
+                        'Processing failed: ' +
+                        (err && err.message ? err.message : 'unknown error'),
+                        'error'
+                    );
+                    return;
+                }
+
+                if (result.success === true) {
+                    var parts = [];
+                    parts.push(result.processed + ' processed');
+                    if (result.skipped > 0) parts.push(result.skipped + ' skipped');
+                    _toast('Enterprises processed: ' + parts.join(', '), 'success');
+                } else {
+                    var msg = 'Processing completed with errors: ' +
+                        result.processed + ' processed, ' +
+                        result.failed + ' failed';
+                    if (result.persist && result.persist.success === false) {
+                        msg += ' (save failed: ' +
+                            (result.persist.reason || 'unknown') + ')';
+                    }
+                    _toast(msg, 'error');
+                }
+
+                _requestRefresh();
+            }
+        );
+    }
+
+    function _handleOpenList() {
+        var modals = _getIndustryModals();
+        if (typeof modals.openEnterpriseListModal !== 'function') {
+            _toast('Enterprise list modal is not available.', 'error');
+            return;
+        }
+        modals.openEnterpriseListModal();
+    }
+
+    // =========================================================================
+    // 4. SECTION BUILDERS
+    // =========================================================================
+
+    function _buildHeader(context, summaryStats) {
+        var locationId = context.locationId;
+        var name = (context.viewModel && context.viewModel.name)
+            ? context.viewModel.name
+            : (_placeName(locationId) || '(unnamed location)');
+
+        var total = summaryStats.total;
+        var publicCount = summaryStats.publicCount;
+        var privateCount = summaryStats.privateCount;
+
+        var refreshBtn = '<button type="button" class="industry-tab-btn" ' +
+            'data-action="refresh" ' +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
+            'color:var(--text);">' +
+            _getIcon('REFRESH') + ' Refresh</button>';
+
+        var processAllBtn = '<button type="button" class="industry-tab-btn" ' +
+            'data-action="process-all" ' +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
+            'color:var(--text);">' +
+            _getIcon('GEAR') + ' Process All</button>';
+
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;display:flex;' +
+            'justify-content:space-between;align-items:center;flex-wrap:wrap;' +
+            'gap:8px;border:1px solid var(--border);">' +
+            '<div>' +
+            '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent-light);">' +
+            _getIcon('GEAR') + ' Industry & Enterprises</div>' +
+            '<div style="font-size:0.6rem;color:var(--dim);">' +
+            _escapeHtml(name) + ' · ' +
+            _fmtNumber(total) + ' total · ' +
+            _fmtNumber(publicCount) + ' public · ' +
+            _fmtNumber(privateCount) + ' private' +
             '</div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">' +
-            PERSON + ' Workers: ' + (summary.workerCount || 0) + '/' + (summary.maxWorkers || 0) +
-            ' · ' + COIN + ' Wealth: ' + (summary.wealth || 0) + 'g' +
-            (summary.debt > 0 ? ' · Debt: ' + summary.debt + 'g' : '') +
-            ' · Profit: <span style="color: ' + profitColor + ';">' + profitPrefix + (profit || 0) + 'g</span>' +
-            (summary.ownerName ? ' · Owner: ' + _escapeHtml(summary.ownerName) : '') +
+            '</div>' +
+            '<div style="display:flex;gap:4px;flex-wrap:wrap;">' +
+            refreshBtn + processAllBtn +
+            '</div>' +
+            '</div>';
+    }
+
+    function _buildActionButtons(locationId) {
+        function btn(action, label, iconName, opts) {
+            opts = opts || {};
+            var style = 'font-size:0.6rem;padding:6px 14px;' +
+                'background:var(--bg3);border:1px solid ' +
+                (opts.accent ? 'var(--accent)' : 'var(--border)') + ';' +
+                'border-radius:4px;cursor:pointer;color:' +
+                (opts.accent ? 'var(--accent-light)' : 'var(--text)') + ';';
+            return '<button type="button" class="industry-tab-btn" ' +
+                'data-action="' + _escapeHtml(action) + '" ' +
+                'data-location="' + _escapeHtml(locationId) + '" ' +
+                'style="' + style + '">' +
+                (iconName ? _getIcon(iconName) + ' ' : '') +
+                _escapeHtml(label) + '</button>';
+        }
+
+        return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">' +
+            btn('create-public', 'New Public Enterprise', 'PLUS', { accent: true }) +
+            btn('create-private', 'New Private Enterprise', 'PLUS') +
+            btn('open-list', 'All Enterprises', 'GEAR') +
+            '</div>';
+    }
+
+    function _buildStatsRow(stats) {
+        function cell(label, valueHtml, color) {
+            return '<div style="background:var(--bg2);padding:10px;' +
+                'border-radius:6px;text-align:center;' +
+                'border:1px solid var(--border);">' +
+                '<div style="font-size:0.5rem;color:var(--dim);">' +
+                _escapeHtml(label) + '</div>' +
+                '<div style="font-size:0.9rem;font-weight:bold;color:' +
+                (color || 'var(--text)') + ';">' +
+                valueHtml + '</div>' +
+                '</div>';
+        }
+
+        var wealthColor = stats.totalWealth >= 0 ? 'var(--success)' : 'var(--danger)';
+        var debtColor = stats.totalDebt > 0 ? 'var(--danger-lt)' : 'var(--success)';
+
+        return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;' +
+            'gap:12px;margin-bottom:16px;">' +
+            cell('Total Wealth', _fmtGold(stats.totalWealth), wealthColor) +
+            cell('Total Debt', _fmtGold(stats.totalDebt), debtColor) +
+            cell('Workers', _fmtNumber(stats.totalWorkers)) +
+            cell('Profitable', _fmtNumber(stats.profitable) + ' / ' +
+                _fmtNumber(stats.total), 'var(--success)') +
+            '</div>';
+    }
+
+    function _buildEnterpriseRow(row) {
+        var profitColor = row.profitClass === 'value-pos'
+            ? 'var(--success)'
+            : (row.profitClass === 'value-neg' ? 'var(--danger)' : 'var(--text)');
+
+        var statusColor = 'var(--text)';
+        if (row.statusClass === 'status-active') statusColor = 'var(--success)';
+        else if (row.statusClass === 'status-bankrupt') statusColor = 'var(--danger)';
+        else if (row.statusClass === 'status-closed') statusColor = 'var(--dim)';
+        else if (row.statusClass === 'status-inactive') statusColor = 'var(--warn)';
+
+        return '<div class="industry-enterprise-row" ' +
+            'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
+            'style="background:var(--bg);border:1px solid var(--border);' +
+            'border-left:3px solid ' + statusColor + ';border-radius:6px;' +
+            'padding:10px 14px;margin-bottom:6px;cursor:pointer;">' +
+            '<div style="display:flex;justify-content:space-between;' +
+            'align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
+            '<div style="flex:1;min-width:0;">' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+            '<span style="font-size:0.7rem;font-weight:bold;color:var(--text);">' +
+            _escapeHtml(row.name) + '</span>' +
+            '<span style="font-size:0.5rem;color:var(--dim);' +
+            'padding:1px 6px;border:1px solid var(--border);' +
+            'border-radius:8px;">' +
+            _fmtText(row.type) + '</span>' +
+            '<span style="font-size:0.5rem;color:' + statusColor + ';' +
+            'padding:1px 6px;border:1px solid ' + statusColor + ';' +
+            'border-radius:8px;">' +
+            _escapeHtml(row.statusLabel) + '</span>' +
+            '</div>' +
+            '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
+            'Owner: ' + _fmtText(row.ownerLabel) +
+            ' · Workers: ' + _fmtNumber(
+                row.workersLabel ? null : null
+            ) +
+            '</div>' +
+            '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
+            'Wealth: ' + _escapeHtml(row.wealthLabel) +
+            ' · ' +
+            '<span style="color:' + profitColor + ';">' +
+            'Profit: ' + _escapeHtml(row.profitLabel) + 'g' +
+            '</span>' +
             '</div>' +
             '</div>' +
-            '<div style="display: flex; gap: 4px; flex-shrink: 0;">' +
-            '<button class="enterprise-detail-btn" data-enterprise-id="' + summary.id + '" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + INFO + ' Details</button>' +
-            '<button class="enterprise-process-btn" data-enterprise-id="' + summary.id + '" style="background: none; border: none; color: var(--success); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + GEAR + ' Process</button>' +
-            (isPublic ? '' : '<button class="enterprise-convert-btn" data-enterprise-id="' + summary.id + '" style="background: none; border: none; color: var(--warn); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + GEAR + ' Make Public</button>') +
-            '<button class="enterprise-delete-btn" data-enterprise-id="' + summary.id + '" style="background: none; border: none; color: var(--danger); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + TRASH + ' Delete</button>' +
+            '<div style="display:flex;gap:4px;flex-shrink:0;">' +
+            '<button type="button" class="industry-row-btn" ' +
+            'data-action="details" ' +
+            'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
+            'style="background:none;border:none;color:var(--accent);' +
+            'cursor:pointer;font-size:0.55rem;padding:2px 6px;">' +
+            'Details</button>' +
+            '<button type="button" class="industry-row-btn" ' +
+            'data-action="edit" ' +
+            'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
+            'style="background:none;border:none;color:var(--text);' +
+            'cursor:pointer;font-size:0.55rem;padding:2px 6px;">' +
+            'Edit</button>' +
             '</div>' +
             '</div>' +
             '</div>';
+    }
 
-        return html;
+    function _buildSection(title, enterprises, summaryMap) {
+        var html = '<div style="margin-bottom:20px;">' +
+            '<div style="font-size:0.7rem;color:var(--accent-light);' +
+            'font-weight:bold;margin-bottom:8px;">' +
+            _escapeHtml(title) + ' (' + _fmtNumber(enterprises.length) + ')' +
+            '</div>';
+
+        if (enterprises.length === 0) {
+            html += '<div style="text-align:center;padding:20px;' +
+                'color:var(--dim);font-size:0.6rem;background:var(--bg3);' +
+                'border-radius:6px;">' +
+                'No ' + _escapeHtml(title.toLowerCase()) + ' in this settlement.</div>';
+            return html + '</div>';
+        }
+
+        var VMs = _getIndustryViewModels();
+        var rows = [];
+        for (var i = 0; i < enterprises.length; i++) {
+            var summary = summaryMap[enterprises[i].id];
+            if (!summary) continue;
+            var row = VMs.buildListRow(summary);
+            if (row) rows.push(row);
+        }
+
+        for (var j = 0; j < rows.length; j++) {
+            html += _buildEnterpriseRow(rows[j]);
+        }
+
+        return html + '</div>';
+    }
+
+    function _buildFooter() {
+        return '<div style="padding:8px;background:var(--bg3);' +
+            'border-radius:6px;font-size:0.55rem;color:var(--dim);">' +
+            _getIcon('CIRCLE_DOT') + ' ' +
+            'Enterprises are owned by the Industry domain. This tab shows ' +
+            'enterprises located in this settlement. Public enterprises are ' +
+            'owned by the settlement; their profits route to the settlement ' +
+            'treasury. Private enterprises are owned by characters, ' +
+            'households, or no one.</div>';
     }
 
     // =========================================================================
-    // 10. ACTION EVENT LISTENERS
+    // 5. WIRING
     // =========================================================================
 
-    function _attachActionListeners(container, locationId) {
-        var actionBtns = container.querySelectorAll('.industry-action-btn');
-        for (var i = 0; i < actionBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var action = this.dataset.action;
-                    switch (action) {
-                        case 'create-public':
-                            _openCreateEnterpriseModal(locationId, true);
-                            break;
-                        case 'create-private':
-                            _openCreateEnterpriseModal(locationId, false);
-                            break;
-                        case 'process-all':
-                            _processAllEnterprisesAction(locationId);
-                            break;
-                        case 'refresh':
-                            renderSettlementIndustry('tab-industry', locationId);
-                            break;
-                    }
-                });
-            })(actionBtns[i]);
-        }
+    function _wireActions(container, locationId) {
+        container.addEventListener('click', function (event) {
+            var target = event.target;
+            if (!target || typeof target.closest !== 'function') return;
 
-        var detailBtns = container.querySelectorAll('.enterprise-detail-btn');
-        for (var i = 0; i < detailBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var enterpriseId = this.dataset.enterpriseId;
-                    _openEnterpriseDetailsModal(enterpriseId, locationId);
-                });
-            })(detailBtns[i]);
-        }
-
-        var processBtns = container.querySelectorAll('.enterprise-process-btn');
-        for (var i = 0; i < processBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var enterpriseId = this.dataset.enterpriseId;
-                    _processEnterpriseAction(enterpriseId, locationId);
-                });
-            })(processBtns[i]);
-        }
-
-        var convertBtns = container.querySelectorAll('.enterprise-convert-btn');
-        for (var i = 0; i < convertBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var enterpriseId = this.dataset.enterpriseId;
-                    _convertEnterpriseToPublicAction(enterpriseId, locationId);
-                });
-            })(convertBtns[i]);
-        }
-
-        var deleteBtns = container.querySelectorAll('.enterprise-delete-btn');
-        for (var i = 0; i < deleteBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var enterpriseId = this.dataset.enterpriseId;
-                    _deleteEnterpriseAction(enterpriseId, locationId);
-                });
-            })(deleteBtns[i]);
-        }
-    }
-
-    // =========================================================================
-    // 11. CREATE ENTERPRISE MODAL
-    // =========================================================================
-
-    function _openCreateEnterpriseModal(locationId, isPublic) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var place = _getPlaceById(locationId);
-            var types = _getEnterpriseTypes();
-            var categories = _getEnterpriseCategories();
-
-            var typeOptions = '';
-            var categoryNames = Object.keys(categories).sort();
-
-            if (categoryNames.length === 0) {
-                // Use direct types array if categories empty
-                for (var i = 0; i < types.length; i++) {
-                    var t = types[i];
-                    typeOptions += '<option value="' + t.id + '">' + _escapeHtml(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</option>';
-                }
-            } else {
-                for (var c = 0; c < categoryNames.length; c++) {
-                    var cat = categoryNames[c];
-                    var catTypes = categories[cat] || [];
-                    if (catTypes.length === 0) continue;
-                    typeOptions += '<optgroup label="' + _escapeHtml(cat.charAt(0).toUpperCase() + cat.slice(1)) + '">';
-                    for (var i = 0; i < catTypes.length; i++) {
-                        var t = catTypes[i];
-                        typeOptions += '<option value="' + t.id + '">' + _escapeHtml(t.name) + ' (Income: ' + t.baseIncome + ', Workers: ' + t.baseWorkers + ')</option>';
-                    }
-                    typeOptions += '</optgroup>';
-                }
-            }
-
-            var INFO = _icon('CIRCLE_DOT') || 'ℹ️';
-            var title = isPublic ? 'Create Public Enterprise' : 'Create Private Enterprise';
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">' + title + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
-                (isPublic ? '<div style="font-size: 0.55rem; color: var(--accent); margin-top: 4px;">Public enterprises are owned by the settlement. All profits go to the settlement treasury.</div>' : '') +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Enterprise Name</label>' +
-                '<input type="text" id="entName" placeholder="e.g., Royal Weavers" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Enterprise Type</label>' +
-                '<select id="entType" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '<option value="">Select type...</option>' +
-                typeOptions +
-                '</select>' +
-                '</div>';
-
-            if (!isPublic) {
-                content +=
-                    '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Owner Type</label>' +
-                    '<select id="entOwnerType" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                    '<option value="character">Character</option>' +
-                    '<option value="household">Household</option>' +
-                    '</select>' +
-                    '</div>' +
-
-                    '<div class="form-group" style="margin-bottom: 12px;">' +
-                    '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Owner</label>' +
-                    '<div style="display: flex; gap: 8px;">' +
-                    '<input type="text" id="entOwnerName" placeholder="Owner name or ID" style="flex:1; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                    '<button id="entSelectOwnerBtn" style="padding:8px 16px; background:var(--bg2); border:1px solid var(--border); border-radius:6px; cursor:pointer; font-size:0.6rem; color:var(--text);">Select</button>' +
-                    '</div>' +
-                    '</div>';
-            }
-
-            content +=
-                '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">' +
-                '<div><label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Initial Wealth</label>' +
-                '<input type="number" id="entWealth" value="100" style="width:100%; padding:6px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:0.65rem; color:var(--text);"></div>' +
-                '<div><label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Initial Debt</label>' +
-                '<input type="number" id="entDebt" value="0" style="width:100%; padding:6px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:0.65rem; color:var(--text);"></div>' +
-                '<div><label style="display: block; font-size: 0.6rem; color: var(--dim); margin-bottom: 4px;">Workers</label>' +
-                '<input type="number" id="entWorkers" value="2" min="0" style="width:100%; padding:6px; background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:0.65rem; color:var(--text);"></div>' +
-                '</div>' +
-
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                INFO + ' Income, expenses, and wages will be set based on the enterprise type. You can adjust them later.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: title,
-                content: content,
-                confirmText: 'Create',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('entName').value.trim();
-                    if (!name) {
-                        _showToast('Enterprise name is required', 'error');
-                        return false;
-                    }
-
-                    var typeId = document.getElementById('entType').value;
-                    if (!typeId) {
-                        _showToast('Please select an enterprise type', 'error');
-                        return false;
-                    }
-
-                    var data = {
-                        name: name,
-                        typeId: typeId,
-                        locationId: locationId,
-                        locationName: place ? place.displayName : 'Unknown',
-                        wealth: parseInt(document.getElementById('entWealth').value) || 100,
-                        debt: parseInt(document.getElementById('entDebt').value) || 0,
-                        workerCount: parseInt(document.getElementById('entWorkers').value) || 2,
-                        maxWorkers: parseInt(document.getElementById('entWorkers').value) * 2 || 4,
-                        foundedYear: _getCurrentYear(),
-                        status: 'active'
-                    };
-
-                    if (isPublic) {
-                        try {
-                            var result = _createPublicEnterprise(locationId, data);
-                            if (result && result.success) {
-                                _showToast('Public enterprise created: ' + result.data.name, 'success');
-                                _closeTopModal();
-                                _modalOpen = false;
-                                renderSettlementIndustry('tab-industry', locationId);
-                                return true;
-                            } else {
-                                _showToast('Failed to create public enterprise: ' + (result ? result.reason : 'Unknown error'), 'error');
-                                _modalOpen = false;
-                                return false;
-                            }
-                        } catch (e) {
-                            _showToast('Error creating public enterprise: ' + e.message, 'error');
-                            _modalOpen = false;
-                            return false;
-                        }
-                    } else {
-                        data.ownershipType = 'private';
-                        data.ownerType = document.getElementById('entOwnerType').value;
-                        data.ownerId = document.getElementById('entOwnerName').value.trim() || null;
-                        data.ownerName = data.ownerId || 'Unknown';
-
-                        try {
-                            var result = _createEnterprise(data);
-                            if (result && result.success) {
-                                _showToast('Enterprise created: ' + result.data.name, 'success');
-                                _closeTopModal();
-                                _modalOpen = false;
-                                renderSettlementIndustry('tab-industry', locationId);
-                                return true;
-                            } else {
-                                _showToast('Failed to create enterprise: ' + (result ? result.reason : 'Unknown error'), 'error');
-                                _modalOpen = false;
-                                return false;
-                            }
-                        } catch (e) {
-                            _showToast('Error creating enterprise: ' + e.message, 'error');
-                            _modalOpen = false;
-                            return false;
-                        }
-                    }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-            setTimeout(function() {
-                var selectBtn = document.getElementById('entSelectOwnerBtn');
-                if (selectBtn) {
-                    selectBtn.addEventListener('click', function() {
-                        var ownerType = document.getElementById('entOwnerType').value;
-                        if (ownerType === 'character') {
-                            if (typeof window.openCharacterSelector === 'function') {
-                                window.openCharacterSelector({
-                                    title: 'Select Owner',
-                                    onSelect: function(character) {
-                                        if (character) {
-                                            document.getElementById('entOwnerName').value = character.id;
-                                            _showToast('Selected: ' + character.name, 'success');
-                                        }
-                                    }
-                                });
-                            } else {
-                                _showToast('Character selector not available', 'error');
-                            }
-                        } else {
-                            if (typeof window.openHouseholdSelector === 'function') {
-                                window.openHouseholdSelector({
-                                    title: 'Select Household',
-                                    onSelect: function(household) {
-                                        if (household) {
-                                            document.getElementById('entOwnerName').value = household.id;
-                                            _showToast('Selected: ' + (household.name || household.displayName), 'success');
-                                        }
-                                    }
-                                });
-                            } else {
-                                _showToast('Household selector not available', 'error');
-                            }
-                        }
-                    });
-                }
-            }, 100);
-
-        } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening modal: ' + e.message, 'error');
-        }
-    }
-
-    // =========================================================================
-    // 12. ENTERPRISE DETAILS MODAL
-    // =========================================================================
-
-    function _openEnterpriseDetailsModal(enterpriseId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            // Try to use the main industry details modal
-            if (typeof window.openEnterpriseDetailsModal === 'function') {
-                _closeTopModal();
-                _modalOpen = false;
-                window.openEnterpriseDetailsModal(enterpriseId, function() {
-                    renderSettlementIndustry('tab-industry', locationId);
-                });
+            // Row buttons first — they carry their own data-enterprise-id.
+            var rowBtn = target.closest('.industry-row-btn');
+            if (rowBtn && container.contains(rowBtn)) {
+                event.preventDefault();
+                var action = rowBtn.dataset.action;
+                var enterpriseId = rowBtn.dataset.enterpriseId;
+                if (action === 'details') _handleDetails(enterpriseId);
+                else if (action === 'edit') _handleEdit(enterpriseId);
                 return;
             }
 
-            // Fallback: simple details view
-            var summary = _getEnterpriseSummary(enterpriseId);
-            if (!summary) {
-                _showToast('Enterprise not found', 'error');
-                _modalOpen = false;
+            // Tab-level buttons.
+            var tabBtn = target.closest('.industry-tab-btn');
+            if (tabBtn && container.contains(tabBtn)) {
+                event.preventDefault();
+                var tabAction = tabBtn.dataset.action;
+                var loc = tabBtn.dataset.location || locationId;
+
+                if (tabAction === 'refresh') {
+                    _requestRefresh();
+                } else if (tabAction === 'process-all') {
+                    _handleProcessAll(loc);
+                } else if (tabAction === 'create-public') {
+                    _handleCreatePublic(loc);
+                } else if (tabAction === 'create-private') {
+                    _handleCreate(loc);
+                } else if (tabAction === 'open-list') {
+                    _handleOpenList();
+                }
                 return;
             }
 
-            var enterprise = _getEnterprise(enterpriseId);
-            var place = _getPlaceById(locationId);
-
-            var GEAR = _icon('GEAR') || '⚙️';
-            var COIN = _icon('COIN') || '💰';
-            var PERSON = _icon('PERSON') || '👤';
-            var INFO = _icon('CIRCLE_DOT') || 'ℹ️';
-
-            var profit = summary.annualProfit || 0;
-            var profitColor = profit >= 0 ? 'var(--success)' : 'var(--danger)';
-            var profitPrefix = profit >= 0 ? '+' : '';
-            var isPublic = summary.ownershipType === 'public' || summary.isPublic;
-            var statusColor = summary.status === 'active' ? 'var(--success)' :
-                             summary.status === 'bankrupt' ? 'var(--danger)' :
-                             'var(--warn)';
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">' + GEAR + ' ' + _escapeHtml(summary.name) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(summary.type || 'Unknown') + ' · ' + (isPublic ? 'Public' : 'Private') + ' · ' + _escapeHtml(summary.locationName || 'Unknown') + '</div>' +
-                '</div>' +
-
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; font-size: 0.7rem; margin-bottom: 16px;">' +
-                '<div><span style="color: var(--dim);">Status:</span> <span style="color: ' + statusColor + ';">' + _escapeHtml(summary.status || 'active') + '</span></div>' +
-                '<div><span style="color: var(--dim);">Founded:</span> ' + (summary.foundedYear || 'Unknown') + '</div>' +
-                '<div><span style="color: var(--dim);">Owner:</span> ' + (summary.ownerName ? _escapeHtml(summary.ownerName) : 'None') + '</div>' +
-                '<div><span style="color: var(--dim);">Workers:</span> ' + (summary.workerCount || 0) + '/' + (summary.maxWorkers || 0) + '</div>' +
-                '<div><span style="color: var(--dim);">Wealth:</span> <span style="color: ' + (summary.wealth >= 0 ? 'var(--success)' : 'var(--danger)') + ';">' + (summary.wealth || 0) + 'g</span></div>' +
-                '<div><span style="color: var(--dim);">Debt:</span> <span style="color: ' + (summary.debt > 0 ? 'var(--danger-lt)' : 'var(--success)') + ';">' + (summary.debt || 0) + 'g</span></div>' +
-                '<div><span style="color: var(--dim);">Income:</span> ' + (summary.income || 0) + 'g/yr</div>' +
-                '<div><span style="color: var(--dim);">Expenses:</span> ' + (summary.expenses || 0) + 'g/yr</div>' +
-                '<div><span style="color: var(--dim);">Wages:</span> ' + (summary.wages || 0) + 'g/worker</div>' +
-                '<div><span style="color: var(--dim);">Annual Profit:</span> <span style="color: ' + profitColor + '; font-weight: bold;">' + profitPrefix + (profit || 0) + 'g</span></div>' +
-                '</div>' +
-
-                '<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px;">' +
-                '<button class="ent-process-btn" data-enterprise-id="' + enterpriseId + '" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer; color: var(--accent-light);">' + GEAR + ' Process Year</button>' +
-                (!isPublic ? '<button class="ent-convert-btn" data-enterprise-id="' + enterpriseId + '" style="font-size: 0.55rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--warn); border-radius: 4px; cursor: pointer; color: var(--warn);">' + GEAR + ' Make Public</button>' : '') +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Enterprise Details',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
-            });
-
-            setTimeout(function() {
-                var processBtn = document.querySelector('.ent-process-btn');
-                if (processBtn) {
-                    processBtn.addEventListener('click', function() {
-                        var id = this.dataset.enterpriseId;
-                        _closeTopModal();
-                        _modalOpen = false;
-                        _processEnterpriseAction(id, locationId);
-                    });
-                }
-
-                var convertBtn = document.querySelector('.ent-convert-btn');
-                if (convertBtn) {
-                    convertBtn.addEventListener('click', function() {
-                        var id = this.dataset.enterpriseId;
-                        _closeTopModal();
-                        _modalOpen = false;
-                        _convertEnterpriseToPublicAction(id, locationId);
-                    });
-                }
-            }, 100);
-
-        } catch (e) {
-            _modalOpen = false;
-            _showToast('Error opening details: ' + e.message, 'error');
-        }
-    }
-
-    // =========================================================================
-    // 13. ACTION FUNCTIONS
-    // =========================================================================
-
-    function _processEnterpriseAction(enterpriseId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var summary = _getEnterpriseSummary(enterpriseId);
-            if (!summary) {
-                _showToast('Enterprise not found', 'error');
-                _modalOpen = false;
+            // Clicking the row body (not a button) opens details.
+            var row = target.closest('.industry-enterprise-row');
+            if (row && container.contains(row)) {
+                event.preventDefault();
+                _handleDetails(row.dataset.enterpriseId);
                 return;
             }
-
-            _confirmDialog(
-                'Process ' + summary.name + ' for the current year?\n\n' +
-                'Current wealth: ' + (summary.wealth || 0) + 'g\n' +
-                'Annual profit: ' + (summary.annualProfit || 0) + 'g',
-                'Process Enterprise',
-                function() {
-                    try {
-                        var result = _processAnnualEnterprise(enterpriseId);
-                        if (result && result.success) {
-                            _showToast('Processed ' + summary.name + ' (' + (result.totalProfit || 0) + 'g profit)', 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementIndustry('tab-industry', locationId);
-                        } else {
-                            _showToast('Failed to process enterprise: ' + (result ? result.reason : 'Unknown error'), 'error');
-                            _modalOpen = false;
-                        }
-                    } catch (e) {
-                        _showToast('Error processing enterprise: ' + e.message, 'error');
-                        _modalOpen = false;
-                    }
-                }
-            );
-
-        } catch (e) {
-            _modalOpen = false;
-            _showToast('Error processing enterprise: ' + e.message, 'error');
-        }
-    }
-
-    function _processAllEnterprisesAction(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            _confirmDialog(
-                'Process all enterprises in this location?\n\n' +
-                'This will process the annual cycle for every enterprise.',
-                'Process All Enterprises',
-                function() {
-                    try {
-                        var result = _processAllEnterprises();
-                        if (result && result.success) {
-                            _showToast('Processed ' + result.processed + ' enterprises', 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementIndustry('tab-industry', locationId);
-                        } else {
-                            _showToast('Failed to process enterprises: ' + (result ? result.reason : 'Unknown error'), 'error');
-                            _modalOpen = false;
-                        }
-                    } catch (e) {
-                        _showToast('Error processing enterprises: ' + e.message, 'error');
-                        _modalOpen = false;
-                    }
-                }
-            );
-
-        } catch (e) {
-            _modalOpen = false;
-            _showToast('Error processing enterprises: ' + e.message, 'error');
-        }
-    }
-
-    function _convertEnterpriseToPublicAction(enterpriseId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var summary = _getEnterpriseSummary(enterpriseId);
-            if (!summary) {
-                _showToast('Enterprise not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            _confirmDialog(
-                'Convert ' + summary.name + ' to a public enterprise?\n\n' +
-                'This enterprise will become owned by the settlement.\n' +
-                'All profits will go to the settlement treasury.\n\n' +
-                'This action cannot be easily undone.',
-                'Convert to Public',
-                function() {
-                    try {
-                        var result = _convertEnterpriseToPublic(enterpriseId, locationId);
-                        if (result && result.success) {
-                            _showToast('Enterprise converted to public: ' + summary.name, 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementIndustry('tab-industry', locationId);
-                        } else {
-                            _showToast('Failed to convert: ' + (result ? result.reason : 'Unknown error'), 'error');
-                            _modalOpen = false;
-                        }
-                    } catch (e) {
-                        _showToast('Error converting enterprise: ' + e.message, 'error');
-                        _modalOpen = false;
-                    }
-                }
-            );
-
-        } catch (e) {
-            _modalOpen = false;
-            _showToast('Error converting enterprise: ' + e.message, 'error');
-        }
-    }
-
-    function _deleteEnterpriseAction(enterpriseId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var summary = _getEnterpriseSummary(enterpriseId);
-            if (!summary) {
-                _showToast('Enterprise not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            _confirmDialog(
-                'Delete ' + summary.name + '?\n\n' +
-                'This will permanently remove the enterprise.\n' +
-                'All data associated with it will be lost.\n\n' +
-                'This action cannot be undone.',
-                'Delete Enterprise',
-                function() {
-                    try {
-                        var result = _deleteEnterprise(enterpriseId);
-                        if (result && result.success) {
-                            _showToast('Enterprise deleted: ' + summary.name, 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementIndustry('tab-industry', locationId);
-                        } else {
-                            _showToast('Failed to delete: ' + (result ? result.reason : 'Unknown error'), 'error');
-                            _modalOpen = false;
-                        }
-                    } catch (e) {
-                        _showToast('Error deleting enterprise: ' + e.message, 'error');
-                        _modalOpen = false;
-                    }
-                }
-            );
-
-        } catch (e) {
-            _modalOpen = false;
-            _showToast('Error deleting enterprise: ' + e.message, 'error');
-        }
-    }
-
-    // =========================================================================
-    // 14. REGISTER WITH TAB SYSTEM
-    // =========================================================================
-
-    // Try to register with the tab system
-    if (typeof window.registerTabRenderer === 'function') {
-        window.registerTabRenderer('industry', renderSettlementIndustry, true);
-    }
-
-    // Also check if we need to register with SettlementTabs
-    if (typeof window.SettlementTabs !== 'undefined' && 
-        typeof window.SettlementTabs.registerTab === 'function') {
-        window.SettlementTabs.registerTab('industry', {
-            label: 'Industry',
-            icon: 'GEAR',
-            render: renderSettlementIndustry
         });
     }
 
     // =========================================================================
-    // 15. EXPORTS
+    // 6. RENDER
+    // =========================================================================
+
+    /**
+     * Renders the industry tab into the container.
+     *
+     * @param {HTMLElement} container
+     * @param {Object} context  { locationId, data, viewModel }
+     */
+    function renderSettlementIndustry(container, context) {
+        if (!container) {
+            throw new Error(
+                'settlement-industry-tab: container is required'
+            );
+        }
+        if (!context || !context.locationId) {
+            throw new Error(
+                'settlement-industry-tab: context.locationId is required'
+            );
+        }
+
+        var locationId = context.locationId;
+        var IQ = _getIndustryQueries();
+
+        // Read the location-scoped enterprise summaries. If the query
+        // throws (load-order regression, corrupted state), render an
+        // error state rather than crashing the tab stack.
+        var summaries;
+        var stats;
+        try {
+            summaries = IQ.getLocationEnterprisesSummary(locationId);
+            stats = IQ.getEnterpriseStatistics();
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-industry-tab: query failed:', err
+                );
+            }
+            container.innerHTML = '<div style="padding:24px;text-align:center;' +
+                'color:var(--danger);font-size:0.65rem;">' +
+                'Could not load industry data: ' +
+                _escapeHtml(err && err.message ? err.message : 'unknown error') +
+                '</div>';
+            return;
+        }
+
+        // Split into public and private by ownershipType. The summary
+        // projection includes ownershipType even though it is derived —
+        // IndustryViewModels.buildListRow preserves it.
+        //
+        // Enterprises with ownershipType not in ('public', 'private') are
+        // an integrity failure (industry-rules enforces this on write).
+        // They are grouped with private rather than dropped, so the user
+        // can see them and open details to inspect the anomaly.
+        var publicEnterprises = [];
+        var privateEnterprises = [];
+        var summaryMap = {};
+
+        // stats here is the aggregate across ALL enterprises, not just
+        // this settlement's. For the stats row, compute a location-scoped
+        // subset.
+        var locationStats = {
+            total: summaries.length,
+            totalWealth: 0,
+            totalDebt: 0,
+            totalWorkers: 0,
+            publicCount: 0,
+            privateCount: 0,
+            profitable: 0
+        };
+
+        for (var i = 0; i < summaries.length; i++) {
+            var s = summaries[i];
+            if (!s || !s.id) continue;
+            summaryMap[s.id] = s;
+
+            // The summary carries ownershipType but not the full enterprise
+            // record. Enterprises are grouped by ownershipType.
+            if (s.ownershipType === 'public') {
+                publicEnterprises.push({ id: s.id });
+                locationStats.publicCount++;
+            } else {
+                privateEnterprises.push({ id: s.id });
+                locationStats.privateCount++;
+            }
+
+            if (typeof s.wealth === 'number') locationStats.totalWealth += s.wealth;
+            if (typeof s.debt === 'number') locationStats.totalDebt += s.debt;
+            if (typeof s.workerCount === 'number') locationStats.totalWorkers += s.workerCount;
+            if (typeof s.annualProfit === 'number' && s.annualProfit > 0) {
+                locationStats.profitable++;
+            }
+        }
+
+        var html = '<div style="padding:4px;">' +
+            _buildHeader(context, locationStats) +
+            _buildStatsRow(locationStats) +
+            _buildActionButtons(locationId) +
+            _buildSection('Public Enterprises', publicEnterprises, summaryMap) +
+            _buildSection('Private Enterprises', privateEnterprises, summaryMap) +
+            _buildFooter() +
+            '</div>';
+
+        container.innerHTML = html;
+        _wireActions(container, locationId);
+    }
+
+    // =========================================================================
+    // 7. REGISTRATION
+    // =========================================================================
+
+    function _register() {
+        var tabs = _getTabs();
+        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
+            throw new Error(
+                'settlement-industry-tab: SettlementTabs is missing. ' +
+                'Load settlement-tabs.js before this tab.'
+            );
+        }
+        tabs.registerTabRenderer('industry', renderSettlementIndustry);
+    }
+
+    _register();
+
+    // =========================================================================
+    // 8. EXPORTS
     // =========================================================================
 
     window.renderSettlementIndustry = renderSettlementIndustry;
