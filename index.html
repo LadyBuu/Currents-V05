@@ -5,17 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Still Waters · Nexus of Tools</title>
 
-    <!-- Theme tokens MUST load first. -->
     <link rel="stylesheet" href="css/themes.css" />
-
-    <!-- Nexus-specific styles. -->
     <link rel="stylesheet" href="css/nexus.css" />
 </head>
 <body>
 
 <div class="dashboard">
 
-    <!-- HEADER -->
     <header class="heraldic-header">
         <div class="title-glow">
             <span class="icon-symbol" data-icon="STAR_4" aria-hidden="true"></span>
@@ -24,7 +20,6 @@
         </div>
         <div class="sub">chronicle · dynasty · ledger</div>
 
-        <!-- TOPBAR CONTROLS (theme, settings) -->
         <div class="topbar-controls">
             <button class="topbar-btn" id="settingsBtn" type="button" aria-haspopup="dialog" aria-expanded="false">
                 <span class="icon-symbol" data-icon="GEAR" aria-hidden="true"></span>
@@ -40,7 +35,6 @@
         </div>
     </header>
 
-    <!-- INFO BANNER -->
     <div class="info-banner">
         <span>
             <span class="icon-symbol" data-icon="CIRCLE_DOT" aria-hidden="true"></span>
@@ -52,7 +46,6 @@
         </span>
     </div>
 
-    <!-- RECENTLY VISITED (hidden if empty) -->
     <section id="recentSection" class="recent-section" hidden>
         <div class="recent-label">
             <span class="icon-symbol" data-icon="TIMELINE" aria-hidden="true"></span>
@@ -61,9 +54,7 @@
         <div class="recent-chips" id="recentChips"></div>
     </section>
 
-    <!-- ============================================================ -->
-    <!-- PRIMARY TOOLS                                                -->
-    <!-- ============================================================ -->
+    <!-- PRIMARY TOOLS -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -117,7 +108,6 @@
             <div class="badge-strip"><span class="badge">alliances</span><span class="badge">bonds</span><span class="badge">fate</span></div>
         </a>
 
-        <!-- NEW: Location Manager -->
         <a class="tool-card" href="LocationManager.html" data-icon="LOCATION" data-label="Location Manager">
             <div class="card-icon"></div>
             <div class="card-title">Location Manager</div>
@@ -125,7 +115,6 @@
             <div class="badge-strip"><span class="badge">geography</span><span class="badge">hierarchy</span><span class="badge">leadership</span></div>
         </a>
 
-        <!-- NEW: Settlement Manager -->
         <a class="tool-card" href="SettlementManager.html" data-icon="HOUSEHOLD" data-label="Settlement Manager">
             <div class="card-icon"></div>
             <div class="card-title">Settlement Manager</div>
@@ -133,18 +122,22 @@
             <div class="badge-strip"><span class="badge">economy</span><span class="badge">prosperity</span><span class="badge">features</span></div>
         </a>
 
-        <!-- NEW: Religion Manager -->
         <a class="tool-card" href="ReligionManager.html" data-icon="STAR_4" data-label="Religion Manager">
             <div class="card-icon"></div>
             <div class="card-title">Religion Manager</div>
             <div class="card-desc">Religions, gods, laws, places of worship, followers, inheritance rules, leadership.</div>
             <div class="badge-strip"><span class="badge">faith</span><span class="badge">doctrine</span><span class="badge">followers</span></div>
         </a>
+
+        <a class="tool-card" href="CultureManager.html" data-icon="BOOK" data-label="Culture Manager">
+            <div class="card-icon"></div>
+            <div class="card-title">Culture Manager</div>
+            <div class="card-desc">Culture editor: appearance templates, mythology, character associations, locations.</div>
+            <div class="badge-strip"><span class="badge">appearance</span><span class="badge">mythology</span><span class="badge">characters</span></div>
+        </a>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- WORLD & EVENTS                                               -->
-    <!-- ============================================================ -->
+    <!-- WORLD & EVENTS -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -178,9 +171,7 @@
         </a>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- LIFE & LEGACY                                                -->
-    <!-- ============================================================ -->
+    <!-- LIFE & LEGACY -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -221,9 +212,7 @@
         </a>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- DATA WEAVING                                                 -->
-    <!-- ============================================================ -->
+    <!-- DATA WEAVING -->
     <div class="divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -250,9 +239,7 @@
         </a>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- TESTING GROUND                                               -->
-    <!-- ============================================================ -->
+    <!-- TESTING GROUND -->
     <div class="divider test-divider">
         <span class="divider-line"></span>
         <span class="divider-text">
@@ -289,9 +276,6 @@
         </a>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- FOOTER                                                       -->
-    <!-- ============================================================ -->
     <footer class="footer-note">
         <span>
             <span class="icon-symbol" data-icon="REFRESH" aria-hidden="true"></span>
@@ -307,9 +291,6 @@
     </footer>
 </div>
 
-<!-- ============================================================ -->
-<!-- SETTINGS PANEL                                               -->
-<!-- ============================================================ -->
 <div class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
     <div class="settings-panel__backdrop" id="settingsBackdrop"></div>
     <div class="settings-panel__sheet">
@@ -326,17 +307,13 @@
                     <span class="settings-row__label">Compact grid</span>
                     <input type="checkbox" id="settingCompactGrid" />
                 </label>
-                <p class="settings-row__hint">
-                    Tighter card padding and smaller gaps.
-                </p>
+                <p class="settings-row__hint">Tighter card padding and smaller gaps.</p>
 
                 <label class="settings-row">
                     <span class="settings-row__label">Show tool paths</span>
                     <input type="checkbox" id="settingShowPaths" />
                 </label>
-                <p class="settings-row__hint">
-                    Displays each card's target URL under its description.
-                </p>
+                <p class="settings-row__hint">Displays each card's target URL under its description.</p>
             </section>
 
             <section class="settings-group">
@@ -370,16 +347,10 @@
     </div>
 </div>
 
-<!-- ============================================================ -->
-<!-- CORE SCRIPTS (minimal — only what the nexus needs)           -->
-<!-- ============================================================ -->
 <script src="js/core/icons.js"></script>
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 
-<!-- ============================================================ -->
-<!-- THEME SWITCHER (runs early so the page paints correctly)     -->
-<!-- ============================================================ -->
 <script>
 (function () {
     'use strict';
@@ -482,24 +453,15 @@
 })();
 </script>
 
-<!-- ============================================================ -->
-<!-- NEXUS ORCHESTRATOR                                           -->
-<!-- ============================================================ -->
 <script>
 (function () {
     'use strict';
 
-    // -----------------------------------------------------------------
-    // Storage keys (UI-only; canonical data is untouched)
-    // -----------------------------------------------------------------
     var KEY_RECENT_TOOLS   = 'stillwaters_recent_tools';
     var KEY_COMPACT_GRID   = 'stillwaters_nexus_compact_grid';
     var KEY_SHOW_PATHS     = 'stillwaters_nexus_show_paths';
     var MAX_RECENT_TOOLS   = 4;
 
-    // -----------------------------------------------------------------
-    // Safe localStorage helpers
-    // -----------------------------------------------------------------
     function readLS(key, fallback) {
         try {
             var v = localStorage.getItem(key);
@@ -513,15 +475,11 @@
         try { localStorage.removeItem(key); } catch (e) {}
     }
 
-    // -----------------------------------------------------------------
-    // Icon injection (waits for icons.js if it hasn't run yet)
-    // -----------------------------------------------------------------
     function injectIcons() {
         if (typeof window.Icons === 'undefined') {
             setTimeout(injectIcons, 50);
             return;
         }
-
         var nodes = document.querySelectorAll('[data-icon]');
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i];
@@ -532,9 +490,6 @@
     }
     injectIcons();
 
-    // -----------------------------------------------------------------
-    // Recently visited
-    // -----------------------------------------------------------------
     function getRecentTools() {
         var raw = readLS(KEY_RECENT_TOOLS, '[]');
         try {
@@ -577,9 +532,6 @@
         chips.innerHTML = html;
     }
 
-    // -----------------------------------------------------------------
-    // Storage health check
-    // -----------------------------------------------------------------
     function updateStorageStatus() {
         var el = document.getElementById('storageStatusText');
         if (!el) return;
@@ -594,6 +546,8 @@
         if (Array.isArray(d.characters)) parts.push(d.characters.length + ' characters');
         if (Array.isArray(d.places))     parts.push(d.places.length + ' places');
         if (Array.isArray(d.religions))  parts.push(d.religions.length + ' religions');
+        if (Array.isArray(d.cultures))   parts.push(d.cultures.length + ' cultures');
+        if (Array.isArray(d.crimes))     parts.push(d.crimes.length + ' crimes');
         if (d.settlementData && typeof d.settlementData === 'object') {
             parts.push(Object.keys(d.settlementData).length + ' settlements');
         }
@@ -603,9 +557,6 @@
             : parts.join(' · ');
     }
 
-    // -----------------------------------------------------------------
-    // Card click → remember, then navigate
-    // -----------------------------------------------------------------
     function attachCardHandlers() {
         var cards = document.querySelectorAll('.tool-card[href]');
         for (var i = 0; i < cards.length; i++) {
@@ -621,16 +572,10 @@
         }
     }
 
-    // -----------------------------------------------------------------
-    // Grid compact toggle
-    // -----------------------------------------------------------------
     function applyCompactGrid(on) {
         document.body.classList.toggle('nexus-compact-grid', on);
     }
 
-    // -----------------------------------------------------------------
-    // Show tool paths
-    // -----------------------------------------------------------------
     function applyShowPaths(on) {
         document.body.classList.toggle('nexus-show-paths', on);
     }
@@ -649,9 +594,6 @@
         }
     }
 
-    // -----------------------------------------------------------------
-    // Settings panel
-    // -----------------------------------------------------------------
     function openSettings() {
         var panel = document.getElementById('settingsPanel');
         var btn   = document.getElementById('settingsBtn');
@@ -686,7 +628,8 @@
                     (Array.isArray(d.characters) ? d.characters.length : 0) + ' chars · ' +
                     (Array.isArray(d.places) ? d.places.length : 0) + ' places · ' +
                     (d.settlementData && typeof d.settlementData === 'object'
-                        ? Object.keys(d.settlementData).length : 0) + ' settlements';
+                        ? Object.keys(d.settlementData).length : 0) + ' settlements · ' +
+                    (Array.isArray(d.crimes) ? d.crimes.length : 0) + ' crimes';
             }
         }
     }
@@ -736,7 +679,6 @@
 
         if (clearUIBtn) {
             clearUIBtn.addEventListener('click', function () {
-                // Explicit list — never wipe stillwaters_master or theme.
                 var keysToClear = [
                     'stillwaters_ui_state',
                     'stillwaters_recent_tools',
@@ -762,17 +704,12 @@
                 for (var i = 0; i < keysToClear.length; i++) {
                     removeLS(keysToClear[i]);
                 }
-                // Theme is a preference; clear it too so the OS preference
-                // takes over again.
                 removeLS('stillwaters_theme');
                 try { window.location.reload(); } catch (e) {}
             });
         }
     }
 
-    // -----------------------------------------------------------------
-    // Utilities
-    // -----------------------------------------------------------------
     function escapeHtml(value) {
         if (value === null || value === undefined) return '';
         return String(value)
@@ -786,18 +723,12 @@
         return escapeHtml(value);
     }
 
-    // -----------------------------------------------------------------
-    // Boot
-    // -----------------------------------------------------------------
     function boot() {
-        // Apply saved settings.
         applyCompactGrid(readLS(KEY_COMPACT_GRID, 'false') === 'true');
         var showPaths = readLS(KEY_SHOW_PATHS, 'false') === 'true';
         if (showPaths) injectPathLabels();
         applyShowPaths(showPaths);
 
-        // Initialize storage if the schema is loaded (it will be, unless
-        // this page is opened standalone).
         if (typeof window.initializeStorage === 'function') {
             try { window.initializeStorage(); } catch (e) {
                 console.error('[nexus] storage init failed:', e);
