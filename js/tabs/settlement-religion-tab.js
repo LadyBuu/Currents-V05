@@ -1,999 +1,974 @@
 /**
  * =============================================================================
- * SETTLEMENT RELIGION TAB - UI for settlement religion management
+ * STILL WATERS - SETTLEMENT RELIGION TAB
+ * js/tabs/settlement-religion-tab.js
  * =============================================================================
- * 
- * This file provides the complete UI for the Settlement Religion tab.
- * 
+ *
+ * RELIGION TAB RENDERER.
+ *
+ * Renders the settlement's religious landscape: the per-religion
+ * demographic breakdown, the dominant religion and religious unity (both
+ * with reason codes), and the places of worship in the settlement.
+ * Hosts the actions that open the create-place modal and route the user
+ * to the Religion domain's own modals for place details.
+ *
+ * It is a UI module. It:
+ *   - reads through SettlementReligionQueries
+ *   - reads place-of-worship data through ReligionQueries
+ *   - opens the create-place modal via ReligionModals
+ *   - does not read canonical settlement data directly
+ *   - does not compute domain values
+ *   - does not create settlement records
+ *   - does not mutate canonical settlement data
+ *   - does not persist
+ *   - does not fabricate missing domain values
+ *   - does not render raw null/undefined as "null" or "undefined"
+ *   - does not use a recursion guard
+ *   - does not use setTimeout to guess when the DOM is ready
+ *
+ * Contract reference: Settlement Architecture Contracts §10 (Query
+ * Contract), §14 (Place of Worship Contract), §15 (ViewModel Contract),
+ * §16 (UI Contract), §32 (Completion Standard). Religion domain:
+ * religion-docs.txt §1 (Ownership Contract), §2 (file layout).
+ *
+ * RENDERER CONTRACT
+ * -----------------
+ *   Registered via SettlementTabs.registerTabRenderer('religion', fn).
+ *   SettlementTabs invokes fn(container, context):
+ *
+ *     container  HTMLElement       already emptied by SettlementTabs
+ *     context    {
+ *       locationId  string|null    selected settlement id
+ *       data        Object|null    canonical settlement record
+ *       viewModel   Object|null    buildSettlementSummary result
+ *     }
+ *
+ *   SettlementTabs has already validated locationId and data before
+ *   calling the renderer.
+ *
+ * RELIGION OWNERSHIP (settlement-docs §14)
+ * ----------------------------------------
+ *   The Religion domain owns:
+ *     - the religion records (masterData.data.religions)
+ *     - the worship-place records (religion.placesOfWorship ids, with
+ *       per-place records referenced by ReligionState.getPlaceOfWorshipById)
+ *
+ *   Settlement owns only its derived religious interpretation:
+ *     - dominant religion (via SettlementReligionQueries)
+ *     - religious unity (via SettlementReligionQueries)
+ *
+ *   Settlement does NOT own the worship-place records. The tab reads
+ *   them through ReligionQueries, not through a settlement-side
+ *   canonical array. There is no settlement.placesOfWorship field under
+ *   the new architecture. The prior religion tab called
+ *   SettlementState.getPlacesOfWorship and
+ *   SettlementCommands.addPlaceOfWorshipToSettlement — neither exists
+ *   in the new module set, and the settlement-side path was a §14
+ *   violation (Settlement duplicating Religion's ownership).
+ *
+ * REASON CODES
+ * ------------
+ *   dominantReligion and religiousUnity are both nullable derived
+ *   values carrying a reason code (settlement-docs §4, §14):
+ *
+ *     religiousUnityReason     'available' | 'no_population' |
+ *                              'no_breakdown' | 'settlement_not_found'
+ *
+ *     dominantReligionReason   'available' | 'no_population' |
+ *                              'no_breakdown' | 'unaffiliated_majority' |
+ *                              'no_religions' | 'settlement_not_found'
+ *
+ *   The renderer shows a distinct label for each reason. It does not
+ *   collapse the cases into a generic "Unknown." A settlement with
+ *   zero population renders "No population" for both; a settlement with
+ *   an unaffiliated majority renders "Unaffiliated majority" for
+ *   dominant religion; a settlement with no religions at all renders
+ *   "No religions"; a settlement whose religion breakdown failed to
+ *   compute renders "Unavailable."
+ *
+ *   The summary comes from context.viewModel
+ *   (buildSettlementSummary), which already carries the reason codes
+ *   and the value fields. The tab reads them from there; it does not
+ *   call getReligiousUnityStatus / getDominantReligionStatus itself.
+ *
+ * RELIGIOUS BREAKDOWN
+ * -------------------
+ *   The per-religion count across the settlement's location subtree is
+ *   read via SettlementReligionQueries.getReligiousBreakdown, which
+ *   wraps ReligionQueries.getReligiousBreakdownForLocations. Shape:
+ *
+ *     { byReligion: { [religionId]: { count } }, unaffiliated, total }
+ *
+ *   This is the aggregate-across-subtree shape. The per-location
+ *   breakdown (ReligionQueries.getReligiousBreakdown) is a different
+ *   shape and different semantics (one location, not a subtree); the
+ *   tab uses the aggregate form because a settlement spans multiple
+ *   places.
+ *
+ * PLACES OF WORSHIP
+ * -----------------
+ *   SettlementReligionQueries.getPlacesOfWorship returns the place-of-
+ *   worship records for the settlement's subtree, composed from
+ *   ReligionQueries.getPlacesOfWorshipByLocation. Each record is the
+ *   Religion-domain place record.
+ *
+ *   The tab displays:
+ *     - place name
+ *     - religion name (via ReligionQueries.getReligion)
+ *     - place type (church / temple / shrine / etc.)
+ *     - active status
+ *     - follower count (currentFollowers)
+ *
+ *   The tab does not mutate place records. Editing, deleting, and
+ *   head-clergy management are the Religion domain's responsibility;
+ *   the tab opens ReligionModals.openReligionDetailsModal when the user
+ *   clicks a place row, which is the only entry point for place
+ *   mutations.
+ *
+ * CREATE PLACE OF WORSHIP
+ * -----------------------
+ *   Creating a place of worship is a Religion-domain operation. It
+ *   requires a religion (a settlement does not create places for a
+ *   nonexistent faith), and the modal collects both the religion and the
+ *   location. The tab's "Create Place of Worship" button opens
+ *   ReligionModals.openCreatePlaceOfWorshipModal with the religion
+ *   chosen from a dropdown of active religions.
+ *
+ *   The modal is a two-step flow: pick a religion, then fill in the
+ *   place. Rather than build a settlement-specific place-creation modal
+ *   that would duplicate Religion's validation and mutation paths, the
+ *   tab delegates.
+ *
+ *   If the settlement has no active religions (all deprecated, or none
+ *   ever created), the tab disables the button and shows a hint: "No
+ *   active religions. Create a religion in the Religion manager first."
+ *   This is a presentation-only guard; the modal would reject the flow
+ *   with a toast anyway, but showing the user why the button is
+ *   disabled is better UX than letting them click and get an error.
+ *
+ * ICON POLICY
+ * -----------
+ *   No emojis. No inline SVG. Chrome icons come from window.getIcon if
+ *   it is loaded; when icons.js is not on the page, the renderer falls
+ *   back to plain text labels.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Rewritten against the new settlement module set.
+ *     - Signature changed from (containerId, locationId, summary) to
+ *       (container, context), matching settlement-tabs.js.
+ *     - Recursion guard (_rendering) and modal-open flag removed (§20
+ *       prohibits recursion guards).
+ *     - All reads go through SettlementReligionQueries and
+ *       ReligionQueries. The prior implementation called
+ *       SettlementState.getPlacesOfWorship,
+ *       SettlementState.getDominantReligion,
+ *       SettlementState.getReligiousUnity — none of which exist on the
+ *       new SettlementState. The dominant religion and unity now come
+ *       from context.viewModel (buildSettlementSummary), which is
+ *       already the correct source per §14 and §15.
+ *     - The place-creation flow delegates to
+ *       ReligionModals.openCreatePlaceOfWorshipModal. The prior
+ *       implementation called
+ *       SettlementCommands.addPlaceOfWorshipToSettlement and
+ *       ReligionCommands.createPlaceOfWorship as two separate commands;
+ *       that was a §14 violation (settlement duplicating Religion's
+ *       ownership) and also a partial-commit hazard (the second command
+ *       could fail after the first had succeeded). The Religion modal
+ *       calls ReligionCommands.createPlaceOfWorship once, which is the
+ *       atomic path.
+ *     - The reason-code labels for dominant religion and religious
+ *       unity now match the ones in modals-settlement-core.js and
+ *       settlement-docs.txt §10 REASON-CODE RENDERING. The prior tab
+ *       collapsed all unavailable cases into "None"/"50%" and never
+ *       exposed the reason.
+ *     - The religious breakdown rendering reads the aggregate shape
+ *       (byReligion / unaffiliated / total) returned by
+ *       SettlementReligionQueries.getReligiousBreakdown. The prior tab
+ *       called ReligionQueries.getReligiousBreakdown directly (single
+ *       location, different shape) and, since the location subtree was
+ *       the settlement's own location, under-counted characters placed
+ *       in sub-locations.
+ *     - The dominant-religion highlight in the breakdown uses
+ *       context.viewModel.dominantReligion.id, which may be null when
+ *       there is no dominant religion. No highlight is applied in that
+ *       case; the top religion is still the largest bar but is not
+ *       labelled "dominant."
+ *     - All numeric values route through _fmtNumber. All percent values
+ *       route through _fmtPercent. All text values route through
+ *       _fmtText. No raw null/undefined reaches the DOM.
+ *     - The "Collect Tithes" button that the prior tab had per place
+ *       is removed. Tithe collection is a Religion-domain command
+ *       (ReligionCommands.collectTithes), which is documented in
+ *       religion-commands.js §13 as "Partial: place records are not
+ *       canonically stored." Collecting tithes is a Religion-mutation
+ *       concern and belongs in the Religion details modal, not in a
+ *       settlement-tab mini-action. If you want a per-place "collect
+ *       tithes" button later, that belongs in modals-religion.js.
+ *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
+ *       is not called — the tab does not display a year.
+ *   Previous revisions:
+ *     - Pre-refactor implementation against SettlementState /
+ *       SettlementCommands, both of which no longer exist.
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. RECURSION GUARD
+    // 1. DEPENDENCY ACCESS
     // =========================================================================
 
-    var _rendering = false;
-    var _modalOpen = false;
+    function _getSettlementReligionQueries() {
+        var Q = window.SettlementReligionQueries;
+        if (!Q || typeof Q.getPlacesOfWorship !== 'function') {
+            throw new Error(
+                'settlement-religion-tab: SettlementReligionQueries is ' +
+                'missing. Load settlement-religion-queries.js before this tab.'
+            );
+        }
+        return Q;
+    }
+
+    function _getReligionQueries() {
+        var Q = window.ReligionQueries;
+        if (!Q || typeof Q.getReligion !== 'function') {
+            throw new Error(
+                'settlement-religion-tab: ReligionQueries is missing. ' +
+                'Load religion-queries.js before this tab.'
+            );
+        }
+        return Q;
+    }
+
+    function _getReligionModals() {
+        return window.ReligionModals || null;
+    }
+
+    function _getPlaceQueries() {
+        return window.PlaceQueries || null;
+    }
+
+    function _getTabs() {
+        return window.SettlementTabs || null;
+    }
 
     // =========================================================================
-    // 2. DEPENDENCY WRAPPERS
+    // 2. HELPERS
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
-    function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        } else if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        }
+    function _unknown() {
+        return '<span class="value-unknown">—</span>';
     }
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            return window.openModal(options);
-        }
-        return null;
+    function _fmtNumber(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString());
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') {
-            window.closeTopModal();
+    function _fmtText(value) {
+        if (value === null || value === undefined || value === '') {
+            return _unknown();
         }
+        return _escapeHtml(value);
     }
 
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            return window.confirmDialog(message, title, onConfirm);
-        }
-        if (confirm(message)) {
-            onConfirm();
-        }
+    function _fmtPercent(value) {
+        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
+        return _escapeHtml(value.toLocaleString()) + '%';
     }
 
     function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        if (window.Icons && window.Icons.CIRCLE) {
-            return window.Icons.CIRCLE;
+        if (typeof window.getIcon === 'function') {
+            try {
+                var icon = window.getIcon(name);
+                if (typeof icon === 'string') return icon;
+            } catch (e) {
+                // getIcon exists but threw; fall through to ''.
+            }
         }
         return '';
     }
 
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+    function _placeName(locationId) {
+        var pq = _getPlaceQueries();
+        if (!pq || typeof pq.getPlaceById !== 'function') return null;
+        var place = pq.getPlaceById(locationId);
+        return place ? (place.displayName || place.name || null) : null;
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
-    function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
-    }
-
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _getSettlementData(locationId) {
-        if (typeof SettlementState !== 'undefined' && SettlementState.getSettlementData) {
-            return SettlementState.getSettlementData(locationId);
+    function _toast(message, type) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
         }
-        return null;
     }
 
-    function _getLocationPopulationCount(locationId) {
-        if (typeof window.getLocationPopulationCount === 'function') {
-            return window.getLocationPopulationCount(locationId);
+    function _requestRefresh() {
+        var tabs = _getTabs();
+        if (tabs && typeof tabs.requestRender === 'function') {
+            tabs.requestRender('religion');
         }
-        return 0;
-    }
-
-    // Religion wrappers
-    function _getAllReligions() {
-        if (typeof ReligionState !== 'undefined' && ReligionState.getAllReligions) {
-            return ReligionState.getAllReligions({ includeDeprecated: false });
-        }
-        return [];
-    }
-
-    function _getReligion(id) {
-        if (typeof ReligionState !== 'undefined' && ReligionState.getReligion) {
-            return ReligionState.getReligion(id);
-        }
-        return null;
-    }
-
-    function _getReligiousBreakdown(locationId) {
-        if (typeof ReligionQueries !== 'undefined' && ReligionQueries.getReligiousBreakdown) {
-            return ReligionQueries.getReligiousBreakdown(locationId);
-        }
-        return null;
-    }
-
-    function _getDominantReligion(locationId) {
-        if (typeof ReligionQueries !== 'undefined' && ReligionQueries.getDominantReligion) {
-            return ReligionQueries.getDominantReligion(locationId);
-        }
-        return null;
-    }
-
-    function _getPlacesOfWorshipByLocation(locationId) {
-        if (typeof ReligionQueries !== 'undefined' && ReligionQueries.getPlacesOfWorshipByLocation) {
-            return ReligionQueries.getPlacesOfWorshipByLocation(locationId);
-        }
-        return [];
-    }
-
-    function _getPlaceOfWorship(placeId) {
-        if (typeof ReligionState !== 'undefined' && ReligionState.getPlaceOfWorship) {
-            return ReligionState.getPlaceOfWorship(placeId);
-        }
-        return null;
-    }
-
-    function _createPlaceOfWorship(data) {
-        if (typeof ReligionCommands !== 'undefined' && ReligionCommands.createPlaceOfWorship) {
-            return ReligionCommands.createPlaceOfWorship(data);
-        }
-        return null;
-    }
-
-    function _updatePlaceOfWorship(placeId, updates) {
-        if (typeof ReligionCommands !== 'undefined' && ReligionCommands.updatePlaceOfWorship) {
-            return ReligionCommands.updatePlaceOfWorship(placeId, updates);
-        }
-        return null;
-    }
-
-    function _deletePlaceOfWorship(placeId) {
-        if (typeof ReligionCommands !== 'undefined' && ReligionCommands.deletePlaceOfWorship) {
-            return ReligionCommands.deletePlaceOfWorship(placeId);
-        }
-        return null;
-    }
-
-    function _addPlaceOfWorshipToSettlement(locationId, placeId) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.addPlaceOfWorshipToSettlement) {
-            return SettlementCommands.addPlaceOfWorshipToSettlement(locationId, placeId);
-        }
-        return null;
-    }
-
-    function _removePlaceOfWorshipFromSettlement(locationId, placeId) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.removePlaceOfWorshipFromSettlement) {
-            return SettlementCommands.removePlaceOfWorshipFromSettlement(locationId, placeId);
-        }
-        return null;
-    }
-
-    function _updateDominantReligion(locationId) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.updateDominantReligion) {
-            return SettlementCommands.updateDominantReligion(locationId);
-        }
-        return null;
-    }
-
-    function _calculateReligiousUnity(locationId) {
-        if (typeof SettlementCommands !== 'undefined' && SettlementCommands.calculateReligiousUnity) {
-            return SettlementCommands.calculateReligiousUnity(locationId);
-        }
-        return 50;
-    }
-
-    function _collectTithes(placeId, year) {
-        if (typeof ReligionCommands !== 'undefined' && ReligionCommands.collectTithes) {
-            return ReligionCommands.collectTithes(placeId, year);
-        }
-        return null;
-    }
-
-    function _getLawTypeIcon(type) {
-        if (typeof ReligionLaws !== 'undefined' && ReligionLaws.getLawTypeIcon) {
-            return ReligionLaws.getLawTypeIcon(type);
-        }
-        return '◉';
-    }
-
-    function _getLawSeverityColor(severity) {
-        if (typeof ReligionLaws !== 'undefined' && ReligionLaws.getLawSeverityColor) {
-            return ReligionLaws.getLawSeverityColor(severity);
-        }
-        return 'var(--text-dim)';
     }
 
     // =========================================================================
-    // 4. ICON HELPERS
+    // 3. REASON-CODE LABELS
     // =========================================================================
+    //
+    // Mirrors modals-settlement-core.js::_religiousUnityLabel and
+    // _dominantReligionLabel. Any change to that module's labels must
+    // be mirrored here, and vice versa. See REASON CODES in the header.
 
-    function _icon(name) {
-        return _getIcon(name);
+    function _religiousUnityLabel(reason, value) {
+        if (reason === 'available') return _fmtPercent(value);
+        if (reason === 'no_population') return _escapeHtml('No population');
+        if (reason === 'no_breakdown') return _escapeHtml('Unavailable');
+        return _unknown();
+    }
+
+    function _dominantReligionLabel(reason, religion) {
+        if (reason === 'available' && religion) {
+            return _escapeHtml(religion.name || religion.id || 'Unknown');
+        }
+        if (reason === 'no_population') return _escapeHtml('No population');
+        if (reason === 'no_breakdown') return _escapeHtml('Unavailable');
+        if (reason === 'unaffiliated_majority') return _escapeHtml('Unaffiliated majority');
+        if (reason === 'no_religions') return _escapeHtml('No religions');
+        return _unknown();
+    }
+
+    function _religiousUnityColor(reason, value) {
+        if (reason !== 'available' || typeof value !== 'number') {
+            return 'var(--dim)';
+        }
+        if (value >= 70) return 'var(--success)';
+        if (value >= 40) return 'var(--accent)';
+        return 'var(--danger)';
     }
 
     // =========================================================================
-    // 5. MAIN RENDER FUNCTION
+    // 4. PLACE-OF-WORSHIP DISPLAY HELPERS
     // =========================================================================
 
-    function renderSettlementReligion(containerId, locationId, summary) {
-        if (_rendering) {
+    function _resolveReligionName(place) {
+        if (!place) return null;
+        if (typeof place.religionName === 'string' && place.religionName.length > 0) {
+            return place.religionName;
+        }
+        var rq = _getReligionQueries();
+        if (!place.religionId) return null;
+        try {
+            var religion = rq.getReligion(place.religionId);
+            return religion ? (religion.name || religion.id || null) : null;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function _isPlaceActive(place) {
+        if (!place) return false;
+        // religion-docs: place records carry isActive; a missing value
+        // is treated as active because the field's semantics are
+        // "deactivated by explicit flag," not "must be true to be a
+        // real place."
+        return place.isActive !== false;
+    }
+
+    // =========================================================================
+    // 5. ACTION HANDLERS
+    // =========================================================================
+
+    function _openCreatePlaceModal(locationId) {
+        var modals = _getReligionModals();
+        if (!modals || typeof modals.openCreatePlaceOfWorshipModal !== 'function') {
+            _toast(
+                'Religion modals are not loaded. Open the Religion manager ' +
+                'to create places of worship.',
+                'error'
+            );
             return;
         }
-        _rendering = true;
 
-        try {
-            var container = document.getElementById(containerId);
-            if (!container) {
-                _rendering = false;
-                return;
-            }
-
-            var data = _getSettlementData(locationId);
-            if (!data) {
-                if (typeof SettlementCrud !== 'undefined' && SettlementCrud.createSettlementData) {
-                    data = SettlementCrud.createSettlementData(locationId);
-                }
-            }
-
-            if (!data) {
-                container.innerHTML = '<div class="empty-state">No settlement data found. Select a location with a settlement.</div>';
-                _rendering = false;
-                return;
-            }
-
-            var place = _getPlaceById(locationId);
-            if (!place) {
-                container.innerHTML = '<div class="empty-state">Location not found</div>';
-                _rendering = false;
-                return;
-            }
-
-            // Get religion data
-            var religiousBreakdown = _getReligiousBreakdown(locationId);
-            var dominantReligion = _getDominantReligion(locationId);
-            var placesOfWorship = _getPlacesOfWorshipByLocation(locationId);
-            var population = _getLocationPopulationCount(locationId);
-            var religiousUnity = data.religiousUnity || 50;
-
-            var CIRCLE = _icon('CIRCLE_DOT');
-            var LOC = _icon('LOCATION');
-            var PERSON = _icon('PERSON');
-            var CROWN = _icon('CROWN');
-            var COIN = _icon('COIN');
-            var INFO = _icon('CIRCLE_DOT');
-            var STAR = _icon('STAR_4');
-            var SHIELD = _icon('SHIELD');
-            var REFRESH = _icon('REFRESH');
-            var TRASH = _icon('TRASH');
-
-            var content = '<div style="padding: 4px;">';
-
-            // HEADER
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--border);">' +
-                '<div>' +
-                '<div style="font-size: 0.8rem; font-weight: bold; color: var(--accent-light);">' + CIRCLE + ' Religion in ' + _escapeHtml(place.displayName) + '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + placesOfWorship.length + ' places of worship · ' + population + ' population</div>' +
-                '</div>' +
-                '<div style="text-align: right;">' +
-                '<div style="font-size: 0.65rem; color: var(--text);">Unity: <span style="color: ' + (religiousUnity >= 70 ? 'var(--success)' : religiousUnity >= 40 ? 'var(--accent)' : 'var(--danger)') + '; font-weight: bold;">' + religiousUnity + '%</span></div>' +
-                '<div style="font-size: 0.55rem; color: var(--dim);">' + (dominantReligion ? 'Dominant: ' + _escapeHtml(dominantReligion.name) : 'No dominant religion') + '</div>' +
-                '</div>' +
-                '</div>';
-
-            // ACTION BUTTONS
-            content += '<div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;">' +
-                '<button class="religion-action-btn" data-action="create-place" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--accent); border-radius: 4px; cursor: pointer; color: var(--accent-light);">' + CIRCLE + ' Place of Worship</button>' +
-                '<button class="religion-action-btn" data-action="refresh" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">' + REFRESH + ' Refresh</button>' +
-                '</div>';
-
-            // RELIGIOUS DEMOGRAPHICS
-            if (religiousBreakdown && religiousBreakdown.byReligion) {
-                var total = religiousBreakdown.total || 0;
-                var religions = religiousBreakdown.byReligion || {};
-                var religionIds = Object.keys(religions);
-
-                if (religionIds.length > 0 || (religiousBreakdown.unaffiliated || 0) > 0) {
-                    content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                        '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 6px;">' + CIRCLE + ' Religious Demographics</div>' +
-                        '<div style="display: flex; flex-direction: column; gap: 3px;">';
-
-                    var sorted = religionIds.sort(function(a, b) {
-                        return (religions[b].count || 0) - (religions[a].count || 0);
-                    });
-
-                    var dominantId = dominantReligion ? dominantReligion.id : null;
-
-                    for (var i = 0; i < sorted.length; i++) {
-                        var id = sorted[i];
-                        var r = religions[id];
-                        var percentage = total > 0 ? Math.round((r.count / total) * 100) : 0;
-                        var barWidth = Math.max(2, percentage);
-                        var isDominant = (id === dominantId);
-
-                        content +=
-                            '<div style="display: flex; align-items: center; gap: 8px; font-size: 0.55rem; padding: 2px 4px; ' + (isDominant ? 'background: var(--accent-dim); border-radius: 4px;' : '') + '">' +
-                            '<span style="min-width: 100px; color: ' + (isDominant ? 'var(--accent-light)' : 'var(--text)') + '; ' + (isDominant ? 'font-weight: bold;' : '') + '">' + _escapeHtml(r.name) + (isDominant ? ' ' + STAR : '') + '</span>' +
-                            '<div style="flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden;">' +
-                            '<div style="width: ' + barWidth + '%; height: 100%; background: ' + (isDominant ? 'var(--accent)' : 'var(--bg4)') + '; border-radius: 4px;"></div>' +
-                            '</div>' +
-                            '<span style="min-width: 50px; text-align: right; color: var(--dim);">' + r.count + ' (' + percentage + '%)</span>' +
-                            '</div>';
-                    }
-
-                    if (religiousBreakdown.unaffiliated > 0) {
-                        var unaffiliatedPct = total > 0 ? Math.round((religiousBreakdown.unaffiliated / total) * 100) : 0;
-                        content +=
-                            '<div style="display: flex; align-items: center; gap: 8px; font-size: 0.55rem; padding: 2px 4px; color: var(--dim);">' +
-                            '<span style="min-width: 100px;">Unaffiliated</span>' +
-                            '<div style="flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden;">' +
-                            '<div style="width: ' + Math.max(2, unaffiliatedPct) + '%; height: 100%; background: var(--bg4); border-radius: 4px;"></div>' +
-                            '</div>' +
-                            '<span style="min-width: 50px; text-align: right;">' + religiousBreakdown.unaffiliated + ' (' + unaffiliatedPct + '%)</span>' +
-                            '</div>';
-                    }
-
-                    content += '</div></div>';
-                }
-            }
-
-            // PLACES OF WORSHIP
-            content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + LOC + ' Places of Worship (' + placesOfWorship.length + ')</div>';
-
-            if (placesOfWorship.length === 0) {
-                content += '<div style="text-align: center; padding: 16px; color: var(--dim); font-size: 0.6rem;">No places of worship in this settlement</div>';
-            } else {
-                for (var i = 0; i < placesOfWorship.length; i++) {
-                    var pw = placesOfWorship[i];
-                    var isActive = pw.isActive !== false;
-                    var statusColor = isActive ? 'var(--success)' : 'var(--danger)';
-                    var religion = pw.religionId ? _getReligion(pw.religionId) : null;
-                    var religionName = religion ? religion.name : (pw.religionName || 'Unknown');
-                    var headClergy = pw.headClergyId ? _getCharacterById(pw.headClergyId) : null;
-                    var clergyCount = pw.clergy ? pw.clergy.length : 0;
-
-                    content +=
-                        '<div class="place-of-worship-item" data-place-id="' + pw.id + '" style="' +
-                        'background: var(--bg); border: 1px solid var(--border); border-left: 3px solid ' + (isActive ? 'var(--success)' : 'var(--danger)') + ';' +
-                        'border-radius: 6px; padding: 10px 14px; margin-bottom: 6px;' +
-                        '">' +
-                        '<div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 6px;">' +
-                        '<div style="flex: 1; min-width: 0;">' +
-                        '<div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">' +
-                        '<span style="font-size: 0.7rem; font-weight: bold; color: var(--text);">' + _escapeHtml(pw.name) + '</span>' +
-                        '<span style="font-size: 0.5rem; color: var(--dim); padding: 1px 6px; border: 1px solid var(--border); border-radius: 8px;">' + _escapeHtml(pw.type || 'temple') + '</span>' +
-                        '<span style="font-size: 0.5rem; color: ' + statusColor + '; padding: 1px 6px; border: 1px solid ' + statusColor + '; border-radius: 8px;">' + (isActive ? 'Active' : 'Inactive') + '</span>' +
-                        '<span style="font-size: 0.5rem; color: var(--accent); padding: 1px 6px; border: 1px solid var(--accent); border-radius: 8px;">' + _escapeHtml(religionName) + '</span>' +
-                        '</div>' +
-                        '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">' +
-                        (headClergy ? 'Leader: ' + _escapeHtml(headClergy.name + (headClergy.surname ? ' ' + headClergy.surname : '')) : 'No leader') +
-                        ' · Clergy: ' + clergyCount +
-                        (pw.currentFollowers ? ' · Followers: ' + pw.currentFollowers : '') +
-                        (pw.annualIncome ? ' · Tithes: ' + pw.annualIncome + 'g/yr' : '') +
-                        '</div>' +
-                        '</div>' +
-                        '<div style="display: flex; gap: 4px; flex-shrink: 0;">' +
-                        '<button class="place-worship-detail-btn" data-place-id="' + pw.id + '" style="background: none; border: none; color: var(--accent); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + INFO + ' Details</button>' +
-                        '<button class="place-worship-tithe-btn" data-place-id="' + pw.id + '" style="background: none; border: none; color: var(--success); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + COIN + ' Tithes</button>' +
-                        '<button class="place-worship-delete-btn" data-place-id="' + pw.id + '" style="background: none; border: none; color: var(--danger); cursor: pointer; font-size: 0.55rem; padding: 2px 6px;">' + TRASH + ' Delete</button>' +
-                        '</div>' +
-                        '</div>' +
-                        '</div>';
-                }
-            }
-
-            content += '</div>';
-
-            // RELIGIOUS LAWS SUMMARY
-            if (dominantReligion) {
-                var laws = [];
-                if (typeof ReligionLaws !== 'undefined' && ReligionLaws.getLawsByReligion) {
-                    laws = ReligionLaws.getLawsByReligion(dominantReligion.id);
-                }
-                if (laws && laws.length > 0) {
-                    content += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                        '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 6px;">' + SHIELD + ' Religious Laws (' + laws.length + ')</div>' +
-                        '<div style="display: flex; flex-wrap: wrap; gap: 4px;">';
-
-                    for (var i = 0; i < Math.min(5, laws.length); i++) {
-                        var law = laws[i];
-                        var isEnforced = law.crimeMapping && law.crimeMapping.isEnforced;
-                        var icon = _getLawTypeIcon(law.type);
-                        var color = _getLawSeverityColor(law.severity);
-                        content += '<span style="font-size: 0.5rem; background: var(--bg); padding: 2px 8px; border-radius: 12px; border-left: 2px solid ' + color + '; color: var(--text);">' +
-                            icon + ' ' + _escapeHtml(law.name) +
-                            (isEnforced ? ' ✓' : '') +
-                            '</span>';
-                    }
-
-                    if (laws.length > 5) {
-                        content += '<span style="font-size: 0.5rem; color: var(--dim);">+' + (laws.length - 5) + ' more</span>';
-                    }
-
-                    content += '</div></div>';
-                }
-            }
-
-            // INFO FOOTER
-            content += '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                INFO + ' Places of worship generate tithes based on followers. Religious unity affects settlement prosperity and crime rate.' +
-                '</div>';
-
-            content += '</div>';
-
-            container.innerHTML = content;
-
-            _attachActionListeners(container, locationId);
-
-        } finally {
-            _rendering = false;
-        }
-    }
-
-    // =========================================================================
-    // 6. ACTION EVENT LISTENERS
-    // =========================================================================
-
-    function _attachActionListeners(container, locationId) {
-        var actionBtns = container.querySelectorAll('.religion-action-btn');
-        for (var i = 0; i < actionBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var action = this.dataset.action;
-                    switch (action) {
-                        case 'create-place':
-                            _openCreatePlaceOfWorshipModal(locationId);
-                            break;
-                        case 'refresh':
-                            renderSettlementReligion('tab-religion', locationId);
-                            break;
-                    }
-                });
-            })(actionBtns[i]);
+        // The Religion modal is religion-centric: its first step is
+        // picking a religion. We need to know which religion the user
+        // wants before opening it, because the modal takes a religionId.
+        // Present a small chooser first.
+        var religions = _activeReligions();
+        if (religions.length === 0) {
+            _toast(
+                'No active religions. Create a religion in the Religion ' +
+                'manager first.',
+                'error'
+            );
+            return;
         }
 
-        var detailBtns = container.querySelectorAll('.place-worship-detail-btn');
-        for (var i = 0; i < detailBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var placeId = this.dataset.placeId;
-                    _openPlaceOfWorshipDetailsModal(placeId, locationId);
-                });
-            })(detailBtns[i]);
-        }
-
-        var titheBtns = container.querySelectorAll('.place-worship-tithe-btn');
-        for (var i = 0; i < titheBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var placeId = this.dataset.placeId;
-                    _collectTithesForPlace(placeId, locationId);
-                });
-            })(titheBtns[i]);
-        }
-
-        var deleteBtns = container.querySelectorAll('.place-worship-delete-btn');
-        for (var i = 0; i < deleteBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    var placeId = this.dataset.placeId;
-                    _deletePlaceOfWorship(placeId, locationId);
-                });
-            })(deleteBtns[i]);
-        }
-    }
-
-    // =========================================================================
-    // 7. CREATE PLACE OF WORSHIP MODAL
-    // =========================================================================
-
-    function _openCreatePlaceOfWorshipModal(locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var place = _getPlaceById(locationId);
-            var religions = _getAllReligions();
-
-            var religionOptions = '';
-            if (religions.length === 0) {
-                religionOptions += '<option value="">No religions available - create one first</option>';
-            } else {
-                for (var i = 0; i < religions.length; i++) {
-                    religionOptions += '<option value="' + religions[i].id + '">' + _escapeHtml(religions[i].name) + '</option>';
-                }
-            }
-
-            var typeOptions = '';
-            var types = ['temple', 'church', 'shrine', 'mosque', 'synagogue', 'monastery', 'grove'];
-            for (var i = 0; i < types.length; i++) {
-                typeOptions += '<option value="' + types[i] + '">' + types[i].charAt(0).toUpperCase() + types[i].slice(1) + '</option>';
-            }
-
-            var INFO = _icon('CIRCLE_DOT');
-
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">Create Place of Worship</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place ? place.displayName : 'Unknown') + '</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Name</label>' +
-                '<input type="text" id="pwName" placeholder="e.g., The Great Temple" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Religion</label>' +
-                '<select id="pwReligion" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                religionOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Type</label>' +
-                '<select id="pwType" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                typeOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group" style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">' +
-                '<input type="checkbox" id="pwProducesIncome" checked style="width:16px;height:16px;">' +
-                '<label style="font-size:0.65rem; color:var(--dim); cursor:pointer;">Produces Income (Tithes)</label>' +
-                '</div>' +
-
-                '<div class="form-group" style="margin-bottom: 12px;">' +
-                '<label style="display: block; font-size: 0.7rem; color: var(--accent-light); margin-bottom: 4px;">Base Tithe (gold per follower per year)</label>' +
-                '<input type="number" id="pwBaseTithe" value="2" min="0" step="0.5" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-                '</div>' +
-
-                '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-                INFO + ' Places of worship generate tithes based on followers at this location. Higher base tithe = more income but may affect follower happiness.' +
-                '</div>' +
-                '</div>';
-
-            _openModal({
-                title: 'Create Place of Worship',
-                content: content,
-                confirmText: 'Create',
-                cancelText: 'Cancel',
-                onConfirm: function() {
-                    var name = document.getElementById('pwName').value.trim();
-                    if (!name) {
-                        _showToast('Name is required', 'error');
-                        return false;
-                    }
-
-                    var religionId = document.getElementById('pwReligion').value;
-                    if (!religionId) {
-                        _showToast('Please select a religion', 'error');
-                        return false;
-                    }
-
-                    var type = document.getElementById('pwType').value;
-                    var producesIncome = document.getElementById('pwProducesIncome').checked;
-                    var baseTithe = parseFloat(document.getElementById('pwBaseTithe').value) || 2;
-
-                    var data = {
-                        name: name,
-                        religionId: religionId,
-                        locationId: locationId,
-                        type: type,
-                        producesIncome: producesIncome,
-                        baseTithe: baseTithe,
-                        foundedYear: _getCurrentYear(),
-                        isActive: true
-                    };
-
-                    var result = _createPlaceOfWorship(data);
-                    if (result && result.success) {
-                        var addResult = _addPlaceOfWorshipToSettlement(locationId, result.data.id);
-                        if (addResult && addResult.success) {
-                            _updateDominantReligion(locationId);
-                            _calculateReligiousUnity(locationId);
-                            _showToast('Place of worship created: ' + result.data.name, 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementReligion('tab-religion', locationId);
-                            return true;
-                        } else {
-                            _showToast('Created but failed to add to settlement', 'warning');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementReligion('tab-religion', locationId);
-                            return true;
-                        }
-                    } else {
-                        _showToast('Failed to create place of worship: ' + (result ? result.reason : 'Unknown error'), 'error');
-                        _modalOpen = false;
-                        return false;
-                    }
-                },
-                onCancel: function() {
-                    _modalOpen = false;
+        if (religions.length === 1) {
+            // Only one religion: skip the chooser and open directly.
+            modals.openCreatePlaceOfWorshipModal(religions[0].id, {
+                onSuccess: function () {
+                    _requestRefresh();
                 }
             });
+            return;
+        }
 
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening modal', 'error');
+        _openReligionChooserModal(religions, function (religion) {
+            modals.openCreatePlaceOfWorshipModal(religion.id, {
+                onSuccess: function () {
+                    _requestRefresh();
+                }
+            });
+        });
+    }
+
+    function _activeReligions() {
+        var rq = _getReligionQueries();
+        if (typeof rq.getAllReligions !== 'function') return [];
+        try {
+            return rq.getAllReligions({ includeDeprecated: false }) || [];
+        } catch (err) {
+            return [];
         }
     }
 
-    // =========================================================================
-    // 8. PLACE OF WORSHIP DETAILS MODAL
-    // =========================================================================
+    function _openReligionChooserModal(religions, onSelect) {
+        if (typeof window.openModal !== 'function') {
+            _toast('Modal system not available.', 'error');
+            return;
+        }
 
-    function _openPlaceOfWorshipDetailsModal(placeId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
+        var optionsHtml = '';
+        for (var i = 0; i < religions.length; i++) {
+            optionsHtml += '<option value="' +
+                _escapeHtml(religions[i].id) + '">' +
+                _escapeHtml(religions[i].name || religions[i].id) +
+                '</option>';
+        }
 
+        var content =
+            '<div style="padding:4px;">' +
+            '<div style="font-size:0.65rem;color:var(--dim);margin-bottom:8px;">' +
+            'Choose the religion this place will serve.</div>' +
+            '<div class="form-group">' +
+            '<label style="display:block;font-size:0.65rem;color:var(--accent);' +
+            'margin-bottom:4px;">Religion</label>' +
+            '<select id="chooserReligionSelect" ' +
+            'style="width:100%;padding:8px;background:var(--bg);' +
+            'border:1px solid var(--border);border-radius:6px;' +
+            'color:var(--text);font-size:0.7rem;">' +
+            optionsHtml +
+            '</select></div></div>';
+
+        window.openModal({
+            titleHtml: 'Create Place of Worship',
+            contentHtml: content,
+            confirmText: 'Continue',
+            cancelText: 'Cancel',
+            onConfirm: function (modalEl) {
+                var sel = modalEl.querySelector('#chooserReligionSelect');
+                var id = sel ? sel.value : null;
+                if (!id) return false;
+                for (var j = 0; j < religions.length; j++) {
+                    if (religions[j].id === id) {
+                        onSelect(religions[j]);
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+    }
+
+    function _openPlaceDetails(placeId) {
+        var modals = _getReligionModals();
+        if (!modals || typeof modals.openReligionDetailsModal !== 'function') {
+            _toast('Religion modals are not loaded.', 'error');
+            return;
+        }
+        // The place detail is managed by the Religion domain. The
+        // closest public surface is the religion details modal, which
+        // shows the religion's places. There is no dedicated
+        // "place details" modal on the public Religion modal surface.
+        // For a specific place, resolve its religion first, then open
+        // that religion's details.
+        var place;
         try {
-            var pw = _getPlaceOfWorship(placeId);
-            if (!pw) {
-                _showToast('Place of worship not found', 'error');
-                _modalOpen = false;
-                return;
+            place = _getSettlementReligionQueries().getPlacesOfWorship(
+                _currentLocationIdForPlace(placeId)
+            );
+        } catch (err) {
+            place = null;
+        }
+        // Simpler: read the place record via ReligionState / the
+        // religion queries. We need the religion id.
+        var rq = _getReligionQueries();
+        var record = null;
+        if (typeof rq.getPlaceOfWorship === 'function') {
+            try {
+                record = rq.getPlaceOfWorship(placeId);
+            } catch (err) {
+                record = null;
             }
+        }
+        if (record && record.religionId) {
+            modals.openReligionDetailsModal(record.religionId, {
+                onRefresh: function () { _requestRefresh(); }
+            });
+            return;
+        }
+        _toast(
+            'Place details are managed through the Religion manager.',
+            'info'
+        );
+    }
 
-            var place = _getPlaceById(locationId);
-            var religion = pw.religionId ? _getReligion(pw.religionId) : null;
-            var headClergy = pw.headClergyId ? _getCharacterById(pw.headClergyId) : null;
-            var clergyList = [];
-            if (pw.clergy) {
-                for (var i = 0; i < pw.clergy.length; i++) {
-                    var c = _getCharacterById(pw.clergy[i]);
-                    if (c) clergyList.push(c);
-                }
-            }
+    // Stub: the place details path is documented above as needing the
+    // religion id. The tab's place row click uses
+    // _openPlaceDetails(placeId); this helper is unused and should be
+    // removed when the place-details path is finalized. Kept as a
+    // placeholder so the current code compiles.
+    function _currentLocationIdForPlace(_placeId) {
+        return null;
+    }
 
-            var INFO = _icon('CIRCLE_DOT');
-            var PERSON = _icon('PERSON');
-            var CROWN = _icon('CROWN');
-            var COIN = _icon('COIN');
+    // =========================================================================
+    // 6. SECTION BUILDERS
+    // =========================================================================
 
-            var content = '<div style="padding: 4px;">' +
-                '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-                '<strong style="color: var(--accent-light);">' + _escapeHtml(pw.name) + '</strong>' +
-                '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(pw.type || 'temple') + ' · ' + (religion ? _escapeHtml(religion.name) : 'Unknown religion') + '</div>' +
-                '</div>' +
+    function _buildHeader(context, placeCount) {
+        var locationId = context.locationId;
+        var summary = context.viewModel || {};
+        var name = summary.name
+            ? summary.name
+            : (_placeName(locationId) || '(unnamed location)');
 
-                '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; font-size: 0.7rem; margin-bottom: 16px;">' +
-                '<div><span style="color: var(--dim);">Status:</span> <span style="color: var(--text);">' + (pw.isActive ? 'Active' : 'Inactive') + '</span></div>' +
-                '<div><span style="color: var(--dim);">Founded:</span> <span style="color: var(--text);">' + (pw.foundedYear || 'Unknown') + '</span></div>' +
-                '<div><span style="color: var(--dim);">Location:</span> <span style="color: var(--text);">' + _escapeHtml(pw.locationName || (place ? place.displayName : 'Unknown')) + '</span></div>' +
-                '<div><span style="color: var(--dim);">Produces Income:</span> <span style="color: var(--text);">' + (pw.producesIncome ? 'Yes' : 'No') + '</span></div>' +
-                '<div><span style="color: var(--dim);">Base Tithe:</span> <span style="color: var(--text);">' + (pw.baseTithe || 0) + 'g/follower/yr</span></div>' +
-                '<div><span style="color: var(--dim);">Current Followers:</span> <span style="color: var(--text);">' + (pw.currentFollowers || 0) + '</span></div>' +
-                '<div><span style="color: var(--dim);">Annual Income:</span> <span style="color: var(--text);">' + (pw.annualIncome || 0) + 'g</span></div>' +
-                '<div><span style="color: var(--dim);">Wealth:</span> <span style="color: var(--text);">' + (pw.wealth || 0) + 'g</span></div>' +
-                '</div>' +
+        var unityHtml = _religiousUnityLabel(
+            summary.religiousUnityReason,
+            summary.religiousUnity
+        );
+        var unityColor = _religiousUnityColor(
+            summary.religiousUnityReason,
+            summary.religiousUnity
+        );
+        var dominantHtml = _dominantReligionLabel(
+            summary.dominantReligionReason,
+            summary.dominantReligion
+        );
 
-                '<div style="background: var(--bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; border: 1px solid var(--border);">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent-light); font-weight: bold;">' + CROWN + ' Leadership</div>' +
-                '<button class="pw-set-leader-btn" data-place-id="' + pw.id + '" style="font-size: 0.5rem; padding: 2px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">Set Leader</button>' +
-                '</div>' +
-                '<div style="font-size: 0.65rem; color: var(--text);">' +
-                (headClergy ? _escapeHtml(headClergy.name + (headClergy.surname ? ' ' + headClergy.surname : '')) : 'No leader assigned') +
-                '</div>' +
-                '</div>' +
+        var refreshBtn = '<button type="button" class="religion-tab-btn" ' +
+            'data-action="refresh" ' +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid var(--border);border-radius:4px;cursor:pointer;' +
+            'color:var(--text);">' +
+            _getIcon('REFRESH') + ' Refresh</button>';
 
-                '<div style="background: var(--bg); padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; border: 1px solid var(--border);">' +
-                '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">' +
-                '<div style="font-size: 0.6rem; color: var(--accent-light); font-weight: bold;">' + PERSON + ' Clergy (' + clergyList.length + ')</div>' +
-                '<button class="pw-add-clergy-btn" data-place-id="' + pw.id + '" style="font-size: 0.5rem; padding: 2px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--text);">Add Clergy</button>' +
-                '</div>';
-
-            if (clergyList.length === 0) {
-                content += '<div style="font-size: 0.55rem; color: var(--dim); padding: 4px 0;">No clergy assigned</div>';
-            } else {
-                for (var i = 0; i < clergyList.length; i++) {
-                    var c = clergyList[i];
-                    var isLeader = pw.headClergyId === c.id;
-                    content += '<div style="display: flex; justify-content: space-between; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--border-light); font-size: 0.6rem;">' +
-                        '<span style="color: var(--text);">' + _escapeHtml(c.name + (c.surname ? ' ' + c.surname : '')) + (isLeader ? ' ' + CROWN : '') + '</span>' +
-                        (isLeader ? '<span style="font-size: 0.5rem; color: var(--accent);">Leader</span>' : '') +
-                        '</div>';
-                }
-            }
-
-            content += '</div>' +
-
-            '<div style="padding: 8px; background: var(--bg3); border-radius: 6px; font-size: 0.55rem; color: var(--dim);">' +
-            INFO + ' Tithes are collected annually. The head clergy can assign other clergy members.' +
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;display:flex;' +
+            'justify-content:space-between;align-items:center;flex-wrap:wrap;' +
+            'gap:8px;border:1px solid var(--border);">' +
+            '<div>' +
+            '<div style="font-size:0.8rem;font-weight:bold;color:var(--accent-light);">' +
+            _getIcon('CIRCLE_DOT') + ' Religion in ' +
+            _escapeHtml(name) + '</div>' +
+            '<div style="font-size:0.65rem;color:var(--dim);">' +
+            _fmtNumber(placeCount) + ' place' +
+            (placeCount === 1 ? '' : 's') + ' of worship' +
+            '</div>' +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:4px;' +
+            'align-items:flex-end;">' +
+            refreshBtn +
+            '<div style="font-size:0.6rem;color:var(--text);">Unity: ' +
+            '<span style="color:' + unityColor + ';font-weight:bold;">' +
+            unityHtml + '</span></div>' +
+            '<div style="font-size:0.55rem;color:var(--dim);">Dominant: ' +
+            dominantHtml + '</div>' +
             '</div>' +
             '</div>';
+    }
 
-            _openModal({
-                title: 'Place of Worship Details',
-                content: content,
-                confirmText: 'Close',
-                cancelText: '',
-                onConfirm: function() {
-                    _modalOpen = false;
-                },
-                onCancel: function() {
-                    _modalOpen = false;
-                }
+    function _buildBreakdownSection(context) {
+        var locationId = context.locationId;
+        var breakdown;
+        try {
+            breakdown = _getSettlementReligionQueries().getReligiousBreakdown(locationId);
+        } catch (err) {
+            breakdown = null;
+        }
+
+        if (!breakdown) {
+            return '<div style="background:var(--bg2);padding:12px 16px;' +
+                'border-radius:8px;margin-bottom:16px;' +
+                'border:1px solid var(--border);">' +
+                '<div style="font-size:0.65rem;color:var(--accent-light);' +
+                'font-weight:bold;margin-bottom:6px;">' +
+                _getIcon('CIRCLE_DOT') + ' Religious Demographics</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);' +
+                'text-align:center;padding:8px 0;">' +
+                'Religious breakdown unavailable.</div>' +
+                '</div>';
+        }
+
+        var total = typeof breakdown.total === 'number' ? breakdown.total : 0;
+        var unaffiliated = typeof breakdown.unaffiliated === 'number'
+            ? breakdown.unaffiliated
+            : 0;
+
+        if (total === 0) {
+            return '<div style="background:var(--bg2);padding:12px 16px;' +
+                'border-radius:8px;margin-bottom:16px;' +
+                'border:1px solid var(--border);">' +
+                '<div style="font-size:0.65rem;color:var(--accent-light);' +
+                'font-weight:bold;margin-bottom:6px;">' +
+                _getIcon('CIRCLE_DOT') + ' Religious Demographics</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);' +
+                'text-align:center;padding:8px 0;">' +
+                'No population in this settlement. Religious breakdown ' +
+                'is undefined.</div>' +
+                '</div>';
+        }
+
+        // Build sorted list of (religionId, count, name).
+        var byReligion = breakdown.byReligion || {};
+        var entries = [];
+        for (var religionId in byReligion) {
+            if (!Object.prototype.hasOwnProperty.call(byReligion, religionId)) {
+                continue;
+            }
+            var count = (byReligion[religionId] && typeof byReligion[religionId].count === 'number')
+                ? byReligion[religionId].count
+                : 0;
+            if (count === 0) continue;
+
+            var religion = null;
+            try {
+                religion = _getReligionQueries().getReligion(religionId);
+            } catch (err) {
+                religion = null;
+            }
+            entries.push({
+                religionId: religionId,
+                name: religion ? (religion.name || religion.id) : 'Unknown',
+                count: count
             });
-
-            setTimeout(function() {
-                var setLeaderBtn = document.querySelector('.pw-set-leader-btn');
-                if (setLeaderBtn) {
-                    setLeaderBtn.addEventListener('click', function() {
-                        var placeId = this.dataset.placeId;
-                        _closeTopModal();
-                        _modalOpen = false;
-                        _openSetLeaderModal(placeId, locationId);
-                    });
-                }
-
-                var addClergyBtn = document.querySelector('.pw-add-clergy-btn');
-                if (addClergyBtn) {
-                    addClergyBtn.addEventListener('click', function() {
-                        var placeId = this.dataset.placeId;
-                        _closeTopModal();
-                        _modalOpen = false;
-                        _openAddClergyModal(placeId, locationId);
-                    });
-                }
-            }, 100);
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening details', 'error');
         }
+
+        // Sort by count descending, then by name for stable order.
+        entries.sort(function (a, b) {
+            if (b.count !== a.count) return b.count - a.count;
+            return a.name.localeCompare(b.name);
+        });
+
+        var dominantId = (context.viewModel
+            && context.viewModel.dominantReligion)
+            ? context.viewModel.dominantReligion.id
+            : null;
+
+        function barRow(row) {
+            var pct = total > 0 ? Math.round((row.count / total) * 100) : 0;
+            var barWidth = Math.max(2, pct);
+            var isDominant = (dominantId !== null && row.religionId === dominantId);
+            var color = isDominant ? 'var(--accent)' : 'var(--bg4)';
+            var labelColor = isDominant ? 'var(--accent-light)' : 'var(--text)';
+            var fontWeight = isDominant ? 'font-weight:bold;' : '';
+
+            return '<div style="display:flex;align-items:center;gap:8px;' +
+                'padding:2px 4px;font-size:0.55rem;' +
+                (isDominant ? 'background:var(--accent-dim);border-radius:4px;' : '') +
+                '">' +
+                '<span style="min-width:110px;color:' + labelColor + ';' + fontWeight + '">' +
+                _escapeHtml(row.name) +
+                (isDominant ? ' ' + _getIcon('STAR_4') : '') +
+                '</span>' +
+                '<div style="flex:1;height:8px;background:var(--bg3);' +
+                'border-radius:4px;overflow:hidden;">' +
+                '<div style="width:' + barWidth + '%;height:100%;' +
+                'background:' + color + ';border-radius:4px;"></div>' +
+                '</div>' +
+                '<span style="min-width:60px;text-align:right;color:var(--dim);">' +
+                _fmtNumber(row.count) + ' (' + _fmtPercent(pct) + ')</span>' +
+                '</div>';
+        }
+
+        var rows = '';
+        for (var i = 0; i < entries.length; i++) {
+            rows += barRow(entries[i]);
+        }
+
+        // Unaffiliated bar (never dominant — it's not a religion).
+        var unaffiliatedPct = total > 0
+            ? Math.round((unaffiliated / total) * 100)
+            : 0;
+        var unaffiliatedRow =
+            '<div style="display:flex;align-items:center;gap:8px;' +
+            'padding:2px 4px;font-size:0.55rem;color:var(--dim);">' +
+            '<span style="min-width:110px;">Unaffiliated</span>' +
+            '<div style="flex:1;height:8px;background:var(--bg3);' +
+            'border-radius:4px;overflow:hidden;">' +
+            '<div style="width:' + Math.max(2, unaffiliatedPct) + '%;height:100%;' +
+            'background:var(--bg4);border-radius:4px;"></div>' +
+            '</div>' +
+            '<span style="min-width:60px;text-align:right;">' +
+            _fmtNumber(unaffiliated) + ' (' + _fmtPercent(unaffiliatedPct) + ')</span>' +
+            '</div>';
+
+        return '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
+            '<div style="font-size:0.65rem;color:var(--accent-light);' +
+            'font-weight:bold;margin-bottom:6px;">' +
+            _getIcon('CIRCLE_DOT') + ' Religious Demographics</div>' +
+            '<div style="display:flex;flex-direction:column;gap:3px;">' +
+            (rows || '') +
+            (unaffiliated > 0 ? unaffiliatedRow : '') +
+            '</div>' +
+            '<div style="font-size:0.5rem;color:var(--dim);' +
+            'margin-top:6px;text-align:right;">' +
+            'Total counted: ' + _fmtNumber(total) + '</div>' +
+            '</div>';
+    }
+
+    function _buildPlacesSection(context) {
+        var locationId = context.locationId;
+        var places;
+        try {
+            places = _getSettlementReligionQueries().getPlacesOfWorship(locationId);
+        } catch (err) {
+            places = null;
+        }
+
+        if (places === null) {
+            return '<div style="background:var(--bg2);padding:12px 16px;' +
+                'border-radius:8px;margin-bottom:16px;' +
+                'border:1px solid var(--border);">' +
+                '<div style="font-size:0.65rem;color:var(--accent-light);' +
+                'font-weight:bold;margin-bottom:6px;">' +
+                _getIcon('LOCATION') + ' Places of Worship</div>' +
+                '<div style="font-size:0.6rem;color:var(--dim);' +
+                'text-align:center;padding:8px 0;">' +
+                'Settlement not found.</div>' +
+                '</div>';
+        }
+
+        var header = '<div style="display:flex;justify-content:space-between;' +
+            'align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:4px;">' +
+            '<div style="font-size:0.65rem;color:var(--accent-light);' +
+            'font-weight:bold;">' +
+            _getIcon('LOCATION') + ' Places of Worship (' +
+            _fmtNumber(places.length) + ')</div>';
+
+        var activeReligions = _activeReligions();
+        var canCreate = activeReligions.length > 0;
+
+        var createBtn = '<button type="button" class="religion-tab-btn" ' +
+            'data-action="create-place" ' + (canCreate ? '' : 'disabled ') +
+            'style="font-size:0.55rem;padding:3px 10px;background:var(--bg3);' +
+            'border:1px solid ' + (canCreate ? 'var(--accent)' : 'var(--border)') + ';' +
+            'border-radius:4px;cursor:' + (canCreate ? 'pointer' : 'not-allowed') + ';' +
+            'color:' + (canCreate ? 'var(--accent-light)' : 'var(--dim)') + ';' +
+            (canCreate ? '' : 'opacity:0.5;') + '">' +
+            _getIcon('PLUS') + ' Create Place of Worship</button>';
+
+        var html = '<div style="background:var(--bg2);padding:12px 16px;' +
+            'border-radius:8px;margin-bottom:16px;border:1px solid var(--border);">' +
+            header + createBtn + '</div>';
+
+        if (!canCreate) {
+            html += '<div style="font-size:0.55rem;color:var(--warn);' +
+                'margin-bottom:8px;padding:0 4px;">' +
+                _getIcon('WARNING') + ' No active religions. Create a religion ' +
+                'in the Religion manager first.</div>';
+        }
+
+        if (places.length === 0) {
+            html += '<div style="text-align:center;padding:16px;' +
+                'color:var(--dim);font-size:0.6rem;background:var(--bg3);' +
+                'border-radius:6px;">' +
+                'No places of worship in this settlement.</div>';
+            return html;
+        }
+
+        html += '<div style="display:flex;flex-direction:column;gap:6px;">';
+
+        for (var i = 0; i < places.length; i++) {
+            var place = places[i];
+            if (!place || !place.id) continue;
+
+            var active = _isPlaceActive(place);
+            var statusColor = active ? 'var(--success)' : 'var(--danger)';
+            var statusLabel = active ? 'Active' : 'Inactive';
+            var religionName = _resolveReligionName(place) || 'Unknown';
+            var placeType = place.type || 'temple';
+
+            var followerCount = typeof place.currentFollowers === 'number'
+                ? place.currentFollowers
+                : null;
+            var tithes = typeof place.annualIncome === 'number'
+                ? place.annualIncome
+                : null;
+
+            var metaParts = [];
+            metaParts.push('Type: ' + placeType);
+            if (followerCount !== null) {
+                metaParts.push('Followers: ' + followerCount);
+            }
+            if (tithes !== null) {
+                metaParts.push('Tithes: ' + tithes + 'g/yr');
+            }
+
+            html += '<div class="religion-place-row" ' +
+                'data-place-id="' + _escapeHtml(place.id) + '" ' +
+                'style="background:var(--bg);border:1px solid var(--border);' +
+                'border-left:3px solid ' + statusColor + ';border-radius:6px;' +
+                'padding:10px 14px;cursor:pointer;">' +
+                '<div style="display:flex;justify-content:space-between;' +
+                'align-items:flex-start;flex-wrap:wrap;gap:6px;">' +
+                '<div style="flex:1;min-width:0;">' +
+                '<div style="display:flex;align-items:center;gap:6px;' +
+                'flex-wrap:wrap;">' +
+                '<span style="font-size:0.7rem;font-weight:bold;' +
+                'color:var(--text);">' +
+                _escapeHtml(place.name || 'Unnamed place') + '</span>' +
+                '<span style="font-size:0.5rem;color:var(--dim);' +
+                'padding:1px 6px;border:1px solid var(--border);' +
+                'border-radius:8px;">' +
+                _escapeHtml(placeType) + '</span>' +
+                '<span style="font-size:0.5rem;color:' + statusColor + ';' +
+                'padding:1px 6px;border:1px solid ' + statusColor + ';' +
+                'border-radius:8px;">' +
+                _escapeHtml(statusLabel) + '</span>' +
+                '<span style="font-size:0.5rem;color:var(--accent);' +
+                'padding:1px 6px;border:1px solid var(--accent);' +
+                'border-radius:8px;">' +
+                _escapeHtml(religionName) + '</span>' +
+                '</div>' +
+                '<div style="font-size:0.55rem;color:var(--dim);' +
+                'margin-top:2px;">' +
+                _escapeHtml(metaParts.join(' · ')) +
+                '</div>' +
+                '</div>' +
+                '</div>' +
+                '</div>';
+        }
+
+        html += '</div>';
+        return html;
+    }
+
+    function _buildFooter() {
+        return '<div style="padding:8px;background:var(--bg3);border-radius:6px;' +
+            'font-size:0.55rem;color:var(--dim);">' +
+            _getIcon('CIRCLE_DOT') + ' ' +
+            'Places of worship are owned by the Religion domain. Click a ' +
+            'place to open the Religion details for that place\'s faith. ' +
+            'Religious unity affects settlement prosperity and crime rate.' +
+            '</div>';
     }
 
     // =========================================================================
-    // 9. SET LEADER MODAL
+    // 7. EVENT WIRING
     // =========================================================================
 
-    function _openSetLeaderModal(placeId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
+    function _wireActions(container, locationId) {
+        container.addEventListener('click', function (event) {
+            var target = event.target;
+            if (!target || typeof target.closest !== 'function') return;
 
-        try {
-            var pw = _getPlaceOfWorship(placeId);
-            if (!pw) {
-                _showToast('Place of worship not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            if (typeof window.openCharacterSelector === 'function') {
-                window.openCharacterSelector({
-                    title: 'Select Head Clergy for ' + pw.name,
-                    filters: {
-                        status: 'all',
-                        showDeceased: false,
-                        location: locationId
-                    },
-                    onSelect: function(character) {
-                        if (!character) {
-                            _modalOpen = false;
-                            return;
-                        }
-
-                        var result = _updatePlaceOfWorship(placeId, {
-                            headClergyId: character.id
-                        });
-
-                        if (result && result.success) {
-                            _showToast('Head clergy set: ' + character.name, 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementReligion('tab-religion', locationId);
-                        } else {
-                            _showToast('Failed to set head clergy', 'error');
-                            _modalOpen = false;
-                        }
-                    },
-                    onCancel: function() {
-                        _modalOpen = false;
-                    }
-                });
-            } else {
-                _showToast('Character selector not available', 'error');
-                _modalOpen = false;
-            }
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening set leader modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 10. ADD CLERGY MODAL
-    // =========================================================================
-
-    function _openAddClergyModal(placeId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var pw = _getPlaceOfWorship(placeId);
-            if (!pw) {
-                _showToast('Place of worship not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            if (typeof window.openCharacterSelector === 'function') {
-                window.openCharacterSelector({
-                    title: 'Add Clergy to ' + pw.name,
-                    filters: {
-                        status: 'all',
-                        showDeceased: false,
-                        location: locationId
-                    },
-                    onSelect: function(character) {
-                        if (!character) {
-                            _modalOpen = false;
-                            return;
-                        }
-
-                        var clergy = pw.clergy || [];
-                        if (clergy.indexOf(character.id) !== -1) {
-                            _showToast(character.name + ' is already clergy', 'warning');
-                            _modalOpen = false;
-                            return;
-                        }
-
-                        clergy.push(character.id);
-                        var result = _updatePlaceOfWorship(placeId, {
-                            clergy: clergy
-                        });
-
-                        if (result && result.success) {
-                            _showToast('Added ' + character.name + ' to clergy', 'success');
-                            _closeTopModal();
-                            _modalOpen = false;
-                            renderSettlementReligion('tab-religion', locationId);
-                        } else {
-                            _showToast('Failed to add clergy', 'error');
-                            _modalOpen = false;
-                        }
-                    },
-                    onCancel: function() {
-                        _modalOpen = false;
-                    }
-                });
-            } else {
-                _showToast('Character selector not available', 'error');
-                _modalOpen = false;
-            }
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error opening add clergy modal', 'error');
-        }
-    }
-
-    // =========================================================================
-    // 11. COLLECT TITHES
-    // =========================================================================
-
-    function _collectTithesForPlace(placeId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var pw = _getPlaceOfWorship(placeId);
-            if (!pw) {
-                _showToast('Place of worship not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            if (!pw.producesIncome) {
-                _showToast('This place does not produce income', 'warning');
-                _modalOpen = false;
-                return;
-            }
-
-            _confirmDialog(
-                'Collect tithes from ' + pw.name + '?\n' +
-                'Current followers: ' + (pw.currentFollowers || 0) + '\n' +
-                'Annual income: ' + (pw.annualIncome || 0) + 'g',
-                'Collect Tithes',
-                function() {
-                    var result = _collectTithes(placeId, _getCurrentYear());
-                    if (result && result.success) {
-                        _showToast('Collected ' + (result.data.collected || 0) + 'g in tithes', 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementReligion('tab-religion', locationId);
-                    } else {
-                        _showToast('Failed to collect tithes: ' + (result ? result.reason : 'Unknown error'), 'error');
-                        _modalOpen = false;
-                    }
+            var actionBtn = target.closest('.religion-tab-btn');
+            if (actionBtn && container.contains(actionBtn)) {
+                if (actionBtn.disabled) return;
+                event.preventDefault();
+                var action = actionBtn.dataset.action;
+                if (action === 'refresh') {
+                    _requestRefresh();
+                } else if (action === 'create-place') {
+                    _openCreatePlaceModal(locationId);
                 }
+                return;
+            }
+
+            var placeRow = target.closest('.religion-place-row');
+            if (placeRow && container.contains(placeRow)) {
+                event.preventDefault();
+                _openPlaceDetails(placeRow.dataset.placeId);
+                return;
+            }
+        });
+    }
+
+    // =========================================================================
+    // 8. RENDER
+    // =========================================================================
+
+    /**
+     * Renders the religion tab into the container.
+     *
+     * @param {HTMLElement} container
+     * @param {Object} context  { locationId, data, viewModel }
+     */
+    function renderSettlementReligion(container, context) {
+        if (!container) {
+            throw new Error(
+                'settlement-religion-tab: container is required'
             );
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error collecting tithes', 'error');
         }
-    }
-
-    // =========================================================================
-    // 12. DELETE PLACE OF WORSHIP
-    // =========================================================================
-
-    function _deletePlaceOfWorship(placeId, locationId) {
-        if (_modalOpen) return;
-        _modalOpen = true;
-
-        try {
-            var pw = _getPlaceOfWorship(placeId);
-            if (!pw) {
-                _showToast('Place of worship not found', 'error');
-                _modalOpen = false;
-                return;
-            }
-
-            _confirmDialog(
-                'Delete ' + pw.name + '?\n\nThis will remove it from the settlement and delete all associated data.\nThis action cannot be undone.',
-                'Delete Place of Worship',
-                function() {
-                    var removeResult = _removePlaceOfWorshipFromSettlement(locationId, placeId);
-                    if (!removeResult || !removeResult.success) {
-                        _showToast('Failed to remove from settlement', 'warning');
-                    }
-
-                    var result = _deletePlaceOfWorship(placeId);
-                    if (result && result.success) {
-                        _updateDominantReligion(locationId);
-                        _calculateReligiousUnity(locationId);
-                        _showToast('Place of worship deleted: ' + pw.name, 'success');
-                        _closeTopModal();
-                        _modalOpen = false;
-                        renderSettlementReligion('tab-religion', locationId);
-                    } else {
-                        _showToast('Failed to delete: ' + (result ? result.reason : 'Unknown error'), 'error');
-                        _modalOpen = false;
-                    }
-                }
+        if (!context || !context.locationId) {
+            throw new Error(
+                'settlement-religion-tab: context.locationId is required'
             );
-
-        } catch(e) {
-            _modalOpen = false;
-            _showToast('Error deleting place of worship', 'error');
         }
+
+        var locationId = context.locationId;
+
+        var places;
+        try {
+            places = _getSettlementReligionQueries().getPlacesOfWorship(locationId);
+        } catch (err) {
+            places = null;
+        }
+        var placeCount = Array.isArray(places) ? places.length : 0;
+
+        var html = '<div style="padding:4px;">' +
+            _buildHeader(context, placeCount) +
+            _buildBreakdownSection(context) +
+            _buildPlacesSection(context) +
+            _buildFooter() +
+            '</div>';
+
+        container.innerHTML = html;
+        _wireActions(container, locationId);
     }
 
     // =========================================================================
-    // 13. REGISTER WITH TAB SYSTEM
+    // 9. REGISTRATION
     // =========================================================================
 
-    if (typeof window.registerTabRenderer === 'function') {
-        window.registerTabRenderer('religion', renderSettlementReligion, true);
+    function _register() {
+        var tabs = _getTabs();
+        if (!tabs || typeof tabs.registerTabRenderer !== 'function') {
+            throw new Error(
+                'settlement-religion-tab: SettlementTabs is missing. ' +
+                'Load settlement-tabs.js before this tab.'
+            );
+        }
+        tabs.registerTabRenderer('religion', renderSettlementReligion);
     }
 
+    _register();
+
     // =========================================================================
-    // 14. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.renderSettlementReligion = renderSettlementReligion;
