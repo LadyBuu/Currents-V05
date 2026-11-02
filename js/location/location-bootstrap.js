@@ -36,6 +36,11 @@
  *   js/core/storage.js         (markDataDirty, saveMasterData)
  *   js/core/ids.js             (generateId)
  *   js/core/time.js            (getCurrentYear, calculateAge)
+ *   js/core/world.js           (getCurrentLocationId)
+ *   js/core/formatting.js      (escapeHtml)
+ *   js/core/icons.js           (Icons, getIcon)
+ *   js/core/ui.js              (showToast, lockBodyScroll, unlockBodyScroll)
+ *   js/core/modals-core.js     (openModal, closeTopModal)
  *   js/character/character-commands.js  (CharacterCommands)
  *   js/character/character-queries.js   (CharacterQueries)
  *
@@ -57,6 +62,13 @@
  *   consumes from cross-domain modules. It does NOT verify methods the
  *   domain does not call. Specifically:
  *
+ *     CharacterCommands.updateCharacters   used by deletePlace's
+ *                                          character-cleanup sweep
+ *                                          (batch path)
+ *     CharacterCommands.updateCharacterFields
+ *                                          used by every single-record
+ *                                          command and as the fallback
+ *                                          for deletePlace's cleanup
  *     CharacterQueries.getAllCharacters       used by location-queries
  *                                              (population)
  *     CharacterQueries.getCharacterById       used by location-queries,
@@ -68,6 +80,18 @@
  *                                              location-queries
  *     CharacterQueries.getMoveHistory         used by location-movement,
  *                                              location-queries
+ *     World.getCurrentLocationId              used by location-queries
+ *                                              (semantic current-location
+ *                                              resolution) and by
+ *                                              location-commands (deletePlace
+ *                                              cleanup). Prior revisions
+ *                                              verified it only via a
+ *                                              typeof guard at the call
+ *                                              site; a load-order bug
+ *                                              surfaced as a silent
+ *                                              fallback to the raw-field
+ *                                              resolver instead of a
+ *                                              bootstrap failure.
  *
  *   Prior revisions also verified CharacterQueries.getCharactersAtLocation.
  *   That method is no longer used by any location module: the bulk-move
@@ -87,9 +111,66 @@
  *   modules the domain cannot function without; optional dependencies are
  *   the optional-dependency check's job, not the bootstrap's.
  *
+ * UI DEPENDENCY VERIFICATION:
+ *   The location domain's UI modules (location-ui-list.js,
+ *   modals-location.js, modals-moves.js, modals-location-helper.js)
+ *   consume core UI globals at call time. A load-order bug in any of
+ *   these surfaces as a runtime TypeError the first time a user opens a
+ *   modal or renders the tree, not at bootstrap time.
+ *
+ *   _verifyUIDependencies verifies the surface those modules actually
+ *   call:
+ *
+ *     window.Icons                    required by location-ui-list.js
+ *                                     and modals-location-helper.js
+ *                                     (icon rendering)
+ *     window.getIcon                  required by location-ui-list.js's
+ *                                     load-time guard
+ *     window.escapeHtml               required by location-ui-list.js's
+ *                                     formatter (with a local fallback)
+ *                                     and modals-location-helper.js
+ *                                     (with a local fallback)
+ *     window.openModal                required by modals-location.js and
+ *                                     modals-moves.js
+ *     window.closeTopModal            required by modals-location-helper.js
+ *     window.showToast                required by modals-location-helper.js
+ *                                     (with a local fallback)
+ *
+ *   The formatter and toast fallbacks remain: the modules work in a bare
+ *   test harness without formatting.js or ui.js. But modals-core.js is a
+ *   hard dependency (no modal opens without openModal), and icons.js is a
+ *   hard dependency of location-ui-list.js's load-time guard. Verifying
+ *   them here means a load-order mistake is reported by the bootstrap,
+ *   not by a user clicking "Add Location."
+ *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _verifyCrossDomain now requires World.getCurrentLocationId. It is
+ *       consumed by location-queries.js (semantic current-location
+ *       resolution) and location-commands.js (deletePlace cleanup). Prior
+ *       revisions guarded the call with `typeof window.getCurrentLocationId
+ *       === 'function'` at runtime, which meant a load-order bug silently
+ *       fell back to the raw-field resolver and produced wrong populations
+ *       and stale dangling references instead of a bootstrap failure.
+ *     - _verifyCrossDomain now requires CharacterCommands.updateCharacters
+ *       in addition to updateCharacterFields. Both are used by
+ *       deletePlace's character-cleanup path: updateCharacters is the
+ *       preferred batch API, updateCharacterFields is the fallback. Prior
+ *       revisions only required updateCharacterFields and logged a warning
+ *       when the batch API was absent, which let a half-working character
+ *       domain pass bootstrap and then fire one commit per character on
+ *       every cascade delete.
+ *     - New _verifyUIDependencies pass. Verifies Icons, getIcon,
+ *       escapeHtml, openModal, closeTopModal, showToast. These are
+ *       consumed by the location UI modules and by the shared modal
+ *       helper. A load-order failure now surfaces at bootstrap instead of
+ *       at click time.
+ *     - Header CROSS-DOMAIN SURFACE VERIFICATION and UI DEPENDENCY
+ *       VERIFICATION sections updated.
+ *     - No behavioural change to any other check. Every other required
+ *       method, global, and module is verified exactly as before.
+ *   Previous revision:
  *     - Removed the CharacterQueries.getCharactersAtLocation check from
  *       _verifyCrossDomain. The method is no longer consumed by any
  *       location module (the bulk-move view model uses
@@ -97,12 +178,6 @@
  *       The check was a dead-dependency false positive waiting to fire
  *       the first time character-queries.js cleaned up an unused export.
  *       See CROSS-DOMAIN SURFACE VERIFICATION in the module header.
- *     - Header CROSS-DOMAIN SURFACE VERIFICATION section added,
- *       explaining the surface-verification policy (verify what is
- *       called, not what might be callable) and the prior dead check.
- *     - No behavioural change to any other check. Every other required
- *       method, global, and module is verified exactly as before.
- *   Previous revision:
  *     - Uses window.getCurrentYear (canonical) rather than the deprecated
  *       window.getCurrentYearSafe alias.
  *     - Requires getLastSaveError alongside saveMasterData.
@@ -145,6 +220,12 @@
         }
     }
 
+    function _requireGlobalObject(name) {
+        if (typeof window[name] === 'undefined' || window[name] === null) {
+            _fail('global check', 'window.' + name + ' is required');
+        }
+    }
+
     // =========================================================================
     // 2. VERIFICATION PASSES
     // =========================================================================
@@ -179,6 +260,12 @@
         var CC = _requireModule('CharacterCommands', function () {
             return window.CharacterCommands;
         });
+
+        // Both methods are used by deletePlace's character-cleanup path.
+        // updateCharacters is the preferred batch API; updateCharacterFields
+        // is the fallback. Requiring both here ensures the character domain
+        // is fully wired before the location domain can delete anything.
+        _requireMethod('CharacterCommands', CC, 'updateCharacters');
         _requireMethod('CharacterCommands', CC, 'updateCharacterFields');
 
         var CQ = _requireModule('CharacterQueries', function () {
@@ -192,6 +279,15 @@
         _requireMethod('CharacterQueries', CQ, 'getCharacterById');
         _requireMethod('CharacterQueries', CQ, 'getCurrentLocationId');
         _requireMethod('CharacterQueries', CQ, 'getMoveHistory');
+
+        // world.js::getCurrentLocationId — the semantic current-location
+        // resolver. Read by location-queries.js (population, current
+        // location reads) and by location-commands.js (deletePlace
+        // cleanup). A missing world.js is a load-order bug; verify it at
+        // bootstrap rather than relying on a typeof guard at every call
+        // site (which silently falls back to the raw-field resolver and
+        // produces wrong counts).
+        _requireGlobalFn('getCurrentLocationId');
     }
 
     function _verifyCanonical() {
@@ -210,6 +306,31 @@
                 'masterData.data.locationTypes must be an array'
             );
         }
+    }
+
+    /**
+     * Verifies the core UI globals the location UI modules consume.
+     * See UI DEPENDENCY VERIFICATION in the module header.
+     *
+     * Icons / getIcon / openModal / closeTopModal are hard: the location
+     * UI cannot function without them. escapeHtml and showToast are
+     * verified here too, but the modules that call them have local
+     * fallbacks; the check is a bootstrap-time early warning, not a
+     * correctness requirement.
+     */
+    function _verifyUIDependencies() {
+        // Hard: modals-location.js / modals-moves.js cannot open a modal
+        // without the core modal shell, and location-ui-list.js cannot
+        // render icons without icons.js.
+        _requireGlobalObject('Icons');
+        _requireGlobalFn('getIcon');
+        _requireGlobalFn('openModal');
+        _requireGlobalFn('closeTopModal');
+
+        // Soft (fallback exists in the calling module), verified for
+        // bootstrap-time early warning.
+        _requireGlobalFn('escapeHtml');
+        _requireGlobalFn('showToast');
     }
 
     // =========================================================================
@@ -386,6 +507,7 @@
         _verifyModules();
         _verifyCrossDomain();
         _verifyCanonical();
+        _verifyUIDependencies();
 
         _verifyStateSurface();
         _verifyCommandsSurface();
