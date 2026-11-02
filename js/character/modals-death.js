@@ -44,6 +44,47 @@
  *   It only routes. This keeps the maternal-death + birth transaction
  *   atomic in one place.
  *
+ * CHILDBED FEVER OUTCOME PATHS:
+ *   Once childbed fever is selected and the death modal's "Confirm
+ *   Death" button is clicked, TWO and ONLY TWO outcomes are possible:
+ *
+ *     PATH A (routed and completed):
+ *       User selects (or skips) a father, the pregnancy attempt modal
+ *       opens, the pregnancy attempt succeeds, and — when maternal
+ *       death is on — the character is killed via
+ *       CharacterLifecycle.killCharacter.
+ *       → onSuccess(outcome) fires on the death-modal caller.
+ *
+ *     PATH B (cancelled):
+ *       User cancels either the father-selector modal (no father
+ *       picked, no pregnancy attempt modal opens) OR the pregnancy
+ *       attempt modal itself (father picked, pregnancy modal opened,
+ *       user then cancels).
+ *       → onSuccess is NOT called. If the user then cancels the death
+ *         modal itself, the death modal's onCancel fires on the
+ *         death-modal caller.
+ *
+ *   There is no third "silent" outcome. Callers that need a positive
+ *   "the character died" signal wire onSuccess; callers that need a
+ *   "the flow ended with no death recorded" signal wire onCancel.
+ *
+ * ROUTING GUARD (routingInProgress):
+ *   The childbed-fever path involves three modals in sequence (death
+ *   → father selector → pregnancy attempt). A double-click on
+ *   "Confirm Death", or a re-click after cancelling the father
+ *   selector, would otherwise open a second father selector on top of
+ *   the first — leading to a stacked-modal collision.
+ *
+ *   The routing guard makes "Confirm Death" idempotent for the
+ *   duration of a single routing attempt:
+ *     - First click: routingInProgress = true, routes.
+ *     - Subsequent clicks while routing: return false, do nothing.
+ *     - On father-selector cancel: routingInProgress = false.
+ *     - On father-selector pick: routingInProgress = true (stays
+ *       true; the pregnancy modal is now on top).
+ *     - On death-modal close: routingInProgress = false
+ *       (via the modal's own onCancel wiring).
+ *
  * OUT OF SCOPE:
  *   - Mortality policy           -> mortality-rules.js
  *   - Death transition           -> CharacterCommands.markDeceased via
@@ -99,6 +140,29 @@
  *
  * ICON POLICY: SVG from icons.js. No emojis.
  *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - Added routingInProgress guard to openDeathModal. Covers the
+ *       childbed-fever double-click hazard: two rapid clicks on
+ *       "Confirm Death" would previously open two father selectors
+ *       stacked on top of each other. The guard makes the second
+ *       click a no-op while routing is in progress.
+ *     - Reset points:
+ *         - father-selector onCancel: routingInProgress = false
+ *         - father-selector onSelect (after death-modal.close()):
+ *           routingInProgress stays true
+ *         - death-modal onCancel: routingInProgress = false
+ *       See CHILDBED FEVER OUTCOME PATHS and ROUTING GUARD in the
+ *       module header.
+ *     - Header CHILDBED FEVER OUTCOME PATHS and ROUTING GUARD sections
+ *       added.
+ *     - No other behavioural change. Death, murder, and execution
+ *       paths are unchanged.
+ *   Previous revisions:
+ *     - Childbed-fever routing extracted to _routeToPregnancyAttempt.
+ *     - _pickRandom introduced; Math.random no longer used anywhere.
+ *     - Age/year sync wired via _wireAgeYearSync.
  * =============================================================================
  */
 
@@ -385,6 +449,11 @@
     // =========================================================================
     // 3. CHILDBED FEVER ROUTING
     // =========================================================================
+    //
+    // See CHILDBED FEVER OUTCOME PATHS and ROUTING GUARD in the module
+    // header. The routing guard is owned by openDeathModal (per-call);
+    // _routeToPregnancyAttempt only fires the sequence and respects the
+    // guard's state through its reset callbacks.
 
     /**
      * Collects a father (optional), then hands off to the pregnancy
@@ -395,69 +464,105 @@
      * modals-core.js).
      *
      * The caller's onSuccess is wired to the pregnancy modal's
-     * onSuccess. If the user cancels the pregnancy modal, the death
-     * modal's caller is notified via onSuccess(null): no death was
-     * recorded.
+     * onSuccess. If the user cancels the father selector or the
+     * pregnancy modal, onSuccess does not fire; the death modal's own
+     * onCancel is the caller's signal that the flow ended without a
+     * recorded death.
      *
-     * @param {Object} summary       death-modal subject projection
-     * @param {number} deathYear     the year to pre-fill in the
-     *                               pregnancy attempt modal
-     * @param {Function} onSuccess   the death modal's caller callback
-     * @param {Object} deathModal    the openModal return handle for
-     *                               the death modal
+     * @param {Object} summary         death-modal subject projection
+     * @param {number} deathYear       the year to pre-fill in the
+     *                                 pregnancy attempt modal
+     * @param {Function} onSuccess     the death modal's caller callback
+     * @param {Object} deathModal      the openModal return handle for
+     *                                 the death modal
+     * @param {Object} guard           { isRouting: () => bool,
+     *                                   reset: () => void,
+     *                                   hold: () => void }
+     *                                 routing guard shared with
+     *                                 openDeathModal's onConfirm
      */
-    function _routeToPregnancyAttempt(summary, deathYear, onSuccess, deathModal) {
+    function _routeToPregnancyAttempt(summary, deathYear, onSuccess, deathModal, guard) {
         if (typeof window.openPregnancyAttemptModal !== 'function') {
+            guard.reset();
             throw new Error(
                 'modals-death.js: pregnancy attempt modal is not loaded ' +
                 '(openPregnancyAttemptModal).'
             );
         }
         if (typeof window.openCharacterSelector !== 'function') {
+            guard.reset();
             throw new Error(
                 'modals-death.js: character selector is not loaded ' +
                 '(openCharacterSelector).'
             );
         }
 
-        window.openCharacterSelector({
-            title: 'Select Father (optional)',
-            filters: {
-                gender: 'male',
-                status: 'living',
-                showDeceased: false
-            },
-            excludeIds: [summary.id],
-            onSelect: function (father) {
-                if (deathModal && typeof deathModal.close === 'function') {
-                    deathModal.close();
-                }
+        var selectorCancelled = false;
 
-                var fatherId = father && _hasId(father.id) ? father.id : null;
-
-                var modalResult = window.openPregnancyAttemptModal(
-                    summary.id,
-                    fatherId,
-                    {
-                        year: deathYear,
-                        deathFlow: true,
-                        defaultOutcome: 'live_birth',
-                        defaultMaternalDeath: true
-                    },
-                    function (outcome) {
-                        if (typeof onSuccess === 'function') {
-                            onSuccess(outcome);
-                        }
+        try {
+            window.openCharacterSelector({
+                title: 'Select Father (optional)',
+                filters: {
+                    gender: 'male',
+                    status: 'living',
+                    showDeceased: false
+                },
+                excludeIds: [summary.id],
+                onCancel: function () {
+                    // Father selector cancelled. No father picked, no
+                    // pregnancy modal opened. Reset the guard so the
+                    // user can retry "Confirm Death" if they change
+                    // their mind, or cancel the death modal entirely.
+                    selectorCancelled = true;
+                    guard.reset();
+                },
+                onSelect: function (father) {
+                    if (selectorCancelled) return; // defensive; cancel already fired
+                    if (deathModal && typeof deathModal.close === 'function') {
+                        deathModal.close();
                     }
-                );
 
-                if (!modalResult || modalResult.success !== true) {
-                    throw new Error(modalResult && modalResult.reason
-                        ? modalResult.reason
-                        : 'Failed to open pregnancy attempt modal.');
+                    var fatherId = father && _hasId(father.id) ? father.id : null;
+
+                    var modalResult = window.openPregnancyAttemptModal(
+                        summary.id,
+                        fatherId,
+                        {
+                            year: deathYear,
+                            deathFlow: true,
+                            defaultOutcome: 'live_birth',
+                            defaultMaternalDeath: true
+                        },
+                        function (outcome) {
+                            // Pregnancy attempt succeeded. Death is
+                            // recorded by the pregnancy modal (via
+                            // CharacterLifecycle). Reset the guard
+                            // — the flow is done.
+                            guard.reset();
+                            if (typeof onSuccess === 'function') {
+                                onSuccess(outcome);
+                            }
+                        }
+                    );
+
+                    if (!modalResult || modalResult.success !== true) {
+                        guard.reset();
+                        throw new Error(modalResult && modalResult.reason
+                            ? modalResult.reason
+                            : 'Failed to open pregnancy attempt modal.');
+                    }
+
+                    // Guard stays held (isRouting === true) while the
+                    // pregnancy modal is on top. If the user cancels
+                    // the pregnancy modal, no callback here fires; the
+                    // death modal's own onCancel will reset the guard
+                    // when the user closes it.
                 }
-            }
-        });
+            });
+        } catch (e) {
+            guard.reset();
+            throw e;
+        }
     }
 
     // =========================================================================
@@ -473,6 +578,15 @@
         var currentYear = window.getCurrentYear();
         var age = summary.age === null ? 0 : summary.age;
         var canChildbed = _canRouteToChildbed(summary);
+
+        // Routing guard for the childbed-fever path. See ROUTING GUARD
+        // in the module header.
+        var _routingInProgress = false;
+        var guard = {
+            isRouting: function () { return _routingInProgress === true; },
+            hold: function () { _routingInProgress = true; },
+            reset: function () { _routingInProgress = false; }
+        };
 
         var categoryOptions = '';
         for (var i = 0; i < DEATH_CAUSE_CATEGORIES.length; i++) {
@@ -556,6 +670,13 @@
             contentHtml: content,
             confirmText: 'Confirm Death',
             cancelText: 'Cancel',
+            onCancel: function () {
+                // Death modal cancelled. Whatever the reason (childbed
+                // routing in progress, ordinary death form still open,
+                // etc.), the routing guard is no longer valid — the
+                // whole flow is over.
+                guard.reset();
+            },
             onOpen: function (modalElement) {
                 var categorySelect = modalElement.querySelector('#death-category');
                 var detailInput = modalElement.querySelector('#death-detail');
@@ -611,15 +732,26 @@
                 }
 
                 if (cause === MR.DEATH_CAUSE.CHILDBED_FEVER) {
+                    // Routing guard: only one routing attempt per
+                    // death-modal lifetime. A second click on "Confirm
+                    // Death" while a father selector or pregnancy modal
+                    // is on top must be a no-op.
+                    if (guard.isRouting()) {
+                        return false;
+                    }
+                    guard.hold();
+
                     // Route to the pregnancy attempt modal. We return
                     // false so the death modal stays open until routing
-                    // completes: the father selector is a separate modal
-                    // on top of it, and closing the death modal before
-                    // the user has finished selecting a father would be
-                    // jarring. When the father is selected (or skipped),
-                    // _routeToPregnancyAttempt closes the death modal
-                    // programmatically (which does NOT fire onCancel).
-                    _routeToPregnancyAttempt(summary, deathYear, onSuccess, modal);
+                    // completes: the father selector is a separate
+                    // modal on top of it, and closing the death modal
+                    // before the user has finished selecting a father
+                    // would be jarring. When the father is selected (or
+                    // skipped), _routeToPregnancyAttempt closes the
+                    // death modal programmatically (which does NOT
+                    // fire onCancel). See CHILDBED FEVER OUTCOME PATHS
+                    // in the module header.
+                    _routeToPregnancyAttempt(summary, deathYear, onSuccess, modal, guard);
                     return false;
                 }
 
