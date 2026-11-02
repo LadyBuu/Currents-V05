@@ -1,12 +1,27 @@
 /* ============================================================================
-   SETTLEMENT MANAGER - SPECIFIC STYLES
+   SETTLEMENT MANAGER — SPECIFIC STYLES
    ============================================================================
-   These styles are SPECIFIC to SettlementManager.html and should NOT be
-   in common.css. They override common styles for this tool only.
+   File: css/settlement.css
+   Dependencies: css/themes.css (all tokens), css/common.css (structure)
+
+   SCOPE
+     Only styles that are SPECIFIC to SettlementManager.html. Tab text
+     readability, tab-content scroll containment, location-tree depth
+     guides, settlement cards, upgrade panel, feature buttons. Anything
+     shared with other tools lives in common.css.
+
+   RULES
+     - No hardcoded color values. All colors from tokens.
+     - No !important unless overriding a truly un-themeable browser default.
+     - No arbitrary font sizes outside the base type scale where avoidable
+       (0.5rem–0.7rem are the existing small-text scale and are preserved).
+     - Structural values (grid tracks, gap sizes on the 4/8/16 scale) are
+       allowed inline because they are layout, not theme.
    ============================================================================ */
 
+
 /* ============================================================================
-   1. TAB TEXT READABILITY FIXES
+   1. TAB BAR
    ============================================================================ */
 
 .panel-tabs .tab-btn {
@@ -16,52 +31,76 @@
     padding: 10px 18px;
     font-size: 0.65rem;
     text-shadow: none;
+    transition: color var(--transition-base, 0.2s) ease,
+                background-color var(--transition-base, 0.2s) ease,
+                border-bottom-color var(--transition-base, 0.2s) ease;
 }
 
 .panel-tabs .tab-btn .tab-icon {
     font-size: 0.75rem;
-    filter: drop-shadow(0 0 2px rgba(106, 158, 207, 0.2));
+    color: var(--accent);
+    transition: color var(--transition-base, 0.2s) ease;
 }
 
 .panel-tabs .tab-btn:hover {
-    color: var(--accent-light) !important;
-    background: rgba(106, 158, 207, 0.08);
-    text-shadow: 0 0 8px rgba(106, 158, 207, 0.15);
+    color: var(--accent-light);
+    background: var(--accent-dim);
+}
+
+.panel-tabs .tab-btn:hover .tab-icon {
+    color: var(--accent-light);
 }
 
 .panel-tabs .tab-btn.active {
-    color: #ffffff !important;
-    background: rgba(106, 158, 207, 0.12);
+    color: var(--accent-fg);
+    background: var(--accent);
     border-bottom: 2px solid var(--accent);
-    text-shadow: 0 0 12px rgba(106, 158, 207, 0.3);
-    font-weight: 500;
+    font-weight: 600;
+    text-shadow: 0 0 8px var(--accent-glow);
 }
 
 .panel-tabs .tab-btn.active .tab-icon {
-    filter: drop-shadow(0 0 4px rgba(106, 158, 207, 0.3));
+    color: var(--accent-fg);
 }
 
+/* Roving tabindex focus ring: keep the visible focus but not the ring
+   around every tab on click. :focus-visible only fires for keyboard. */
+.panel-tabs .tab-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+
 /* ============================================================================
-   2. TAB CONTENT CONTAINERS - Ensure proper scrolling
+   2. TAB CONTENT CONTAINER
    ============================================================================ */
 
 .tab-content {
     padding: 16px 20px;
     background: var(--bg);
+    min-height: 0;
 }
 
 .tab-pane {
     display: none;
-    animation: fadeIn 0.25s ease;
     min-height: 200px;
+    animation: fadeIn var(--transition-base, 0.2s) ease;
 }
 
 .tab-pane.active {
     display: block;
 }
 
+
 /* ============================================================================
-   3. SCROLLABLE TAB CONTAINERS
+   3. SCROLLABLE TAB PANES
+   ============================================================================
+   Each tab pane gets an independent scroll region so that long content
+   (settlement history, feature lists) does not push the tab bar offscreen.
+
+   Uses 100dvh (dynamic viewport) with a vh fallback for browsers that do
+   not support dvh yet. The minus-180px accounts for topbar (~48px) plus
+   tab bar (~44px) plus content padding (~16px) plus breathing room.
    ============================================================================ */
 
 #tab-location,
@@ -71,16 +110,76 @@
 #tab-religion,
 #tab-industry,
 #tab-education,
-#tab-settings {
+#tab-history,
+#tab-roles,
+#tab-government {
     max-height: calc(100vh - 180px);
+    max-height: calc(100dvh - 180px);
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 8px;
     scroll-behavior: smooth;
 }
 
+#tab-location::-webkit-scrollbar,
+#tab-overview::-webkit-scrollbar,
+#tab-features::-webkit-scrollbar,
+#tab-economy::-webkit-scrollbar,
+#tab-religion::-webkit-scrollbar,
+#tab-industry::-webkit-scrollbar,
+#tab-education::-webkit-scrollbar,
+#tab-history::-webkit-scrollbar,
+#tab-roles::-webkit-scrollbar,
+#tab-government::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+#tab-location::-webkit-scrollbar-track,
+#tab-overview::-webkit-scrollbar-track,
+#tab-features::-webkit-scrollbar-track,
+#tab-economy::-webkit-scrollbar-track,
+#tab-religion::-webkit-scrollbar-track,
+#tab-industry::-webkit-scrollbar-track,
+#tab-education::-webkit-scrollbar-track,
+#tab-history::-webkit-scrollbar-track,
+#tab-roles::-webkit-scrollbar-track,
+#tab-government::-webkit-scrollbar-track {
+    background: var(--bg2);
+    border-radius: 3px;
+}
+
+#tab-location::-webkit-scrollbar-thumb,
+#tab-overview::-webkit-scrollbar-thumb,
+#tab-features::-webkit-scrollbar-thumb,
+#tab-economy::-webkit-scrollbar-thumb,
+#tab-religion::-webkit-scrollbar-thumb,
+#tab-industry::-webkit-scrollbar-thumb,
+#tab-education::-webkit-scrollbar-thumb,
+#tab-history::-webkit-scrollbar-thumb,
+#tab-roles::-webkit-scrollbar-thumb,
+#tab-government::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 3px;
+    box-shadow: var(--glow-sm);
+}
+
+#tab-location::-webkit-scrollbar-thumb:hover,
+#tab-overview::-webkit-scrollbar-thumb:hover,
+#tab-features::-webkit-scrollbar-thumb:hover,
+#tab-economy::-webkit-scrollbar-thumb:hover,
+#tab-religion::-webkit-scrollbar-thumb:hover,
+#tab-industry::-webkit-scrollbar-thumb:hover,
+#tab-education::-webkit-scrollbar-thumb:hover,
+#tab-history::-webkit-scrollbar-thumb:hover,
+#tab-roles::-webkit-scrollbar-thumb:hover,
+#tab-government::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-light);
+}
+
+
 /* ============================================================================
-   4. SIDEBAR LOCATION TREE - Better contrast
+   4. SIDEBAR LOCATION TREE
    ============================================================================ */
 
 .sidebar h3 {
@@ -94,18 +193,18 @@
 }
 
 .location-tree-item {
-    border-radius: 4px;
+    border-radius: var(--radius);
     padding: 5px 8px;
     margin: 1px 0;
     min-height: 30px;
 }
 
 .location-tree-item:hover {
-    background: rgba(106, 158, 207, 0.1) !important;
+    background: var(--accent-dim);
 }
 
 .location-tree-item.selected {
-    background: rgba(106, 158, 207, 0.18) !important;
+    background: var(--accent-dim);
     border-left: 3px solid var(--accent);
 }
 
@@ -115,21 +214,32 @@
 }
 
 .location-tree-badge.population {
-    background: rgba(74, 144, 96, 0.15);
-    border-color: rgba(74, 144, 96, 0.25);
-    color: #6ab88a;
+    background: color-mix(in srgb, var(--ok) 15%, transparent);
+    border-color: color-mix(in srgb, var(--ok) 25%, transparent);
+    color: var(--ok);
 }
 
+/* Depth indentation for the location tree (5 levels supported). */
+.location-tree-item.depth-1 { padding-left: 24px; }
+.location-tree-item.depth-2 { padding-left: 40px; }
+.location-tree-item.depth-3 { padding-left: 56px; }
+.location-tree-item.depth-4 { padding-left: 72px; }
+.location-tree-item.depth-5 { padding-left: 88px; }
+.location-tree-item.depth-6 { padding-left: 104px; }
+
+
 /* ============================================================================
-   5. TOP BAR - Better contrast
+   5. TOP BAR ACTIONS
    ============================================================================ */
 
 .topbar .btn {
     padding: 5px 14px;
     font-size: 0.65rem;
-    font-weight: 400;
-    border-radius: 4px;
-    transition: all 0.2s;
+    font-weight: 500;
+    border-radius: var(--radius);
+    transition: background-color var(--transition-base, 0.2s) ease,
+                border-color var(--transition-base, 0.2s) ease,
+                color var(--transition-base, 0.2s) ease;
 }
 
 .topbar .btn:hover {
@@ -145,8 +255,21 @@
     letter-spacing: 0.03em;
 }
 
+.topbar .burger-btn {
+    color: var(--accent-light);
+    font-size: 1.3rem;
+    padding: 4px 12px;
+}
+
+.topbar .burger-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent-fg);
+    background: var(--accent);
+}
+
+
 /* ============================================================================
-   6. EMPTY STATE MESSAGES
+   6. EMPTY & LOADING STATES
    ============================================================================ */
 
 .empty-state {
@@ -163,10 +286,6 @@
     opacity: 0.4;
 }
 
-/* ============================================================================
-   7. LOADING PLACEHOLDER
-   ============================================================================ */
-
 .loading-placeholder {
     padding: 30px 16px;
     text-align: center;
@@ -175,238 +294,18 @@
     animation: pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes pulse {
-    0%, 100% { opacity: 0.6; }
-    50% { opacity: 1; }
-}
 
 /* ============================================================================
-   8. RESPONSIVE ADJUSTMENTS
-   ============================================================================ */
-
-@media (max-width: 768px) {
-    .panel-tabs {
-        padding: 0 6px;
-        min-height: 40px;
-    }
-
-    .panel-tabs .tab-btn {
-        padding: 8px 12px;
-        font-size: 0.55rem;
-        min-height: 40px;
-    }
-
-    .panel-tabs .tab-btn .tab-icon {
-        font-size: 0.6rem;
-    }
-
-    .tab-content {
-        padding: 12px 14px;
-    }
-
-    #tab-location,
-    #tab-overview,
-    #tab-features,
-    #tab-economy,
-    #tab-religion,
-    #tab-industry,
-    #tab-education,
-    #tab-settings {
-        max-height: calc(100vh - 160px);
-        padding-right: 4px;
-    }
-
-    .topbar .btn {
-        padding: 3px 8px;
-        font-size: 0.55rem;
-    }
-}
-
-@media (max-width: 480px) {
-    .panel-tabs {
-        min-height: 36px;
-    }
-
-    .panel-tabs .tab-btn {
-        padding: 6px 8px;
-        font-size: 0.5rem;
-        min-height: 36px;
-    }
-
-    .panel-tabs .tab-btn .tab-icon {
-        font-size: 0.5rem;
-    }
-
-    .tab-content {
-        padding: 8px 10px;
-    }
-
-    #tab-location,
-    #tab-overview,
-    #tab-features,
-    #tab-economy,
-    #tab-religion,
-    #tab-industry,
-    #tab-education,
-    #tab-settings {
-        max-height: calc(100vh - 140px);
-    }
-
-    .topbar .title {
-        font-size: 0.65rem;
-    }
-
-    .topbar .btn {
-        padding: 2px 6px;
-        font-size: 0.5rem;
-    }
-}
-
-/* ============================================================================
-   9. SCROLLBAR STYLING FOR TAB CONTAINERS
-   ============================================================================ */
-
-#tab-location::-webkit-scrollbar,
-#tab-overview::-webkit-scrollbar,
-#tab-features::-webkit-scrollbar,
-#tab-economy::-webkit-scrollbar,
-#tab-religion::-webkit-scrollbar,
-#tab-industry::-webkit-scrollbar,
-#tab-education::-webkit-scrollbar,
-#tab-settings::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-}
-
-#tab-location::-webkit-scrollbar-track,
-#tab-overview::-webkit-scrollbar-track,
-#tab-features::-webkit-scrollbar-track,
-#tab-economy::-webkit-scrollbar-track,
-#tab-religion::-webkit-scrollbar-track,
-#tab-industry::-webkit-scrollbar-track,
-#tab-education::-webkit-scrollbar-track,
-#tab-settings::-webkit-scrollbar-track {
-    background: var(--bg2);
-    border-radius: 3px;
-}
-
-#tab-location::-webkit-scrollbar-thumb,
-#tab-overview::-webkit-scrollbar-thumb,
-#tab-features::-webkit-scrollbar-thumb,
-#tab-economy::-webkit-scrollbar-thumb,
-#tab-religion::-webkit-scrollbar-thumb,
-#tab-industry::-webkit-scrollbar-thumb,
-#tab-education::-webkit-scrollbar-thumb,
-#tab-settings::-webkit-scrollbar-thumb {
-    background: var(--accent);
-    border-radius: 3px;
-}
-
-#tab-location::-webkit-scrollbar-thumb:hover,
-#tab-overview::-webkit-scrollbar-thumb:hover,
-#tab-features::-webkit-scrollbar-thumb:hover,
-#tab-economy::-webkit-scrollbar-thumb:hover,
-#tab-religion::-webkit-scrollbar-thumb:hover,
-#tab-industry::-webkit-scrollbar-thumb:hover,
-#tab-education::-webkit-scrollbar-thumb:hover,
-#tab-settings::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-light);
-}
-
-/* ============================================================================
-   10. BURGER BUTTON - Better visibility
-   ============================================================================ */
-
-.topbar .burger-btn {
-    color: var(--accent-light);
-    font-size: 1.3rem;
-    padding: 4px 12px;
-}
-
-.topbar .burger-btn:hover {
-    border-color: var(--accent);
-    color: #ffffff;
-}
-
-/* ============================================================================
-   11. TAB ICON COLORS
-   ============================================================================ */
-
-.panel-tabs .tab-btn[data-tab="location"] .tab-icon {
-    color: var(--accent-light);
-}
-.panel-tabs .tab-btn[data-tab="overview"] .tab-icon {
-    color: #8ab0e0;
-}
-.panel-tabs .tab-btn[data-tab="features"] .tab-icon {
-    color: #b8a88a;
-}
-.panel-tabs .tab-btn[data-tab="economy"] .tab-icon {
-    color: #8ac8a0;
-}
-.panel-tabs .tab-btn[data-tab="religion"] .tab-icon {
-    color: #c8a0c0;
-}
-.panel-tabs .tab-btn[data-tab="industry"] .tab-icon {
-    color: #c8b080;
-}
-.panel-tabs .tab-btn[data-tab="education"] .tab-icon {
-    color: #80b8c8;
-}
-.panel-tabs .tab-btn[data-tab="settings"] .tab-icon {
-    color: var(--tmut);
-}
-
-.panel-tabs .tab-btn.active[data-tab="location"] .tab-icon { color: #8ab0e0; }
-.panel-tabs .tab-btn.active[data-tab="overview"] .tab-icon { color: #9ac0f0; }
-.panel-tabs .tab-btn.active[data-tab="features"] .tab-icon { color: #d0c0a0; }
-.panel-tabs .tab-btn.active[data-tab="economy"] .tab-icon { color: #9ad8b0; }
-.panel-tabs .tab-btn.active[data-tab="religion"] .tab-icon { color: #e0b0d0; }
-.panel-tabs .tab-btn.active[data-tab="industry"] .tab-icon { color: #e0c0a0; }
-.panel-tabs .tab-btn.active[data-tab="education"] .tab-icon { color: #90c8d8; }
-.panel-tabs .tab-btn.active[data-tab="settings"] .tab-icon { color: #90a0b0; }
-
-/* ============================================================================
-   12. ANIMATIONS
-   ============================================================================ */
-
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(6px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* ============================================================================
-   13. LOCATION TREE - INDENTATION GUIDE
-   ============================================================================ */
-
-.location-tree-children {
-    border-left: none;
-}
-
-/* Small indentation guide dots for depth */
-.location-tree-item.depth-1 { padding-left: 24px !important; }
-.location-tree-item.depth-2 { padding-left: 40px !important; }
-.location-tree-item.depth-3 { padding-left: 56px !important; }
-.location-tree-item.depth-4 { padding-left: 72px !important; }
-.location-tree-item.depth-5 { padding-left: 88px !important; }
-.location-tree-item.depth-6 { padding-left: 104px !important; }
-
-/* ============================================================================
-   14. SETTLEMENT CARD STYLES
+   7. SETTLEMENT CARD
    ============================================================================ */
 
 .settlement-card {
     background: var(--bg2);
-    border-radius: 8px;
+    border-radius: calc(var(--radius) * 2);
     padding: 16px 20px;
     border: 1px solid var(--border);
     margin-bottom: 12px;
+    transition: border-color var(--transition-base, 0.2s) ease;
 }
 
 .settlement-card:hover {
@@ -436,7 +335,7 @@
 .settlement-card .stats .stat {
     background: var(--bg);
     padding: 6px 10px;
-    border-radius: 4px;
+    border-radius: var(--radius);
     text-align: center;
 }
 
@@ -453,124 +352,109 @@
     font-size: 0.75rem;
 }
 
-/* ============================================================================
-   15. RESPONSIVE - TAB SCROLLING ON MOBILE
-   ============================================================================ */
-
-@media (max-width: 768px) {
-    .panel-tabs {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: none;
-    }
-    
-    .panel-tabs::-webkit-scrollbar {
-        display: none;
-        width: 0;
-        height: 0;
-    }
-    
-    .panel-tabs .tab-btn {
-        flex-shrink: 0;
-        white-space: nowrap;
-    }
-}
 
 /* ============================================================================
-   16. FEATURE BUTTONS & INTERNAL TAB READABILITY
+   8. FEATURE BUTTONS & FORM CONTROLS INSIDE TABS
    ============================================================================ */
 
-/* Feature buttons inside tabs */
 .feature-card-built,
 .feature-item,
-.settlement-feature-btn,
-.add-feature-btn,
-.remove-feature-btn,
-.demolish-feature-btn {
-    color: var(--text) !important;
-    background: var(--bg3) !important;
+.settlement-feature-btn {
+    color: var(--text);
+    background: var(--bg3);
 }
 
 .feature-card-built .feature-name,
 .feature-item .feature-name {
-    color: var(--text) !important;
+    color: var(--text);
 }
 
 .feature-card-built .feature-cost,
 .feature-item .feature-cost {
-    color: var(--accent-light) !important;
+    color: var(--accent-light);
 }
 
 .add-feature-btn {
-    background: var(--bg3) !important;
-    border: 1px solid var(--accent) !important;
-    color: var(--accent-light) !important;
-    padding: 6px 12px !important;
-    border-radius: 4px !important;
-    cursor: pointer !important;
+    background: var(--bg3);
+    border: 1px solid var(--accent);
+    color: var(--accent-light);
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background-color var(--transition-base, 0.2s) ease,
+                color var(--transition-base, 0.2s) ease;
 }
 
 .add-feature-btn:hover {
-    background: var(--accent-dim) !important;
-    color: #ffffff !important;
+    background: var(--accent);
+    color: var(--accent-fg);
 }
 
 .remove-feature-btn {
-    color: var(--success) !important;
+    color: var(--success);
 }
 
 .demolish-feature-btn {
-    color: var(--danger-lt) !important;
+    color: var(--danger-lt);
 }
 
-/* Tab content text */
+/* Forms inside tab panes. Scoped to .tab-pane so modals are untouched. */
+
 .tab-pane .form-group label,
 .tab-pane .form-label {
-    color: var(--accent-light) !important;
+    color: var(--accent-light);
 }
 
 .tab-pane .form-group input,
 .tab-pane .form-group select,
 .tab-pane .form-group textarea {
-    background: var(--bg) !important;
-    color: var(--text) !important;
-    border: 1px solid var(--border) !important;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
 }
 
 .tab-pane .form-group input:focus,
 .tab-pane .form-group select:focus,
 .tab-pane .form-group textarea:focus {
-    border-color: var(--accent) !important;
-    outline: none !important;
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-/* Stat cards inside tabs */
+
+/* ============================================================================
+   9. STAT CARDS
+   ============================================================================ */
+
 .tab-pane .stat-card,
 .tab-pane .detail-stat {
-    background: var(--bg2) !important;
-    border: 1px solid var(--border) !important;
-    color: var(--text) !important;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--text);
 }
 
 .tab-pane .stat-card .stat-value,
 .tab-pane .detail-stat .value {
-    color: var(--accent-light) !important;
+    color: var(--accent-light);
 }
 
 .tab-pane .stat-card .stat-label,
 .tab-pane .detail-stat .label {
-    color: var(--dim) !important;
+    color: var(--dim);
 }
 
-/* Overview tab - settlement info */
+
+/* ============================================================================
+   10. SETTLEMENT INFO GRID
+   ============================================================================ */
+
 .settlement-info-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
     background: var(--bg2);
     padding: 12px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     border: 1px solid var(--border);
 }
 
@@ -591,21 +475,27 @@
     font-weight: 500;
 }
 
-/* Action buttons in tabs */
+
+/* ============================================================================
+   11. ACTION BUTTONS INSIDE TABS
+   ============================================================================ */
+
 .tab-pane .action-btn,
 .tab-pane .overview-action-btn,
 .tab-pane .economy-action-btn,
 .tab-pane .religion-action-btn,
 .tab-pane .industry-action-btn,
 .tab-pane .education-action-btn {
-    background: var(--bg3) !important;
-    border: 1px solid var(--border) !important;
-    color: var(--text) !important;
-    padding: 6px 14px !important;
-    border-radius: 4px !important;
-    cursor: pointer !important;
-    font-size: 0.6rem !important;
-    transition: all 0.2s !important;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.6rem;
+    transition: background-color var(--transition-base, 0.2s) ease,
+                border-color var(--transition-base, 0.2s) ease,
+                color var(--transition-base, 0.2s) ease;
 }
 
 .tab-pane .action-btn:hover,
@@ -614,57 +504,73 @@
 .tab-pane .religion-action-btn:hover,
 .tab-pane .industry-action-btn:hover,
 .tab-pane .education-action-btn:hover {
-    background: var(--accent-dim) !important;
-    border-color: var(--accent) !important;
-    color: var(--accent-light) !important;
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent-light);
 }
 
 .tab-pane .action-btn.primary,
 .tab-pane .overview-action-btn.primary {
-    border-color: var(--accent) !important;
-    color: var(--accent-light) !important;
+    border-color: var(--accent);
+    color: var(--accent-light);
 }
 
 .tab-pane .action-btn.danger {
-    border-color: var(--danger) !important;
-    color: var(--danger-lt) !important;
+    border-color: var(--danger);
+    color: var(--danger-lt);
 }
 
 .tab-pane .action-btn.success {
-    border-color: var(--success) !important;
-    color: var(--success) !important;
+    border-color: var(--success);
+    color: var(--success);
 }
 
-/* Modal content readability */
+
+/* ============================================================================
+   12. MODAL CONTENT READABILITY
+   ============================================================================
+   The modals the settlement modals-core open use the shared modal shell.
+   These rules only adjust form controls inside .modal-content so they
+   match the theme in every palette.
+   ============================================================================ */
+
 .modal-content .form-group label {
-    color: var(--accent-light) !important;
+    color: var(--accent-light);
 }
 
 .modal-content .form-group input,
 .modal-content .form-group select,
 .modal-content .form-group textarea {
-    background: var(--bg) !important;
-    color: var(--text) !important;
-    border: 1px solid var(--border) !important;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.modal-content .form-group input:focus,
+.modal-content .form-group select:focus,
+.modal-content .form-group textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .modal-content .modal-body {
-    color: var(--text) !important;
+    color: var(--text);
 }
 
 .modal-content .modal-body .info-text {
-    color: var(--dim) !important;
+    color: var(--dim);
 }
 
+
 /* ============================================================================
-   17. SETTLEMENT UPGRADE SYSTEM
+   13. UPGRADE SYSTEM
    ============================================================================ */
 
-/* Upgrade info display */
 .upgrade-info {
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius);
     padding: 12px 16px;
     margin: 8px 0;
 }
@@ -693,23 +599,191 @@
 }
 
 .upgrade-btn {
-    background: var(--accent) !important;
-    color: #ffffff !important;
-    border: none !important;
-    padding: 8px 20px !important;
-    border-radius: 4px !important;
-    cursor: pointer !important;
-    font-size: 0.7rem !important;
-    font-weight: 600 !important;
-    transition: all 0.2s !important;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    padding: 8px 20px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 600;
+    transition: background-color var(--transition-base, 0.2s) ease,
+                box-shadow var(--transition-base, 0.2s) ease;
 }
 
 .upgrade-btn:hover {
-    background: var(--accent-light) !important;
-    box-shadow: 0 0 15px var(--accent-glow) !important;
+    background: var(--accent-light);
+    box-shadow: var(--glow-md);
 }
 
 .upgrade-btn:disabled {
-    opacity: 0.5 !important;
-    cursor: not-allowed !important;
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+
+/* ============================================================================
+   14. THEME TOGGLE (topbar)
+   ============================================================================ */
+
+.theme-toggle {
+    position: relative;
+    display: inline-flex;
+}
+
+.theme-toggle__btn {
+    gap: 6px;
+}
+
+.theme-toggle__menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 200;
+    min-width: 160px;
+    padding: 4px;
+    margin: 0;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.theme-toggle__menu[hidden] {
+    display: none;
+}
+
+.theme-toggle__menu button {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.7rem;
+    border-radius: calc(var(--radius) - 2px);
+    cursor: pointer;
+    transition: background-color var(--transition-fast, 0.15s) ease;
+}
+
+.theme-toggle__menu button:hover,
+.theme-toggle__menu button:focus-visible {
+    background: var(--accent-dim);
+    color: var(--accent-light);
+    outline: none;
+}
+
+
+/* ============================================================================
+   15. RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .panel-tabs {
+        padding: 0 6px;
+        min-height: 40px;
+    }
+
+    .panel-tabs .tab-btn {
+        padding: 8px 12px;
+        font-size: 0.55rem;
+        min-height: 40px;
+    }
+
+    .panel-tabs .tab-btn .tab-icon {
+        font-size: 0.6rem;
+    }
+
+    .tab-content {
+        padding: 12px 14px;
+    }
+
+    #tab-location,
+    #tab-overview,
+    #tab-features,
+    #tab-economy,
+    #tab-religion,
+    #tab-industry,
+    #tab-education,
+    #tab-history,
+    #tab-roles,
+    #tab-government {
+        max-height: calc(100vh - 160px);
+        max-height: calc(100dvh - 160px);
+        padding-right: 4px;
+    }
+
+    .topbar .btn {
+        padding: 3px 8px;
+        font-size: 0.55rem;
+    }
+
+    .theme-toggle__menu {
+        min-width: 140px;
+    }
+}
+
+@media (max-width: 480px) {
+    .panel-tabs {
+        min-height: 36px;
+        padding: 0 4px;
+    }
+
+    .panel-tabs .tab-btn {
+        padding: 6px 8px;
+        font-size: 0.5rem;
+        min-height: 36px;
+        gap: 3px;
+    }
+
+    .panel-tabs .tab-btn .tab-icon {
+        font-size: 0.55rem;
+    }
+
+    .tab-content {
+        padding: 8px 10px;
+    }
+
+    #tab-location,
+    #tab-overview,
+    #tab-features,
+    #tab-economy,
+    #tab-religion,
+    #tab-industry,
+    #tab-education,
+    #tab-history,
+    #tab-roles,
+    #tab-government {
+        max-height: calc(100vh - 140px);
+        max-height: calc(100dvh - 140px);
+    }
+
+    .topbar .title {
+        font-size: 0.65rem;
+    }
+
+    .topbar .btn {
+        padding: 2px 6px;
+        font-size: 0.5rem;
+    }
+
+    .settlement-info-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Honor prefers-reduced-motion for the animations this file still uses. */
+@media (prefers-reduced-motion: reduce) {
+    .tab-pane,
+    .loading-placeholder,
+    .panel-tabs .tab-btn {
+        animation: none;
+        transition: none;
+    }
 }
