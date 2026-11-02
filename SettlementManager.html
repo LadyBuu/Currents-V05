@@ -5,10 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Settlement Manager</title>
 
-    <!-- Theme tokens MUST load first. -->
     <link rel="stylesheet" href="css/themes.css" />
-
-    <!-- Structural styles consume the tokens. -->
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/settlement.css" />
     <link rel="stylesheet" href="css/location-list.css" />
@@ -18,7 +15,6 @@
 </head>
 <body>
 
-    <!-- TOP BAR -->
     <header class="topbar" role="banner">
         <button class="burger-btn" id="burgerBtn" type="button" aria-label="Toggle sidebar">☰</button>
         <h1 class="title">Settlement Manager</h1>
@@ -43,7 +39,6 @@
         </div>
     </header>
 
-    <!-- APP LAYOUT -->
     <div class="app-layout">
 
         <aside class="sidebar" id="sidebar" aria-label="Locations">
@@ -107,54 +102,93 @@
     </div>
 
     <!-- ============================================================ -->
-    <!-- CORE (no domain dependencies)                                -->
+    <!-- CORE CONSTANTS (must be first)                               -->
     <!-- ============================================================ -->
-    <script src="js/core/constants.js"></script>
+    <script src="js/core/constants/constants.js"></script>
     <script src="js/core/constants/age-constants.js"></script>
     <script src="js/core/constants/character-constants.js"></script>
     <script src="js/core/constants/character-traits.js"></script>
     <script src="js/core/constants/location-constants.js"></script>
     <script src="js/core/constants/relationship-constants.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- CORE UTILITIES (no domain dependencies)                      -->
+    <!-- ============================================================ -->
     <script src="js/core/time.js"></script>
     <script src="js/core/randomness.js"></script>
     <script src="js/core/collections.js"></script>
     <script src="js/core/formatting.js"></script>
     <script src="js/core/icons.js"></script>
     <script src="js/core/ids.js"></script>
-    <script src="js/core/storage-schema.js"></script>
-    <script src="js/core/storage.js"></script>
-    <script src="js/core/accessors.js"></script>
-    <script src="js/core/world.js"></script>
-    <script src="js/core/names.js"></script>
+    <script src="js/core/simulation-generators.js"></script>
     <script src="js/core/validation.js"></script>
     <script src="js/core/integrity.js"></script>
     <script src="js/core/maintenance.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- CORE STORAGE (schema before storage, then init)              -->
+    <!-- ============================================================ -->
+    <script src="js/core/storage-schema.js"></script>
+    <script src="js/core/storage.js"></script>
+    <script>
+    // Initialize masterData before any domain module loads. Every
+    // domain module with a top-level `masterData` guard will throw at
+    // load time otherwise. This is the single most important fix in
+    // this HTML — without it, character-state.js, family-state.js,
+    // and every downstream module fail before they can be used.
+    (function () {
+        if (typeof window.initializeStorage === 'function') {
+            try { window.initializeStorage(); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('storage.js initializeStorage failed at boot:', e);
+                }
+            }
+        }
+    })();
+    </script>
+
+    <!-- ============================================================ -->
+    <!-- CORE DATA ACCESSORS (need storage + masterData)              -->
+    <!-- ============================================================ -->
+    <script src="js/core/accessors.js"></script>
+    <script src="js/core/world.js"></script>
+    <script src="js/core/names.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- CORE UI (no domain dependencies)                             -->
+    <!-- ============================================================ -->
     <script src="js/core/ui.js"></script>
     <script src="js/core/ui-state.js"></script>
     <script src="js/core/modals-core.js"></script>
     <script src="js/core/collapsible.js"></script>
     <script src="js/core/responsive.js"></script>
     <script src="js/core/exportUtils.js"></script>
-    <script src="js/modules/simulation/simulation-generators.js"></script>
 
-    <!-- Feature-state modules required by state.js -->
-    <script src="js/systems/census/census-state.js"></script>
-    <script src="js/systems/matchmaker/matchmaker-state.js"></script>
-    <script src="js/systems/household/household-state.js"></script>
-    <script src="js/systems/roles/role-state.js"></script>
-    <script src="js/systems/ranks/rank-state.js"></script>
-    <script src="js/systems/names/names-state.js"></script>
-    <script src="js/core/state/misc-state.js"></script>
-    <script src="js/core/state/location-ui-state.js"></script>
+    <!-- ============================================================ -->
+    <!-- FEATURE-STATE MODULES (must load before state.js)            -->
+    <!-- ============================================================ -->
+    <script src="js/core/census-state.js"></script>
+    <script src="js/core/matchmaker-state.js"></script>
+    <script src="js/core/misc-state.js"></script>
+    <script src="js/households/household-state.js"></script>
+    <script src="js/roles/role-state.js"></script>
+    <script src="js/ranks/rank-state.js"></script>
+    <script src="js/names/name-state.js"></script>
+    <script src="js/location/location-ui-state.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- STATE FACADE (requires every feature-state module)           -->
+    <!-- ============================================================ -->
     <script src="js/core/state.js"></script>
 
     <!-- ============================================================ -->
-    <!-- CHARACTER (Location + Settlement + Crime dependencies)       -->
+    <!-- CHARACTER (CharacterState + FamilyState chain)               -->
     <!-- ============================================================ -->
     <script src="js/character/character-state.js"></script>
     <script src="js/character/character-commands.js"></script>
     <script src="js/character/character-queries.js"></script>
+    <script src="js/character/family-rules.js"></script>
     <script src="js/character/family-state.js"></script>
     <script src="js/character/family-queries.js"></script>
     <script src="js/character/family-commands.js"></script>
@@ -173,26 +207,37 @@
     <script src="js/selectors/modals-household-selector.js"></script>
 
     <!-- ============================================================ -->
-    <!-- HOUSEHOLD / ROLES / RANKS / NAMES                            -->
+    <!-- HOUSEHOLDS                                                   -->
     <!-- ============================================================ -->
     <script src="js/households/household-constants.js"></script>
     <script src="js/households/household-queries.js"></script>
     <script src="js/households/household-commands.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- ROLES (skill-utils before role-constants)                    -->
+    <!-- ============================================================ -->
+    <script src="js/roles/skill-utils.js"></script>
     <script src="js/roles/role-constants.js"></script>
     <script src="js/roles/role-queries.js"></script>
     <script src="js/roles/role-commands.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- RANKS                                                        -->
+    <!-- ============================================================ -->
     <script src="js/ranks/rank-constants.js"></script>
     <script src="js/ranks/rank-rules.js"></script>
     <script src="js/ranks/rank-queries.js"></script>
     <script src="js/ranks/rank-commands.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- NAMES (rules before commands)                                -->
+    <!-- ============================================================ -->
+    <script src="js/names/name-rules.js"></script>
     <script src="js/names/name-queries.js"></script>
     <script src="js/names/name-commands.js"></script>
 
     <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM (canonical load order)                       -->
+    <!-- LOCATION SYSTEM                                              -->
     <!-- ============================================================ -->
     <script src="js/location/location-state.js"></script>
     <script src="js/location/location-hierarchy.js"></script>
@@ -200,7 +245,6 @@
     <script src="js/location/location-queries.js"></script>
     <script src="js/location/location-movement.js"></script>
     <script src="js/location/location-view-models.js"></script>
-    <script src="js/location/location-ui-state.js"></script>
     <script src="js/location/location-ui-list.js"></script>
     <script src="js/location/location-presentation.js"></script>
     <script src="js/location/modals-location-helper.js"></script>
@@ -211,8 +255,6 @@
     <!-- ============================================================ -->
     <!-- SETTLEMENT SYSTEM                                            -->
     <!-- ============================================================ -->
-
-    <!-- 1. Definitions -->
     <script src="js/settlement/settlement-fiscal-definitions.js"></script>
     <script src="js/settlement/settlement-government-definitions.js"></script>
     <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -222,18 +264,15 @@
     <script src="js/settlement/settlement-feature-definitions.js"></script>
     <script src="js/settlement/settlement-education-definitions.js"></script>
 
-    <!-- 2. Rules -->
     <script src="js/settlement/settlement-rank-rules.js"></script>
     <script src="js/settlement/settlement-fiscal-rules.js"></script>
     <script src="js/settlement/settlement-government-rules.js"></script>
     <script src="js/settlement/settlement-feature-rules.js"></script>
     <script src="js/settlement/settlement-law-rules.js"></script>
 
-    <!-- 3. State + commit -->
     <script src="js/settlement/settlement-state.js"></script>
     <script src="js/settlement/settlement-command-commit.js"></script>
 
-    <!-- 4. Queries -->
     <script src="js/settlement/settlement-queries.js"></script>
     <script src="js/settlement/settlement-rank-queries.js"></script>
     <script src="js/settlement/settlement-feature-queries.js"></script>
@@ -245,7 +284,6 @@
     <script src="js/settlement/settlement-crime-queries.js"></script>
     <script src="js/settlement/settlement-prosperity-queries.js"></script>
 
-    <!-- 5. Commands -->
     <script src="js/settlement/settlement-feature-commands.js"></script>
     <script src="js/settlement/settlement-government-commands.js"></script>
     <script src="js/settlement/settlement-fiscal-commands.js"></script>
@@ -255,15 +293,12 @@
     <script src="js/settlement/settlement-rank-commands.js"></script>
     <script src="js/settlement/settlement-specialization-commands.js"></script>
 
-    <!-- 6. Creation + lifecycle -->
     <script src="js/settlement/settlement-factory.js"></script>
     <script src="js/settlement/settlement-annual-processor.js"></script>
 
-    <!-- 7. ViewModels + UI state -->
     <script src="js/settlement/settlement-view-models.js"></script>
     <script src="js/settlement/settlement-ui-state.js"></script>
 
-    <!-- 8. UI -->
     <script src="js/settlement/settlement-tabs.js"></script>
     <script src="js/settlement/settlement-ui-list.js"></script>
     <script src="js/settlement/modals-settlement-core.js"></script>
@@ -271,13 +306,17 @@
     <script src="js/settlement/modals-settlement-roles.js"></script>
 
     <!-- ============================================================ -->
-    <!-- GOVERNMENT / RELIGION / INDUSTRY / EDUCATION                 -->
+    <!-- GOVERNMENT (constants first)                                 -->
     <!-- ============================================================ -->
+    <script src="js/government/government-constants.js"></script>
     <script src="js/government/government-state.js"></script>
     <script src="js/government/government-commands.js"></script>
     <script src="js/government/government-queries.js"></script>
     <script src="js/government/government-rules.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- RELIGION                                                     -->
+    <!-- ============================================================ -->
     <script src="js/religion/religion-constants.js"></script>
     <script src="js/religion/religion-format.js"></script>
     <script src="js/religion/religion-validation.js"></script>
@@ -293,14 +332,22 @@
     <script src="js/religion/modals-religion.js"></script>
     <script src="js/religion/religion-bootstrap.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- INDUSTRY (types before rules before queries/commands)        -->
+    <!-- ============================================================ -->
     <script src="js/industry/industry-constants.js"></script>
+    <script src="js/industry/industry-types.js"></script>
+    <script src="js/industry/industry-rules.js"></script>
     <script src="js/industry/industry-state.js"></script>
     <script src="js/industry/industry-commands.js"></script>
     <script src="js/industry/industry-queries.js"></script>
-    <script src="js/industry/industry-types.js"></script>
     <script src="js/industry/industry-processor.js"></script>
 
+    <!-- ============================================================ -->
+    <!-- EDUCATION (rules before queries/learning)                    -->
+    <!-- ============================================================ -->
     <script src="js/education/education-constants.js"></script>
+    <script src="js/education/education-rules.js"></script>
     <script src="js/education/education-state.js"></script>
     <script src="js/education/education-commands.js"></script>
     <script src="js/education/education-queries.js"></script>
@@ -308,7 +355,7 @@
     <script src="js/education/education-annual.js"></script>
 
     <!-- ============================================================ -->
-    <!-- CRIME SYSTEM (loads LAST in the domain chain)                -->
+    <!-- CRIME SYSTEM (last domain, before tab renderers)             -->
     <!-- ============================================================ -->
     <script src="js/crime/crime-constants.js"></script>
     <script src="js/crime/crime-state.js"></script>
@@ -480,18 +527,10 @@
         var activeTabId   = 'location';
         var isInitialized = false;
 
-        // -----------------------------------------------------------------
-        // Bootstrapping
-        // -----------------------------------------------------------------
         function bootstrap() {
             if (isInitialized) return;
             isInitialized = true;
 
-            if (typeof window.initializeStorage === 'function') {
-                try { window.initializeStorage(); } catch (e) {
-                    console.error('[settlement-manager] storage init failed:', e);
-                }
-            }
             if (typeof window.LocationBootstrap !== 'undefined'
                 && typeof window.LocationBootstrap.init === 'function') {
                 try { window.LocationBootstrap.init(); } catch (e) {
@@ -523,9 +562,6 @@
             activateTab(activeTabId);
         }
 
-        // -----------------------------------------------------------------
-        // Tree
-        // -----------------------------------------------------------------
         function renderTree() {
             if (!treeContainer) return;
             if (typeof window.LocationUI === 'undefined'
@@ -574,12 +610,8 @@
             renderActiveTab();
         }
 
-        // -----------------------------------------------------------------
-        // Tabs
-        // -----------------------------------------------------------------
         function activateTab(tabId) {
             activeTabId = tabId;
-
             for (var i = 0; i < tabButtons.length; i++) {
                 var btn = tabButtons[i];
                 var isActive = btn.dataset.tab === tabId;
@@ -588,7 +620,6 @@
                 btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
                 btn.setAttribute('tabindex', isActive ? '0' : '-1');
             }
-
             for (var key in tabPanes) {
                 if (!Object.prototype.hasOwnProperty.call(tabPanes, key)) continue;
                 if (tabPanes[key]) {
@@ -596,7 +627,6 @@
                     tabPanes[key].classList.toggle('is-active', key === tabId);
                 }
             }
-
             renderActiveTab();
         }
 
@@ -612,34 +642,32 @@
             var id = activeTabId;
             var container = tabPanes[id];
             if (!container) return;
-
             if (!selectedId) {
                 container.innerHTML =
                     '<div class="empty-state">Select a location from the sidebar.</div>';
                 return;
             }
-
             try {
                 if (id === 'location') {
                     renderLocationTab(container, selectedId);
                 } else if (id === 'overview') {
-                    renderSettlementOverview(container, selectedId);
+                    callTabRenderer('SettlementOverviewTab', container, selectedId, 'Overview');
                 } else if (id === 'features') {
-                    renderSettlementFeatures(container, selectedId);
+                    callTabRenderer('SettlementFeaturesTab', container, selectedId, 'Features');
                 } else if (id === 'economy') {
-                    renderSettlementEconomy(container, selectedId);
+                    callTabRenderer('SettlementEconomyTab', container, selectedId, 'Economy');
                 } else if (id === 'religion') {
-                    renderSettlementReligion(container, selectedId);
+                    callTabRenderer('SettlementReligionTab', container, selectedId, 'Religion');
                 } else if (id === 'industry') {
-                    renderSettlementIndustry(container, selectedId);
+                    callTabRenderer('SettlementIndustryTab', container, selectedId, 'Industry');
                 } else if (id === 'education') {
-                    renderSettlementEducation(container, selectedId);
+                    callTabRenderer('SettlementEducationTab', container, selectedId, 'Education');
                 } else if (id === 'history') {
-                    renderSettlementHistory(container, selectedId);
+                    callTabRenderer('SettlementHistoryTab', container, selectedId, 'History');
                 } else if (id === 'roles') {
-                    renderSettlementRoles(container, selectedId);
+                    callTabRenderer('SettlementRolesTab', container, selectedId, 'Roles');
                 } else if (id === 'government') {
-                    renderGovernment(container, selectedId);
+                    callTabRenderer('GovernmentDetailsTab', container, selectedId, 'Government');
                 } else if (id === 'crime') {
                     renderCrimeTab(container, selectedId);
                 }
@@ -650,9 +678,15 @@
             }
         }
 
-        // -----------------------------------------------------------------
-        // Tab renderers (delegated to per-tab modules)
-        // -----------------------------------------------------------------
+        function callTabRenderer(globalName, container, locationId, label) {
+            var mod = window[globalName];
+            if (mod && typeof mod.render === 'function') {
+                return mod.render(container, locationId);
+            }
+            container.innerHTML = '<div class="empty-state">' + label +
+                ' tab not available.</div>';
+        }
+
         function renderLocationTab(c, id) {
             if (typeof window.LocationTab !== 'undefined'
                 && typeof window.LocationTab.render === 'function') {
@@ -664,84 +698,6 @@
             c.innerHTML = '<div class="empty-state">Location tab not available.</div>';
         }
 
-        function renderSettlementOverview(c, id) {
-            if (typeof window.SettlementOverviewTab !== 'undefined'
-                && typeof window.SettlementOverviewTab.render === 'function') {
-                return window.SettlementOverviewTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Overview tab not available.</div>';
-        }
-
-        function renderSettlementFeatures(c, id) {
-            if (typeof window.SettlementFeaturesTab !== 'undefined'
-                && typeof window.SettlementFeaturesTab.render === 'function') {
-                return window.SettlementFeaturesTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Features tab not available.</div>';
-        }
-
-        function renderSettlementEconomy(c, id) {
-            if (typeof window.SettlementEconomyTab !== 'undefined'
-                && typeof window.SettlementEconomyTab.render === 'function') {
-                return window.SettlementEconomyTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Economy tab not available.</div>';
-        }
-
-        function renderSettlementReligion(c, id) {
-            if (typeof window.SettlementReligionTab !== 'undefined'
-                && typeof window.SettlementReligionTab.render === 'function') {
-                return window.SettlementReligionTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Religion tab not available.</div>';
-        }
-
-        function renderSettlementIndustry(c, id) {
-            if (typeof window.SettlementIndustryTab !== 'undefined'
-                && typeof window.SettlementIndustryTab.render === 'function') {
-                return window.SettlementIndustryTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Industry tab not available.</div>';
-        }
-
-        function renderSettlementEducation(c, id) {
-            if (typeof window.SettlementEducationTab !== 'undefined'
-                && typeof window.SettlementEducationTab.render === 'function') {
-                return window.SettlementEducationTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Education tab not available.</div>';
-        }
-
-        function renderSettlementHistory(c, id) {
-            if (typeof window.SettlementHistoryTab !== 'undefined'
-                && typeof window.SettlementHistoryTab.render === 'function') {
-                return window.SettlementHistoryTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">History tab not available.</div>';
-        }
-
-        function renderSettlementRoles(c, id) {
-            if (typeof window.SettlementRolesTab !== 'undefined'
-                && typeof window.SettlementRolesTab.render === 'function') {
-                return window.SettlementRolesTab.render(c, id);
-            }
-            c.innerHTML = '<div class="empty-state">Roles tab not available.</div>';
-        }
-
-        function renderGovernment(c, id) {
-            if (typeof window.GovernmentDetailsTab !== 'undefined'
-                && typeof window.GovernmentDetailsTab.render === 'function') {
-                return window.GovernmentDetailsTab.render(c, id);
-            }
-            if (typeof window.renderGovernmentDetailsTab === 'function') {
-                return window.renderGovernmentDetailsTab(c.id, id);
-            }
-            c.innerHTML = '<div class="empty-state">Government tab not available.</div>';
-        }
-
-        // -----------------------------------------------------------------
-        // Crime tab
-        // -----------------------------------------------------------------
         function renderCrimeTab(container, locationId) {
             var Stats = window.CrimeStatsUI;
             var Queries = window.CrimeQueries;
@@ -753,10 +709,6 @@
                 return;
             }
 
-            // Tear down any prior registration for our sub-containers so
-            // CrimeStatsUI.refreshAll does not try to render into a DOM
-            // node that no longer exists after this function replaces
-            // container.innerHTML.
             if (typeof Stats.unmount === 'function') {
                 Stats.unmount('crimeStatsPanel');
                 Stats.unmount('crimeRecentList');
@@ -765,31 +717,25 @@
 
             container.innerHTML =
                 '<div class="crime-tab">' +
-
                     '<div class="crime-tab__toolbar">' +
                         '<button type="button" class="btn primary" id="crimeActionMurder">Record Murder</button>' +
                         '<button type="button" class="btn" id="crimeActionExecution">Record Execution</button>' +
                         '<button type="button" class="btn" id="crimeActionVendetta">Create Vendetta</button>' +
                     '</div>' +
-
                     '<section class="crime-tab__section">' +
                         '<h3 class="crime-tab__heading">Statistics</h3>' +
                         '<div id="crimeStatsPanel"></div>' +
                     '</section>' +
-
                     '<section class="crime-tab__section">' +
                         '<h3 class="crime-tab__heading">Recent Crimes</h3>' +
                         '<div id="crimeRecentList"></div>' +
                     '</section>' +
-
                     '<section class="crime-tab__section">' +
                         '<h3 class="crime-tab__heading">Active Vendettas</h3>' +
                         '<div id="crimeVendettaList"></div>' +
                     '</section>' +
-
                 '</div>';
 
-            // Stats
             try {
                 Stats.renderStatsPanel('crimeStatsPanel', {
                     locationId: locationId,
@@ -799,20 +745,12 @@
                 });
             } catch (e) {
                 console.error('[settlement-manager] renderStatsPanel failed:', e);
-                var statsEl = container.querySelector('#crimeStatsPanel');
-                if (statsEl) {
-                    statsEl.innerHTML =
-                        '<div class="error-state">Error rendering statistics.</div>';
-                }
             }
 
-            // Recent crimes
             var crimes = [];
             try {
                 crimes = Queries.getCrimesByLocation(locationId) || [];
-            } catch (e) {
-                console.error('[settlement-manager] getCrimesByLocation failed:', e);
-            }
+            } catch (e) { /* ignore */ }
             crimes.sort(function (a, b) { return (b.year || 0) - (a.year || 0); });
             try {
                 Stats.renderCrimeList('crimeRecentList', crimes.slice(0, 10), {
@@ -822,8 +760,6 @@
                 console.error('[settlement-manager] renderCrimeList failed:', e);
             }
 
-            // Active vendettas — walk this settlement's households and
-            // intersect with the crime domain's active vendettas for each.
             var activeVendettas = [];
             var seen = Object.create(null);
             try {
@@ -844,9 +780,7 @@
                         }
                     }
                 }
-            } catch (e) {
-                console.error('[settlement-manager] vendetta scan failed:', e);
-            }
+            } catch (e) { /* ignore */ }
             try {
                 Stats.renderVendettaList('crimeVendettaList', activeVendettas, {
                     emptyMessage: 'No active vendettas in this settlement.'
@@ -855,46 +789,34 @@
                 console.error('[settlement-manager] renderVendettaList failed:', e);
             }
 
-            // Action buttons
             var murderBtn = container.querySelector('#crimeActionMurder');
             if (murderBtn) {
                 murderBtn.addEventListener('click', function () {
                     Modals.openMurderModal({
                         locationId: locationId,
-                        onComplete: function () {
-                            renderCrimeTab(container, locationId);
-                        }
+                        onComplete: function () { renderCrimeTab(container, locationId); }
                     });
                 });
             }
-
             var execBtn = container.querySelector('#crimeActionExecution');
             if (execBtn) {
                 execBtn.addEventListener('click', function () {
                     Modals.openExecutionModal({
                         locationId: locationId,
-                        onComplete: function () {
-                            renderCrimeTab(container, locationId);
-                        }
+                        onComplete: function () { renderCrimeTab(container, locationId); }
                     });
                 });
             }
-
             var vendettaBtn = container.querySelector('#crimeActionVendetta');
             if (vendettaBtn) {
                 vendettaBtn.addEventListener('click', function () {
                     Modals.openVendettaModal({
-                        onComplete: function () {
-                            renderCrimeTab(container, locationId);
-                        }
+                        onComplete: function () { renderCrimeTab(container, locationId); }
                     });
                 });
             }
         }
 
-        // -----------------------------------------------------------------
-        // Sidebar
-        // -----------------------------------------------------------------
         function toggleSidebar() { if (sidebar) sidebar.classList.toggle('open'); }
         function closeSidebar()  { if (sidebar) sidebar.classList.remove('open'); }
 
@@ -907,18 +829,13 @@
             if (e.target === burgerBtn) return;
             closeSidebar();
         });
-
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') closeSidebar();
         });
-
         window.addEventListener('resize', function () {
             if (window.innerWidth > 768) closeSidebar();
         });
 
-        // -----------------------------------------------------------------
-        // Year
-        // -----------------------------------------------------------------
         function syncYearInput() {
             if (typeof window.getCurrentYear !== 'function') return;
             try { yearInput.value = String(window.getCurrentYear()); } catch (e) {}
@@ -930,8 +847,7 @@
                 var val = parseInt(yearInput.value, 10);
                 if (isNaN(val)) { window.alert('Enter a valid year.'); return; }
                 if (!window.isValidYear(val)) {
-                    window.alert('Year is outside the allowed range.');
-                    return;
+                    window.alert('Year is outside the allowed range.'); return;
                 }
                 if (window.masterData && window.masterData.data) {
                     window.masterData.data.currentYear = val;
@@ -942,28 +858,20 @@
             });
         }
 
-        // -----------------------------------------------------------------
-        // Add location / settlement
-        // -----------------------------------------------------------------
         if (addLocationBtn) {
             addLocationBtn.addEventListener('click', function () {
                 if (typeof window.openAddPlaceModal !== 'function') {
                     window.alert('Add Location modal not loaded.'); return;
                 }
                 window.openAddPlaceModal(null, function (newId) {
-                    if (newId) {
-                        renderTree();
-                        selectLocation(newId);
-                    }
+                    if (newId) { renderTree(); selectLocation(newId); }
                 });
             });
         }
 
         if (addSettlementBtn) {
             addSettlementBtn.addEventListener('click', function () {
-                if (!selectedId) {
-                    window.alert('Select a location first.'); return;
-                }
+                if (!selectedId) { window.alert('Select a location first.'); return; }
                 if (typeof window.SettlementFactory === 'undefined'
                     || typeof window.SettlementFactory.ensureSettlement !== 'function') {
                     window.alert('SettlementFactory not loaded.'); return;
@@ -978,23 +886,17 @@
                     activateTab('overview');
                 } catch (e) {
                     console.error('[settlement-manager] createSettlement failed:', e);
-                    window.alert('Could not create settlement: ' +
-                        (e.message || 'unknown'));
+                    window.alert('Could not create settlement: ' + (e.message || 'unknown'));
                 }
             });
         }
 
-        // -----------------------------------------------------------------
-        // Export / Import
-        // -----------------------------------------------------------------
         if (exportBtn) {
             exportBtn.addEventListener('click', function () {
                 if (typeof window.exportToJSON !== 'function') {
                     window.alert('Export module not available.'); return;
                 }
-                if (!window.masterData) {
-                    window.alert('No data to export.'); return;
-                }
+                if (!window.masterData) { window.alert('No data to export.'); return; }
                 try { window.exportToJSON(window.masterData, 'stillwaters'); }
                 catch (e) { window.alert('Export failed: ' + (e.message || 'unknown')); }
             });
@@ -1005,11 +907,9 @@
                 fileInput.value = '';
                 fileInput.click();
             });
-
             fileInput.addEventListener('change', function () {
                 var file = this.files && this.files[0];
                 if (!file) return;
-
                 var reader = new FileReader();
                 reader.onload = function (ev) {
                     try {
@@ -1022,72 +922,52 @@
                         } else if (parsed && parsed.data) {
                             dataToInstall = parsed.data;
                         }
-                        if (!dataToInstall) {
-                            window.alert('Unrecognized import format.'); return;
-                        }
-
+                        if (!dataToInstall) { window.alert('Unrecognized import format.'); return; }
                         if (typeof window.normalizeMasterData !== 'function') {
                             window.alert('Schema module not available.'); return;
                         }
-
                         window.masterData = window.normalizeMasterData({
                             schemaVersion: window.STORAGE_SCHEMA_VERSION,
                             savedAt: new Date().toISOString(),
                             data: dataToInstall
                         });
-
                         if (typeof window.invalidateAccessorCaches === 'function') {
                             window.invalidateAccessorCaches();
                         }
                         if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                        if (typeof window.saveMasterData === 'function'
-                            && !window.saveMasterData()) {
+                        if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
                             window.alert('Save failed after import.'); return;
                         }
-
-                        if (window.LocationBootstrap
-                            && typeof window.LocationBootstrap.init === 'function') {
+                        if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
                             try { window.LocationBootstrap.init(); } catch (e) {}
                         }
-                        if (window.SettlementState
-                            && typeof window.SettlementState.rebuildIndexes === 'function') {
+                        if (window.SettlementState && typeof window.SettlementState.rebuildIndexes === 'function') {
                             try { window.SettlementState.rebuildIndexes(); } catch (e) {}
                         }
-                        if (window.CrimeBootstrap
-                            && typeof window.CrimeBootstrap.reinit === 'function') {
+                        if (window.CrimeBootstrap && typeof window.CrimeBootstrap.reinit === 'function') {
                             try { window.CrimeBootstrap.reinit(); } catch (e) {}
                         }
-
                         selectedId = null;
                         syncYearInput();
                         renderTree();
                         pickInitialSelection();
                         renderActiveTab();
-
                         window.alert('Import complete.');
                     } catch (err) {
                         window.alert('Invalid JSON: ' + err.message);
                     }
                 };
-                reader.onerror = function () {
-                    window.alert('Failed to read file.');
-                };
+                reader.onerror = function () { window.alert('Failed to read file.'); };
                 reader.readAsText(file);
                 this.value = '';
             });
         }
 
-        // -----------------------------------------------------------------
-        // Cross-domain events
-        // -----------------------------------------------------------------
         if (typeof window.addEventListener === 'function') {
             window.addEventListener('masterDataUpdated', function () {
                 renderTree();
                 renderActiveTab();
             });
-
-            // Crime commands dispatch these. If the active tab is Crime,
-            // re-render so the stats/lists reflect the new record.
             var _crimeEvents = [
                 'crimeRecorded', 'crimeSolved', 'crimeDeleted',
                 'vendettaCreated', 'vendettaDeath', 'vendettaEscalated',
@@ -1102,9 +982,6 @@
             }
         }
 
-        // -----------------------------------------------------------------
-        // Init
-        // -----------------------------------------------------------------
         function onDomReady(fn) {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', fn);
@@ -1112,7 +989,6 @@
                 fn();
             }
         }
-
         onDomReady(bootstrap);
 
     })();
