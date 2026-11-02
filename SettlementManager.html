@@ -1,12 +1,14 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="default">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Settlement Manager</title>
 
-    <!-- Theme tokens first, then structural CSS, then per-domain CSS. -->
+    <!-- Theme tokens MUST load first. They define every CSS custom property. -->
     <link rel="stylesheet" href="css/themes.css" />
+
+    <!-- Structural styles consume the tokens. No color values inside. -->
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/settlement.css" />
     <link rel="stylesheet" href="css/location-list.css" />
@@ -14,9 +16,11 @@
     <link rel="stylesheet" href="css/selectors.css" />
     <link rel="stylesheet" href="css/uiList.css" />
 </head>
-<body class="settlement-manager">
+<body>
 
-    <!-- TOP BAR -->
+    <!-- ================================================================ -->
+    <!-- TOP BAR                                                          -->
+    <!-- ================================================================ -->
     <header class="topbar" role="banner">
         <button class="burger-btn" id="burgerBtn" type="button" aria-label="Toggle sidebar">☰</button>
         <h1 class="title">Settlement Manager</h1>
@@ -26,88 +30,67 @@
         <button class="btn" id="addSettlementBtn" type="button">+ Add Settlement</button>
 
         <label class="year-label" for="yearInput">Year</label>
-        <input type="number" class="year-input" id="yearInput" name="yearInput" inputmode="numeric" />
+        <input type="number" class="year-input" id="yearInput" name="yearInput" inputmode="numeric" min="-10000" max="9999" />
         <button class="btn" id="setYearBtn" type="button">Set</button>
         <button class="btn" id="exportBtn" type="button">Export</button>
         <button class="btn" id="importBtn" type="button">Import</button>
         <input type="file" id="fileInput" accept=".json" class="visually-hidden" tabindex="-1" />
 
-        <!-- Theme switcher -->
         <div class="theme-toggle" role="group" aria-label="Theme">
             <button class="btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
-                <span class="theme-toggle__icon" aria-hidden="true">◐</span>
-                <span class="theme-toggle__name" id="themeName">Default</span>
+                <span aria-hidden="true">◐</span>
+                <span id="themeName">Dark</span>
             </button>
-            <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden>
-                <li role="none"><button role="menuitem" data-theme-value="default">Default</button></li>
-                <li role="none"><button role="menuitem" data-theme-value="parchment">Parchment</button></li>
-                <li role="none"><button role="menuitem" data-theme-value="slate">Slate</button></li>
-                <li role="none"><button role="menuitem" data-theme-value="high-contrast">High Contrast</button></li>
-            </ul>
+            <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
         </div>
     </header>
 
-    <!-- APP LAYOUT -->
+    <!-- ================================================================ -->
+    <!-- APP LAYOUT                                                       -->
+    <!-- ================================================================ -->
     <div class="app-layout">
+
+        <!-- SIDEBAR -->
         <aside class="sidebar" id="sidebar" aria-label="Locations">
-            <h2 class="sidebar__heading">Locations</h2>
+            <h3>Locations</h3>
             <div id="locationTreeContainer" class="location-tree">
                 <div class="loading-placeholder">Loading locations…</div>
             </div>
         </aside>
 
+        <!-- MAIN PANEL -->
         <main class="main-panel" id="mainPanel" role="main">
             <nav class="panel-tabs" id="panelTabs" role="tablist" aria-label="Settlement tabs">
-                <button class="tab-btn is-active" role="tab" type="button" data-tab="location" aria-selected="true" tabindex="0">
-                    <span class="tab-icon" aria-hidden="true">◈</span> Location
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="overview" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">▤</span> Overview
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="features" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">⚙</span> Features
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="economy" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">◆</span> Economy
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="religion" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">✝</span> Religion
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="industry" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">▣</span> Industry
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="education" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">▤</span> Education
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="history" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">◷</span> History
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="roles" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">◯</span> Roles
-                </button>
-                <button class="tab-btn" role="tab" type="button" data-tab="government" aria-selected="false" tabindex="-1">
-                    <span class="tab-icon" aria-hidden="true">▥</span> Government
-                </button>
+                <button class="tab-btn active" role="tab" type="button" data-tab="location"     aria-selected="true"  tabindex="0"><span class="tab-icon" aria-hidden="true">◈</span> Location</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="overview"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▤</span> Overview</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="features"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">⚙</span> Features</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="economy"      aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">◆</span> Economy</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="religion"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">✝</span> Religion</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="industry"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▣</span> Industry</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="education"    aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▤</span> Education</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="history"      aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">◷</span> History</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="roles"        aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">◯</span> Roles</button>
+                <button class="tab-btn"        role="tab" type="button" data-tab="government"   aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▥</span> Government</button>
             </nav>
 
             <div class="tab-content" id="tabContent" role="tabpanel">
-                <div class="tab-pane is-active" id="tab-location"     data-tab-content="location"></div>
-                <div class="tab-pane"           id="tab-overview"     data-tab-content="overview"></div>
-                <div class="tab-pane"           id="tab-features"     data-tab-content="features"></div>
-                <div class="tab-pane"           id="tab-economy"      data-tab-content="economy"></div>
-                <div class="tab-pane"           id="tab-religion"     data-tab-content="religion"></div>
-                <div class="tab-pane"           id="tab-industry"     data-tab-content="industry"></div>
-                <div class="tab-pane"           id="tab-education"    data-tab-content="education"></div>
-                <div class="tab-pane"           id="tab-history"      data-tab-content="history"></div>
-                <div class="tab-pane"           id="tab-roles"        data-tab-content="roles"></div>
-                <div class="tab-pane"           id="tab-government"   data-tab-content="government"></div>
+                <div class="tab-pane active" id="tab-location"   data-tab-content="location"></div>
+                <div class="tab-pane"        id="tab-overview"   data-tab-content="overview"></div>
+                <div class="tab-pane"        id="tab-features"   data-tab-content="features"></div>
+                <div class="tab-pane"        id="tab-economy"    data-tab-content="economy"></div>
+                <div class="tab-pane"        id="tab-religion"   data-tab-content="religion"></div>
+                <div class="tab-pane"        id="tab-industry"   data-tab-content="industry"></div>
+                <div class="tab-pane"        id="tab-education"  data-tab-content="education"></div>
+                <div class="tab-pane"        id="tab-history"    data-tab-content="history"></div>
+                <div class="tab-pane"        id="tab-roles"      data-tab-content="roles"></div>
+                <div class="tab-pane"        id="tab-government" data-tab-content="government"></div>
             </div>
         </main>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- CORE — NO DOMAIN DEPENDENCIES                                -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- CORE (no domain dependencies)                                    -->
+    <!-- ================================================================ -->
     <script src="js/core/constants.js"></script>
     <script src="js/core/constants/age-constants.js"></script>
     <script src="js/core/constants/character-constants.js"></script>
@@ -148,9 +131,9 @@
     <script src="js/core/state/location-ui-state.js"></script>
     <script src="js/core/state.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- CHARACTER — cross-domain dependency of Location + Settlement -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- CHARACTER (cross-domain dependency of Location + Settlement)     -->
+    <!-- ================================================================ -->
     <script src="js/character/character-state.js"></script>
     <script src="js/character/character-commands.js"></script>
     <script src="js/character/character-queries.js"></script>
@@ -159,17 +142,17 @@
     <script src="js/character/family-commands.js"></script>
     <script src="js/character/character-lifecycle.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- SELECTORS                                                    -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- SELECTORS                                                        -->
+    <!-- ================================================================ -->
     <script src="js/selectors/selector-base.js"></script>
     <script src="js/selectors/locationDropdown.js"></script>
     <script src="js/selectors/modals-char-selector.js"></script>
     <script src="js/selectors/modals-household-selector.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM (canonical load order per location-docs.txt) -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- LOCATION SYSTEM (canonical order per location-docs.txt §2)       -->
+    <!-- ================================================================ -->
     <script src="js/location/location-state.js"></script>
     <script src="js/location/location-hierarchy.js"></script>
     <script src="js/location/location-commands.js"></script>
@@ -184,9 +167,9 @@
     <script src="js/location/modals-moves.js"></script>
     <script src="js/location/location-bootstrap.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- HOUSEHOLD / ROLES / RANKS / NAMES  (Settlement touches these) -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- HOUSEHOLD / ROLES / RANKS / NAMES                                -->
+    <!-- ================================================================ -->
     <script src="js/households/household-constants.js"></script>
     <script src="js/households/household-queries.js"></script>
     <script src="js/households/household-commands.js"></script>
@@ -203,11 +186,11 @@
     <script src="js/names/name-queries.js"></script>
     <script src="js/names/name-commands.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- SETTLEMENT SYSTEM                                            -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- SETTLEMENT SYSTEM                                                -->
+    <!-- ================================================================ -->
 
-    <!-- 1. Definitions (pure data) -->
+    <!-- 1. Definitions -->
     <script src="js/settlement/settlement-fiscal-definitions.js"></script>
     <script src="js/settlement/settlement-government-definitions.js"></script>
     <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -217,14 +200,14 @@
     <script src="js/settlement/settlement-feature-definitions.js"></script>
     <script src="js/settlement/settlement-education-definitions.js"></script>
 
-    <!-- 2. Rules (pure functions) -->
+    <!-- 2. Rules -->
     <script src="js/settlement/settlement-rank-rules.js"></script>
     <script src="js/settlement/settlement-fiscal-rules.js"></script>
     <script src="js/settlement/settlement-government-rules.js"></script>
     <script src="js/settlement/settlement-feature-rules.js"></script>
     <script src="js/settlement/settlement-law-rules.js"></script>
 
-    <!-- 3. State + commit (state.js must NOT be confused with core state.js) -->
+    <!-- 3. State + commit -->
     <script src="js/settlement/settlement-state.js"></script>
     <script src="js/settlement/settlement-command-commit.js"></script>
 
@@ -265,9 +248,9 @@
     <script src="js/settlement/modals-settlement-economy.js"></script>
     <script src="js/settlement/modals-settlement-roles.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- GOVERNMENT / RELIGION / INDUSTRY / EDUCATION                 -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- GOVERNMENT / RELIGION / INDUSTRY / EDUCATION                     -->
+    <!-- ================================================================ -->
     <script src="js/government/government-state.js"></script>
     <script src="js/government/government-commands.js"></script>
     <script src="js/government/government-queries.js"></script>
@@ -292,9 +275,9 @@
     <script src="js/education/education-learning.js"></script>
     <script src="js/education/education-annual.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- TAB RENDERERS  (register via SettlementTabs or *_Tab.render) -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- TAB RENDERERS                                                    -->
+    <!-- ================================================================ -->
     <script src="js/tabs/location-tab.js"></script>
     <script src="js/tabs/settlement-overview-tab.js"></script>
     <script src="js/tabs/settlement-features-tab.js"></script>
@@ -306,29 +289,550 @@
     <script src="js/tabs/settlement-roles-tab.js"></script>
     <script src="js/tabs/government-details-tab.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- ORCHESTRATOR                                                 -->
-    <!-- ============================================================ -->
+    <!-- ================================================================ -->
+    <!-- THEME SWITCHER (must run before orchestrator)                    -->
+    <!-- ================================================================ -->
     <script>
-        (function () {
-            'use strict';
+    (function () {
+        'use strict';
 
-            // -----------------------------------------------------------------
-            // Element handles
-            // -----------------------------------------------------------------
-            var treeContainer   = document.getElementById('locationTreeContainer');
-            var burgerBtn       = document.getElementById('burgerBtn');
-            var sidebar         = document.getElementById('sidebar');
-            var exportBtn       = document.getElementById('exportBtn');
-            var importBtn       = document.getElementById('importBtn');
-            var fileInput       = document.getElementById('fileInput');
-            var yearInput       = document.getElementById('yearInput');
-            var setYearBtn      = document.getElementById('setYearBtn');
-            var addLocationBtn  = document.getElementById('addLocationBtn');
-            var addSettlementBtn= document.getElementById('addSettlementBtn');
-            var themeBtn        = document.getElementById('themeBtn');
-            var themeMenu       = document.getElementById('themeMenu');
-            var themeNameEl     = document.getElementById('themeName');
+        var STORAGE_KEY = 'stillwaters_theme';
 
-            var tabButtons = Array.prototype.slice.call(
-                document.querySelectorAll('.
+        var THEMES = [
+            { id: 'dark',            label: 'Dark' },
+            { id: 'light',           label: 'Light' },
+            { id: 'vaporwave',       label: 'Vaporwave' },
+            { id: 'pastel',          label: 'Pastel' },
+            { id: 'carnival',        label: 'Carnival' },
+            { id: 'maximal',         label: 'Maximal' },
+            { id: 'gits',            label: 'GITS' },
+            { id: 'nouveau',         label: 'Nouveau' },
+            { id: 'ukiyo-e',         label: 'Ukiyo-e' },
+            { id: 'nature',          label: 'Nature' },
+            { id: 'kmt',             label: 'KMT' },
+            { id: 'gaslight',        label: 'Gaslight' },
+            { id: 'grotesque',       label: 'Grotesque' },
+            { id: 'illuminated',     label: 'Illuminated' },
+            { id: 'discowing',       label: 'Discowing' },
+            { id: 'choc-cake',       label: 'Choc Cake' },
+            { id: 'dada',            label: 'Dada' },
+            { id: 'brutalist',       label: 'Brutalist' },
+            { id: 'orchestrion',     label: 'Orchestrion' },
+            { id: 'rococo',          label: 'Rococo' },
+            { id: 'nautical-tile',   label: 'Nautical Tile' }
+        ];
+
+        var byId = {};
+        for (var i = 0; i < THEMES.length; i++) byId[THEMES[i].id] = THEMES[i];
+
+        var themeBtn  = document.getElementById('themeBtn');
+        var themeMenu = document.getElementById('themeMenu');
+        var themeName = document.getElementById('themeName');
+
+        function apply(id) {
+            if (!byId[id]) id = 'dark';
+            if (id === 'dark') {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            } else {
+                document.documentElement.setAttribute('data-theme', id);
+            }
+            themeName.textContent = byId[id].label;
+            try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
+        }
+
+        function buildMenu() {
+            var html = '';
+            for (var i = 0; i < THEMES.length; i++) {
+                html += '<li role="none">' +
+                    '<button role="menuitem" type="button" data-theme-id="' +
+                    THEMES[i].id + '">' + THEMES[i].label + '</button>' +
+                    '</li>';
+            }
+            themeMenu.innerHTML = html;
+        }
+
+        function openMenu() {
+            themeMenu.hidden = false;
+            themeBtn.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeMenu() {
+            themeMenu.hidden = true;
+            themeBtn.setAttribute('aria-expanded', 'false');
+        }
+
+        themeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (themeMenu.hidden) openMenu(); else closeMenu();
+        });
+
+        themeMenu.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-theme-id]');
+            if (!btn) return;
+            apply(btn.getAttribute('data-theme-id'));
+            closeMenu();
+        });
+
+        document.addEventListener('click', function (e) {
+            if (!themeMenu.hidden && !themeMenu.contains(e.target) && e.target !== themeBtn) {
+                closeMenu();
+            }
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !themeMenu.hidden) closeMenu();
+        });
+
+        // Restore saved theme or follow OS.
+        var saved = null;
+        try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+
+        buildMenu();
+
+        if (saved && byId[saved]) {
+            apply(saved);
+        } else {
+            var mq = window.matchMedia('(prefers-color-scheme: light)');
+            apply(mq.matches ? 'light' : 'dark');
+            mq.addEventListener('change', function (ev) {
+                var check;
+                try { check = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+                if (!check) apply(ev.matches ? 'light' : 'dark');
+            });
+        }
+
+        window.ThemeSwitcher = { apply: apply, themes: THEMES.slice() };
+    })();
+    </script>
+
+    <!-- ================================================================ -->
+    <!-- ORCHESTRATOR                                                     -->
+    <!-- ================================================================ -->
+    <script>
+    (function () {
+        'use strict';
+
+        // -----------------------------------------------------------------
+        // Element handles
+        // -----------------------------------------------------------------
+        var treeContainer   = document.getElementById('locationTreeContainer');
+        var burgerBtn       = document.getElementById('burgerBtn');
+        var sidebar         = document.getElementById('sidebar');
+        var exportBtn       = document.getElementById('exportBtn');
+        var importBtn       = document.getElementById('importBtn');
+        var fileInput       = document.getElementById('fileInput');
+        var yearInput       = document.getElementById('yearInput');
+        var setYearBtn      = document.getElementById('setYearBtn');
+        var addLocationBtn  = document.getElementById('addLocationBtn');
+        var addSettlementBtn= document.getElementById('addSettlementBtn');
+        var tabButtons      = Array.prototype.slice.call(document.querySelectorAll('.tab-btn'));
+
+        var tabPanes = {
+            location:   document.getElementById('tab-location'),
+            overview:   document.getElementById('tab-overview'),
+            features:   document.getElementById('tab-features'),
+            economy:    document.getElementById('tab-economy'),
+            religion:   document.getElementById('tab-religion'),
+            industry:   document.getElementById('tab-industry'),
+            education:  document.getElementById('tab-education'),
+            history:    document.getElementById('tab-history'),
+            roles:      document.getElementById('tab-roles'),
+            government: document.getElementById('tab-government')
+        };
+
+        var selectedId     = null;
+        var activeTabId    = 'location';
+        var isInitialized  = false;
+
+        // -----------------------------------------------------------------
+        // Bootstrapping
+        // -----------------------------------------------------------------
+        function bootstrap() {
+            if (isInitialized) return;
+            isInitialized = true;
+
+            if (typeof window.initializeStorage === 'function') {
+                try { window.initializeStorage(); } catch (e) {
+                    console.error('[settlement-manager] storage init failed:', e);
+                }
+            }
+
+            if (typeof window.LocationBootstrap !== 'undefined'
+                && typeof window.LocationBootstrap.init === 'function') {
+                try { window.LocationBootstrap.init(); } catch (e) {
+                    console.error('[settlement-manager] location bootstrap failed:', e);
+                }
+            }
+
+            if (typeof window.SettlementState !== 'undefined'
+                && typeof window.SettlementState.rebuildIndexes === 'function') {
+                try { window.SettlementState.rebuildIndexes(); } catch (e) {
+                    console.error('[settlement-manager] settlement index rebuild failed:', e);
+                }
+            }
+
+            syncYearInput();
+            renderTree();
+            pickInitialSelection();
+            activateTab(activeTabId);
+        }
+
+        // -----------------------------------------------------------------
+        // Tree rendering
+        // -----------------------------------------------------------------
+        function renderTree() {
+            if (!treeContainer) return;
+
+            if (typeof window.LocationUI === 'undefined'
+                || typeof window.LocationUI.renderLocationList !== 'function') {
+                treeContainer.innerHTML =
+                    '<div class="empty-state">Location UI not loaded.</div>';
+                return;
+            }
+
+            try {
+                window.LocationUI.renderLocationList('locationTreeContainer', {
+                    selectedId: selectedId,
+                    onSelect: function (place) {
+                        if (!place || !place.id) return;
+                        selectLocation(place.id);
+                        if (window.innerWidth <= 768) closeSidebar();
+                    }
+                });
+            } catch (e) {
+                console.error('[settlement-manager] renderTree failed:', e);
+                treeContainer.innerHTML =
+                    '<div class="error-state">Error loading locations.</div>';
+            }
+        }
+
+        function pickInitialSelection() {
+            if (selectedId) return;
+            if (typeof window.LocationQueries === 'undefined') return;
+            try {
+                var roots = window.LocationQueries.getRootPlaces({});
+                if (roots && roots.length > 0) {
+                    selectLocation(roots[0].id);
+                }
+            } catch (e) {
+                console.error('[settlement-manager] initial selection failed:', e);
+            }
+        }
+
+        function selectLocation(id) {
+            if (!id) return;
+            selectedId = id;
+
+            if (typeof window.SettlementUIState !== 'undefined'
+                && typeof window.SettlementUIState.setSelectedLocationId === 'function') {
+                window.SettlementUIState.setSelectedLocationId(id);
+            }
+
+            renderTree();
+            renderActiveTab();
+        }
+
+        // -----------------------------------------------------------------
+        // Tab dispatch
+        // -----------------------------------------------------------------
+        function activateTab(tabId) {
+            activeTabId = tabId;
+
+            for (var i = 0; i < tabButtons.length; i++) {
+                var btn = tabButtons[i];
+                var isActive = btn.dataset.tab === tabId;
+                btn.classList.toggle('active', isActive);
+                btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+                btn.setAttribute('tabindex', isActive ? '0' : '-1');
+            }
+
+            for (var key in tabPanes) {
+                if (!Object.prototype.hasOwnProperty.call(tabPanes, key)) continue;
+                var pane = tabPanes[key];
+                if (!pane) continue;
+                pane.classList.toggle('active', key === tabId);
+            }
+
+            renderActiveTab();
+        }
+
+        function renderActiveTab() {
+            var id = activeTabId;
+            var container = tabPanes[id];
+            if (!container) return;
+
+            if (!selectedId) {
+                container.innerHTML =
+                    '<div class="empty-state">Select a location from the sidebar.</div>';
+                return;
+            }
+
+            var renderer = getTabRenderer(id);
+            if (!renderer) {
+                container.innerHTML =
+                    '<div class="empty-state">This tab is not available.</div>';
+                return;
+            }
+
+            try {
+                renderer(container, selectedId);
+            } catch (e) {
+                console.error('[settlement-manager] tab "' + id + '" failed:', e);
+                container.innerHTML =
+                    '<div class="error-state">Error rendering this tab.</div>';
+            }
+        }
+
+        function getTabRenderer(tabId) {
+            if (tabId === 'location') {
+                return function (c, locId) {
+                    if (typeof window.LocationTab !== 'undefined'
+                        && typeof window.LocationTab.render === 'function') {
+                        return window.LocationTab.render(c, locId);
+                    }
+                    if (typeof window.renderLocationDetails === 'function') {
+                        return window.renderLocationDetails(c.id, locId);
+                    }
+                    c.innerHTML = '<div class="empty-state">Location tab not available.</div>';
+                };
+            }
+
+            var tabModuleMap = {
+                overview:    { global: 'SettlementOverviewTab',  fn: 'render' },
+                features:    { global: 'SettlementFeaturesTab',  fn: 'render' },
+                economy:     { global: 'SettlementEconomyTab',   fn: 'render' },
+                religion:    { global: 'SettlementReligionTab',  fn: 'render' },
+                industry:    { global: 'SettlementIndustryTab',  fn: 'render' },
+                education:   { global: 'SettlementEducationTab', fn: 'render' },
+                history:     { global: 'SettlementHistoryTab',   fn: 'render' },
+                roles:       { global: 'SettlementRolesTab',     fn: 'render' },
+                government:  { global: 'GovernmentDetailsTab',   fn: 'render' }
+            };
+
+            var spec = tabModuleMap[tabId];
+            if (!spec) return null;
+
+            var mod = window[spec.global];
+            if (mod && typeof mod[spec.fn] === 'function') {
+                return function (c, locId) { return mod[spec.fn](c, locId); };
+            }
+
+            return function (c) {
+                c.innerHTML = '<div class="empty-state">This tab is not available.</div>';
+            };
+        }
+
+        for (var i = 0; i < tabButtons.length; i++) {
+            (function (btn) {
+                btn.addEventListener('click', function () {
+                    activateTab(btn.dataset.tab);
+                });
+            })(tabButtons[i]);
+        }
+
+        // -----------------------------------------------------------------
+        // Sidebar
+        // -----------------------------------------------------------------
+        function toggleSidebar() { sidebar.classList.toggle('open'); }
+        function closeSidebar()  { sidebar.classList.remove('open'); }
+
+        burgerBtn.addEventListener('click', toggleSidebar);
+
+        document.addEventListener('click', function (e) {
+            if (window.innerWidth > 768) return;
+            if (sidebar.contains(e.target)) return;
+            if (e.target === burgerBtn) return;
+            closeSidebar();
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') closeSidebar();
+        });
+
+        window.addEventListener('resize', function () {
+            if (window.innerWidth > 768) closeSidebar();
+        });
+
+        // -----------------------------------------------------------------
+        // Year
+        // -----------------------------------------------------------------
+        function syncYearInput() {
+            if (typeof window.getCurrentYear !== 'function') return;
+            try { yearInput.value = String(window.getCurrentYear()); } catch (e) {}
+        }
+
+        setYearBtn.addEventListener('click', function () {
+            if (typeof window.isValidYear !== 'function') return;
+            var val = parseInt(yearInput.value, 10);
+            if (isNaN(val)) {
+                window.alert('Enter a valid year.');
+                return;
+            }
+            if (!window.isValidYear(val)) {
+                window.alert('Year is outside the allowed range.');
+                return;
+            }
+            if (window.masterData && window.masterData.data) {
+                window.masterData.data.currentYear = val;
+            }
+            if (typeof window.markDataDirty === 'function') window.markDataDirty();
+            if (typeof window.saveMasterData === 'function') window.saveMasterData();
+            renderActiveTab();
+        });
+
+        // -----------------------------------------------------------------
+        // Export / Import
+        // -----------------------------------------------------------------
+        exportBtn.addEventListener('click', function () {
+            if (typeof window.exportToJSON !== 'function') {
+                window.alert('Export module not available.');
+                return;
+            }
+            if (!window.masterData) {
+                window.alert('No data to export.');
+                return;
+            }
+            try {
+                window.exportToJSON(window.masterData, 'stillwaters');
+            } catch (e) {
+                window.alert('Export failed: ' + (e.message || 'unknown'));
+            }
+        });
+
+        importBtn.addEventListener('click', function () {
+            fileInput.value = '';
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', function () {
+            var file = this.files && this.files[0];
+            if (!file) return;
+
+            var reader = new FileReader();
+            reader.onload = function (ev) {
+                try {
+                    var text = ev.target.result;
+                    var parsed = JSON.parse(text);
+
+                    var dataToInstall = null;
+                    if (parsed && parsed.data && parsed.data.characters !== undefined) {
+                        dataToInstall = parsed.data;
+                    } else if (parsed && parsed.characters !== undefined) {
+                        dataToInstall = parsed;
+                    } else if (parsed && parsed.data) {
+                        dataToInstall = parsed.data;
+                    }
+
+                    if (!dataToInstall) {
+                        window.alert('Unrecognized file format.');
+                        return;
+                    }
+
+                    if (typeof window.normalizeMasterData !== 'function') {
+                        window.alert('Schema module not available; cannot import.');
+                        return;
+                    }
+
+                    var envelope = window.normalizeMasterData({
+                        schemaVersion: window.STORAGE_SCHEMA_VERSION,
+                        savedAt: new Date().toISOString(),
+                        data: dataToInstall
+                    });
+
+                    window.masterData = envelope;
+
+                    if (typeof window.invalidateAccessorCaches === 'function') {
+                        window.invalidateAccessorCaches();
+                    }
+
+                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                    if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
+                        window.alert('Save failed after import.');
+                        return;
+                    }
+
+                    if (typeof window.LocationBootstrap !== 'undefined'
+                        && typeof window.LocationBootstrap.init === 'function') {
+                        try { window.LocationBootstrap.init(); } catch (e) {}
+                    }
+                    if (typeof window.SettlementState !== 'undefined'
+                        && typeof window.SettlementState.rebuildIndexes === 'function') {
+                        try { window.SettlementState.rebuildIndexes(); } catch (e) {}
+                    }
+
+                    selectedId = null;
+                    syncYearInput();
+                    renderTree();
+                    pickInitialSelection();
+                    renderActiveTab();
+
+                    window.alert('Import complete.');
+                } catch (err) {
+                    window.alert('Invalid JSON: ' + err.message);
+                }
+            };
+            reader.onerror = function () {
+                window.alert('Failed to read file.');
+            };
+            reader.readAsText(file);
+            this.value = '';
+        });
+
+        // -----------------------------------------------------------------
+        // Add Location / Add Settlement
+        // -----------------------------------------------------------------
+        addLocationBtn.addEventListener('click', function () {
+            if (typeof window.openAddPlaceModal !== 'function') {
+                window.alert('Add Location modal not loaded.');
+                return;
+            }
+            window.openAddPlaceModal(null, function (newId) {
+                if (newId) {
+                    renderTree();
+                    selectLocation(newId);
+                }
+            });
+        });
+
+        addSettlementBtn.addEventListener('click', function () {
+            if (!selectedId) {
+                window.alert('Select a location first.');
+                return;
+            }
+            if (typeof window.SettlementFactory === 'undefined'
+                || typeof window.SettlementFactory.ensureSettlement !== 'function') {
+                window.alert('SettlementFactory not loaded.');
+                return;
+            }
+            try {
+                var result = window.SettlementFactory.ensureSettlement(selectedId);
+                if (!result || result.success !== true) {
+                    window.alert('Could not create settlement: ' +
+                        (result && result.code ? result.code : 'unknown'));
+                    return;
+                }
+                activateTab('overview');
+            } catch (e) {
+                console.error('[settlement-manager] createSettlement failed:', e);
+                window.alert('Could not create settlement: ' + (e.message || 'unknown'));
+            }
+        });
+
+        // -----------------------------------------------------------------
+        // Initialization
+        // -----------------------------------------------------------------
+        function onDomReady(fn) {
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', fn);
+            } else {
+                fn();
+            }
+        }
+
+        onDomReady(bootstrap);
+
+    })();
+    </script>
+
+</body>
+</html>
