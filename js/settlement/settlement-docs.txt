@@ -1,14 +1,14 @@
 # SETTLEMENT SYSTEM — ARCHITECTURE AND REFERENCE
 
-Version 5.2
+Version 5.3
 Status: current
 Scope: settlement domain and its direct integrations
 Purpose: reference for the settlement system as it is implemented
-Supersedes: settlement-docs.txt v5.1
+Supersedes: settlement-docs.txt v5.2
 
 This document describes the settlement system after the architectural
 refactor defined by the Settlement Architecture Contracts, and after the
-v5.2 year-transition hardening pass. It documents the modules that
+v5.3 crime/prosperity cycle-break pass. It documents the modules that
 actually exist, their responsibilities, and the contracts they honor.
 Where legacy files have been replaced, the replacement is named.
 
@@ -221,6 +221,7 @@ Canonical (persistent authoritative state):
     hasWatch
     watchSize
     watchFounded
+    baseProsperity
     civilLaws
     demolitionHistory
 
@@ -271,6 +272,50 @@ call site's trust level. `SettlementQueries` documents three tiers:
 The rule: mutate nothing. Live and shallow-copy reads are
 optimizations for trusted callers, not licenses to write. If a
 mutation is needed, go through a command.
+
+**BASE PROSPERITY FIELD.**
+`baseProsperity` is a canonical settlement field, initialized by
+`SettlementFactory.getDefaultSettlement` to `50`. It is the neutral
+baseline input for prosperity-derived calculations that cannot call
+`SettlementProsperityQueries` without creating a query cycle.
+
+Rationale:
+
+  - `SettlementProsperityQueries.getProsperity` consumes the crime
+    rate (via `SettlementCrimeQueries.getCrimeRateValue`) as one of
+    its modifiers.
+
+  - `SettlementCrimeQueries.getCrimeRate` consumes prosperity as one
+    of its modifiers.
+
+If crime read its prosperity modifier by calling
+`SettlementProsperityQueries.getProsperityValue`, the two modules
+would form a cycle (crime → prosperity → crime). The architecture
+forbids cycles (§20 RECURSION GUARD POLICY: the dependency graph must
+be fixed, not masked by a boolean flag).
+
+`baseProsperity` breaks the cycle:
+
+  - `SettlementCrimeQueries` reads `settlement.baseProsperity`
+    directly. It does not call `SettlementProsperityQueries`.
+
+  - `SettlementProsperityQueries.getProsperity` does NOT read
+    `settlement.baseProsperity`. It uses
+    `SettlementProsperityDefinitions.BASE_PROSPERITY` as its constant
+    baseline and returns the derived prosperity value. The two inputs
+    are intentionally decoupled: baseProsperity is the crime-facing
+    stored input; BASE_PROSPERITY is the prosperity-facing constant.
+
+Coupling invariant: the factory default (50) MUST equal
+`SettlementProsperityDefinitions.BASE_PROSPERITY` (50). If the
+constant changes, the factory default must change with it. This is a
+data-level invariant enforced by code review, not by an import — an
+import would reintroduce the cycle.
+
+No command mutates `baseProsperity`. It is initialized by the factory
+and is a read-only input from the domain's perspective. A future
+`SettlementProsperityCommands.setBaseProsperity` (not currently
+implemented) would be the sanctioned way to change it.
 
 ---
 
@@ -329,6 +374,14 @@ was fabricated or silently zeroed:
     now resolves the character via
     `CharacterQueries.getCharacterById(leader.characterId)` and reads
     traits from that projection.
+
+The v5.3 cycle-break pass eliminated a fourth:
+
+  - **Crime-rate prosperity modifier.** Prior revisions read
+    `settlement.prosperity`, which `SettlementFactory` never set.
+    The prosperity term in the crime rate was silently 0 for every
+    settlement. The fix reads `settlement.baseProsperity`, a canonical
+    factory-initialized field. See §3 BASE PROSPERITY FIELD.
 
 **Character enumeration.**
 Three settlement query modules computed settlement-level facts over
@@ -456,6 +509,13 @@ handling wraps its command call in its own try/catch and converts the
 exception into a `{ success: false, code: 'SAVE_FAILED', ... }` result.
 The annual processor is one such caller (see §26).
 
+**Candidate-write ordering.**
+The candidate is written to the in-memory canonical store BEFORE
+persist runs. On persist failure, the in-memory record and the stored
+record diverge until the caller reloads, retries, or re-commits. See
+CANDIDATE-WRITE ORDERING in `settlement-command-commit.js` for the
+recovery contract and the reasoning behind the ordering.
+
 ---
 
 # 7. QUERY CONTRACT
@@ -488,6 +548,15 @@ Two-tier status queries:
     Current pairs:
         getReligiousUnity        / getReligiousUnityStatus
         getDominantReligion      / getDominantReligionStatus
+
+Query cycles:
+    The settlement query graph is acyclic. Where a derived query would
+    naturally read another derived query in the opposite direction
+    (crime → prosperity → crime), the cycle is broken by a canonical
+    stored input. The crime-rate prosperity input is the current
+    example: it reads `settlement.baseProsperity` rather than calling
+    `SettlementProsperityQueries.getProsperityValue`. See §3 BASE
+    PROSPERITY FIELD.
 
 ---
 
@@ -557,6 +626,16 @@ alternative — `Math.floor(undefined)` producing `NaN` — silently
 poisoned the downstream calculation. The settlement-docs §4 rule
 ("missing is not the same as zero") applies to definitions as well as
 to canonical data.
+
+**BASE_PROSPERITY vs baseProsperity.**
+`SettlementProsperityDefinitions.BASE_PROSPERITY` is a definition
+constant used by `SettlementProsperityQueries.getProsperity` as its
+neutral baseline. `settlement.baseProsperity` (a canonical field, see
+§3) is a stored value read by `SettlementCrimeQueries.getCrimeRate`
+for the crime-rate prosperity modifier. The two are intentionally
+decoupled: one is a query-layer constant, the other is a
+factory-initialized canonical input. They currently have the same
+value (50); see §3 BASE PROSPERITY FIELD for the coupling invariant.
 
 ---
 
@@ -815,6 +894,22 @@ it is applied by SettlementAnnualProcessor as an explicit step.
 Persisted values named prosperity on old settlement records are ignored
 by the new architecture.
 
+**Crime-rate prosperity input.**
+`SettlementCrimeQueries.getCrimeRate` reads
+`settlement.baseProsperity` (a canonical factory-initialized field)
+for its prosperity modifier, NOT `SettlementProsperityQueries.
+getProsperityValue` and NOT `settlement.prosperity`. See §3 BASE
+PROSPERITY FIELD for the field's definition, its coupling to
+`SettlementProsperityDefinitions.BASE_PROSPERITY`, and the cycle-
+avoidance rationale (crime → prosperity → crime is acyclic because
+crime reads a stored input, not a derived one).
+
+The crime → prosperity → crime cycle is the only place in the
+settlement query graph where a natural two-way read was broken by a
+canonical field. A future prosperity input that needs the same
+treatment should follow the same pattern: add a stored input field,
+document it in §3, and break the cycle at the query layer.
+
 **Character input.**
 Role-density, master-concentration, underserved-roles, and average-
 skill modifiers are computed over every living character whose
@@ -976,7 +1071,10 @@ silently disappear. Other subscribers still receive the event.
 failure. The boolean must be inspected. `SettlementCommandCommit.
 _saveMasterData` inspects it and throws an `Error` on false, reading
 `getLastSaveError()` for the underlying reason. The published event is
-NOT dispatched after a failed persist.
+NOT dispatched after a failed persist. See §6 (COMMAND TRANSACTION
+CONTRACT, Persistence failure) and CANDIDATE-WRITE ORDERING in
+settlement-command-commit.js for the in-memory-state-ahead-of-storage
+consequence and the caller's recovery obligations.
 
 ---
 
@@ -1000,7 +1098,10 @@ Composition is legal. A query may call another query. A rule may call
 another rule. A renderer may call another renderer.
 
 If a genuine cycle exists, the dependency graph must be fixed, not
-masked by a boolean flag.
+masked by a boolean flag. The crime → prosperity → crime cycle is the
+current canonical example of this policy applied: it was fixed by
+adding the `baseProsperity` field to break the cycle, not by adding a
+guard flag. See §3 BASE PROSPERITY FIELD.
 
 ---
 
@@ -1115,6 +1216,15 @@ Commands never display UI and never show toasts.
 Commands that mutate canonical data may throw on persistence failure.
 The throw propagates from SettlementCommandCommit. See §6
 (COMMAND TRANSACTION CONTRACT, Persistence failure).
+
+**baseProsperity is factory-initialized only.**
+No command in the current settlement system mutates `baseProsperity`.
+It is set by `SettlementFactory.getDefaultSettlement` and treated as
+a read-only canonical input thereafter. `SettlementCrimeQueries`
+reads it; `SettlementProsperityQueries` does not (see §16). A future
+`SettlementProsperityCommands.setBaseProsperity(locationId, value)`
+would be the sanctioned way to change it. It does not currently
+exist.
 
 ---
 
@@ -1417,6 +1527,7 @@ The settlement refactor is complete when:
     - Allocation and spending are semantically distinct.
     - Debt and wealth are independently represented.
     - Prosperity is deterministic outside explicit annual simulation.
+    - The settlement query dependency graph is acyclic.
     - All domain definitions have one authoritative owner.
     - Documentation matches the architecture actually implemented.
 
@@ -1490,6 +1601,36 @@ Additional mechanical requirements introduced in v5.2:
       "undefined". openBudgetModal guards against sub-object
       nullability that would throw a TypeError on property access.
 
+Additional mechanical requirements introduced in v5.3:
+
+    - SettlementFactory.getDefaultSettlement initializes
+      `baseProsperity: 50`. The value MUST equal
+      SettlementProsperityDefinitions.BASE_PROSPERITY (currently 50).
+      See §3 BASE PROSPERITY FIELD for the coupling invariant.
+    - SettlementCrimeQueries.getCrimeRate reads
+      `settlement.baseProsperity`, NOT `settlement.prosperity` (which
+      the factory never set) and NOT
+      SettlementProsperityQueries.getProsperityValue (which would
+      create a crime → prosperity → crime cycle). The prior read of
+      `settlement.prosperity` silently zeroed the prosperity modifier
+      for every settlement. See §3 and §16.
+    - No command mutates `baseProsperity`. It is factory-initialized
+      and read-only. A future
+      SettlementProsperityCommands.setBaseProsperity would be the
+      sanctioned way to change it.
+    - settlement-command-commit.js documents CANDIDATE-WRITE ORDERING:
+      the candidate is written to the in-memory canonical store
+      BEFORE persist runs. On persist failure, in-memory and storage
+      diverge until the caller reloads, retries, or re-commits. This
+      is correct-by-design; the recovery contract is documented in
+      §6 and in the module header.
+    - The settlement query dependency graph is acyclic. The only
+      natural two-way read (crime ↔ prosperity) is broken by the
+      stored `baseProsperity` field. Adding a new derived-value input
+      that would create a cycle requires the same treatment: add a
+      stored field, document it in §3, and break the cycle at the
+      query layer.
+
 ---
 
 # 28. AMENDMENT RULE
@@ -1532,104 +1673,53 @@ The settlement system has had enough of those.
 | 5.0     | 2026-10-16 | Post-refactor baseline. Hydrate-from-masterData. Clone returns. Command-commit helper. Definitions split. |
 | 5.1     | 2026-10-27 | Modal infrastructure fix. getCurrentYearSafe removal. Legacy file inventory reconciliation.              |
 | 5.2     | 2026-10-28 | Year-transition hardening. Persistence truth. Character-enumeration fixes. Reason codes.                 |
+| 5.3     | 2026-11-02 | Crime/prosperity query cycle break. baseProsperity canonical field. Candidate-write ordering doc.       |
 
-v5.2 changes:
+v5.3 changes:
 
-  **Persistence truth.**
-    - SettlementCommandCommit inspects the boolean return of
-      saveMasterData() and throws on false, using getLastSaveError().
-      The prior revision called saveMasterData() and ignored the
-      result, reintroducing the Pattern C bug documented in
-      storage.js's DOMAIN PERSIST CONTRACT. Every settlement command
-      silently reported success on every failed save; the annual
-      processor's per-settlement history records were lost on quota
-      failure with no signal.
+  **Crime/prosperity cycle break.**
+    - `SettlementFactory.getDefaultSettlement` now initializes
+      `baseProsperity: 50`. This is the canonical stored input read
+      by `SettlementCrimeQueries.getCrimeRate` for its prosperity
+      modifier.
+    - `SettlementCrimeQueries.getCrimeRate` now reads
+      `settlement.baseProsperity`, NOT `settlement.prosperity` (which
+      the factory never set). The prior read silently zeroed the
+      prosperity modifier for every settlement.
+    - The crime → prosperity → crime cycle that would have resulted
+      from having crime call `SettlementProsperityQueries.
+      getProsperityValue` is broken by the stored `baseProsperity`
+      field. This is the canonical example of the §20 RECURSION
+      GUARD POLICY applied: a cycle is fixed by adding a stored
+      input, not by masking the cycle with a guard flag.
+    - Coupling invariant: the factory default (50) MUST equal
+      `SettlementProsperityDefinitions.BASE_PROSPERITY` (50). If the
+      constant changes, the factory default must change with it. This
+      is enforced by code review, not by an import (an import would
+      reintroduce the cycle).
+    - No command mutates `baseProsperity`. A future
+      `SettlementProsperityCommands.setBaseProsperity` would be the
+      sanctioned way to change it. It does not currently exist.
 
-  **Schema declaration.**
-    - settlementData is now declared in storage-schema.js's factory
-      and normalization pass. Every fresh install and every old save
-      gets the object up front, matching the shape
-      SettlementCommandCommit expects. Prior revisions relied on lazy
-      creation on first commit.
+  **Candidate-write ordering.**
+    - `settlement-command-commit.js` header gains a
+      CANDIDATE-WRITE ORDERING section. It documents that the
+      candidate is written to the in-memory canonical store BEFORE
+      persist runs, so on persist failure the in-memory state is
+      ahead of storage until the caller reloads, retries, or
+      re-commits the prior record. This is correct-by-design; the
+      caller's recovery obligations are now explicit.
 
-  **Annual processor year contract.**
-    - processSettlementAnnual and processAllSettlementsAnnual accept
-      an explicit options.year. When supplied and valid, that year
-      drives the history record. When supplied and invalid, the call
-      throws. When omitted, the current year is used. Prior revisions
-      read the clock directly inside the processor, which meant an
-      N-year advance produced N history entries tagged with the same
-      wall-clock year.
-
-  **Per-settlement failure isolation.**
-    - processAllSettlementsAnnual catches per-settlement failures and
-      records them in result.failures, continuing to the next
-      settlement. The prior revision threw and aborted the entire
-      batch on the first failure. With the new throw-on-persist
-      contract, that would have been catastrophic for a
-      multi-settlement advance.
-
-  **Character-lifecycle integration.**
-    - CharacterLifecycle.advanceMortality now runs the settlement
-      annual processor once per simulated year, after the character
-      mortality pass for that year, using the same year. Settlement
-      failures are collected into result.settlementFailures and
-      logged, but do not abort the character loop. The step is
-      optional (skipped when the processor is absent or when
-      options.skipSettlements === true) and area-guarded (a thrown
-      exception from the processor becomes a single failure entry
-      covering all settlements).
-
-  **Character enumeration.**
-    - SettlementEducationQueries and SettlementProsperityQueries
-      enumerate characters via CharacterQueries.getAllCharacters()
-      plus LocationQueries.getCurrentLocationId, not via
-      CharacterQueries.getCharactersInLocations (the raw-field
-      filter). Characters placed only by move records were not
-      counted before; the under-count silently shifted literacy
-      rate, role diversity, master concentration, and average skill.
-      The under-count propagated into prosperity modifiers.
-
-  **Leader traits.**
-    - SettlementProsperityQueries resolves the leader's traits via
-      CharacterQueries.getCharacterById(leader.characterId). The
-      prior revision read leader.character.traits from an assignment
-      projection that never carried a `character` field. The
-      government-leader modifier was silently 0 for every settlement.
-
-  **Religion reason codes.**
-    - SettlementReligionQueries returns null (never a fabricated 50)
-      for religious unity when the settlement has zero counted
-      population or the breakdown is unavailable. Both states are
-      distinguished via getReligiousUnityStatus.
-      getDominantReligion distinguishes "no religions" from
-      "unaffiliated majority" via getDominantReligionStatus. The
-      fabricated 50 flowed into SettlementProsperityQueries.
-      modifiers.religiousUnity as a neutral reading that looked
-      correct but was meaningless.
-
-  **Data access contract.**
-    - SettlementQueries.getAllSettlements returns shallow copies of
-      canonical records. getFeatureIds returns a defensive slice. The
-      live canonical accessor is getSettlementData, documented as
-      such. See §3 (Data access contract).
-
-  **View model hardening.**
-    - SettlementViewModels.buildFinancialReportView accepts an
-      optional options.year and computes isHistorical from
-      reportYear !== getCurrentYear(). buildSettlementSummary exposes
-      religiousUnityReason and dominantReligionReason alongside the
-      nullable values. Definition reads that feed view models return
-      null for the affected field when the definition is missing or
-      malformed, instead of producing NaN.
-
-  **Modal reason rendering.**
-    - Settlement modals render honest copy for every religion reason
-      code. openSettlementDetailsModal distinguishes "No population"
-      from "Unavailable" from "Unaffiliated majority" from "No
-      religions". openManageFeaturesModal routes feature maintenance
-      and cost through _fmtNumber. openBudgetModal guards against
-      sub-object nullability.
+  **Documentation.**
+    - §3 gains the BASE PROSPERITY FIELD section.
+    - §16 (PROSPERITY CONTRACT) gains the Crime-rate prosperity input
+      section.
+    - §22 (COMMAND REFERENCE) gains a note that no command mutates
+      `baseProsperity`.
+    - §27 gains four v5.3 completion requirements, including the
+      explicit statement that the settlement query graph is acyclic
+      and the crime ↔ prosperity cycle is broken by the stored
+      input.
 
 ---
 
