@@ -2,29 +2,51 @@
  * =============================================================================
  * STILL WATERS - RELIGION GODS TAB (js/tabs/religion-gods-tab.js)
  * =============================================================================
- * 
- * A modular tab for managing gods within a religion.
- * 
+ *
+ * LOCATION: js/tabs/religion-gods-tab.js
+ *
+ * A TabManager-rendered tab for managing the gods of a religion's pantheon.
+ *
  * FEATURES:
- *   - View all gods in a religion
- *   - Add new god with name, domain, symbol, description, gender, alignment
- *   - Edit existing god
- *   - Remove god with confirmation
- *   - Filter gods by domain
- *   - Search gods by name
- *   - Sort gods by name or domain
- *   - Show god details in expandable cards
- * 
- * DEPENDENCIES:
- *   - ReligionState, ReligionQueries, ReligionCommands
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- * 
- * ICON POLICY: Uses icons.js via _getIcon() - NO EMOJIS
- * 
+ *   - List gods with filters (search + domain)
+ *   - Sort by name or domain
+ *   - Add god (modal)
+ *   - Edit god (modal)
+ *   - Remove god (confirm + removeGod)
+ *   - Optional parent-god reference
+ *
+ * REGISTRATION (TabManager):
+ *   TabManager.register('religion', 'gods', renderAdapter)
+ *
+ *   renderAdapter(container, context) → renderGodsTab(container, context.religion)
+ *
+ * DEPENDENCIES (resolved at call time — no load-time guards):
+ *   - TabManager            (js/core/tab-manager.js)
+ *   - ReligionQueries       (js/religion/religion-queries.js)
+ *   - ReligionCommands      (js/religion/religion-commands.js)
+ *   - formatting.js         (escapeHtml)
+ *   - icons.js              (Icons — chrome icons via _getIcon; no emoji)
+ *   - ui.js                 (showToast)
+ *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
+ *
+ * ICON POLICY: no emojis. God domain is text-only in this tab (the
+ * domain value is a short string; the domain icon emoji set from the
+ * original was forbidden). If you later want per-domain icons, register
+ * them through icons.js and use _getIcon('DOMAIN_' + domain) with the
+ * standard CIRCLE fallback. Do NOT reintroduce a local emoji map.
+ *
+ * DOMAIN ENUM: the modal accepts a free-form domain string; the
+ * canonical list (if any) would live in religion-constants.js. This tab
+ * does not enforce a closed set, matching the original behaviour. If
+ * religion-constants.js starts exporting a GOD_DOMAINS enum, switch the
+ * input to a <select> seeded from it. Do NOT hardcode the list here.
+ *
+ * INLINE STYLES: none. All classes are in css/religion-tabs.css.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
@@ -32,21 +54,23 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _getIcon(name) {
         if (window.Icons && window.Icons[name]) return window.Icons[name];
-        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
         return '';
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') window._showToast(msg, type);
-        else if (typeof window.showToast === 'function') window.showToast(msg, type);
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
     function _openModal(options) {
@@ -54,22 +78,12 @@
         return null;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
-    }
-
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             window.confirmDialog(message, title, onConfirm);
-        } else if (typeof window._confirmDialog === 'function') {
-            window._confirmDialog(message, title, onConfirm);
-        } else if (confirm(message)) {
+        } else if (typeof confirm === 'function' && confirm(message)) {
             onConfirm();
         }
-    }
-
-    function _getReligionState() {
-        return typeof window.ReligionState !== 'undefined' ? window.ReligionState : null;
     }
 
     function _getReligionQueries() {
@@ -80,583 +94,582 @@
         return typeof window.ReligionCommands !== 'undefined' ? window.ReligionCommands : null;
     }
 
-    function _getGodsByReligion(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getGodsByReligion === 'function') {
-            return window.ReligionQueries.getGodsByReligion(religionId);
-        }
-        return [];
-    }
+    // =========================================================================
+    // 2. TAB-LOCAL UI STATE
+    // =========================================================================
 
-    function _getReligiousTraitName(trait) {
-        if (typeof window.getReligiousTraitName === 'function') {
-            return window.getReligiousTraitName(trait);
-        }
-        var names = {
-            'monotheistic': 'Monotheistic',
-            'polytheistic': 'Polytheistic',
-            'syncretic': 'Syncretic',
-            'evangelical': 'Evangelical',
-            'animist': 'Animist'
-        };
-        return names[trait] || trait;
-    }
-
-    function _getGenderName(gender) {
-        var names = {
-            'male': 'Male',
-            'female': 'Female',
-            'neuter': 'Neuter'
-        };
-        return names[gender] || gender;
-    }
-
-    function _getAlignmentName(alignment) {
-        var names = {
-            'good': 'Good',
-            'neutral': 'Neutral',
-            'evil': 'Evil',
-            'chaotic': 'Chaotic',
-            'lawful': 'Lawful'
-        };
-        return names[alignment] || alignment;
-    }
-
-    function _getDomainIcon(domain) {
-        var icons = {
-            'war': '⚔',
-            'fertility': '🌾',
-            'wisdom': '📖',
-            'death': '💀',
-            'love': '❤',
-            'justice': '⚖',
-            'craft': '🔨',
-            'nature': '🌿',
-            'sky': '☀',
-            'sea': '🌊',
-            'fire': '🔥',
-            'earth': '⛰'
-        };
-        return icons[domain] || '✦';
-    }
-
-    var _godState = {
-        searchTerm: '',
-        domainFilter: 'all',
+    var _state = {
+        search: '',
+        domain: 'all',
         sortBy: 'name'
     };
 
+    function _resetState() {
+        _state.search = '';
+        _state.domain = 'all';
+        _state.sortBy = 'name';
+    }
+
     // =========================================================================
-    // 2. RENDER FUNCTION
+    // 3. RENDER
     // =========================================================================
 
     function renderGodsTab(container, religion) {
-        if (!religion) {
-            container.innerHTML = '<div style="padding:20px;color:var(--dim);">No religion loaded</div>';
+        if (!container) return;
+
+        if (!religion || typeof religion !== 'object' || !religion.id) {
+            container.innerHTML =
+                '<div class="rt-empty">Select a religion to view its pantheon.</div>';
             return;
         }
 
-        var RS = _getReligionState();
         var RQ = _getReligionQueries();
         var RC = _getReligionCommands();
 
-        if (!RS || !RQ || !RC) {
-            container.innerHTML = '<div style="padding:20px;color:var(--danger);">Religion system not available</div>';
+        if (!RQ || !RC) {
+            container.innerHTML =
+                '<div class="rt-unavailable">Religion system not available.</div>';
             return;
         }
 
-        var gods = _getGodsByReligion(religion.id);
-        var isDeprecated = religion.isDeprecated || false;
+        _resetState();
 
-        var starIcon = _getIcon('STAR_4');
-        var plusIcon = _getIcon('PLUS');
-        var searchIcon = _getIcon('SEARCH');
-        var editIcon = _getIcon('EDIT');
-        var trashIcon = _getIcon('TRASH');
+        var gods = RQ.getGodsByReligion(religion.id) || [];
+        var isDeprecated = religion.isDeprecated === true;
 
-        // Apply filters and sorting
-        var filtered = filterGods(gods);
+        // Collect domains for the filter dropdown.
+        var domainSet = Object.create(null);
+        for (var i = 0; i < gods.length; i++) {
+            var g = gods[i];
+            if (g && typeof g.domain === 'string' && g.domain.length > 0) {
+                domainSet[g.domain] = true;
+            }
+        }
+        var domainOptions = '<option value="all">All Domains</option>';
+        var domainKeys = Object.keys(domainSet).sort();
+        for (var d = 0; d < domainKeys.length; d++) {
+            var dom = domainKeys[d];
+            domainOptions += '<option value="' + _escapeHtml(dom) + '">' +
+                _escapeHtml(dom.charAt(0).toUpperCase() + dom.slice(1)) +
+                '</option>';
+        }
 
-        var html = 
-            '<div class="religion-gods-tab" style="padding:4px;">' +
+        var filtered = _filterGods(gods);
 
-            // Header
-            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:12px;">' +
-            '<div style="display:flex;align-items:center;gap:8px;">' +
-            '<span style="font-size:0.7rem;font-weight:bold;color:var(--accent);">' + starIcon + ' Gods</span>' +
-            '<span style="font-size:0.55rem;color:var(--dim);">(' + gods.length + ')</span>' +
-            '</div>' +
-            (!isDeprecated ? '<button id="addGodBtn" class="btn primary small" style="padding:4px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">' + plusIcon + ' Add God</button>' : '') +
-            '</div>' +
+        var html =
+            '<div class="rt-tab">' +
 
-            // Filters
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 8px 0;">' +
-            '<div style="flex:1;min-width:120px;">' +
-            '<input type="text" id="godsSearchInput" placeholder="Search gods..." value="' + _escapeHtml(_godState.searchTerm) + '" style="width:100%;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '</div>' +
-            '<select id="godsDomainFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '<option value="all" ' + (_godState.domainFilter === 'all' ? 'selected' : '') + '>All Domains</option>' +
-            '<option value="war" ' + (_godState.domainFilter === 'war' ? 'selected' : '') + '>War</option>' +
-            '<option value="fertility" ' + (_godState.domainFilter === 'fertility' ? 'selected' : '') + '>Fertility</option>' +
-            '<option value="wisdom" ' + (_godState.domainFilter === 'wisdom' ? 'selected' : '') + '>Wisdom</option>' +
-            '<option value="death" ' + (_godState.domainFilter === 'death' ? 'selected' : '') + '>Death</option>' +
-            '<option value="love" ' + (_godState.domainFilter === 'love' ? 'selected' : '') + '>Love</option>' +
-            '<option value="justice" ' + (_godState.domainFilter === 'justice' ? 'selected' : '') + '>Justice</option>' +
-            '<option value="craft" ' + (_godState.domainFilter === 'craft' ? 'selected' : '') + '>Craft</option>' +
-            '<option value="nature" ' + (_godState.domainFilter === 'nature' ? 'selected' : '') + '>Nature</option>' +
-            '<option value="sky" ' + (_godState.domainFilter === 'sky' ? 'selected' : '') + '>Sky</option>' +
-            '<option value="sea" ' + (_godState.domainFilter === 'sea' ? 'selected' : '') + '>Sea</option>' +
-            '<option value="fire" ' + (_godState.domainFilter === 'fire' ? 'selected' : '') + '>Fire</option>' +
-            '<option value="earth" ' + (_godState.domainFilter === 'earth' ? 'selected' : '') + '>Earth</option>' +
-            '</select>' +
-            '<select id="godsSortBy" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '<option value="name" ' + (_godState.sortBy === 'name' ? 'selected' : '') + '>Sort: Name</option>' +
-            '<option value="domain" ' + (_godState.sortBy === 'domain' ? 'selected' : '') + '>Sort: Domain</option>' +
-            '</select>' +
-            '<button id="clearGodsFilters" class="btn small" style="padding:4px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Clear</button>' +
+            // ---- Header ----
+            '<div class="rt-tab__header">' +
+              '<div class="rt-tab__header-title">Gods' +
+                '<span class="rt-tab__header-count">(' + gods.length + ')</span>' +
+              '</div>' +
+              '<div class="rt-tab__header-actions">' +
+                (!isDeprecated
+                  ? '<button type="button" class="rt-btn rt-btn--primary add-god-btn">Add God</button>'
+                  : '') +
+              '</div>' +
             '</div>' +
 
-            // Gods list
-            (filtered.length > 0 ?
-                renderGodList(filtered, religion) :
-                '<div style="padding:20px;text-align:center;color:var(--dim);font-size:0.6rem;">' + starIcon + ' No gods found' +
-                (gods.length > 0 ? ' matching your filters' : ' in this religion') +
-                '</div>'
-            ) +
+            // ---- Filters ----
+            '<div class="rt-tab__filters">' +
+              '<div class="rt-search">' +
+                '<input type="text" class="gods-search"' +
+                  ' placeholder="Search gods..."' +
+                  ' value="' + _escapeHtml(_state.search) + '">' +
+              '</div>' +
+              '<select class="gods-domain-filter">' + domainOptions + '</select>' +
+              '<select class="gods-sort-by">' +
+                '<option value="name">Sort: Name</option>' +
+                '<option value="domain">Sort: Domain</option>' +
+              '</select>' +
+              '<button type="button" class="rt-clear clear-gods-filters">Clear</button>' +
+            '</div>' +
+
+            // ---- List ----
+            (filtered.length > 0
+              ? _renderList(filtered, religion)
+              : _renderEmpty(gods.length > 0)) +
 
             '</div>';
 
         container.innerHTML = html;
 
-        attachGodsTabHandlers(container, religion);
+        // Restore filter selections after innerHTML assignment.
+        var df = container.querySelector('.gods-domain-filter');
+        if (df) df.value = _state.domain;
+        var sf = container.querySelector('.gods-sort-by');
+        if (sf) sf.value = _state.sortBy;
+
+        _attachHandlers(container, religion);
+    }
+
+    function _renderEmpty(hadGods) {
+        var msg = hadGods
+            ? 'No gods match your filters.'
+            : 'This religion has no gods yet.';
+        var hint = hadGods
+            ? '<span class="rt-empty__sub">Adjust the filters above.</span>'
+            : '';
+        return '<div class="rt-empty">' + msg + hint + '</div>';
     }
 
     // =========================================================================
-    // 3. FILTER GODS
+    // 4. FILTER / SORT
     // =========================================================================
 
-    function filterGods(gods) {
-        var search = _godState.searchTerm.toLowerCase();
-        var domain = _godState.domainFilter;
-        var sortBy = _godState.sortBy;
+    function _filterGods(gods) {
+        var search = _state.search ? _state.search.toLowerCase() : '';
+        var domain = _state.domain;
+        var sortBy = _state.sortBy;
 
-        var result = gods.slice();
+        var out = [];
+        for (var i = 0; i < gods.length; i++) {
+            var g = gods[i];
+            if (!g) continue;
 
-        // Search filter
-        if (search) {
-            result = result.filter(function(g) {
-                var name = (g.displayName || g.name || '').toLowerCase();
-                return name.indexOf(search) !== -1;
-            });
+            if (search) {
+                var full = String(
+                    (g.displayName || g.name || '') + ' ' + (g.name || '')
+                ).toLowerCase();
+                if (full.indexOf(search) === -1) continue;
+            }
+
+            if (domain !== 'all' && g.domain !== domain) continue;
+
+            out.push(g);
         }
 
-        // Domain filter
-        if (domain !== 'all') {
-            result = result.filter(function(g) { return g.domain === domain; });
-        }
-
-        // Sort
         if (sortBy === 'name') {
-            result.sort(function(a, b) {
-                return (a.displayName || a.name || '').localeCompare(b.displayName || b.name || '');
+            out.sort(function (a, b) {
+                var an = String(a.displayName || a.name || '');
+                var bn = String(b.displayName || b.name || '');
+                return an.localeCompare(bn);
             });
         } else if (sortBy === 'domain') {
-            result.sort(function(a, b) {
-                return (a.domain || '').localeCompare(b.domain || '');
+            out.sort(function (a, b) {
+                var ad = String(a.domain || '');
+                var bd = String(b.domain || '');
+                if (ad !== bd) return ad.localeCompare(bd);
+                // Stable secondary sort by name.
+                var an = String(a.displayName || a.name || '');
+                var bn = String(b.displayName || b.name || '');
+                return an.localeCompare(bn);
+            });
+        } else {
+            out.sort(function (a, b) {
+                var an = String(a.displayName || a.name || '');
+                var bn = String(b.displayName || b.name || '');
+                return an.localeCompare(bn);
             });
         }
 
-        return result;
+        return out;
     }
 
     // =========================================================================
-    // 4. RENDER GOD LIST
+    // 5. LIST
     // =========================================================================
 
-    function renderGodList(gods, religion) {
-        var editIcon = _getIcon('EDIT');
-        var trashIcon = _getIcon('TRASH');
-        var starIcon = _getIcon('STAR_4');
-
-        var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:400px;overflow-y:auto;padding-right:4px;">';
+    function _renderList(gods, religion) {
+        var isDeprecated = religion.isDeprecated === true;
+        var html = '<div class="rt-tab__body rt-tab__body--grid">';
 
         for (var i = 0; i < gods.length; i++) {
-            var god = gods[i];
-            var domainIcon = _getDomainIcon(god.domain);
-            var genderName = _getGenderName(god.gender);
-            var alignmentName = _getAlignmentName(god.alignment);
-            var displayName = god.displayName || god.name;
-            var symbol = god.symbol || '✦';
-
-            var isDeprecated = religion.isDeprecated || false;
+            var g = gods[i];
+            var displayName = g.displayName || g.name || '';
+            var slug = g.name || '';
+            var symbol = g.symbol || '';
+            var domainText = g.domain
+                ? (g.domain.charAt(0).toUpperCase() + g.domain.slice(1))
+                : '—';
+            var genderText = g.gender
+                ? (g.gender.charAt(0).toUpperCase() + g.gender.slice(1))
+                : '—';
+            var alignmentText = g.alignment
+                ? (g.alignment.charAt(0).toUpperCase() + g.alignment.slice(1))
+                : '—';
 
             html +=
-                '<div class="god-card" data-god-id="' + god.id + '" style="' +
-                'background:var(--bg2);border:1px solid var(--border-light);border-radius:6px;' +
-                'padding:10px 12px;' +
-                '">' +
-                '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
-                '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">' +
-                '<span style="font-size:1.2rem;">' + symbol + '</span>' +
-                '<div style="min-width:0;">' +
-                '<div style="font-size:0.75rem;font-weight:bold;">' + _escapeHtml(displayName) + '</div>' +
-                '<div style="font-size:0.55rem;color:var(--dim);">' + _escapeHtml(god.name) + '</div>' +
-                '</div>' +
-                '</div>' +
-                (isDeprecated ? '' :
-                    '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-                    '<button class="edit-god-btn" data-god-id="' + god.id + '" style="background:transparent;border:none;color:var(--accent);cursor:pointer;font-size:0.6rem;padding:2px 4px;" title="Edit">' + editIcon + '</button>' +
-                    '<button class="delete-god-btn" data-god-id="' + god.id + '" style="background:transparent;border:none;color:var(--danger);cursor:pointer;font-size:0.6rem;padding:2px 4px;" title="Delete">' + trashIcon + '</button>' +
-                    '</div>'
-                ) +
-                '</div>' +
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:0.5rem;color:var(--dim);">' +
-                '<span>' + domainIcon + ' ' + _escapeHtml(god.domain.charAt(0).toUpperCase() + god.domain.slice(1)) + '</span>' +
-                '<span>◈ ' + _escapeHtml(genderName) + '</span>' +
-                '<span>◈ ' + _escapeHtml(alignmentName) + '</span>' +
-                '</div>' +
-                (god.description ? '<div style="font-size:0.5rem;color:var(--dim);margin-top:4px;line-height:1.3;">' + _escapeHtml(god.description) + '</div>' : '') +
-                (god.parentGodId ? '<div style="font-size:0.45rem;color:var(--dim);margin-top:2px;">Parent: ' + _escapeHtml(god.parentGodId) + '</div>' : '') +
+                '<div class="rt-god-card" data-god-id="' + _escapeHtml(g.id) + '">' +
+                  '<div class="rt-god-card__header">' +
+                    '<div class="rt-god-card__identity">' +
+                      (symbol
+                        ? '<span class="rt-god-card__glyph">' +
+                          _escapeHtml(symbol) + '</span>'
+                        : '') +
+                      '<div>' +
+                        '<div class="rt-god-card__name">' + _escapeHtml(displayName) + '</div>' +
+                        (slug && slug !== displayName
+                          ? '<div class="rt-god-card__slug">' + _escapeHtml(slug) + '</div>'
+                          : '') +
+                      '</div>' +
+                    '</div>' +
+                    (isDeprecated
+                      ? ''
+                      : '<div class="rt-god-card__actions">' +
+                          '<button type="button" class="rt-btn rt-btn--icon edit-god-btn"' +
+                            ' data-god-id="' + _escapeHtml(g.id) + '"' +
+                            ' title="Edit">Edit</button>' +
+                          '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger delete-god-btn"' +
+                            ' data-god-id="' + _escapeHtml(g.id) + '"' +
+                            ' title="Delete">Delete</button>' +
+                        '</div>') +
+                  '</div>' +
+                  '<div class="rt-god-card__meta">' +
+                    '<span>' + _escapeHtml(domainText) + '</span>' +
+                    '<span>' + _escapeHtml(genderText) + '</span>' +
+                    '<span>' + _escapeHtml(alignmentText) + '</span>' +
+                  '</div>' +
+                  (g.description
+                    ? '<div class="rt-god-card__desc">' + _escapeHtml(g.description) + '</div>'
+                    : '') +
+                  (g.parentGodId
+                    ? '<div class="rt-god-card__parent">Parent: ' +
+                      _escapeHtml(g.parentGodId) + '</div>'
+                    : '') +
                 '</div>';
         }
 
         html += '</div>';
-
         return html;
     }
 
     // =========================================================================
-    // 5. EVENT HANDLERS
+    // 6. HANDLERS
     // =========================================================================
 
-    function attachGodsTabHandlers(container, religion) {
+    function _attachHandlers(container, religion) {
         var RC = _getReligionCommands();
-
         if (!RC) return;
 
-        // Search
-        var searchInput = document.getElementById('godsSearchInput');
-        if (searchInput) {
-            searchInput._searchTimeout = null;
-            searchInput.oninput = function() {
-                if (searchInput._searchTimeout) {
-                    clearTimeout(searchInput._searchTimeout);
-                }
-                searchInput._searchTimeout = setTimeout(function() {
-                    _godState.searchTerm = searchInput.value;
-                    renderGodsTab(container, religion);
-                }, 300);
-            };
+        function rerender() {
+            renderGodsTab(container, religion);
         }
 
-        // Domain filter
-        var domainFilter = document.getElementById('godsDomainFilter');
-        if (domainFilter) {
-            domainFilter.onchange = function() {
-                _godState.domainFilter = this.value;
-                renderGodsTab(container, religion);
-            };
+        // ---- Search (debounced) ----
+        var search = container.querySelector('.gods-search');
+        if (search) {
+            var timer = null;
+            search.addEventListener('input', function () {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(function () {
+                    timer = null;
+                    _state.search = search.value || '';
+                    _applyFiltersInPlace(container, religion);
+                }, 200);
+            });
         }
 
-        // Sort by
-        var sortBy = document.getElementById('godsSortBy');
-        if (sortBy) {
-            sortBy.onchange = function() {
-                _godState.sortBy = this.value;
-                renderGodsTab(container, religion);
-            };
+        var domainSel = container.querySelector('.gods-domain-filter');
+        if (domainSel) {
+            domainSel.addEventListener('change', function () {
+                _state.domain = domainSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
         }
 
-        // Clear filters
-        var clearBtn = document.getElementById('clearGodsFilters');
+        var sortSel = container.querySelector('.gods-sort-by');
+        if (sortSel) {
+            sortSel.addEventListener('change', function () {
+                _state.sortBy = sortSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
+        }
+
+        var clearBtn = container.querySelector('.clear-gods-filters');
         if (clearBtn) {
-            clearBtn.onclick = function() {
-                _godState.searchTerm = '';
-                _godState.domainFilter = 'all';
-                _godState.sortBy = 'name';
-                renderGodsTab(container, religion);
-            };
+            clearBtn.addEventListener('click', function () {
+                _resetState();
+                rerender();
+            });
         }
 
-        // Add god button
-        var addBtn = document.getElementById('addGodBtn');
+        // ---- Add god ----
+        var addBtn = container.querySelector('.add-god-btn');
         if (addBtn) {
-            addBtn.onclick = function() {
-                openAddGodModal(religion, function() {
-                    renderGodsTab(container, religion);
-                });
-            };
+            addBtn.addEventListener('click', function () {
+                _openAddGod(religion, rerender);
+            });
         }
 
-        // Edit god buttons
-        var editBtns = container.querySelectorAll('.edit-god-btn');
-        for (var i = 0; i < editBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var godId = this.dataset.godId;
-                    openEditGodModal(godId, religion, function() {
-                        renderGodsTab(container, religion);
-                    });
-                };
-            })(editBtns[i]);
-        }
-
-        // Delete god buttons
-        var deleteBtns = container.querySelectorAll('.delete-god-btn');
-        for (var i = 0; i < deleteBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var godId = this.dataset.godId;
-                    _confirmDialog('Remove this god from the pantheon?', 'Delete God', function() {
-                        var result = RC.removeGod(religion.id, godId);
-                        if (result.success) {
-                            _showToast('God removed', 'info');
-                            renderGodsTab(container, religion);
-                        } else {
-                            _showToast('Failed to remove god: ' + result.reason, 'error');
-                        }
-                    });
-                };
-            })(deleteBtns[i]);
-        }
+        // ---- Row actions (delegated) ----
+        _attachRowActions(container, religion);
     }
 
-    // =========================================================================
-    // 6. ADD GOD MODAL
-    // =========================================================================
+    function _applyFiltersInPlace(container, religion) {
+        var RQ = _getReligionQueries();
+        if (!RQ) return;
+        var gods = RQ.getGodsByReligion(religion.id) || [];
+        var filtered = _filterGods(gods);
 
-    function openAddGodModal(religion, onSuccess) {
-        var domains = ['war', 'fertility', 'wisdom', 'death', 'love', 'justice', 'craft', 'nature', 'sky', 'sea', 'fire', 'earth'];
-        var genders = ['male', 'female', 'neuter'];
-        var alignments = ['good', 'neutral', 'evil', 'chaotic', 'lawful'];
+        var existing = container.querySelector('.rt-tab__body');
+        var empty = container.querySelector('.rt-empty');
+        var newHtml = filtered.length > 0
+            ? _renderList(filtered, religion)
+            : _renderEmpty(gods.length > 0);
 
-        var domainOptions = '';
-        for (var i = 0; i < domains.length; i++) {
-            var d = domains[i];
-            var label = d.charAt(0).toUpperCase() + d.slice(1);
-            domainOptions += '<option value="' + d + '">' + label + '</option>';
+        if (existing) {
+            var tmp = document.createElement('div');
+            tmp.innerHTML = newHtml;
+            var fresh = tmp.firstChild;
+            existing.parentNode.replaceChild(fresh, existing);
+        } else if (empty) {
+            var tmp2 = document.createElement('div');
+            tmp2.innerHTML = newHtml;
+            var fresh2 = tmp2.firstChild;
+            empty.parentNode.replaceChild(fresh2, empty);
         }
 
-        var genderOptions = '';
-        for (var i = 0; i < genders.length; i++) {
-            var g = genders[i];
-            var label = g.charAt(0).toUpperCase() + g.slice(1);
-            genderOptions += '<option value="' + g + '" ' + (g === 'neuter' ? 'selected' : '') + '>' + label + '</option>';
-        }
+        _attachRowActions(container, religion);
+    }
 
-        var alignmentOptions = '';
-        for (var i = 0; i < alignments.length; i++) {
-            var a = alignments[i];
-            var label = a.charAt(0).toUpperCase() + a.slice(1);
-            alignmentOptions += '<option value="' + a + '" ' + (a === 'neutral' ? 'selected' : '') + '>' + label + '</option>';
-        }
+    function _attachRowActions(container, religion) {
+        var RC = _getReligionCommands();
+        if (!RC) return;
+        var body = container.querySelector('.rt-tab__body');
+        if (!body) return;
+        if (body.__rtHandled) return;
+        body.__rtHandled = true;
 
-        var content = 
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Add a new god to <strong>' + _escapeHtml(religion.displayName || religion.name) + '</strong></p>' +
+        body.addEventListener('click', function (e) {
+            var target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
 
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
-            '<input type="text" id="godName" placeholder="e.g., Thor" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-            '<input type="text" id="godDisplayName" placeholder="e.g., Thor, God of Thunder" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-            '<textarea id="godDescription" rows="2" placeholder="Describe the god..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;resize:vertical;"></textarea>' +
-            '</div>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-            '<select id="godDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            domainOptions +
-            '</select>' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
-            '<input type="text" id="godSymbol" placeholder="✦" value="✦" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
-            '<select id="godGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            genderOptions +
-            '</select>' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
-            '<select id="godAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            alignmentOptions +
-            '</select>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God (optional)</label>' +
-            '<input type="text" id="godParent" placeholder="ID of parent god" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-
-            '</div>';
-
-        _openModal({
-            title: 'Add God to ' + (religion.displayName || religion.name),
-            content: content,
-            confirmText: 'Add God',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('godName').value.trim();
-                if (!name) {
-                    _showToast('God name is required', 'error');
-                    return false;
+            var editBtn = target.closest('.edit-god-btn');
+            if (editBtn) {
+                e.preventDefault();
+                var eid = editBtn.getAttribute('data-god-id');
+                if (eid) {
+                    _openEditGod(religion, eid, function () {
+                        renderGodsTab(container, religion);
+                    });
                 }
+                return;
+            }
 
-                var data = {
-                    name: name,
-                    displayName: document.getElementById('godDisplayName').value.trim() || name,
-                    description: document.getElementById('godDescription').value.trim(),
-                    domain: document.getElementById('godDomain').value,
-                    symbol: document.getElementById('godSymbol').value.trim() || '✦',
-                    gender: document.getElementById('godGender').value,
-                    alignment: document.getElementById('godAlignment').value,
-                    parentGodId: document.getElementById('godParent').value.trim() || null
-                };
-
-                var result = RC.addGod(religion.id, data);
-                if (result.success) {
-                    _showToast('God added: ' + result.data.name, 'success');
-                    _closeTopModal();
-                    if (onSuccess) onSuccess(result.data);
-                    return true;
-                } else {
-                    _showToast('Failed to add god: ' + result.reason, 'error');
-                    return false;
+            var delBtn = target.closest('.delete-god-btn');
+            if (delBtn) {
+                e.preventDefault();
+                var did = delBtn.getAttribute('data-god-id');
+                if (did) {
+                    _confirmDeleteGod(religion, did, function () {
+                        renderGodsTab(container, religion);
+                    });
                 }
             }
         });
     }
 
     // =========================================================================
-    // 7. EDIT GOD MODAL
+    // 7. ADD / EDIT / DELETE
     // =========================================================================
 
-    function openEditGodModal(godId, religion, onSuccess) {
-        var RS = _getReligionState();
+    function _openAddGod(religion, onDone) {
         var RC = _getReligionCommands();
+        if (!RC) {
+            _showToast('ReligionCommands not available', 'error');
+            return;
+        }
 
-        if (!RS || !RC) {
+        var content =
+            '<div class="rt-form">' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godName">God Name *</label>' +
+                  '<input type="text" id="godName" placeholder="e.g., Thor">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godDisplayName">Display Name</label>' +
+                  '<input type="text" id="godDisplayName" placeholder="e.g., Thor, God of Thunder">' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__label" for="godDescription">Description</label>' +
+                '<textarea id="godDescription" rows="2" placeholder="Describe the god..."></textarea>' +
+              '</div>' +
+              '<div class="rt-form__grid-3">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godDomain">Domain</label>' +
+                  '<input type="text" id="godDomain" placeholder="e.g., war">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godSymbol">Symbol</label>' +
+                  '<input type="text" id="godSymbol" placeholder="e.g., ✦">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godGender">Gender</label>' +
+                  '<select id="godGender">' +
+                    '<option value="neuter" selected>Neuter</option>' +
+                    '<option value="male">Male</option>' +
+                    '<option value="female">Female</option>' +
+                  '</select>' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godAlignment">Alignment</label>' +
+                  '<select id="godAlignment">' +
+                    '<option value="neutral" selected>Neutral</option>' +
+                    '<option value="good">Good</option>' +
+                    '<option value="evil">Evil</option>' +
+                    '<option value="lawful">Lawful</option>' +
+                    '<option value="chaotic">Chaotic</option>' +
+                  '</select>' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="godParent">Parent God (optional)</label>' +
+                  '<input type="text" id="godParent" placeholder="ID of parent god">' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+
+        _openModal({
+            titleHtml: 'Add God',
+            contentHtml: content,
+            confirmText: 'Add God',
+            cancelText: 'Cancel',
+            onConfirm: function (root) {
+                var nameInput = root.querySelector('#godName');
+                var name = nameInput ? nameInput.value.trim() : '';
+                if (!name) {
+                    _showToast('God name is required', 'error');
+                    return false;
+                }
+
+                var displayInput = root.querySelector('#godDisplayName');
+                var descInput = root.querySelector('#godDescription');
+                var domainInput = root.querySelector('#godDomain');
+                var symbolInput = root.querySelector('#godSymbol');
+                var genderInput = root.querySelector('#godGender');
+                var alignInput = root.querySelector('#godAlignment');
+                var parentInput = root.querySelector('#godParent');
+
+                var data = {
+                    name: name,
+                    displayName: displayInput && displayInput.value.trim()
+                        ? displayInput.value.trim() : name,
+                    description: descInput ? descInput.value.trim() : '',
+                    domain: domainInput ? domainInput.value.trim() : '',
+                    symbol: symbolInput ? symbolInput.value.trim() : '',
+                    gender: genderInput ? genderInput.value : 'neuter',
+                    alignment: alignInput ? alignInput.value : 'neutral',
+                    parentGodId: parentInput && parentInput.value.trim()
+                        ? parentInput.value.trim() : null
+                };
+
+                var result = RC.addGod(religion.id, data);
+                if (result && result.success) {
+                    _showToast('God added: ' + name, 'success');
+                    if (typeof onDone === 'function') onDone();
+                    return true;
+                }
+                _showToast(
+                    'Failed to add god: ' +
+                    (result && result.reason ? result.reason : 'unknown'),
+                    'error'
+                );
+                return false;
+            }
+        });
+    }
+
+    function _openEditGod(religion, godId, onDone) {
+        var RC = _getReligionCommands();
+        var RQ = _getReligionQueries();
+        if (!RC || !RQ) {
             _showToast('Religion system not available', 'error');
             return;
         }
 
-        // Find the god
-        var gods = _getGodsByReligion(religion.id);
+        var gods = RQ.getGodsByReligion(religion.id) || [];
         var god = null;
         for (var i = 0; i < gods.length; i++) {
-            if (gods[i].id === godId) {
+            if (gods[i] && gods[i].id === godId) {
                 god = gods[i];
                 break;
             }
         }
-
         if (!god) {
             _showToast('God not found', 'error');
             return;
         }
 
-        var domains = ['war', 'fertility', 'wisdom', 'death', 'love', 'justice', 'craft', 'nature', 'sky', 'sea', 'fire', 'earth'];
-        var genders = ['male', 'female', 'neuter'];
-        var alignments = ['good', 'neutral', 'evil', 'chaotic', 'lawful'];
+        var displayVal = god.displayName || '';
+        var descVal = god.description || '';
+        var domainVal = god.domain || '';
+        var symbolVal = god.symbol || '';
+        var genderVal = god.gender || 'neuter';
+        var alignVal = god.alignment || 'neutral';
+        var parentVal = god.parentGodId || '';
 
-        var domainOptions = '';
-        for (var i = 0; i < domains.length; i++) {
-            var d = domains[i];
-            var label = d.charAt(0).toUpperCase() + d.slice(1);
-            var selected = (god.domain === d) ? 'selected' : '';
-            domainOptions += '<option value="' + d + '" ' + selected + '>' + label + '</option>';
-        }
-
-        var genderOptions = '';
-        for (var i = 0; i < genders.length; i++) {
-            var g = genders[i];
-            var label = g.charAt(0).toUpperCase() + g.slice(1);
-            var selected = (god.gender === g) ? 'selected' : '';
-            genderOptions += '<option value="' + g + '" ' + selected + '>' + label + '</option>';
-        }
-
-        var alignmentOptions = '';
-        for (var i = 0; i < alignments.length; i++) {
-            var a = alignments[i];
-            var label = a.charAt(0).toUpperCase() + a.slice(1);
-            var selected = (god.alignment === a) ? 'selected' : '';
-            alignmentOptions += '<option value="' + a + '" ' + selected + '>' + label + '</option>';
-        }
-
-        var content = 
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Edit <strong>' + _escapeHtml(god.displayName || god.name) + '</strong></p>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">God Name *</label>' +
-            '<input type="text" id="editGodName" value="' + _escapeHtml(god.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Display Name</label>' +
-            '<input type="text" id="editGodDisplayName" value="' + _escapeHtml(god.displayName || '') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Description</label>' +
-            '<textarea id="editGodDescription" rows="2" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;resize:vertical;">' + _escapeHtml(god.description || '') + '</textarea>' +
-            '</div>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Domain</label>' +
-            '<select id="editGodDomain" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            domainOptions +
-            '</select>' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Symbol</label>' +
-            '<input type="text" id="editGodSymbol" value="' + _escapeHtml(god.symbol || '✦') + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Gender</label>' +
-            '<select id="editGodGender" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            genderOptions +
-            '</select>' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Alignment</label>' +
-            '<select id="editGodAlignment" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            alignmentOptions +
-            '</select>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Parent God (optional)</label>' +
-            '<input type="text" id="editGodParent" value="' + _escapeHtml(god.parentGodId || '') + '" placeholder="ID of parent god" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-
+        var content =
+            '<div class="rt-form">' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodName">God Name *</label>' +
+                  '<input type="text" id="editGodName" value="' +
+                    _escapeHtml(god.name || '') + '">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodDisplayName">Display Name</label>' +
+                  '<input type="text" id="editGodDisplayName" value="' +
+                    _escapeHtml(displayVal) + '">' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__label" for="editGodDescription">Description</label>' +
+                '<textarea id="editGodDescription" rows="2">' +
+                  _escapeHtml(descVal) +
+                '</textarea>' +
+              '</div>' +
+              '<div class="rt-form__grid-3">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodDomain">Domain</label>' +
+                  '<input type="text" id="editGodDomain" value="' +
+                    _escapeHtml(domainVal) + '">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodSymbol">Symbol</label>' +
+                  '<input type="text" id="editGodSymbol" value="' +
+                    _escapeHtml(symbolVal) + '">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodGender">Gender</label>' +
+                  '<select id="editGodGender">' +
+                    _selectOption('neuter', genderVal, 'Neuter') +
+                    _selectOption('male', genderVal, 'Male') +
+                    _selectOption('female', genderVal, 'Female') +
+                  '</select>' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodAlignment">Alignment</label>' +
+                  '<select id="editGodAlignment">' +
+                    _selectOption('neutral', alignVal, 'Neutral') +
+                    _selectOption('good', alignVal, 'Good') +
+                    _selectOption('evil', alignVal, 'Evil') +
+                    _selectOption('lawful', alignVal, 'Lawful') +
+                    _selectOption('chaotic', alignVal, 'Chaotic') +
+                  '</select>' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editGodParent">Parent God (optional)</label>' +
+                  '<input type="text" id="editGodParent" value="' +
+                    _escapeHtml(parentVal) + '" placeholder="ID of parent god">' +
+                '</div>' +
+              '</div>' +
             '</div>';
 
         _openModal({
-            title: 'Edit God',
-            content: content,
+            titleHtml: 'Edit God',
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('editGodName').value.trim();
+            onConfirm: function (root) {
+                var nameInput = root.querySelector('#editGodName');
+                var name = nameInput ? nameInput.value.trim() : '';
                 if (!name) {
                     _showToast('God name is required', 'error');
                     return false;
@@ -664,74 +677,106 @@
 
                 var updates = {
                     name: name,
-                    displayName: document.getElementById('editGodDisplayName').value.trim() || name,
-                    description: document.getElementById('editGodDescription').value.trim(),
-                    domain: document.getElementById('editGodDomain').value,
-                    symbol: document.getElementById('editGodSymbol').value.trim() || '✦',
-                    gender: document.getElementById('editGodGender').value,
-                    alignment: document.getElementById('editGodAlignment').value,
-                    parentGodId: document.getElementById('editGodParent').value.trim() || null
+                    displayName: _readVal(root, '#editGodDisplayName') || name,
+                    description: _readVal(root, '#editGodDescription'),
+                    domain: _readVal(root, '#editGodDomain'),
+                    symbol: _readVal(root, '#editGodSymbol'),
+                    gender: _readVal(root, '#editGodGender') || 'neuter',
+                    alignment: _readVal(root, '#editGodAlignment') || 'neutral',
+                    parentGodId: _readVal(root, '#editGodParent') || null
                 };
 
                 var result = RC.updateGod(godId, updates);
-                if (result.success) {
+                if (result && result.success) {
                     _showToast('God updated', 'success');
-                    _closeTopModal();
-                    if (onSuccess) onSuccess(result.data);
+                    if (typeof onDone === 'function') onDone();
                     return true;
-                } else {
-                    _showToast('Failed to update god: ' + result.reason, 'error');
-                    return false;
                 }
+                _showToast(
+                    'Failed to update god: ' +
+                    (result && result.reason ? result.reason : 'unknown'),
+                    'error'
+                );
+                return false;
             }
         });
     }
 
-    // =========================================================================
-    // 8. TAB DEFINITION
-    // =========================================================================
+    function _confirmDeleteGod(religion, godId, onDone) {
+        var RC = _getReligionCommands();
+        if (!RC) return;
 
-    var ReligionGodsTab = {
-        label: 'Gods',
-        icon: 'STAR_4',
-        render: renderGodsTab,
-        save: function(religion) {
-            return religion;
-        },
-        validate: function(religion) {
-            return { valid: true };
+        var RQ = _getReligionQueries();
+        var gods = RQ ? (RQ.getGodsByReligion(religion.id) || []) : [];
+        var god = null;
+        for (var i = 0; i < gods.length; i++) {
+            if (gods[i] && gods[i].id === godId) { god = gods[i]; break; }
         }
-    };
+        var displayName = god ? (god.displayName || god.name || 'this god') : 'this god';
+
+        _confirmDialog(
+            'Remove "' + displayName + '" from the pantheon?',
+            'Delete God',
+            function () {
+                var result = RC.removeGod(religion.id, godId);
+                if (result && result.success) {
+                    _showToast('God removed', 'info');
+                    if (typeof onDone === 'function') onDone();
+                } else {
+                    _showToast(
+                        'Failed to remove god: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                }
+            }
+        );
+    }
 
     // =========================================================================
-    // 9. REGISTER FUNCTION
+    // 8. SMALL HELPERS
     // =========================================================================
 
-    function registerReligionGodsTab() {
-        if (typeof window.ReligionEditorTabs === 'undefined') {
-            return false;
-        }
+    function _readVal(root, selector) {
+        var el = root ? root.querySelector(selector) : null;
+        return el ? el.value : '';
+    }
 
-        var result = window.ReligionEditorTabs.registerTab('gods', ReligionGodsTab);
-        return result;
+    function _selectOption(value, currentValue, label) {
+        var sel = (value === currentValue) ? ' selected' : '';
+        return '<option value="' + _escapeHtml(value) + '"' + sel + '>' +
+            _escapeHtml(label) + '</option>';
+    }
+
+    // =========================================================================
+    // 9. TABMANAGER ADAPTER + REGISTRATION
+    // =========================================================================
+
+    function renderAdapter(container, context) {
+        var religion = (context && context.religion) ? context.religion : null;
+        renderGodsTab(container, religion);
+    }
+
+    if (typeof window.TabManager !== 'undefined' && window.TabManager) {
+        window.TabManager.register('religion', 'gods', renderAdapter);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'religion-gods-tab.js: TabManager is not loaded; the gods ' +
+            'tab was not registered. Load tab-manager.js first.'
+        );
     }
 
     // =========================================================================
     // 10. EXPORTS
     // =========================================================================
 
-    window.ReligionGodsTab = ReligionGodsTab;
-    window.registerReligionGodsTab = registerReligionGodsTab;
-
-    if (typeof window.ReligionEditorTabs !== 'undefined') {
-        registerReligionGodsTab();
-    }
+    window.ReligionGodsTab = {
+        id: 'gods',
+        render: renderGodsTab,
+        renderAdapter: renderAdapter
+    };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionGodsTab: ReligionGodsTab,
-            registerReligionGodsTab: registerReligionGodsTab
-        };
+        module.exports = { ReligionGodsTab: window.ReligionGodsTab };
     }
-
 })();
