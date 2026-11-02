@@ -6,13 +6,15 @@
  *
  * CRIME QUERIES.
  *
- * Read-only calculation of a settlement's crime rate and its associated
- * modifiers.
+ * This file provides read-only calculation of a settlement's crime rate
+ * and its associated modifiers. It answers:
+ *   - what is the current crime rate of a settlement?
+ *   - how do prosperity, taxation, watch, features, unemployment,
+ *     military spending, justice severity, and religious unity each
+ *     contribute to the crime rate?
  *
- * This is a query module. It:
+ * It is a query module. It:
  *   - reads canonical settlement data through SettlementQueries
- *   - reads prosperity through SettlementProsperityQueries (the canonical
- *     owner of the derived prosperity value)
  *   - reads justice severity from SettlementGovernmentDefinitions
  *   - reads feature-based crime reduction from SettlementFeatureQueries
  *   - reads employment through SettlementEmploymentQueries
@@ -21,58 +23,69 @@
  *   - does not persist
  *   - does not display UI
  *   - does not fabricate missing values
+ *   - does not use recursion guards
  *
- * PROSPERITY SOURCE
- * -----------------
- *   `settlement.prosperity` is a DERIVED value in the current
- *   architecture. It is computed by SettlementProsperityQueries and is
- *   NOT persisted on the settlement record (settlement-docs.txt §3
- *   lists it under "Derived (not stored; calculated by queries)";
- *   §16 says "Persisted values named prosperity on old settlement
- *   records are ignored by the new architecture").
+ * Contract reference: Settlement Architecture Contracts §10 (Query
+ * Contract), §11 (Query Results and Missing Data), §22 (Prosperity
+ * Contract analog for a derived value), §32 (Completion Standard).
  *
- *   Prior revisions of this module read `settlement.prosperity`
- *   directly. On any save created after the architecture refactor,
- *   that field is absent, so the `prosperity < 30` / `< 50` / `> 70`
- *   branches never fired — the prosperity modifier was silently 0 for
- *   every settlement. Crime rate was computed without it.
+ * Crime rate is derived:
  *
- *   Current revision calls SettlementProsperityQueries.getProsperityValue
- *   and reads the `.value` from the result. This is the canonical
- *   source. If the prosperity module is unavailable (bare harness), the
- *   modifier is skipped and the crime rate is computed from the
- *   remaining inputs — a documented graceful degradation, not a
- *   fabricated prosperity value.
+ *   Under the current architecture, `settlement.crimeRate` is a legacy
+ *   persisted field. Under the new architecture, crime rate is a derived
+ *   value: the sum of a baseline plus a set of modifiers, clamped to
+ *   [0.01, 0.8]. The canonical settlement record does not need to store
+ *   it. If it does store it (for backward compatibility), the stored
+ *   value is ignored in favor of the calculation.
  *
- * CRIME RATE IS DERIVED:
- *   Sum of baseline + modifiers, then a justice-severity multiplier,
- *   clamped to [0.01, 0.8]. Canonical `settlement.crimeRate` (if it
- *   exists on an old save) is ignored; the calculation below is the
- *   single source of truth.
+ *   This module is the single source of truth for the crime rate
+ *   calculation. Every subsystem that needs a settlement's crime rate
+ *   reads it from here.
  *
- * MISSING DATA:
- *   - settlement missing             → returns null
- *   - population/employment missing  → employment term is 0, rest computed
- *   - religion missing               → unity term is 0, rest computed
- *   - prosperity missing             → prosperity term is 0, rest computed
+ * PROSPERITY INPUT:
+ *   The prosperity term in the crime calculation reads
+ *   `settlement.baseProsperity`, a canonical settlement field initialized
+ *   by SettlementFactory. It does NOT call
+ *   SettlementProsperityQueries.getProsperityValue.
+ *
+ *   Rationale: SettlementProsperityQueries.getProsperity consumes the
+ *   crime rate (via SettlementCrimeQueries.getCrimeRateValue) as one of
+ *   its modifiers. Reading prosperity from SettlementProsperityQueries
+ *   here would create a cycle (crime → prosperity → crime), which the
+ *   architecture forbids (§20 RECURSION GUARD POLICY). baseProsperity
+ *   is the stored input that breaks the cycle: it is a neutral value
+ *   the settlement carries, not a derived one. See BASE PROSPERITY
+ *   FIELD in settlement-factory.js for the field's definition and for
+ *   its coupling to SettlementProsperityDefinitions.BASE_PROSPERITY.
+ *
+ *   Prior revisions read `settlement.prosperity`, which the factory
+ *   never set. The prosperity term in the crime rate was silently zero
+ *   for every settlement. The fix is documented in the refactor history
+ *   below.
+ *
+ * Missing data:
+ *
+ *   - settlement missing             → queries return null
+ *   - population/employment missing  → employment term is 0, rest still
+ *                                       computed
+ *   - religion missing               → unity term is 0 (no fabricated
+ *                                       neutral value)
+ *   - baseProsperity missing         → prosperity term is 0
  *   - required dependency missing    → the call throws (required)
  *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Prosperity modifier now reads from
- *       SettlementProsperityQueries.getProsperityValue(locationId)
- *       instead of `settlement.prosperity`. The persisted field does
- *       not exist in the current architecture, so the modifier never
- *       fired and every settlement's crime rate omitted it. Fixed at
- *       all call sites (there is only one).
- *     - Added _readProsperity(locationId): returns the number or null.
- *       Handles the case where SettlementProsperityQueries is not
- *       loaded (bare harness), returning null so the caller skips the
- *       modifier. It never fabricates a default.
- *     - Header PROSPERITY SOURCE section added.
- *     - No behavioral change to the other modifiers, the justice
- *       multiplier, the clamp, or the return shape.
+ *     - Prosperity term now reads `settlement.baseProsperity` instead of
+ *       `settlement.prosperity`. The prior field was never set by
+ *       SettlementFactory, so the prosperity modifier was silently 0
+ *       for every settlement. The new field is a canonical factory-owned
+ *       input, which also resolves the crime ↔ prosperity query cycle.
+ *       See PROSPERITY INPUT in the module header.
+ *     - Header PROSPERITY INPUT section added.
+ *     - No public signature change, no public return-shape change. The
+ *       prosperity modifier field on the result object is unchanged;
+ *       only the source of its input changed.
  *   Previous revisions:
  *     - Initial implementation.
  * =============================================================================
@@ -131,35 +144,6 @@
         return null;
     }
 
-    /**
-     * Reads the settlement's derived prosperity value through
-     * SettlementProsperityQueries. Returns the numeric value or null
-     * when the module is unavailable, the settlement has no prosperity
-     * (which is a legitimate "unavailable" state), or the value is
-     * non-finite.
-     *
-     * Does NOT read `settlement.prosperity` — that field is absent on
-     * any save created after the architecture refactor. See
-     * PROSPERITY SOURCE in the header.
-     *
-     * @private
-     * @param {string} locationId
-     * @returns {number|null}
-     */
-    function _readProsperity(locationId) {
-        if (typeof window.SettlementProsperityQueries === 'undefined'
-            || !window.SettlementProsperityQueries
-            || typeof window.SettlementProsperityQueries.getProsperityValue !== 'function') {
-            // Prosperity module not loaded. The modifier is skipped.
-            // This is a documented graceful degradation, not a silent
-            // fabrication.
-            return null;
-        }
-        var value = window.SettlementProsperityQueries.getProsperityValue(locationId);
-        if (!_isFiniteNumber(value)) return null;
-        return value;
-    }
-
     // =========================================================================
     // 4. CRIME RATE CALCULATION
     // =========================================================================
@@ -187,6 +171,15 @@
      *     }
      *   }
      *
+     * Each modifier is the delta applied. Their sum, added to base and
+     * followed by the justice severity multiplier, produces the value.
+     * The breakdown is explanatory; consumers that only need the rate
+     * read `.value`.
+     *
+     * The prosperity modifier reads `settlement.baseProsperity`, not
+     * `SettlementProsperityQueries`. See PROSPERITY INPUT in the module
+     * header.
+     *
      * @param {string} locationId
      * @returns {Object|null}
      */
@@ -209,9 +202,10 @@
         var crimeRate = BASE_CRIME_RATE;
 
         // --- Prosperity effect ---
-        // Read through SettlementProsperityQueries, not settlement.prosperity.
-        // See PROSPERITY SOURCE in the header.
-        var prosperity = _readProsperity(locationId);
+        // Reads settlement.baseProsperity, the factory-initialized
+        // canonical input. NOT SettlementProsperityQueries — see
+        // PROSPERITY INPUT in the module header for the cycle rationale.
+        var prosperity = settlement.baseProsperity;
         if (_isFiniteNumber(prosperity)) {
             var prosperityDelta = 0;
             if (prosperity < 30) prosperityDelta = 0.10;
@@ -232,9 +226,7 @@
         }
 
         // --- Watch effect ---
-        if (settlement.hasWatch === true
-            && _isFiniteNumber(settlement.watchSize)
-            && settlement.watchSize > 0) {
+        if (settlement.hasWatch === true && _isFiniteNumber(settlement.watchSize) && settlement.watchSize > 0) {
             var watchDelta = -Math.min(0.3, settlement.watchSize / 100);
             modifiers.watch = watchDelta;
             crimeRate += watchDelta;
@@ -250,9 +242,7 @@
 
         // --- Unemployment effect ---
         var employment = _getEmploymentQueries().getEmployment(locationId);
-        if (employment
-            && _isFiniteNumber(employment.unemployed)
-            && _isFiniteNumber(employment.workingAgePopulation)
+        if (employment && _isFiniteNumber(employment.unemployed) && _isFiniteNumber(employment.workingAgePopulation)
             && employment.workingAgePopulation > 0) {
             var unemploymentRate = employment.unemployed / employment.workingAgePopulation;
             var unemploymentDelta = unemploymentRate * 0.1;
@@ -288,9 +278,15 @@
             crimeRate += placeDelta;
         }
 
-        // --- Justice severity effect (multiplier) ---
+        // --- Justice severity effect ---
+        // The justice severity is a multiplier applied to the
+        // accumulated rate. It represents the deterrence strength of the
+        // settlement's justice system.
         var justiceFactor = _getJusticeFactor(settlement.justiceSeverity);
         if (_isFiniteNumber(justiceFactor)) {
+            // The delta is the change caused by applying the multiplier.
+            // It is recorded as "final - intermediate" so the breakdown
+            // sums to the actual change.
             var intermediate = crimeRate;
             crimeRate = crimeRate * (1 - justiceFactor * 0.3);
             modifiers.justiceSeverity = crimeRate - intermediate;
