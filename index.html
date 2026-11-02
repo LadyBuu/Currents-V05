@@ -6,7 +6,66 @@
     <title>Still Waters · Nexus of Tools</title>
 
     <link rel="stylesheet" href="css/themes.css" />
+    <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/nexus.css" />
+
+    <!-- Defensive fallback: if nexus.css is missing or mis-ordered, this
+         block keeps the cards legible. Only applies when nexus.css is
+         absent — common.css and nexus.css normally win. -->
+    <style>
+        .tool-card {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 16px 18px;
+            color: var(--fg);
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) * 2);
+            text-decoration: none;
+            transition: border-color 0.2s ease, background-color 0.2s ease;
+        }
+        .tool-card:hover {
+            border-color: var(--accent);
+            background: var(--bg3);
+        }
+        .tool-card .card-title {
+            font-family: var(--f-display);
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--fg);
+        }
+        .tool-card .card-desc {
+            font-size: 0.7rem;
+            color: var(--dim);
+        }
+        .tool-card .card-icon {
+            width: 32px;
+            height: 32px;
+            color: var(--accent);
+        }
+        .tool-card .badge {
+            display: inline-block;
+            padding: 1px 8px;
+            background: var(--accent-dim);
+            color: var(--accent);
+            border-radius: 10px;
+            font-size: 0.5rem;
+            font-family: var(--f-display);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .tool-card .badge-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .tool-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px;
+        }
+    </style>
 </head>
 <body>
 
@@ -359,6 +418,20 @@
     </div>
 </div>
 
+<!-- ============================================================ -->
+<!-- CORE PREREQUISITES (needed by storage.js)                    -->
+<!-- ============================================================ -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
+<script src="js/core/formatting.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
+<script src="js/core/time.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
