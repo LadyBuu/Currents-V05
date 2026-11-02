@@ -1,0 +1,589 @@
+# STILL WATERS — Full Documentation and Load Order
+
+Below are two separate documents: **Part 1: Documentation** and **Part 2: Load Order**. They are derived strictly from the file headers and export blocks you provided. Where a file's header states a dependency, that dependency is recorded; where the header is silent, I have inferred only what the code itself proves (e.g. a function calls `window.X`, so `X` must be loaded first). Anything not provable from the provided files is marked **[UNVERIFIED]**.
+
+---
+
+# PART 1 — DOCUMENTATION
+
+## 1. Overview
+
+Still Waters is a browser-based simulation application. It is organized as a set of ES5-style IIFE modules that attach functions/objects to `window`. There is no bundler and no module system in the provided files; every module is a plain script that mutates `window` on load.
+
+Architectural conventions that hold across the codebase:
+
+- **Single Source of Truth (SSOT)** headers. Every non-trivial file declares SCOPE, OUT OF SCOPE, SEMANTIC RULES, DEPENDENCIES, and ICON POLICY.
+- **Explicit missing vs. invalid.** `undefined`/`null` means "missing" → documented default. Wrong type / out-of-domain means "invalid" → throw or return `null`/`false`, never silently normalized.
+- **No emojis, no icons in logic files.** Icons are SVG strings in `icons.js` only.
+- **Required dependencies fail loudly.** Missing `window.X` throws at call time (or load time for some modules).
+- **Missing data is not a dependency failure.** A missing collection returns `[]`; a missing entity returns `null`.
+- **Mutation boundaries invalidate caches.** `accessors.js` builds ID maps; mutation modules call `invalidateAccessorCaches()`.
+- **Persistence is debounced and truthful.** `markDataDirty()` schedules a save; `saveMasterData()` returns a boolean that reflects whether the write actually succeeded.
+
+## 2. Module catalogue
+
+Each entry lists: location, scope, exports, dependencies (from header + code), and notable contracts.
+
+### 2.1 Core — storage and schema
+
+#### `storage-schema.js`
+- **Location:** `js/core/storage-schema.js`
+- **Scope:** canonical shape of the persisted `masterData` envelope; current-schema normalization; default factory.
+- **Exports:** `createDefaultMasterDataOverride`, `normalizeMasterData`, `STORAGE_SCHEMA_VERSION` (currently `3`).
+- **Dependencies (required):** `time.js` — `TIME_CONSTANTS.DEFAULT_YEAR`, `.MIN_YEAR`, `.MAX_YEAR`.
+- **Contracts:**
+  - Normalization **mutates** the supplied envelope's `data` in place; does not deep-clone.
+  - `SCHEMA_VERSION` identifies the **envelope** shape; migration is `database.js`'s job.
+  - Top-level arrays declared: `characters, places, ranks, roles, locationTypes, governmentTypes, governments, households, householdPositions, householdAssignments, enterprises, enterpriseTypes, residences, disasters, eventLog, educationalInstitutions, parentChildEdges, pregnancyRecords, surrogacyArrangements, adoptionRecords`.
+  - Top-level objects declared: `nameLists, cityNameParts, rankInheritanceRules, educationalSubjects, subjectProgress, settlementData`.
+  - Scalar: `currentYear`.
+  - Opt-in markers `_legacyEnvelopeLess`, `_yearCoerced`, `_preservedUnknownTopLevel` are preserved if set by the caller, never added.
+  - Rank records have **no** `locationId`. Parentage fields (`motherId`, `fatherId`, `children`, `adoptedParents`, `adoptedChildren`) are **not** normalized.
+
+#### `storage.js`
+- **Location:** `js/core/storage.js`
+- **Scope:** localStorage read/write, cross-tab sync, load/save/reload/reset, import, debounced save.
+- **Exports:** `STORAGE_CONFIG`, `createDefaultMasterData`, `loadMasterData`, `reloadMasterData`, `forceReloadData` (deprecated), `saveMasterData`, `saveMasterDataOrThrow`, `scheduleSave`, `flushPendingSave`, `markDataDirty`, `hasUnsavedChanges`, `getLastSaveError`, `importData`, `resetMasterData`, `initializeStorage`.
+- **Dependencies (required):** `time.js` (`TIME_CONSTANTS.DEFAULT_YEAR`), `storage-schema.js` (`createDefaultMasterDataOverride`, `normalizeMasterData`, `STORAGE_SCHEMA_VERSION`).
+- **Optional:** `accessors.js` (`invalidateAccessorCaches`, used at cross-tab reload/import/reset), `validation.js` (`validateImportData`, required for import).
+- **Contracts:**
+  - `loadMasterData()` returns `{ ok, source?, error?, warnings? }`. Failure leaves `window.masterData` untouched.
+  - `saveMasterData()` returns `true` **only** on a real write.
+  - `markDataDirty()` is the single persistence trigger.
+  - Cross-tab reload invalidates accessor caches **before** dispatching `masterDataUpdated`.
+  - Envelope markers are stripped from the serialized form.
+  - **Domain persist contract:** Pattern A (`saveMasterData() === true`) or Pattern B (`saveMasterDataOrThrow()`); Pattern C (discard return value) is broken and must not be reintroduced.
+
+### 2.2 Core — data access
+
+#### `accessors.js`
+- **Location:** `js/core/accessors.js`
+- **Scope:** raw collection accessors, ID-map caching, cache invalidation.
+- **Exports:**
+  - Raw: `getCharacters`, `getPlaces`, `getRanks`, `getRoles`, `getLocationTypes`, `getGovernmentTypes`, `getHouseholds`, `getResidences`, `getInheritanceRules`, `getNameLists`, `getCityNameParts`, `getDisasters`, `getEventLog`.
+  - Cached lookups: `getCharacterById`, `getPlaceById`, `getRankById`, `getRoleById`, `getLocationTypeById`, `getGovernmentTypeById`, `getHouseholdById`.
+  - Existence: `characterExists`, `placeExists`, `roleExists`, `rankExists`, `householdExists`.
+  - Cache management: `invalidateAccessorCaches`, `refreshCaches`.
+- **Dependencies:** `storage.js` (must have initialized `window.masterData`).
+- **Contracts:**
+  - ID maps index **only** non-empty string IDs; later duplicate wins.
+  - `getXById` returns `null` for missing entity.
+  - Cache self-heals via `_ensureCacheInSync`: size check vs. canonical array; warn once per invalidation cycle.
+  - Cached accessors return **live** entities. Under documented load order, `character-queries.js` (or the `character-system.js` shim) overwrites `window.getCharacterById` with a **projection-returning** version.
+  - **Concrete projection consumers** named in the header: `names.js`, `education-queries.js`, `education-learning.js`, `education-commands.js`, `education-annual.js`, `apprenticeship-queries.js`, `apprenticeship-commands.js`, `professional-knowledge-cmds.js`, `modals-roles.js`, `modals-education.js`, `modals-apprenticeship.js`, `settlement-prosperity-queries.js` (traits only).
+  - `settlementData` is **not** indexed by any accessor cache; `SettlementQueries` reads it directly.
+
+### 2.3 Core — identity and validation
+
+#### `ids.js`
+- **Location:** `js/core/ids.js`
+- **Scope:** ID generation, parsing, format validation.
+- **Exports:** `ID_PREFIXES`, `ID_CONFIG`, `generateId`, `generateShortId`, `generateLongId`, `generateCharacterId`, `generatePlaceId`, `generateRankId`, `generateRoleId`, `generateHouseholdId`, `generateRelationshipId`, `generateEventId`, `generateProfessionId`, `generateMoveId`, `generateBatchIds`, `generateBatchCharacterIds`, `parseId`, `parseLongId`, `parseShortId`, `getIdTimestamp`, `getIdPrefix`, `getIdForm`, `isValidId`, `isLongId`, `isShortId`, `isCharacterId`, `isPlaceId`, `isRankId`, `IDsDebug`.
+- **Dependencies:** browser `crypto` (optional), `Date`, `Set`, `Math.random` fallback.
+- **Grammar:** `[prefix_]digits_random` (long) or `[prefix_]random` (short); prefix `[a-z][a-z0-9]*`, random length in `[4, 32]`.
+- **Contracts:** session collision registry; does **not** guarantee uniqueness against persisted data (mutation layer's job). Invalid explicit args return `null` (generators) or throw (batch).
+
+#### `validation.js`
+- **Location:** `js/core/validation.js`
+- **Scope:** field shape, entity validation, reference syntax, import structural + entity validation, schema presence/unknown-field checks.
+- **Exports:** `VALIDATION_CONSTANTS`, `isValidYear`, `validateYearsConsistency`, `isValidIdSyntax`, `isValidCharacterId`, `isValidPlaceId`, `validateCharacter`, `validateCharacterAge`, `validatePlace`, `validatePlaceHierarchy`, `validateRank`, `validateRole`, `validateRelationship`, `validateBidirectionalRelationship`, `validateImportData`, `validateEntitySchema`, `ENTITY_SCHEMAS`.
+- **Dependencies (required):** `time.js` (`TIME_CONSTANTS.MIN_YEAR`, `.MAX_YEAR`).
+- **Optional:** `constants.js` (`GENDER_VALUES`, `ATTRACTION_VALUES`, `RELATIONSHIP_STATUS`).
+- **Contracts:**
+  - Validators do **not** mutate; return `{ isValid, errors, warnings? }`.
+  - ID syntax ≠ existence. Existence belongs to `accessors.js`.
+  - `context.existing*Ids` means **canonical masterData**, never "this import". Self-duplicates are reported once by `_reportSelfDuplicates`.
+  - `ENTITY_SCHEMAS` excludes removed parentage fields and `rank.locationId`; unknown fields are reported.
+  - Validates `traits` only at the container level (array), not contents.
+
+#### `integrity.js`
+- **Location:** `js/core/integrity.js`
+- **Scope:** cross-entity referential integrity detection and repair.
+- **Exports:**
+  - Finders (pure): `findBrokenPlaceHierarchy`, `findBrokenRelationships`, `findBrokenFriendships`, `findBrokenHouseholdMembers`, `findBrokenRankAssignments`, `findBrokenRoleAssignments`, `findBrokenApprenticeships`.
+  - Repairers (mutate memory): `repairBrokenPlaceHierarchy`, `repairBrokenRelationships`, `repairBrokenFriendships`, `repairBrokenHouseholdMembers`, `repairBrokenRankAssignments`, `repairBrokenRoleAssignments`, `repairBrokenApprenticeships`.
+  - Comprehensive: `auditDataIntegrity`, `repairAllData`.
+- **Dependencies (required):** `accessors.js` — `getCharacters`, `getPlaces`, `getRanks`, `getRoles`, `getHouseholds`, `getCharacterById`, `getPlaceById`.
+- **Contracts:**
+  - Finders may return **live** canonical references; callers must treat as read-only.
+  - Repairers do **not** persist, invalidate caches, or show UI.
+  - Parentage (family) integrity is **out of scope**; belongs to family domain (`family-queries.js` / `family-integrity.js`).
+  - Apprenticeship conflict policies: `report` (default), `trustMasterList`, `trustApprenticeId`.
+
+### 2.4 Core — time and simulation
+
+#### `time.js`
+- **Location:** `js/core/time.js`
+- **Scope:** current world year resolution, canonical year validation, age calculations, chronology checks, pregnancy/succession timing, time range overlap.
+- **Exports:** `TIME_CONSTANTS`, `isValidYear`, `getCurrentYear`, `calculateAge`, `getYearDifference`, `getAgeAtEvent`, `isMinor`, `isAdult`, `isFertileAge`, `isYearInRange`, `getTimeRangeOverlap`, `doTimeRangesOverlap`, `getGenerationGap`, `isPlausibleParentAge`, `calculatePregnancyDuration`, `getConceptionYear`, `getAgeAtSuccession`, `getReignLength`, `getCurrentYearSafe` (deprecated), `_getCurrentYear` (deprecated).
+- **Dependencies:** browser `window` (reads `masterData.data.currentYear`).
+- **Contracts:**
+  - `getCurrentYear()` falls back to `TIME_CONSTANTS.DEFAULT_YEAR` (1250) when the stored year is absent or invalid.
+  - `isValidYear` is the canonical validator; year `0` and negatives within range are valid.
+  - Pre-birth ages return `null`, not `0`; newborns return `0`.
+  - `getReignLength` and `calculateAge` reject explicitly invalid `currentYear`.
+
+#### `randomness.js`
+- **Location:** `js/core/randomness.js`
+- **Scope:** seedable core RNG, distributions, dice, array selection/shuffle, weighted selection, random strings.
+- **Exports:** `RNG_CONSTANTS`, `setRandomSeed`, `getRandomSeed`, `loadPersistedSeed`, `random`, `randomInt`, `randomFloat`, `chance`, `Random` (`{ next }`), `randomNext` (deprecated), `randomness` (frozen provider), `rollDice`, `roll`, `rollHighest`, `rollLowest`, `rollWithDropLowest`, `pickRandom`, `pickRandomMultiple`, `pickWeighted`, `pickWeightedKey`, `shuffleArrayInPlace`, `shuffleArray`, `shuffleString`, `percentile`, `checkPercentile`, `randomBoolean`, `randomSign`, `randomVariation`, `randomNormal`, `randomGaussian`, `randomExponential`, `randomString`, `weightedTable`, `createWeightedTable`, `CHANCE_TABLES`.
+- **Dependencies:** `localStorage` (optional, seed persistence only).
+- **Contracts:**
+  - All names (`random`, `Random.next`, `randomNext`, `randomness`) consume the **same** `_rngState`.
+  - Invalid input conventions: numeric generators → `null`; probability predicates → `false` (with finite clamping); structured ops → documented sentinel (`undefined`, `[]`, `''`, error field).
+  - `randomNormal(mean, 0)` returns `mean` **without** consuming RNG state.
+  - `randomExponential` is a power-transformed uniform, **not** the mathematical exponential distribution.
+
+#### `simulation-generators.js`
+- **Location:** `js/modules/simulation/simulation-generators.js`
+- **Scope:** simulation-specific random values (age distributions, year windows, fertility modifier, lifespan).
+- **Exports:** `randomRealisticAge`, `randomYear`, `randomFertilityModifier`, `randomLifespan`.
+- **Dependencies (required):** `randomness.js` (`randomNormal`, `randomExponential`, `randomInt`); `time.js` (`TIME_CONSTANTS.MIN_YEAR`, `.MAX_YEAR`).
+- **Contracts:**
+  - `randomLifespan` rejects `currentAge > LIFESPAN_MAX_AGE (120)` rather than clamping.
+  - `randomYear` rejects an out-of-world reference year rather than clamping.
+  - Domain constants (`FERTILITY_*`, `LIFESPAN_*`, `AGE_DISTRIBUTION_EXPONENT`, year windows) are simulation policy, documented as future per-world config.
+
+### 2.5 Core — formatting and icons
+
+#### `formatting.js`
+- **Location:** `js/core/formatting.js`
+- **Scope:** HTML escaping, year/name/title/dynasty/age/date/list/population formatting, string utilities.
+- **Exports:** `escapeHtml`, `_escapeHtml` (deprecated), `escapeHtmlWithBreaks`, `formatYear`, `formatYearRange`, `formatCharacterName`, `formatCharacterNameWithRank`, `formatCharacterNameWithGender`, `formatCharacterNameWithAge`, `formatRomanNumeral`, `formatTitle`, `formatCharacterTitles`, `formatSuccessionNumber`, `formatDynasty`, `formatRelationshipStatus`, `formatRelationshipType`, `formatFriendship`, `formatLocationHierarchy`, `formatLocationType`, `formatPopulation`, `formatAge`, `formatAgeRange`, `formatDateRange`, `formatList`, `formatCount`, `getGenderLabel`, `truncateString`, `truncateLocation`, `formatPercentage`, `formatDuration`.
+- **Dependencies:** none. Pure string manipulation.
+- **Contracts:** callers resolve IDs/entities/ages; formatters only format. No icons, no emojis.
+
+#### `icons.js`
+- **Location:** `js/core/icons.js`
+- **Scope:** all SVG assets plus value→icon semantic helpers.
+- **Exports:** `Icons` (frozen object of SVG strings), `getIcon`, `getLocationTypeIcon`, `getRelationshipStatusIcon`, `getGenderIcon`, `getAdoptionTypeIcon`, `getRankLevelIcon`, `getRankActionIcon`, `getDashboardToolIcon`. CommonJS `module.exports` for tests.
+- **Dependencies:** none.
+- **Contract:** `Icons.X` is trusted inline SVG; never concatenate untrusted strings into an icon. All unknown values fall back to `Icons.CIRCLE`.
+
+### 2.6 Core — UI primitives
+
+#### `ui.js`
+- **Location:** `js/core/ui.js`
+- **Scope:** toasts, loading overlay (nested counter), inline loading, button loading, progress bars, skeleton loaders, body scroll lock (`UI.lockBodyScroll` / `UI.unlockBodyScroll` / `UI.clearAllScrollLocks`).
+- **Exports:** `UI.*` (scroll lock); `showToast`, `showSuccessToast`, `showErrorToast`, `showWarningToast`, `showInfoToast`, `showPersistentToast`, `showToastSequence`, `clearAllToasts`; `showLoading`, `hideLoading`, `forceHideLoading`; `showInlineLoading`, `hideInlineLoading`; `showButtonLoading`, `hideButtonLoading`; `showProgressBar`, `hideProgressBar`, `updateProgressBar`; `showSkeletonLoader`, `hideSkeletonLoader`; `_showToast` (deprecated).
+- **Dependencies (required):** `formatting.js` (`escapeHtml`), `icons.js` (`Icons`).
+- **Contracts:**
+  - Loading overlay uses a **nested counter**, message belongs to the most recent caller.
+  - Inline loading **replaces** container contents temporarily; content added while active is removed on hide.
+  - Button loading preserves original children + disabled state.
+  - Progress bar: one instance per container, update-in-place.
+  - Body scroll lock uses a **named-owner Set**, not a counter.
+
+#### `modals-core.js`
+- **Location:** `js/core/modals-core.js`
+- **Scope:** modal stack, `openModal`/`closeTopModal`/`closeAllModals`, `alertDialog`/`confirmDialog`/`successDialog`/`errorDialog`, `openPreviewModal`.
+- **Exports:** `openModal`, `closeTopModal`, `closeAllModals`, `alertDialog`, `confirmDialog`, `successDialog`, `errorDialog`, `openPreviewModal`.
+- **Dependencies (required):** `formatting.js` (`escapeHtml`), `icons.js` (`Icons`).
+- **Contracts:**
+  - `onMount` exceptions logged & swallowed; `onConfirm` returning `false` keeps modal open; exceptions propagate.
+  - `onCancel` is called on **any non-confirmed close** (cancel button, overlay, Escape, close X, `closeTopModal`/`closeAllModals`); exceptions logged & swallowed.
+  - Programmatic `.close()` on the returned handle does **not** fire `onCancel`.
+  - `titleHtml` / `contentHtml` are trusted HTML (caller must escape untrusted text).
+
+#### `collapsible.js`
+- **Location:** `js/core/ui/collapsible.js`
+- **Scope:** collapsible sidebar, filter section, age groups, tree nodes, simple collapsible.
+- **Exports:** `initCollapsibleSidebar`, `initCollapsibleFilter`, `initCollapsibleAgeGroups`, `initCollapsibleTreeNodes`, `createSimpleCollapsible`; namespace `UI.Collapsible` with `initSidebar`, `initFilter`, `initAgeGroups`, `initTreeNodes`, `createSimple`.
+- **Dependencies (required):** `ui.js` (`UI.lockBodyScroll`, `UI.unlockBodyScroll`), `responsive.js` (`RESPONSIVE_BREAKPOINTS.MOBILE`).
+- **Contracts:** logical state is the `.collapsed` class on the DOM; initializers return `destroy()`; `window.refreshCollapsibleTreeNodes` was removed (use `initCollapsibleTreeNodes(...).refresh()`).
+
+#### `responsive.js`
+- **Location:** `js/core/responsive.js`
+- **Scope:** viewport detection, responsive body classes, responsive grid column count (data attribute only), mobile menu lifecycle, swipe gestures.
+- **Exports:** `RESPONSIVE_BREAKPOINTS` (frozen `{ MOBILE: 768, TABLET: 1024 }`), `isMobileViewport`, `isTabletViewport`, `isDesktopViewport`, `getViewportCategory`, `initResponsiveBody`, `initResponsiveGrid`, `initMobileMenu`, `initSwipeable`, `isTableViewport` (deprecated alias).
+- **Dependencies (required):** `collections.js` (`debounce`), `ui.js` (`UI.lockBodyScroll`, `UI.unlockBodyScroll`).
+- **Contracts:**
+  - Body classes `mobile-view` / `tablet-view` / `desktop-view` are application state, **not** a substitute for CSS media queries.
+  - `initResponsiveGrid` writes `data-responsive-columns`; presentation is CSS-owned.
+  - Duplicate `initMobileMenu` on the same container returns `null`.
+
+#### `tab-manager.js`
+- **Location:** `js/core/tab-manager.js`
+- **Scope:** universal scope-keyed tab registry and dispatcher.
+- **Exports:** `TabManager` (`configure`, `register`, `unregister`, `has`, `getRenderer`, `getRegistered`, `render`, `renderActive`, `activate`, `setActive`, `requestRender`, `init`, `getScopes`, `getStatus`).
+- **Dependencies:** **none** by design — every domain-specific concern (context, container, empty state, active tab) lives in the domain's config block.
+- **Contracts:**
+  - Click routing is by DOM ancestry against each scope's `containerRoot`.
+  - Renderer exceptions propagate (not swallowed).
+  - Empty-state reasons: `'no-container'`, `'no-context'`, `'no-renderer'`.
+  - `requestRender` coalesces same-tab renders onto the next tick.
+
+### 2.7 Core — state
+
+#### `state.js`
+- **Location:** `js/core/state.js`
+- **Scope:** **compatibility facade** over feature state modules.
+- **Exports:** `StillWatersState` (getters/setters delegating to feature modules), `clearAllRuntimeState`, `clearAdoptionCache`, `setSelectedCharacter`, `setSelectedPlace`, `setSelectedHousehold`, `hasSelectedCharacter`, `hasSelectedPlace`, `hasSelectedHousehold`, matchmaker helpers (`clearRomanceCharacters`, `addRomanceCharacter`, `removeRomanceCharacter`, `clearFriendshipCharacters`, `addFriendshipCharacter`, `removeFriendshipCharacter`, `clearHeartbreakCouples`, `setHeartbreakCoupleCollapsed`), plus live global bindings via `Object.defineProperty`.
+- **Required feature modules (must load before):**
+  - `CharacterState` — `js/character/character-state.js`
+  - `LocationUIState` — `js/core/state/location-ui-state.js` **(NOT** `js/location/location-state.js`)
+  - `MatchmakerState` — `js/systems/matchmaker/matchmaker-state.js`
+  - `CensusState` — `js/systems/census/census-state.js`
+  - `HouseholdState` — `js/systems/household/household-state.js`
+  - `RoleState` — `js/systems/roles/role-state.js`
+  - `RankState` — `js/systems/ranks/rank-state.js`
+  - `NamesState` — `js/systems/names/names-state.js`
+  - `MiscState` — `js/core/state/misc-state.js`
+- **Contracts:**
+  - Global bindings are **live** (getter/setter, not snapshots).
+  - Read-only bindings throw on assignment.
+  - `window.LocationState` (domain) ≠ `window.LocationUIState` (UI state). The facade reads `LocationUIState`.
+  - `householdCurrentYear` and `loadingOverlay` are **deprecated**, throttled to one `console.warn` per process; `householdCurrentYear` throws if `time.js` is not loaded.
+  - Romance/friendship selection globals are read-only **views** over live `Set`s (frozen wrappers, cached per Set instance via `WeakMap`).
+
+#### `ui-state.js`
+- **Location:** `js/core/ui-state.js`
+- **Scope:** persistent per-panel UI state (filters, sort, collapsed, arbitrary data), subscriptions, namespacing.
+- **Exports:** `UIState` (`getFilters`, `setFilters`, `patchFilters`, `resetFilters`, `getSort`, `setSort`, `getCollapsed`, `setCollapsed`, `toggleCollapsed`, `getData`, `setData`, `removeData`, `subscribe`, `clearPanel`, `clearAll`, `isPersistent`, `getStorageKey`, `getPanelIds`, `getParseFailures`).
+- **Dependencies (required):** none.
+- **Contracts:**
+  - Stored under a single localStorage key `stillwaters_ui_state`.
+  - Falls back to in-memory when localStorage throws; `isPersistent()` reports.
+  - Setting to the same value is a no-op (no write, no notification).
+  - Subscribers receive a deep copy of the panel entry; subscriber throws are logged and contained.
+
+#### State feature modules (all IIFE, no external deps):
+- `census-state.js` — `CensusState` (`censusCurrentView`, `censusSelectedLocationId`, `censusFilters`, `censusPresets`, `reset`, `_createDefaults`, `_createDefaultFilters`).
+- `matchmaker-state.js` — `MatchmakerState` (`selectedRomanceCharacterIds`, `selectedFriendshipCharacterIds`, `selectedPolygynyManId`, `selectedPolygynyWomanId`, `heartbreakCollapsedCouples`, `isSurpriseModalOpen`, `isSurpriseApprenticeModalOpen`, plus clear/add/remove helpers and `reset`, `_createDefaults`). **Uses `Set`/`Map` and clears in place on reset** (documented contract in `state.js`).
+- `misc-state.js` — `MiscState` (`treeCurrentCharacterId`, `timelineEvents`, `diagnosticCurrentData`, `bulkImportedData`, `bulkImportedHeaders`, `reset`, `_createDefaults`).
+
+### 2.8 Core — maintenance and exports
+
+#### `maintenance.js`
+- **Location:** `js/core/maintenance.js`
+- **Scope:** periodic integrity audit scheduling; audit-then-repair orchestration; last-audit timestamp.
+- **Exports:** `autoAudit`, `isAuditDue`, `getLastAuditTime`, `getAuditStatus`, `MaintenanceDebug` (`clearAuditTimestamp`, `setAuditTimestamp`).
+- **Dependencies (required when due):** `integrity.js` (`auditDataIntegrity`, `repairAllData`), `storage.js` (`markDataDirty`, only when repairs occurred).
+- **Contracts:**
+  - `autoAudit()` returns `{ ran, success, ... }`; distinguishes "scheduler ran" from "audit cycle succeeded".
+  - Timestamp only advances after a **fully successful** cycle.
+  - Corrupt/future-dated scheduler timestamps → "never audited".
+  - Persistence boundary (not maintenance) invalidates caches.
+
+#### `exportUtils.js`
+- **Location:** `js/core/exportUtils.js`
+- **Scope:** generic CSV and JSON serialization → browser download.
+- **Exports:** `exportToCSV`, `exportToJSON`.
+- **Dependencies:** browser `Blob`, `URL`, `document`, `setTimeout`. No application/domain deps.
+- **Contracts:**
+  - Serialization errors throw; callers surface.
+  - CSV escaping is RFC 4180; **no** formula-injection mitigation (export projection's responsibility).
+  - Filenames sanitized; non-string filename throws.
+  - `exportToJSON` throws on `undefined` / function / symbol values.
+
+### 2.9 Core — collections and constants
+
+#### `collections.js`
+- **Location:** `js/core/collections.js`
+- **Scope:** deep clone, function utilities, array helpers, object helpers.
+- **Exports:** `deepClone`, `safeDeepClone`, `quickClone` (deprecated), `debounce`, `debounceLeading`, `throttle`, `unique`, `groupBy`, `groupByObject`, `sortBy`, `sortByMultiple`, `chunk`, `flatten`, `flattenDeep`, `intersection`, `arrayToMap`, `arrayToObject`, `pick`, `omit`, `merge` (deprecated alias), `shallowMerge`, `deepMerge`, `isEmptyObject`.
+- **Dependencies:** none.
+- **Contracts:**
+  - `deepClone` supports primitives/Date/RegExp/Map/Set/Array/plain objects; prototype pollution keys skipped.
+  - `deepMerge` requires acyclic input; cycles throw; recurses only into plain objects (arrays replaced/cloned).
+  - `debounce` exposes `.cancel()` and `.flush()`; `throttle` is leading-edge only with `.cancel()`.
+
+#### `constants.js`
+- **Location:** `js/core/constants/constants.js`
+- **Scope:** application-wide localStorage keys and cross-cutting config.
+- **Exports:** `LOCAL_STORAGE_KEYS` (frozen), `STORAGE_KEYS` (alias), `APP_CONSTANTS` (frozen).
+- **Dependencies:** none. Load first.
+- **Contracts:**
+  - Enumerates **every** localStorage key the application uses (`MASTER`, `UI_STATE`, `LOCATION_TREE_STATE`, `CHARACTER_TREE_STATE`, `RANK_TREE_STATE`, `HOUSEHOLD_TREE_STATE`, filter keys, UI state keys, custom-data keys, census keys, timeline keys, `RNG_SEED`, `LAST_AUDIT`).
+  - Location tree key canonicalized back to `'location_tree_expanded'`; migration policy documented in header.
+
+#### `age-constants.js`
+- **Location:** `js/core/constants/age-constants.js`
+- **Scope:** `LIFE_STAGES`, `AGE_GROUPS`, `FILTER_AGE_GROUPS`, legacy `DEATH_CAUSES`.
+- **Exports:** `LIFE_STAGES` (frozen: INFANT…ANCIENT), `AGE_GROUPS` (`'0-10'…'91+'`), `FILTER_AGE_GROUPS` (`'0-19'`, `'20-35'`, `'36-50'`, `'51+'`), `DEATH_CAUSES` (legacy flat weighted list).
+- **Dependencies:** none.
+- **Contracts:**
+  - `LIFE_STAGES` and `AGE_GROUPS` must stay aligned (documented invariant, not machine-checked).
+  - `FILTER_AGE_GROUPS` is **intentionally** a different partition; do not unify.
+  - `DEATH_CAUSES` here is **legacy**, no current consumers; canonical catalogue is `mortality-rules.js::DEFAULT_DEATH_CAUSES`.
+
+#### `character-constants.js`
+- **Location:** `js/core/constants/character-constants.js`
+- **Exports:** `GENDER_VALUES` (`['male','female','unknown']`), `ATTRACTION_VALUES` (`['both','men','women','neither','unknown']`).
+- **Contract:** `'other'` is **not** canonical gender (removed; it was silently collapsed to `'unknown'`).
+
+#### `character-traits.js`
+- **Location:** `js/core/constants/character-traits.js`
+- **Exports:** `CHARACTER_TRAITS` (frozen map), `CHARACTER_TRAIT_VALUES` (ordered id list), `CHARACTER_TRAIT_LOOKUP` (frozen null-proto membership map), `isKnownTrait`, `getTraitDefinition`, `getTraitIds`. CommonJS export for tests.
+- **Contract:** `polygamous` is **deliberately excluded**; multi-spouse permission is `rank.allowsMultipleSpouses` only.
+
+#### `location-constants.js`
+- **Location:** `js/core/constants/location-constants.js`
+- **Exports:** `LOCATION_LEVELS` (1:country, 2:region/district, 3:county/duchy, 4:town/village, 5:locality/compound).
+
+#### `relationship-constants.js`
+- **Location:** `js/core/constants/relationship-constants.js`
+- **Exports:** `RELATIONSHIP_STATUS` (`ONGOING`, `ENDED`, `WIDOWED`, `SINGLE`, `PARTNERED`).
+
+### 2.10 Core — world queries
+
+#### `world.js`
+- **Location:** `js/core/world.js`
+- **Scope:** pure read-only location queries.
+- **Exports:** `getLocationTypePriority`, `getPlacePriority`, `getLocationTypeScope`, `getPlaceScope`, `getChildPlaces`, `getTopLevelPlaces`, `getPlacesByPriority`, `getPlacesByScope`, `getParentChain`, `isAncestorOf`, `getLocationCountry`, `getLocationDistrict`, `getCountryPlaces`, `getCountryIdForPlace`, `getCharacterCountryId`, `getCharacterCountry`, `getCurrentLocationId`, `getCurrentPlace`, `getCharacterLocationPath`, `getCharactersGroupedByLocation`, `getLocationPopulationCount`.
+- **Dependencies (required):** `accessors.js` (`getPlaces`, `getPlaceById`, `getLocationTypeById`, `getCharacters`), `time.js` (`isValidYear`).
+- **Contracts:**
+  - `getCurrentLocationId` may return a dangling ID; `getCurrentPlace` returns `null` in that case.
+  - **Shadowing:** under documented load order, `js/selectors/locationDropdown.js` overwrites `window.getLocationCountry` / `window.getLocationDistrict` with a superset version (accepts place **or** id). Runtime callers should assume the superset contract.
+  - `getLocationPopulationCount(locationId, { includeDescendants=true, aliveOnly=false })` → `number | null`.
+
+### 2.11 Core — naming
+
+#### `names.js`
+- **Location:** `js/core/names.js`
+- **Scope:** character/city/region/landmark names, dynasty names, regnal numbering, epithets.
+- **Exports:** `getRandomNameFromCountry`, `getRandomSurnameFromCountry`, `generateRandomFullName`, `getCharacterSurnameRules`, `getCharacterEpithet`, `getCharacterSurnameSource`, `generateDynastyName`, `formatDynastyName`, `generateCityName`, `generateRegionName`, `generateLandmarkName`, `formatTitleName`, `generateEpithet`, `formatRegnalName`, `getNextRegnalNumber`.
+- **Dependencies (required):** `randomness.js` (`pickRandom`, `random`, `randomBoolean`), `accessors.js` (`getNameLists`, `getCityNameParts`), and **a** provider of `getCharacterById` — `character-queries.js` **or** `accessors.js` **or** the `character-system.js` shim (whichever loads last; all three return the fields read: `surnameRules`, `epithet`, `surnameSource`).
+- **Contracts:**
+  - Missing `countryId` → `null` for character-name lookups; place generators fall back to a generic name.
+  - `formatTitleName` produces ordinal for 1 ("King Henry I"); `formatRegnalName` does **not** (first ruler is plain "Henry").
+  - `window.normalizeName` was removed (storage-boundary concern).
+
+---
+
+## 3. Cross-cutting contracts (consolidated)
+
+### 3.1 Persistence
+- Only `storage.js` writes `localStorage['stillwaters_master']`.
+- Domain mutations call `markDataDirty()` → debounced save.
+- Domain `persist()` returns `{ success, reason? }` using `saveMasterData() === true` or `saveMasterDataOrThrow()`.
+- `masterDataUpdated` CustomEvent fires on cross-tab reload **after** `invalidateAccessorCaches()`.
+
+### 3.2 Accessor cache lifecycle
+- Cache built lazily on first `getXById`.
+- Self-heals on size mismatch with a one-shot warning per invalidation cycle.
+- Mutation boundaries call `invalidateAccessorCaches()`.
+- `settlementData` is not cached here; no invalidation needed for settlement writes.
+
+### 3.3 Character projection vs. live entity
+- `accessors.js::getCharacterById` returns the **live** cached entity.
+- Under documented load order, `character-queries.js` (or the `character-system.js` shim) overwrites `window.getCharacterById` with a **projection**.
+- Live entity access for mutation is `CharacterState.getLiveCharacterForMutation`.
+- Projection consumers are enumerated in `accessors.js` header.
+
+### 3.4 Validation vs. existence
+- `validation.js` checks syntax/shape and semantics.
+- `accessors.js::*Exists` and `getXById(...) !== null` check existence.
+- `integrity.js` checks cross-entity references and repairs them (in memory).
+
+### 3.5 Error-handling conventions
+- Missing dependency → throw.
+- Missing data → `null` / `[]` / `false` / documented default.
+- Invalid explicit argument → throw or `null`/`false` per function contract (never silently normalized).
+- Load-order mistakes throw; they are not a legitimate runtime state.
+
+### 3.6 Time and years
+- `TIME_CONSTANTS` owns year bounds and default year (1250).
+- `getCurrentYear()` is the only current-year resolver; all else calls it.
+- `isValidYear` in `time.js` and `validation.js` share the same bounds.
+
+---
+
+# PART 2 — LOAD ORDER
+
+The order below is derived from: (a) explicit `DEPENDENCIES (REQUIRED)` sections, (b) runtime `window.X` lookups in code, and (c) the `state.js` `REQUIRED_MODULES` list. Where a file's header documents a *documented load order* (e.g. `character-queries.js` after `accessors.js`, `locationDropdown.js` after `world.js`), that is preserved. Files marked **[NOT PROVIDED]** are referenced by headers but were not in the supplied set; they are placed per the dependencies those headers state.
+
+> **Reading the order:** each group may be loaded in the order shown. Within a group, order is significant unless explicitly noted. Files in a later group depend on files in earlier groups.
+
+## Group 0 — No dependencies (load first)
+
+1. `js/core/constants/constants.js`
+2. `js/core/constants/age-constants.js`
+3. `js/core/constants/character-constants.js`
+4. `js/core/constants/character-traits.js`
+5. `js/core/constants/location-constants.js`
+6. `js/core/constants/relationship-constants.js`
+7. `js/core/formatting.js`
+8. `js/core/icons.js`
+9. `js/core/collections.js`
+10. `js/core/ids.js`
+11. `js/core/time.js`
+12. `js/core/randomness.js`
+13. `js/core/exportUtils.js`
+14. `js/core/ui-state.js`
+
+*Rationale:* none of these reference other application modules. `time.js` must precede `storage-schema.js`; `randomness.js` must precede `simulation-generators.js`; `constants.js` is documented to load first.
+
+## Group 1 — Schema and simulation (depends on Group 0)
+
+15. `js/core/storage-schema.js` — requires `time.js` (`TIME_CONSTANTS`).
+16. `js/modules/simulation/simulation-generators.js` — requires `randomness.js` + `time.js`.
+
+## Group 2 — Storage (depends on Group 1)
+
+17. `js/core/storage.js` — requires `time.js` + `storage-schema.js`.
+
+*Note:* `storage.js` optionally calls `invalidateAccessorCaches` and `validateImportData`; these are guarded by `typeof === 'function'`, so `accessors.js` / `validation.js` may load later. `initializeStorage()` is called after `accessors.js` is available in practice (cross-tab sync and import both need them), so a safe bootstrap calls `initializeStorage()` **after** Group 3.
+
+## Group 3 — Accessors and validation (depends on Group 2)
+
+18. `js/core/accessors.js` — reads `window.masterData` (initialized by `storage.js`).
+19. `js/core/validation.js` — requires `time.js`; optional `constants.js` enum files.
+
+*Order note:* `accessors.js` must load before any module that calls `getXById` at load time. `validation.js` has no ordering constraint against `accessors.js`, but both must precede `integrity.js`.
+
+## Group 4 — Domain queries over accessors (depends on Group 3)
+
+20. `js/core/world.js` — requires `accessors.js` + `time.js`.
+21. `js/core/names.js` — requires `randomness.js`, `accessors.js`, and a `getCharacterById` provider (see Group 6 note).
+
+*Order note:* `world.js` must load **before** `js/selectors/locationDropdown.js` (the selector overwrites `getLocationCountry`/`getLocationDistrict`). `names.js` works whether it sees the accessor version or the projection version of `getCharacterById`; it only needs *some* provider present.
+
+## Group 5 — Integrity and maintenance (depends on Groups 3–4)
+
+22. `js/core/integrity.js` — requires `accessors.js` (`getCharacters`, `getPlaces`, `getRanks`, `getRoles`, `getHouseholds`, `getCharacterById`, `getPlaceById`).
+23. `js/core/maintenance.js` — requires `integrity.js` (and `storage.js` only when repairs occur). May load after `integrity.js`; its "not due" path does not touch integrity.
+
+## Group 6 — Character domain provider (depends on Group 3)
+
+24. `js/character/character-queries.js` **[NOT PROVIDED]** — overwrites `window.getCharacterById` with the projection version.
+25. `js/character/character-state.js` **[NOT PROVIDED]** — required by `state.js`; provides `CharacterState`.
+26. `js/character/character-system.js` **[NOT PROVIDED]** — the shim that re-installs the projection-returning `getCharacterById` under the documented load order.
+
+*Order note:* per `accessors.js` and `names.js` headers, the runtime winner for `window.getCharacterById` is whichever of `character-queries.js` / the `character-system.js` shim loads **last**. This is intentional. Any module that needs a live entity must call `CharacterState.getLiveCharacterForMutation` directly.
+
+## Group 7 — UI state feature modules (depend only on Group 0; may load in parallel with Groups 1–6)
+
+27. `js/core/state/location-ui-state.js` **[NOT PROVIDED]** — `LocationUIState`.
+28. `js/systems/matchmaker/matchmaker-state.js` — `MatchmakerState`.
+29. `js/systems/census/census-state.js` — `CensusState`.
+30. `js/systems/household/household-state.js` **[NOT PROVIDED]** — `HouseholdState`.
+31. `js/systems/roles/role-state.js` **[NOT PROVIDED]** — `RoleState`.
+32. `js/systems/ranks/rank-state.js` **[NOT PROVIDED]** — `RankState`.
+33. `js/systems/names/names-state.js` **[NOT PROVIDED]** — `NamesState`.
+34. `js/core/state/misc-state.js` — `MiscState`.
+
+*Note:* `matchmaker-state.js`, `census-state.js`, and `misc-state.js` have no dependencies and could be loaded in Group 0. They are placed here because `state.js` requires all of them to exist before it loads, and grouping them together keeps `state.js`'s precondition obvious.
+
+## Group 8 — State facade and UI primitives (depends on Groups 0, 6, 7)
+
+35. `js/core/state.js` — requires **all nine** feature state modules from Groups 6–7 to be present; throws otherwise with a canonical path for each missing module.
+36. `js/core/ui.js` — requires `formatting.js` + `icons.js` (Group 0).
+37. `js/core/responsive.js` — requires `collections.js` + `ui.js`.
+38. `js/core/collapsible.js` — requires `ui.js` + `responsive.js`.
+39. `js/core/modals-core.js` — requires `formatting.js` + `icons.js`.
+40. `js/core/tab-manager.js` — no deps; may load any time after Group 0.
+
+*Order note:* `responsive.js` must load **after** `ui.js` because it calls `UI.lockBodyScroll`/`UI.unlockBodyScroll` at call time, and `collapsible.js` must load **after** `responsive.js` because it reads `RESPONSIVE_BREAKPOINTS.MOBILE` at call time. `ui.js` must precede `collapsible.js` and `responsive.js`.
+
+## Group 9 — Domain UI / selectors (depends on Groups 4, 8)
+
+41. `js/selectors/locationDropdown.js` **[NOT PROVIDED]** — overwrites `getLocationCountry`/`getLocationDistrict` with superset versions; must load after `world.js`.
+
+*Any other domain UI modules* (`modals-roles.js`, `modals-education.js`, `modals-apprenticeship.js`, `education-queries.js`, `apprenticeship-queries.js`, `settlement-prosperity-queries.js`, etc. — listed as projection consumers in `accessors.js`) load after Group 6 (`character-queries.js`/shim) and Group 8 (`modals-core.js`, `formatting.js`, `icons.js`), because they read the character projection and/or use modal/formatters. They were not provided, so no stricter order is asserted.
+
+## Group 10 — Application bootstrap (last)
+
+42. `js/core/storage.js::initializeStorage()` — **call**, not load. Invoke after Groups 2–3 are loaded so `loadMasterData()` and the cross-tab listener run against a ready accessor layer. (The module itself is loaded in Group 2; the *function call* belongs here.)
+
+---
+
+## 4. Summary load sequence (flat)
+
+```
+— Group 0 —
+constants.js
+age-constants.js
+character-constants.js
+character-traits.js
+location-constants.js
+relationship-constants.js
+formatting.js
+icons.js
+collections.js
+ids.js
+time.js
+randomness.js
+exportUtils.js
+ui-state.js
+
+— Group 1 —
+storage-schema.js
+simulation-generators.js
+
+— Group 2 —
+storage.js
+
+— Group 3 —
+accessors.js
+validation.js
+
+— Group 4 —
+world.js
+names.js
+
+— Group 5 —
+integrity.js
+maintenance.js
+
+— Group 6 —
+character-queries.js            [NOT PROVIDED]
+character-state.js              [NOT PROVIDED]
+character-system.js             [NOT PROVIDED]
+
+— Group 7 —
+location-ui-state.js            [NOT PROVIDED]
+matchmaker-state.js
+census-state.js
+household-state.js              [NOT PROVIDED]
+role-state.js                   [NOT PROVIDED]
+rank-state.js                   [NOT PROVIDED]
+names-state.js                  [NOT PROVIDED]
+misc-state.js
+
+— Group 8 —
+state.js
+ui.js
+responsive.js
+collapsible.js
+modals-core.js
+tab-manager.js
+
+— Group 9 —
+locationDropdown.js             [NOT PROVIDED]
+...other domain UI/queries...
+
+— Group 10 —
+initializeStorage()   (function call)
+```
+
+## 5. Load-order invariants (must-hold rules)
+
+1. `time.js` before `storage-schema.js`, `storage.js`, `validation.js`, `world.js`, `simulation-generators.js`.
+2. `storage-schema.js` before `storage.js`.
+3. `storage.js` before any `accessors.js` use at runtime (accessors throws if `window.masterData` is absent).
+4. `accessors.js` before `integrity.js`, `world.js`, `names.js`.
+5. `collections.js` before `responsive.js` (debounce).
+6. `ui.js` before `responsive.js` and `collapsible.js` (scroll-lock + `RESPONSIVE_BREAKPOINTS`).
+7. `responsive.js` before `collapsible.js`.
+8. All nine feature state modules before `state.js`.
+9. `world.js` before `js/selectors/locationDropdown.js` (intentional shadowing).
+10. Whichever of `character-queries.js` / `character-system.js` should win the `window.getCharacterById` race must load **last** among those two; `accessors.js` must load before either (it provides the underlying cache the projection reads).
+11. `initializeStorage()` is called after `accessors.js` + `validation.js` are loaded, so cross-tab reload, import, and reset can invalidate caches and validate payloads.
+12. `integrity.js` before `maintenance.js` at the time an audit is due (the "not due" path is dependency-free).
+
+## 6. Known hazards
+
+- **`LocationState` vs. `LocationUIState`.** `state.js` requires `LocationUIState` at `js/core/state/location-ui-state.js`. `js/location/location-state.js` is the **domain** module and is **not** a UI-state module. `state.js`'s error message distinguishes them explicitly.
+- **`getCharacterById` race.** `accessors.js` exports the live-entity version; `character-queries.js` / the `character-system.js` shim overwrite it with the projection version. Do not "fix" this by removing the override; live access is opt-in via `CharacterState.getLiveCharacterForMutation`.
+- **`getLocationCountry` / `getLocationDistrict` shadowing.** `locationDropdown.js` overwrites `world.js`'s exports with a superset. Runtime callers should assume the superset contract (place **or** id).
+- **`DEATH_CAUSES` duplication.** `age-constants.js::DEATH_CAUSES` is a legacy flat list with no current consumers; `mortality-rules.js::DEFAULT_DEATH_CAUSES` is canonical. Do not conflate.
+- **`FILTER_AGE_GROUPS` vs. `AGE_GROUPS`.** Intentionally different partitions; do not unify.
+- **Envelope markers.** `_legacyEnvelopeLess`, `_yearCoerced`, `_preservedUnknownTopLevel` exist only in memory until the next save; `storage.js` strips them from the serialized form.
+- **Persistence Pattern C.** `saveMasterData(); return { success: true };` is broken (discards return value). Use Pattern A or B.
+- **`ui-state.js` fallback.** When localStorage throws, the store is in-memory only; `isPersistent()` reports this.
+- **`state.js` deprecated globals.** `householdCurrentYear` throws if `time.js` is absent; `loadingOverlay` always returns `null`. Both warn once per process.
+
+---
+
+*End of documentation. Files marked **[NOT PROVIDED]** are referenced by dependency headers in the supplied set but were not included; their position in the load order is dictated by those headers and by the `state.js` `REQUIRED_MODULES` list.*
