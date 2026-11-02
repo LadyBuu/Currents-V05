@@ -4,16 +4,17 @@ STILL WATERS — MASTER LOAD ORDER (ALL SUBSYSTEMS)
 
 Subsystems covered:
   - js/core/*                (constants, utilities, state, UI primitives)
-  - js/core/rank/*           (rank subsystem)
+  - js/ranks/*               (rank subsystem)
   - js/character/*           (character, family, children, mortality)
   - js/location/*            (location)
   - js/selectors/*           (selectors)
   - js/settlement/*          (settlement)
-  - js/systems/government/*  (government)
+  - js/government/*          (government)
   - js/religion/*            (religion)
   - js/households/*, js/industry/*, js/roles/*, js/crime/*,
     js/culture/*, js/education/*, js/events/*, js/relationships/*,
     js/social/*   (only where another subsystem requires them)
+  - css/*                    (stylesheet order)
 
 Notation:
 
@@ -39,10 +40,105 @@ Notation:
       referenced by a header or REQUIRED list but not in the
       supplied files.
 
+PATH NOTE (CANONICAL PATHS):
+  Rank files live at js/ranks/*.             NOT js/core/rank/*.
+  Government files live at js/government/*.  NOT js/systems/government/*.
+
+  Earlier revisions of this document used js/core/rank/ and
+  js/systems/government/. Those paths do not exist in the tree.
+  A directory named js/core/rank/ is NOT the canonical rank
+  subsystem; a directory named js/systems/government/ is NOT the
+  canonical government subsystem. If your HTML references either
+  of the old paths, every script in the block 404s and the
+  corresponding tab guard throws at load.
+
+  The correct paths, everywhere:
+    js/ranks/rank-constants.js
+    js/ranks/rank-rules.js
+    js/ranks/rank-state.js
+    js/ranks/rank-queries.js
+    js/ranks/rank-assignment.js
+    js/ranks/rank-commands.js
+    js/ranks/rank-issues.js
+    js/ranks/rank-ui-list.js
+    js/ranks/modals-rank.js
+    js/ranks/rank-bootstrap.js
+
+    js/government/government-constants.js
+    js/government/government-state.js
+    js/government/government-rules.js
+    js/government/government-queries.js
+    js/government/government-commands.js
+    js/government/government-economy.js
+    js/government/government-bootstrap.js
+    js/government/government-view-models.js
+    js/government/government-ui-list.js
+    js/government/modals-government.js
+    js/government/modals-government-positions.js
+    js/government/modals-government-departments.js
+    js/government/modals-government-assign.js
+    js/government/modals-government-economy.js
+    js/government/settlement-law-formatters.js
+
 Reading rule: never reorder two lines within a block unless the
 block says "order within this block is unimportant". Every
 "<- AFTER: (HARD)" note is mandatory. Every "<- after: (call-time)"
 is a strong recommendation for a functioning page.
+
+==============================================================================
+BLOCK 0 — STYLESHEETS (load before any page script)
+==============================================================================
+
+Every HTML page that renders domain UI MUST link these stylesheets,
+in this order, before any <script> tag that touches the DOM.
+
+  css/themes.css
+    (defines :root defaults, all named themes, art direction)
+
+  css/common.css
+    <- AFTER: css/themes.css                  (HARD — every
+                                                colour, font,
+                                                radius, and shadow
+                                                declaration is a
+                                                var(--token) that
+                                                themes.css
+                                                defines)
+
+  css/<page>.css
+    <- AFTER: css/themes.css                  (HARD — same reason)
+    <- AFTER: css/common.css                  (soft — for the
+                                                shared structural
+                                                classes:
+                                                .empty-state,
+                                                .location-tree-badge,
+                                                .btn)
+
+  Notes:
+    - themes.css MUST be first. Without it, common.css and every
+      domain CSS file render with UNSET tokens: transparent
+      backgrounds, no borders, inherited (i.e. browser-default)
+      fonts. The symptom looks like "no CSS at all" but every
+      rule in common.css and the domain CSS is loading; they are
+      simply resolving to unset values.
+    - This is the single most common "the CSS isn't working"
+      cause and it is not a domain-specific rule. It applies to
+      index.html, DataManager.html, LocationManager.html,
+      GovernmentManager.html, SettlementManager.html,
+      ReligionManager.html, CultureManager.html,
+      HouseholdManager.html, RoleManager.html, CharacterManager.html,
+      every legacy *_v0*.html, every test page under js/testing/,
+      and any future page.
+    - index.html uses  themes.css → nexus.css  (nexus.css is
+      self-contained and does not depend on common.css).
+    - DataManager.html uses  themes.css → common.css →
+      data-manager.css.  data-manager.css owns ONLY the app shell
+      (.data-manager-app, .topbar, .panel-tabs, .tab-content,
+      .tab-pane). Each tab module injects its own structural CSS
+      at load (.ltm-* for location types, .gtm-* for government
+      types, .rtm-* for ranks). common.css supplies .empty-state,
+      .location-tree-badge, .btn.
+    - No domain CSS file defines colour, font, radius, or shadow
+      literals. Every visual value comes from themes.css tokens.
 
 ==============================================================================
 BLOCK 1 — CORE CONSTANTS (leaf, no dependencies)
@@ -60,6 +156,9 @@ BLOCK 1 — CORE CONSTANTS (leaf, no dependencies)
     - character-traits.js is a HARD prerequisite of
       character-factory.js and character-generator.js.
     - constants.js owns LOCAL_STORAGE_KEYS.
+    - There is NO js/core/constants.js. Any <script src="js/core/
+      constants.js"> is a 404. The correct path is
+      js/core/constants/constants.js.
 
 ==============================================================================
 BLOCK 2 — CORE UTILITIES (leaf, no dependencies)
@@ -75,9 +174,9 @@ BLOCK 2 — CORE UTILITIES (leaf, no dependencies)
     - Order within this block is unimportant.
     - formatting.js provides escapeHtml (HARD load-time guard of
       ui.js, modals-core.js, selector-base.js,
-      modals-household-selector.js, rank-ui-list.js,
-      modals-rank.js, religion-render.js, modals-religion.js,
-      and every modals-*.js).
+      modals-household-selector.js, location-ui-list.js,
+      rank-ui-list.js, modals-rank.js, religion-render.js,
+      modals-religion.js, and every modals-*.js).
     - formatting.js also provides formatOrdinal and
       formatRomanNumeral, used at CALL TIME by rank-rules.js.
     - icons.js provides window.Icons (HARD load-time guard of
@@ -112,9 +211,8 @@ BLOCK 3 — CORE TIME
       getCurrentYear / isValidYear / calculateAge).
     - The canonical accessor is getCurrentYear. getCurrentYearSafe
       is the DEPRECATED alias — used ONLY by Government (see
-      government-docs.txt §18) and by the deprecated
-      government-assignment.js facade. Every other subsystem,
-      INCLUDING RANK, reads getCurrentYear.
+      government-docs.txt §18). Every other subsystem, INCLUDING
+      RANK, reads getCurrentYear.
 
 ==============================================================================
 BLOCK 4 — CORE STORAGE
@@ -146,6 +244,8 @@ BLOCK 4 — CORE STORAGE
       (HARD load-time guards of rank-commands.js). It provides
       markDataDirty (verified by rank-bootstrap.js in
       REQUIRED_GLOBALS).
+    - The Data Manager page runs initializeStorage() inline, right
+      after storage.js and before accessors.js.
 
 ==============================================================================
 BLOCK 5 — CORE ACCESSORS, VALIDATION, WORLD, NAMES
@@ -216,6 +316,10 @@ BLOCK 6 — CORE UI PRIMITIVES
     - modals-core.js provides openModal and closeTopModal (HARD
       load-time guards of modals-rank.js, selector-base.js,
       modals-household-selector.js, every modals-*.js).
+    - responsive.js MUST load BEFORE collapsible.js.
+      collapsible.js throws at load if RESPONSIVE_BREAKPOINTS.MOBILE
+      is missing. This is the #1 cause of the "collapsible.js:
+      responsive.js must load first" error.
 
 ==============================================================================
 BLOCK 7 — CORE INTEGRITY AND MAINTENANCE
@@ -369,10 +473,8 @@ BLOCK 14 — CHARACTER SUBSYSTEM: CREATION AND DELETION
     <- after: js/relationships/relationship-integrations.js (call-time)
     <- after: js/households/household-commands.js      (call-time)
     <- after: js/apprenticeship/apprenticeship-commands.js (call-time)
-    <- after: rank-issues.js::removeAllReferencesTo    (call-time —
-                                                        DIRECT call;
-                                                        no listener
-                                                        registry)
+    <- after: js/ranks/rank-issues.js::removeAllReferencesTo
+        (call-time — DIRECT call; no listener registry)
 
   Notes:
     - character-deletion-commands.js CALLS
@@ -417,11 +519,7 @@ BLOCK 15 — CHARACTER SUBSYSTEM: CHILDREN
     <- after: js/character/family-queries.js       (call-time)
 
 ==============================================================================
-BLOCK 16 — RANK SUBSYSTEM (LOADS BEFORE THE UI LAYER SO THE
-            CHARACTER DEATH / DELETE CASCADE HAS A RANK HOOK
-            AVAILABLE AT CALL TIME, AND BEFORE
-            RELIGION / SETTLEMENT / GOVERNMENT, WHICH READ RANK
-            AT CALL TIME)
+BLOCK 16 — RANK SUBSYSTEM (js/ranks/)
 ==============================================================================
 
 This block is placed BEFORE the religion, settlement, government,
@@ -434,7 +532,7 @@ location, and UI blocks because:
     RankIssues.removeAllReferencesTo at CALL TIME (typeof-guarded,
     DIRECT call).
   - role-queries.js reads rank fields via accessors.getRankById at
-    CALL TIME (role is loaded in BLOCK 34).
+    CALL TIME (role is loaded in BLOCK 35).
   - religion-queries.js and religion-commands.js do not read rank,
     but the settlement and government blocks read RoleQueries at
     CALL TIME, and RoleQueries reads RankSummary via accessors.
@@ -442,12 +540,19 @@ location, and UI blocks because:
     loads BEFORE rank, so rank is placed immediately after the
     character block to close the call-time cycle.
 
+PATH CORRECTION (BLOCK 16):
+  Every file below lives at js/ranks/. There is no
+  js/core/rank/ directory. If your HTML references
+  js/core/rank/*.js, every script 404s and the rank subsystem
+  never loads — rank-manager-tab.js then throws its own guard
+  ("rank-state.js must load first"). Fix the paths first.
+
   — Rank constants (no dependencies) —
-  js/core/rank/rank-constants.js
+  js/ranks/rank-constants.js
 
   — Rank rules (pure policy; no load-time guard) —
-  js/core/rank/rank-rules.js
-    <- after: js/core/rank/rank-constants.js     (call-time —
+  js/ranks/rank-rules.js
+    <- after: js/ranks/rank-constants.js         (call-time —
                                                    RANK_LEVELS,
                                                    AVAILABLE_SYMBOLS,
                                                    DEFAULT_RANK read
@@ -462,7 +567,7 @@ location, and UI blocks because:
                                                    delegate)
 
   — Rank state (owns canonical catalogue) —
-  js/core/rank/rank-state.js
+  js/ranks/rank-state.js
     <- after: js/core/storage.js                 (call-time —
                                                    markDataDirty;
                                                    masterData)
@@ -473,16 +578,16 @@ location, and UI blocks because:
     <- after: js/core/accessors.js               (call-time,
                                                    typeof-guarded —
                                                    invalidateAccessorCaches)
-    <- after: js/core/rank/rank-rules.js         (call-time —
+    <- after: js/ranks/rank-rules.js             (call-time —
                                                    applyDefaults
                                                    production path of
                                                    _normaliseRank)
 
   — Rank queries —
-  js/core/rank/rank-queries.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-constants.js      (HARD —
+  js/ranks/rank-queries.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-constants.js          (HARD —
                                                    RANK_LEVELS,
                                                    AVAILABLE_SYMBOLS;
                                                    missing -> throw)
@@ -500,10 +605,10 @@ location, and UI blocks because:
                                                    getRankLevelIcon)
 
   — Rank assignment (numbering arithmetic) —
-  js/core/rank/rank-assignment.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
+  js/ranks/rank-assignment.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
     <- AFTER: js/character/character-commands.js  (HARD —
                                                    updateRankAssignment
                                                    method check)
@@ -516,11 +621,11 @@ location, and UI blocks because:
     <- method check: RankQueries.getParentIds            (HARD)
 
   — Rank commands (the only saveMasterData site) —
-  js/core/rank/rank-commands.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-assignment.js     (HARD)
+  js/ranks/rank-commands.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-assignment.js         (HARD)
     <- AFTER: js/character/character-commands.js  (HARD)
     <- AFTER: js/core/ids.js                      (HARD —
                                                    generateId)
@@ -535,12 +640,12 @@ location, and UI blocks because:
     <- method check: RankAssignment.renumberRankHolders    (HARD)
 
   — Rank issues (detection + fix closures) —
-  js/core/rank/rank-issues.js
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-commands.js       (HARD)
-    <- AFTER: js/core/rank/rank-assignment.js     (HARD)
+  js/ranks/rank-issues.js
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-commands.js           (HARD)
+    <- AFTER: js/ranks/rank-assignment.js         (HARD)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/character/character-commands.js  (HARD)
     <- AFTER: js/core/time.js                     (HARD)
@@ -551,20 +656,20 @@ location, and UI blocks because:
     <- after: js/character/family-queries.js      (call-time, soft)
 
   — Rank UI list —
-  js/core/rank/rank-ui-list.js
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-state.js          (HARD — surface)
+  js/ranks/rank-ui-list.js
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-state.js              (HARD — surface)
     <- AFTER: js/core/formatting.js               (HARD —
                                                    escapeHtml)
     <- AFTER: js/core/icons.js                    (HARD — Icons)
-    <- after: js/core/rank/modals-rank.js         (call-time, soft —
+    <- after: js/ranks/modals-rank.js             (call-time, soft —
                                                    default action
                                                    map for
                                                    'details' /
                                                    'edit')
 
   — Rank modals —
-  js/core/rank/modals-rank.js
+  js/ranks/modals-rank.js
     <- AFTER: js/core/modals-core.js              (HARD —
                                                    openModal,
                                                    closeTopModal)
@@ -572,17 +677,17 @@ location, and UI blocks because:
     <- AFTER: js/core/formatting.js               (HARD —
                                                    escapeHtml)
     <- AFTER: js/core/ui.js                       (HARD — showToast)
-    <- AFTER: js/core/rank/rank-state.js          (HARD)
-    <- AFTER: js/core/rank/rank-rules.js          (HARD)
-    <- AFTER: js/core/rank/rank-queries.js        (HARD)
-    <- AFTER: js/core/rank/rank-commands.js       (HARD)
+    <- AFTER: js/ranks/rank-state.js              (HARD)
+    <- AFTER: js/ranks/rank-rules.js              (HARD)
+    <- AFTER: js/ranks/rank-queries.js            (HARD)
+    <- AFTER: js/ranks/rank-commands.js           (HARD)
     <- AFTER: js/character/character-state.js     (HARD)
     <- AFTER: js/core/time.js                     (HARD)
-    <- AFTER: js/core/rank/rank-constants.js      (HARD)
+    <- AFTER: js/ranks/rank-constants.js          (HARD)
 
   — Rank bootstrap (verifies everything above) —
-  js/core/rank/rank-bootstrap.js
-    <- AFTER: every other js/core/rank/*.js file (HARD — REQUIRED_
+  js/ranks/rank-bootstrap.js
+    <- AFTER: every other js/ranks/*.js file (HARD — REQUIRED_
                MODULES check: RankRules, RankState, RankQueries,
                RankCommands, RankAssignment, RankIssues, RankUI,
                RankModals)
@@ -865,11 +970,11 @@ This block is placed AFTER the rank block (BLOCK 16) because:
 
   Notes:
     - Religion modals (modals-religion.js) are loaded AFTER
-      selectors (BLOCK 31) because they require
+      selectors (BLOCK 30) because they require
       openCharacterSelector and getFilteredLocationOptions. See
       BLOCK 32.
     - religion-bootstrap.js is loaded at the END of the religion
-      group (BLOCK 30) AFTER settlement-law-definitions.js is
+      group (BLOCK 29) AFTER settlement-law-definitions.js is
       available.
 
 ==============================================================================
@@ -1415,7 +1520,7 @@ BLOCK 34 — CHARACTER LIFECYCLE (AFTER SETTLEMENT ANNUAL PROCESSOR)
     <- AFTER: js/core/time.js                          (HARD)
     <- AFTER: js/core/randomness.js                    (HARD)
     <- after: js/character/family-commands.js          (call-time)
-    <- after: js/character/rank-issues.js              (call-time —
+    <- after: js/ranks/rank-issues.js                  (call-time —
                                                         DIRECT call:
                                                         handleCharacterDeath;
                                                         typeof-guarded;
@@ -1477,10 +1582,6 @@ BLOCK 35 — HOUSEHOLD AND CROSS-DOMAIN MODULES
   js/social/relationship-integrations.js               [UNVERIFIED]
   js/events/timeline-core.js                           [UNVERIFIED]
   js/crime/crime-constants.js                          [UNVERIFIED]
-  js/ranks/rank-queries.js                             [UNVERIFIED]
-    Note: this is NOT js/core/rank/rank-queries.js. It is a
-    separate ranks/* provider in the tree. The core rank block
-    (BLOCK 16) is the canonical rank subsystem.
 
   Notes:
     - These are CALL-TIME dependencies of the religion,
@@ -1539,14 +1640,14 @@ BLOCK 36 — SETTLEMENT SUBSYSTEM: UI
     <- after: window.PlaceQueries                      [UNVERIFIED]
 
 ==============================================================================
-BLOCK 37 — GOVERNMENT SUBSYSTEM: CONSTANTS, STATE, RULES
+BLOCK 37 — GOVERNMENT SUBSYSTEM: CONSTANTS, STATE, RULES (js/government/)
 ==============================================================================
 
-  js/systems/government/government-constants.js
+  js/government/government-constants.js
     (no dependencies)
 
-  js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-constants.js
+  js/government/government-state.js
+    <- AFTER: js/government/government-constants.js
     <- AFTER: js/core/ids.js
     <- AFTER: js/core/time.js                 (getCurrentYearSafe —
                                               DEPRECATED alias;
@@ -1554,17 +1655,17 @@ BLOCK 37 — GOVERNMENT SUBSYSTEM: CONSTANTS, STATE, RULES
     <- AFTER: js/core/storage.js              (markDataDirty)
     <- AFTER: initializeStorage()
 
-  js/systems/government/government-rules.js
-    <- AFTER: js/systems/government/government-constants.js
+  js/government/government-rules.js
+    <- AFTER: js/government/government-constants.js
 
 ==============================================================================
-BLOCK 38 — GOVERNMENT SUBSYSTEM: QUERIES AND COMMANDS
+BLOCK 38 — GOVERNMENT SUBSYSTEM: QUERIES AND COMMANDS (js/government/)
 ==============================================================================
 
-  js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-rules.js
+  js/government/government-queries.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-state.js
+    <- AFTER: js/government/government-rules.js
     <- AFTER: js/character/character-queries.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/roles/role-queries.js                   [UNVERIFIED]
@@ -1572,11 +1673,11 @@ BLOCK 38 — GOVERNMENT SUBSYSTEM: QUERIES AND COMMANDS
     <- AFTER: js/settlement/settlement-prosperity-queries.js
     <- AFTER: js/industry/industry-queries.js            [UNVERIFIED]
 
-  js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-rules.js
+  js/government/government-commands.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-state.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-rules.js
     <- AFTER: js/character/character-commands.js
     <- AFTER: js/character/character-queries.js
     <- AFTER: js/location/location-queries.js
@@ -1589,13 +1690,13 @@ BLOCK 38 — GOVERNMENT SUBSYSTEM: QUERIES AND COMMANDS
     <- AFTER: js/core/storage.js
 
 ==============================================================================
-BLOCK 39 — GOVERNMENT SUBSYSTEM: ECONOMY
+BLOCK 39 — GOVERNMENT SUBSYSTEM: ECONOMY (js/government/)
 ==============================================================================
 
-  js/systems/government/government-economy.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-rules.js
-    <- AFTER: js/systems/government/government-queries.js
+  js/government/government-economy.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-rules.js
+    <- AFTER: js/government/government-queries.js
     <- AFTER: js/location/location-queries.js      (loaded but not
                                                     used; see
                                                     government-docs.txt
@@ -1604,16 +1705,16 @@ BLOCK 39 — GOVERNMENT SUBSYSTEM: ECONOMY
     <- AFTER: js/core/time.js
 
 ==============================================================================
-BLOCK 40 — GOVERNMENT SUBSYSTEM: BOOTSTRAP
+BLOCK 40 — GOVERNMENT SUBSYSTEM: BOOTSTRAP (js/government/)
 ==============================================================================
 
-  js/systems/government/government-bootstrap.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-state.js
-    <- AFTER: js/systems/government/government-rules.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-economy.js
+  js/government/government-bootstrap.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-state.js
+    <- AFTER: js/government/government-rules.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-economy.js
     <- AFTER: js/core/ids.js
     <- AFTER: js/core/storage.js
     <- AFTER: js/core/time.js
@@ -1631,68 +1732,68 @@ BLOCK 40 — GOVERNMENT SUBSYSTEM: BOOTSTRAP
     <- AFTER: initializeStorage()
 
 ==============================================================================
-BLOCK 41 — GOVERNMENT SUBSYSTEM: VIEW MODELS, UI, MODALS
+BLOCK 41 — GOVERNMENT SUBSYSTEM: VIEW MODELS, UI, MODALS (js/government/)
 ==============================================================================
 
-  js/systems/government/government-view-models.js
-    <- AFTER: js/systems/government/government-constants.js
+  js/government/government-view-models.js
+    <- AFTER: js/government/government-constants.js
 
-  js/systems/government/government-ui-list.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/government-ui-list.js
+    <- AFTER: js/government/government-view-models.js
     <- after: js/core/formatting.js     (soft)
     <- after: js/core/icons.js          (soft)
 
-  js/systems/government/modals-government-positions.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/modals-government-positions.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
     <- AFTER: js/roles/role-queries.js                   [UNVERIFIED]
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
     <- after: js/selectors/modals-char-selector.js       (call-time)
 
-  js/systems/government/modals-government.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
-    <- AFTER: js/systems/government/government-ui-list.js
+  js/government/modals-government.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
+    <- AFTER: js/government/government-ui-list.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/roles/role-queries.js                   [UNVERIFIED]
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
 
-  js/systems/government/modals-government-departments.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/modals-government-departments.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
-    <- after: js/systems/government/modals-government-positions.js
+    <- after: js/government/modals-government-positions.js
         (call-time; "Add Position" button)
 
-  js/systems/government/modals-government-assign.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-view-models.js
-    <- AFTER: js/systems/government/government-ui-list.js
+  js/government/modals-government-assign.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-view-models.js
+    <- AFTER: js/government/government-ui-list.js
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
 
-  js/systems/government/modals-government-economy.js
-    <- AFTER: js/systems/government/government-constants.js
-    <- AFTER: js/systems/government/government-queries.js
-    <- AFTER: js/systems/government/government-commands.js
-    <- AFTER: js/systems/government/government-economy.js
-    <- AFTER: js/systems/government/government-view-models.js
+  js/government/modals-government-economy.js
+    <- AFTER: js/government/government-constants.js
+    <- AFTER: js/government/government-queries.js
+    <- AFTER: js/government/government-commands.js
+    <- AFTER: js/government/government-economy.js
+    <- AFTER: js/government/government-view-models.js
     <- AFTER: js/location/location-queries.js
     <- AFTER: js/core/modals-core.js
     <- AFTER: js/core/ui.js
 
-  js/systems/government/settlement-law-formatters.js
+  js/government/settlement-law-formatters.js
     <- after: js/core/icons.js          (soft)
 
 ==============================================================================
@@ -1705,7 +1806,8 @@ BLOCK 42 — OPTIONAL: STATE FACADE (only if js/core/state.js is used)
   js/core/state/location-ui-state.js                    [NOT PROVIDED]
   js/roles/role-state.js                                [NOT PROVIDED]
   js/ranks/rank-state.js                                [NOT PROVIDED]
-    Note: this is NOT js/core/rank/rank-state.js. It is a
+    Note: this is NOT the canonical rank-state.js (which is at
+    js/ranks/rank-state.js and is loaded in BLOCK 16). This is a
     separate ranks/* provider in the tree, not used by the core
     rank subsystem.
   js/names/name-state.js                                [NOT PROVIDED]
@@ -1803,17 +1905,17 @@ dependency appears before its dependent.
   js/character/children-commands.js
   js/character/children-statistics.js
 
-  — Block 16: RANK SUBSYSTEM —
-  js/core/rank/rank-constants.js
-  js/core/rank/rank-rules.js
-  js/core/rank/rank-state.js
-  js/core/rank/rank-queries.js
-  js/core/rank/rank-assignment.js
-  js/core/rank/rank-commands.js
-  js/core/rank/rank-issues.js
-  js/core/rank/rank-ui-list.js
-  js/core/rank/modals-rank.js
-  js/core/rank/rank-bootstrap.js
+  — Block 16: RANK SUBSYSTEM (js/ranks/) —
+  js/ranks/rank-constants.js
+  js/ranks/rank-rules.js
+  js/ranks/rank-state.js
+  js/ranks/rank-queries.js
+  js/ranks/rank-assignment.js
+  js/ranks/rank-commands.js
+  js/ranks/rank-issues.js
+  js/ranks/rank-ui-list.js
+  js/ranks/modals-rank.js
+  js/ranks/rank-bootstrap.js
 
   — Block 17: religion constants and format —
   js/religion/religion-constants.js
@@ -1948,8 +2050,6 @@ dependency appears before its dependent.
   js/social/relationship-integrations.js                [UNVERIFIED]
   js/events/timeline-core.js                            [UNVERIFIED]
   js/crime/crime-constants.js                           [UNVERIFIED]
-  js/ranks/rank-queries.js                              [UNVERIFIED]
-    (Note: not js/core/rank/rank-queries.js.)
 
   — Block 36: settlement UI —
   js/settlement/settlement-tabs.js
@@ -1959,29 +2059,29 @@ dependency appears before its dependent.
   js/settlement/modals-settlement-roles.js
 
   — Block 37: government constants, state, rules —
-  js/systems/government/government-constants.js
-  js/systems/government/government-state.js
-  js/systems/government/government-rules.js
+  js/government/government-constants.js
+  js/government/government-state.js
+  js/government/government-rules.js
 
   — Block 38: government queries and commands —
-  js/systems/government/government-queries.js
-  js/systems/government/government-commands.js
+  js/government/government-queries.js
+  js/government/government-commands.js
 
   — Block 39: government economy —
-  js/systems/government/government-economy.js
+  js/government/government-economy.js
 
   — Block 40: government bootstrap —
-  js/systems/government/government-bootstrap.js
+  js/government/government-bootstrap.js
 
   — Block 41: government view models, UI list, modals —
-  js/systems/government/government-view-models.js
-  js/systems/government/government-ui-list.js
-  js/systems/government/modals-government-positions.js
-  js/systems/government/modals-government.js
-  js/systems/government/modals-government-departments.js
-  js/systems/government/modals-government-assign.js
-  js/systems/government/modals-government-economy.js
-  js/systems/government/settlement-law-formatters.js
+  js/government/government-view-models.js
+  js/government/government-ui-list.js
+  js/government/modals-government-positions.js
+  js/government/modals-government.js
+  js/government/modals-government-departments.js
+  js/government/modals-government-assign.js
+  js/government/modals-government-economy.js
+  js/government/settlement-law-formatters.js
 
   — Block 42: optional state facade (only if js/core/state.js
      is used) —
@@ -2002,9 +2102,9 @@ dependency appears before its dependent.
     explicit call is needed.
 
   — DO NOT LOAD —
-  js/systems/government/government-system.js
-  js/systems/government/government-assignment.js
-  js/systems/government/government-laws.js
+  js/government/government-system.js
+  js/government/government-assignment.js
+  js/government/government-laws.js
     (government-docs.txt §8 lists these as DELETED. Loading
     government-system.js throws at load; government-laws.js
     throws at load; government-assignment.js is a dead facade.)
@@ -2013,44 +2113,50 @@ dependency appears before its dependent.
 BLOCK 44 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
 ==============================================================================
 
-  1.  time.js before storage-schema.js, storage.js, validation.js,
+  1.  themes.css before common.css and every domain CSS file.
+      Failure without it: every var(--token) resolves to its
+      fallback (none), which is unset. Backgrounds, borders,
+      fonts, colours all render at browser defaults. The
+      symptom is "no CSS at all" but every rule is loading.
+
+  2.  time.js before storage-schema.js, storage.js, validation.js,
       world.js, and every module that guards on getCurrentYear /
       isValidYear / calculateAge.
 
-  2.  storage-schema.js before storage.js.
+  3.  storage-schema.js before storage.js.
 
-  3.  initializeStorage() before character-state.js,
+  4.  initializeStorage() before character-state.js,
       family-state.js, children-state.js, location-state.js,
       settlement-state.js's first call, government-state.js's
       first hydrate, religion-state.js's first hydrate,
       rank-state.js's first hydrate (via RankBootstrap.init()).
 
-  4.  collections.js before location-state.js.
+  5.  collections.js before location-state.js.
 
-  5.  formatting.js and icons.js before ui.js, modals-core.js,
+  6.  formatting.js and icons.js before ui.js, modals-core.js,
       selector-base.js, modals-household-selector.js,
       location-ui-list.js, rank-ui-list.js, modals-rank.js,
       religion-render.js, and every modals-*.js.
 
-  6.  ui.js before responsive.js and collapsible.js.
+  7.  ui.js before responsive.js and collapsible.js.
 
-  7.  responsive.js before collapsible.js.
+  8.  responsive.js before collapsible.js.
 
-  8.  accessors.js before integrity.js, world.js, names.js,
+  9.  accessors.js before integrity.js, world.js, names.js,
       selector-base.js, locationDropdown.js,
       modals-char-selector.js, religion-state.js,
       religion-queries.js, religion-rules.js,
       religion-commands.js, modals-religion.js, rank-state.js
       (call-time, typeof-guarded).
 
-  9.  character-state.js before character-commands.js,
+  10. character-state.js before character-commands.js,
       character-queries.js.
 
-  10. character-state.js, character-commands.js before
+  11. character-state.js, character-commands.js before
       rank-queries.js, rank-assignment.js, rank-issues.js,
       modals-rank.js (all HARD load-time guards).
 
-  11. The nine CharacterCommands rank API methods
+  12. The nine CharacterCommands rank API methods
       (addRankAssignment, updateRankAssignment,
       deprecateRankAssignment, removeRankAssignment,
       setActiveRank, clearActiveRank, getRankAssignment,
@@ -2058,40 +2164,40 @@ BLOCK 44 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
       rank-commands.js loads. Failure throws at load naming the
       first missing method.
 
-  12. CharacterCommands.updateRankAssignment must exist before
+  13. CharacterCommands.updateRankAssignment must exist before
       rank-assignment.js and rank-issues.js load. Failure
       throws at load.
 
-  13. family-rules.js, family-state.js before family-queries.js.
+  14. family-rules.js, family-state.js before family-queries.js.
 
-  14. family-rules.js, family-state.js, family-queries.js before
+  15. family-rules.js, family-state.js, family-queries.js before
       family-commands.js.
 
-  15. FamilyQueries.getParents must exist at RankBootstrap.init()
+  16. FamilyQueries.getParents must exist at RankBootstrap.init()
       time (BLOCK 16's rank-bootstrap.js). Failure throws
       ("Missing FamilyQueries methods: getParents").
 
-  16. character-state.js, character-commands.js,
+  17. character-state.js, character-commands.js,
       character-creation-commands.js, family-commands.js,
       children-rules.js, ids.js, time.js, randomness.js before
       children-commands.js.
 
-  17. character-factory.js before character-creation-commands.js.
+  18. character-factory.js before character-creation-commands.js.
 
-  18. mortality-rules.js before character-lifecycle.js.
+  19. mortality-rules.js before character-lifecycle.js.
 
-  19. randomness.js before character-lifecycle.js.
+  20. randomness.js before character-lifecycle.js.
 
-  20. character-state.js, character-commands.js, mortality-rules.js,
+  21. character-state.js, character-commands.js, mortality-rules.js,
       time.js, randomness.js before character-lifecycle.js.
 
-  21. settlement-annual-processor.js before character-lifecycle.js
+  22. settlement-annual-processor.js before character-lifecycle.js
       (so advanceMortality's settlement step runs).
 
-  22. rank-issues.js before character-lifecycle.js (so
+  23. rank-issues.js before character-lifecycle.js (so
       handleCharacterDeath is callable).
 
-  23. rank-issues.js before character-deletion-commands.js's
+  24. rank-issues.js before character-deletion-commands.js's
       cleanup step actually reaches removeAllReferencesTo. Under
       the documented order, character-deletion-commands.js loads
       at BLOCK 14 (before rank-issues.js at BLOCK 16). The call is
@@ -2099,124 +2205,124 @@ BLOCK 44 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
       rely on the deletion path's rank step firing on a
       rank-issues-less page; it will silently skip.
 
-  24. location-state.js before location-hierarchy.js,
+  25. location-state.js before location-hierarchy.js,
       location-commands.js, location-queries.js,
       location-movement.js, location-view-models.js,
       location-bootstrap.js.
 
-  25. location-hierarchy.js before location-commands.js,
+  26. location-hierarchy.js before location-commands.js,
       location-movement.js, location-view-models.js,
       location-bootstrap.js.
 
-  26. location-queries.js before location-movement.js,
+  27. location-queries.js before location-movement.js,
       location-view-models.js, location-ui-list.js,
       location-presentation.js, location-bootstrap.js, and
       before every settlement / religion query that enumerates
       location subtrees at call time.
 
-  27. character-queries.js before location-queries.js,
+  28. character-queries.js before location-queries.js,
       location-movement.js, location-view-models.js,
       location-bootstrap.js, modals-char-selector.js, and before
       every settlement query that enumerates character
       projections, and before religion-state.js's first call to
       window.getCharacterById.
 
-  28. character-commands.js before location-commands.js,
+  29. character-commands.js before location-commands.js,
       location-bootstrap.js, character-lifecycle.js,
       character-deletion-commands.js (call-time),
       children-commands.js, government-commands.js,
       government-bootstrap.js, and religion-commands.js
       (setReligion method guard).
 
-  29. location-commands.js before location-bootstrap.js,
+  30. location-commands.js before location-bootstrap.js,
       government-commands.js.
 
-  30. rank-constants.js before rank-queries.js and
+  31. rank-constants.js before rank-queries.js and
       modals-rank.js (both throw at load if missing).
 
-  31. rank-rules.js before rank-state.js, rank-queries.js,
+  32. rank-rules.js before rank-state.js, rank-queries.js,
       rank-assignment.js, rank-commands.js, rank-issues.js.
 
-  32. rank-state.js before rank-queries.js, rank-assignment.js,
+  33. rank-state.js before rank-queries.js, rank-assignment.js,
       rank-commands.js, rank-issues.js.
 
-  33. rank-queries.js before rank-assignment.js,
+  34. rank-queries.js before rank-assignment.js,
       rank-commands.js, rank-issues.js, rank-ui-list.js,
       modals-rank.js.
 
-  34. rank-assignment.js before rank-commands.js and
+  35. rank-assignment.js before rank-commands.js and
       rank-issues.js.
 
-  35. RankQueries.getInheritanceSource and
+  36. RankQueries.getInheritanceSource and
       RankQueries.getParentIds must exist before
       rank-assignment.js loads.
 
-  36. RankQueries.getParentIds, RankQueries.getChildIds, and
+  37. RankQueries.getParentIds, RankQueries.getChildIds, and
       RankAssignment.getHolderGroupKey must exist before
       rank-issues.js loads.
 
-  37. rank-commands.js before rank-issues.js and modals-rank.js.
+  38. rank-commands.js before rank-issues.js and modals-rank.js.
 
-  38. rank-issues.js, rank-ui-list.js, modals-rank.js before
+  39. rank-issues.js, rank-ui-list.js, modals-rank.js before
       rank-bootstrap.js.
 
-  39. getCurrentYear is the canonical accessor. Rank does not
+  40. getCurrentYear is the canonical accessor. Rank does not
       read getCurrentYearSafe. Do not unify without updating
       rank's own call sites and rank-doc.md §8.
 
-  40. RankAssignment.getNextRankNumber takes exactly 3 arguments
+  41. RankAssignment.getNextRankNumber takes exactly 3 arguments
       (rankId, characterId, sourceCharacterId). Extra arguments
       are ignored; callers passing 5 args are latent bugs.
 
-  41. settlement-state.js before settlement-command-commit.js.
+  42. settlement-state.js before settlement-command-commit.js.
 
-  42. settlement-command-commit.js before every settlement
+  43. settlement-command-commit.js before every settlement
       command.
 
-  43. settlement-queries.js before every settlement query / view
+  44. settlement-queries.js before every settlement query / view
       model / command / annual processor / government query.
 
-  44. settlement-government-commands.js before
+  45. settlement-government-commands.js before
       government-commands.js, government-bootstrap.js.
 
-  45. settlement-prosperity-queries.js before
+  46. settlement-prosperity-queries.js before
       government-economy.js, government-queries.js,
       government-bootstrap.js.
 
-  46. household-commands.js, household-queries.js before
+  47. household-commands.js, household-queries.js before
       government-commands.js, government-bootstrap.js.
 
-  47. government-constants.js before government-state.js,
+  48. government-constants.js before government-state.js,
       government-rules.js, government-queries.js,
       government-commands.js, government-economy.js,
       government-view-models.js, every modals-government-*.js.
 
-  48. government-state.js before government-queries.js,
+  49. government-state.js before government-queries.js,
       government-commands.js, government-bootstrap.js.
 
-  49. government-rules.js before government-queries.js,
+  50. government-rules.js before government-queries.js,
       government-commands.js, government-economy.js.
 
-  50. government-queries.js before government-commands.js,
+  51. government-queries.js before government-commands.js,
       government-economy.js, government-view-models.js,
       every modals-government-*.js, government-bootstrap.js.
 
-  51. government-commands.js before every
+  52. government-commands.js before every
       modals-government-*.js, government-bootstrap.js.
 
-  52. government-economy.js before modals-government-economy.js,
+  53. government-economy.js before modals-government-economy.js,
       government-bootstrap.js.
 
-  53. government-view-models.js before government-ui-list.js,
+  54. government-view-models.js before government-ui-list.js,
       every modals-government-*.js.
 
-  54. government-ui-list.js before modals-government-assign.js.
+  55. government-ui-list.js before modals-government-assign.js.
 
-  55. location-queries.js before modals-government.js,
+  56. location-queries.js before modals-government.js,
       modals-government-departments.js,
       modals-government-economy.js.
 
-  56. role-queries.js before modals-government.js,
+  57. role-queries.js before modals-government.js,
       modals-government-positions.js, and before
       government-queries.js.
       Note: role-queries.js reads rank fields via
@@ -2224,61 +2330,61 @@ BLOCK 44 — LOAD-ORDER INVARIANTS (CROSS-SUBSYSTEM)
       16) before role-queries.js is used. Under the documented
       order this holds.
 
-  57. industry-queries.js before government-queries.js,
+  58. industry-queries.js before government-queries.js,
       modals-government-economy.js.
 
-  58. modals-core.js and ui.js before every modals-*.js is used.
+  59. modals-core.js and ui.js before every modals-*.js is used.
 
-  59. openCharacterSelector (or openUnifiedCharacterSelector)
+  60. openCharacterSelector (or openUnifiedCharacterSelector)
       available before modals-government-positions.js and
       modals-religion.js are used.
 
-  60. religion-constants.js before religion-format.js,
+  61. religion-constants.js before religion-format.js,
       religion-validation.js, religion-rules.js,
       modals-religion.js, religion-bootstrap.js.
 
-  61. religion-format.js before religion-queries.js,
+  62. religion-format.js before religion-queries.js,
       religion-view-models.js, modals-religion.js,
       religion-bootstrap.js.
 
-  62. religion-validation.js before religion-commands.js,
+  63. religion-validation.js before religion-commands.js,
       religion-bootstrap.js.
 
-  63. religion-state.js before religion-queries.js,
+  64. religion-state.js before religion-queries.js,
       religion-laws.js, religion-commands.js, religion-bootstrap.js.
 
-  64. religion-queries.js before religion-rules.js,
+  65. religion-queries.js before religion-rules.js,
       religion-laws.js, religion-commands.js,
       religion-view-models.js, modals-religion.js,
       religion-bootstrap.js.
 
-  65. religion-rules.js before religion-commands.js,
+  66. religion-rules.js before religion-commands.js,
       religion-inheritance.js, religion-bootstrap.js.
 
-  66. religion-commands.js before religion-inheritance.js,
+  67. religion-commands.js before religion-inheritance.js,
       modals-religion.js, religion-bootstrap.js.
 
-  67. religion-view-models.js before religion-bootstrap.js.
+  68. religion-view-models.js before religion-bootstrap.js.
 
-  68. religion-render.js before religion-bootstrap.js.
+  69. religion-render.js before religion-bootstrap.js.
 
-  69. religion-ui-state.js before religion-bootstrap.js.
+  70. religion-ui-state.js before religion-bootstrap.js.
 
-  70. settlement-law-definitions.js before religion-commands.js is
+  71. settlement-law-definitions.js before religion-commands.js is
       used for law mutations (call-time; missing → "enum not
       loaded").
 
-  71. crime-constants.js before religion-commands.js is used for
+  72. crime-constants.js before religion-commands.js is used for
       law mutations with a crime type (call-time; missing → "enum
       not loaded").
 
-  72. selector-base.js and modals-char-selector.js before
+  73. selector-base.js and modals-char-selector.js before
       modals-religion.js (openCharacterSelector guard).
 
-  73. locationDropdown.js before modals-religion.js
+  74. locationDropdown.js before modals-religion.js
       (getFilteredLocationOptions guard).
 
-  74. Do NOT load government-system.js, government-assignment.js,
+  75. Do NOT load government-system.js, government-assignment.js,
       or government-laws.js. They are DELETED per
       government-docs.txt §8.
 
@@ -2322,7 +2428,8 @@ BLOCK 45 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
 
   5.  Cross-domain state modules.
       js/households/household-state.js, js/roles/role-state.js,
-      js/ranks/rank-state.js (NOT js/core/rank/rank-state.js),
+      js/ranks/rank-state.js (the state-facade variant, NOT the
+      canonical js/ranks/rank-state.js from BLOCK 16),
       js/names/name-state.js, js/core/state/location-ui-state.js
       are only required by state.js, not by any of the character /
       location / settlement / government / religion / rank
@@ -2425,7 +2532,7 @@ BLOCK 45 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
       religion-bootstrap.js.
 
   25. Government-law formatter duplication.
-      js/systems/government/settlement-law-formatters.js and
+      js/government/settlement-law-formatters.js and
       js/religion/religion-format.js each have their own law label
       tables. Canonical source is SettlementLawDefinitions.
 
@@ -2481,6 +2588,105 @@ BLOCK 45 — KNOWN HAZARDS (CROSS-SUBSYSTEM)
       calls leave a dead character's deprecate-on-death ranks
       un-deprecated and a deleted character's inheritedFrom
       pointers dangling.
+
+  35. themes.css must load before common.css and every domain
+      CSS file. Missing themes.css = unset tokens = transparent
+      surfaces, no borders, default fonts. The symptom is "no
+      CSS at all" but every rule is loading.
+      Failure without it: every var(--token) declaration
+      resolves to its fallback (none), which is unset.
+      This is not a per-page rule; it applies to every page.
+
+  36. responsive.js MUST load before collapsible.js.
+      collapsible.js throws at load if
+      RESPONSIVE_BREAKPOINTS.MOBILE is missing.
+      The error reads "collapsible.js: responsive.js must load
+      first (RESPONSIVE_BREAKPOINTS.MOBILE missing)".
+      This is invariant 8 in BLOCK 44 restated as a hazard
+      because the failure mode is a hard throw that kills the
+      page.
+
+  37. Character prerequisites must load before selectors,
+      location, rank, or government.
+      js/character/character-state.js,
+      js/character/character-commands.js, and
+      js/character/character-queries.js are HARD load-time
+      dependencies of:
+        - js/selectors/modals-char-selector.js
+          (CharacterQueries.getCharacterSummary)
+        - js/location/location-commands.js
+          (CharacterCommands, CharacterQueries)
+        - js/ranks/rank-queries.js
+          (CharacterState)
+        - js/ranks/rank-assignment.js
+          (CharacterCommands.updateRankAssignment)
+        - js/ranks/rank-commands.js
+          (nine CharacterCommands rank-API methods)
+        - js/ranks/rank-issues.js
+          (CharacterState, CharacterCommands)
+        - js/ranks/modals-rank.js
+          (CharacterState)
+      Failure without them: the dependent file throws at load
+      with a named dependency message. The most common cascade
+      is "modals-char-selector.js: character-queries.js must
+      load first (CharacterQueries.getCharacterSummary
+      missing)" — which is fixed by moving the character block
+      before selectors, not by changing any selector file.
+
+  38. js/selectors/modals-household-selector.js requires the
+      full household domain (household-constants.js,
+      household-rules.js, household-state.js,
+      household-queries.js, household-commands.js) at load.
+      It is NOT a universal selector. Pages that do not load
+      the household stack must NOT include it. A page that
+      needs it must load the full household block first.
+      Failure without it: the file throws at load with
+      "modals-household-selector: HouseholdQueries is
+      required".
+
+  39. Government requires four cross-domain modules at load:
+      RoleQueries, SettlementQueries,
+      SettlementProsperityQueries, IndustryQueries.
+      government-queries.js throws at load if any one is
+      missing. On a page that does not load the Settlement /
+      Industry / Role stacks, the four namespaces must be
+      stubbed BEFORE government-queries.js runs. The stub is:
+        window.SettlementQueries           — getIndustryTaxRate,
+                                              getGovernmentSalaryBudget
+        window.SettlementProsperityQueries — getProsperityValue
+        window.IndustryQueries             — getIndustryTaxRevenue,
+                                              getIndustryEnterpriseStats
+        window.RoleQueries                 — getRoleSummary,
+                                              getRankSummary,
+                                              getAllRankSummaries,
+                                              getAllRoleSummaries
+      Failure without the stub: government-queries.js throws at
+      load ("government-queries.js requires RoleQueries"), which
+      cascades to government-commands.js, government-economy.js,
+      every modals-government-*.js, and the government-type
+      manager tab.
+
+  40. When the government block is loaded behind stubs, only
+      Government Type CRUD is fully functional. Government
+      departments, positions, assignments, salary flows, and
+      justice/watch updates reach the stubs and will either
+      render empty data or throw at call time. This is expected
+      on a page that does not include the full Settlement /
+      Industry / Role stacks.
+
+  41. js/core/constants.js does NOT exist. The path is
+      js/core/constants/constants.js. Any HTML referencing
+      js/core/constants.js gets a 404 on every load.
+      Failure without the correct path: window.LOCAL_STORAGE_KEYS,
+      window.GENDER_VALUES, window.ATTRACTION_VALUES, and every
+      other constant that lives in constants.js is undefined at
+      the point where dependent modules read them.
+
+  42. No file named js/core/query-helpers.js exists in the tree.
+      If an HTML references it, that is a stale path. The
+      helpers it used to provide (if any) are now spread across
+      js/core/world.js, js/core/accessors.js, and the domain
+      query modules.
 
 ==============================================================================
 END OF DOCUMENT
