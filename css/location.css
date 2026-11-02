@@ -1,0 +1,455 @@
+/* ============================================================================
+   LOCATION MANAGER — SPECIFIC STYLES
+   ============================================================================
+   File: css/location.css
+   Dependencies: css/themes.css (all tokens), css/common.css (structure)
+
+   SCOPE
+     Only styles emitted by LocationManager.html's tab renderers.
+     Every color value is a token from themes.css.
+   ============================================================================ */
+
+
+/* ============================================================================
+   1. DETAIL CARD
+   ============================================================================ */
+
+.location-detail {
+    max-width: 860px;
+    margin: 0 auto;
+}
+
+.location-detail__card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 2);
+    padding: 20px 24px;
+    margin-bottom: 16px;
+    color: var(--text);
+}
+
+.location-detail__title {
+    font-family: var(--f-display);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--accent-light);
+    margin: 0 0 4px;
+}
+
+.location-detail__subtitle {
+    font-size: 0.7rem;
+    color: var(--dim);
+    margin-bottom: 16px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.location-detail__grid {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 8px 24px;
+    font-size: 0.75rem;
+}
+
+.location-detail__label {
+    color: var(--dim);
+    font-weight: 500;
+}
+
+.location-detail__value {
+    color: var(--text);
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+}
+
+.location-detail__breadcrumb {
+    font-size: 0.65rem;
+    color: var(--tmut);
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-top: 16px;
+    font-style: italic;
+}
+
+.location-detail__notes {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 2);
+    padding: 16px 20px;
+    color: var(--text);
+}
+
+.location-detail__notes-label {
+    font-size: 0.6rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+}
+
+.location-detail__notes p {
+    font-size: 0.75rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+
+/* ============================================================================
+   2. HIERARCHY
+   ============================================================================ */
+
+.location-hierarchy {
+    margin-bottom: 24px;
+    max-width: 860px;
+}
+
+.location-hierarchy__title {
+    font-family: var(--f-display);
+    font-size: 0.75rem;
+    color: var(--accent-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+}
+
+.location-hierarchy__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.location-hierarchy__item {
+    padding: 6px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    color: var(--text);
+}
+
+.location-hierarchy__item--current {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent-light);
+    font-weight: 600;
+}
+
+.location-hierarchy__depth {
+    display: inline-block;
+    min-width: 22px;
+    color: var(--dim);
+    font-family: var(--f-mono);
+    font-size: 0.65rem;
+}
+
+
+/* ============================================================================
+   3. MOVES
+   ============================================================================ */
+
+.location-moves {
+    max-width: 860px;
+}
+
+.location-moves__title {
+    font-family: var(--f-display);
+    font-size: 0.75rem;
+    color: var(--accent-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+}
+
+.location-moves__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.location-moves__item {
+    padding: 6px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    color: var(--text);
+}
+
+
+/* ============================================================================
+   4. LEADERSHIP
+   ============================================================================ */
+
+.location-leadership {
+    max-width: 860px;
+}
+
+.location-leadership__current {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+}
+
+.location-leadership__title {
+    font-family: var(--f-display);
+    font-size: 0.7rem;
+    color: var(--accent-light);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0 0 8px;
+}
+
+.location-leadership__current .location-leadership__title {
+    margin-top: 0;
+}
+
+.location-leadership__name {
+    font-family: var(--f-display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.location-leadership__title-text {
+    font-size: 0.7rem;
+    color: var(--accent);
+    margin-top: 2px;
+}
+
+.location-leadership__meta {
+    font-size: 0.65rem;
+    color: var(--dim);
+    margin-top: 4px;
+    font-family: var(--f-mono);
+}
+
+.location-leadership__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.location-leadership__item {
+    padding: 6px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+    color: var(--text);
+    font-family: var(--f-mono);
+}
+
+
+/* ============================================================================
+   5. SETTINGS
+   ============================================================================ */
+
+.location-settings {
+    max-width: 860px;
+}
+
+.location-settings__title {
+    font-family: var(--f-display);
+    font-size: 1rem;
+    color: var(--accent-light);
+    margin: 0 0 6px;
+}
+
+.location-settings__hint {
+    font-size: 0.7rem;
+    color: var(--dim);
+    margin-bottom: 16px;
+}
+
+.location-settings__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 2);
+    padding: 16px 20px;
+}
+
+.location-settings__field {
+    font-size: 0.75rem;
+    color: var(--text);
+}
+
+.location-settings__field--wide {
+    grid-column: 1 / -1;
+}
+
+.location-settings__field label {
+    display: block;
+    font-size: 0.6rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+}
+
+
+/* ============================================================================
+   6. EMPTY / ERROR STATES
+   ============================================================================ */
+
+.placeholder {
+    color: var(--tmut);
+    text-align: center;
+    padding: 60px 20px;
+    font-size: 0.9rem;
+}
+
+.empty-state {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.85rem;
+}
+
+.error-state {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--danger-lt);
+    font-size: 0.85rem;
+}
+
+
+/* ============================================================================
+   7. THEME TOGGLE
+   ============================================================================ */
+
+.theme-toggle {
+    position: relative;
+    display: inline-flex;
+}
+
+.theme-toggle__btn {
+    gap: 6px;
+}
+
+.theme-toggle__menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 200;
+    min-width: 160px;
+    padding: 4px;
+    margin: 0;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.theme-toggle__menu[hidden] { display: none; }
+
+.theme-toggle__menu button {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.7rem;
+    border-radius: calc(var(--radius) - 2px);
+    cursor: pointer;
+    transition: background-color var(--transition-fast, 0.15s) ease;
+}
+
+.theme-toggle__menu button:hover,
+.theme-toggle__menu button:focus-visible {
+    background: var(--accent-dim);
+    color: var(--accent-light);
+    outline: none;
+}
+
+
+/* ============================================================================
+   8. RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .location-detail__grid {
+        grid-template-columns: 1fr;
+        gap: 4px 0;
+    }
+
+    .location-detail__label {
+        font-weight: 600;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 2px;
+        margin-top: 6px;
+    }
+
+    .location-detail__value {
+        padding-left: 4px;
+        margin-bottom: 4px;
+    }
+
+    .location-detail__card {
+        padding: 14px 16px;
+    }
+
+    .location-settings__grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 480px) {
+    .location-detail__card {
+        padding: 10px 12px;
+    }
+
+    .location-detail__title {
+        font-size: 1.05rem;
+    }
+
+    .location-hierarchy__item,
+    .location-moves__item,
+    .location-leadership__item {
+        font-size: 0.7rem;
+        padding: 5px 10px;
+    }
+
+    .topbar .btn {
+        padding: 2px 6px;
+        font-size: 0.55rem;
+    }
+}
+
+
+/* ============================================================================
+   9. REDUCED MOTION
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    .location-hierarchy__item,
+    .location-moves__item,
+    .location-leadership__item,
+    .theme-toggle__menu button {
+        transition: none;
+    }
+}
