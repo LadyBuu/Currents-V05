@@ -1,918 +1,1779 @@
-# 9/9 — `culture-doc.md`
-
-New file. Replaces `culture-docs.txt` (which should be deleted). Written from the code as it now stands after 1/9 through 8/9, not from the old docs.
-
-The structure follows the plan's `x-doc.md` template:
-
-1. Ownership contract
-2. Load order
-3. File-by-file API reference
-4. Data schemas
-5. Known deferrals
-6. Anti-patterns
-7. Version history
-
----
-
-```markdown
-# Culture System Documentation
-
-**Module:** `js/culture/`
-**Version:** 2.0 (post-refactor)
-**Last updated:** 2026-07-14
-
----
-
-## Table of Contents
-
-1. [Ownership Contract](#1-ownership-contract)
-2. [Load Order](#2-load-order)
-3. [File-by-File API Reference](#3-file-by-file-api-reference)
-4. [Data Schemas](#4-data-schemas)
-5. [Known Deferrals](#5-known-deferrals)
-6. [Anti-Patterns](#6-anti-patterns)
-7. [Version History](#7-version-history)
-
----
-
-## 1. Ownership Contract
-
-The culture subsystem is split into eight modules, each with a single
-layer of responsibility. The rule is simple: **every module owns exactly
-one thing, and everything else is out of scope.**
-
-| Module | Owns | Does NOT own |
-|---|---|---|
-| `CultureConstants` | Frozen vocabulary (appearance categories, default templates, `CULTURE_DEFAULT_APPEARANCE`) | Policy, defaults-for-missing-data, runtime state |
-| `CultureValidation` | Structural and value validation rules (`validateCreate`, `validateUpdate`, `validateDelete`) | Orchestration, mutation, persistence, defaults |
-| `CultureState` | Indexes, subscriptions, mutation primitives (`_addCulture`, `_updateCulture`, `_removeCulture`) | Canonical data, persistence, mutation policy, queries |
-| `CultureQueries` | Semantic reads, analytics, projections, cross-domain composition | Mutation, rendering, persistence, presentation defaults |
-| `CultureCommands` | Write boundary, validation orchestration, commit tail (`hydrate → markDirty → publish → dispatch`), `persist()` | Canonical data ownership, cross-domain side effects, presentation |
-| `CultureGeneration` | Weighted appearance generation from a culture (pure core + query-integrated wrappers) | Mutation, rendering, persistence, policy |
-| `CultureViewModels` | Presentation-ready projections (labels, icons, summaries) | DOM, event handlers, canonical reads |
-| `CultureUI` | DOM rendering for lists, cards, dropdowns | Domain logic, field resolution, icon policy for chrome icons (delegates to `_getIcon`) |
-| `CultureModals` | Modal form orchestration, persist batching | Validation, defaults, field resolution, mutation |
-| `CultureBootstrap` | Load-time verification, index hydration, `window.Culture` namespace | Mutation, persistence, UI wiring |
-
-### The cross-cutting rules
-
-**Commands own mutation.** Nothing outside `CultureCommands` may call
-`CultureState._addCulture`, `_updateCulture`, or `_removeCulture`. If
-another subsystem needs to write culture data, it must go through a
-command.
-
-**Commands own persistence.** `CultureCommands.persist()` is the only
-call site for `window.saveMasterData` in the culture subsystem. Nothing
-else saves. The UI calls `persist()` once per successful command batch.
-
-**Queries own reads.** Every read goes through `CultureQueries`. No
-module reads `masterData.data.cultures` directly except `CultureState`
-(for indexing) and `CultureQueries` (for enumeration).
-
-**Live records are for commands only.** `CultureState._getCultureCanonical(id)`
-returns the live object. Only `CultureCommands` may call it. Everything
-else calls `CultureQueries.getCultureById(id)`, which returns a clone.
-
-**Generation is a distinct layer.** It is not rules, not queries, not
-view-models. It is a read-side consumer of queries that produces domain
-objects (a character's appearance). It sits alongside queries, not above
-it. Do not fold it into any other layer.
-
-**Validation is pure.** `CultureValidation` has no dependencies, no
-side effects, no randomness. Given the same candidate and context it
-returns the same `{valid, errors}` result.
-
----
-
-## 2. Load Order
-
-Every HTML file that loads culture modules must include them in this
-order. Load order is verified by `CultureBootstrap.init()` at page load;
-a broken order throws before anything tries to use the culture subsystem.
-
-```
-1.  js/core/storage.js
-2.  js/core/ids.js
-3.  js/core/accessors.js
-4.  js/ui/modals-core.js
-5.  js/core/location/location-queries.js
-6.  js/core/religion/religion-queries.js
-7.  js/core/character/character-queries.js
-
-8.  js/culture/culture-constants.js
-9.  js/culture/culture-validation.js
-10. js/culture/culture-state.js
-11. js/culture/culture-commands.js
-12. js/culture/culture-queries.js
-13. js/culture/culture-generation.js
-14. js/culture/culture-view-models.js
-15. js/culture/culture-ui-list.js
-16. js/culture/culture-modals.js
-17. js/culture/culture-bootstrap.js   ← loads last, verifies everything
-```
-
-**Files that need the bootstrap script tag:**
-
-- `DataManager.html`
-- `GENERIC.html`
-- `GENERIC_sidebar.html`
-- `GovernmentManager.html`
-- `HouseholdManager.html`
-- `ReligionManager.html`
-- `RoleManager.html`
-- `SettlementManager.html`
-
-If a page loads any culture module, it must load `culture-bootstrap.js`
-after the last culture script and before any script that reads
-`window.Culture`.
-
-### Initialization
-
-`CultureBootstrap.init()` is idempotent. The first call verifies
-dependencies, hydrates indexes, runs integrity checks, and creates
-`window.Culture`. Subsequent calls re-hydrate indexes only.
-
-The bootstrap auto-initializes if `masterData.data` is already available
-at script load. If a page requires explicit initialization (e.g. after
-an asynchronous data fetch), the loader calls `window.CultureBootstrap.init()`
-directly.
-
-**A failed auto-init logs to console but does not throw.** A top-level
-throw aborts subsequent `<script>` loading, which would mask the real
-problem (a missing dependency) behind secondary failures. If a caller
-needs to gate other initialization on culture availability, it calls
-`init()` explicitly and catches the throw.
-
----
-
-## 3. File-by-File API Reference
-
-### 3.1 `culture-constants.js`
-
-Frozen exports. No inline numbers elsewhere in the subsystem.
-
-| Export | Type | Description |
-|---|---|---|
-| `CULTURE_APPEARANCE_CATEGORIES` | Object | Canonical category names |
-| `CULTURE_DEFAULT_APPEARANCE` | Object | Fallback appearance options |
-| `CULTURE_TEMPLATES` | Object | Pre-defined culture templates |
-| `getCultureTemplate(name)` | Function | Lookup by template key |
-| `getCultureTemplateNames()` | Function | List template keys |
-| `getAllCultureTemplates()` | Function | List templates with metadata |
-
-### 3.2 `culture-validation.js`
-
-Pure rules. Returns `{valid: boolean, errors: [{field, message}]}`.
-
-| Export | Description |
-|---|---|
-| `validateCreate(candidate, {cultures})` | Validates a new culture candidate |
-| `validateUpdate(candidate, {cultures, index})` | Validates a fully-patched candidate |
-| `validateDelete(id, {cultures})` | Validates that a culture exists |
-
-**Note:** `validateUpdate` rejects an id mismatch against the original
-record. Commands pass `index` so validation can detect identity changes.
-
-### 3.3 `culture-state.js`
-
-Indexes, subscriptions, and mutation primitives.
-
-| Export | Description |
-|---|---|
-| `hydrateFromMasterData()` | Rebuild indexes from canonical data. Throws on duplicate ids. |
-| `refreshFromMasterData()` | Deprecated alias for `hydrateFromMasterData()`. |
-| `getById(id)` | Clone. Null if not found. |
-| `getByName(name)` | Clones. Case-insensitive. |
-| `getByDisplayName(name)` | Clones. Case-insensitive. |
-| `getByAssociatedLocation(locationId)` | Clones. Descriptive association only. |
-| `getByReligion(religionId)` | Clones. |
-| `_getCultureCanonical(id)` | Live record. **Commands only.** |
-| `_addCulture(culture)` | Mutation primitive. **Commands only.** |
-| `_updateCulture(id, culture)` | Mutation primitive. **Commands only.** |
-| `_removeCulture(id)` | Mutation primitive. **Commands only.** |
-| `subscribe(callback)` | Subscribe to change events. Returns unsubscribe. |
-| `publish(eventName, data)` | Publish to subscribers. |
-| `validateIntegrity()` | Warn-only integrity check. Returns findings array. |
-| `getIndexStats()` | Diagnostic index sizes. |
-
-**Note:** There is no `byPrimaryCultureLocation` index. The primary
-culture relationship lives on `Place.cultureId`, not on the culture
-record. `CultureQueries.getPrimaryCultureForLocation` walks the place
-hierarchy.
-
-### 3.4 `culture-queries.js`
-
-Semantic reads. Cross-domain composition.
-
-| Export | Description |
-|---|---|
-| `getCultureById(id)` | Clone. Primary lookup. |
-| `getAllCultures()` | Array of clones. |
-| `getCulturesByName(name)` | Clones matching name. |
-| `getCulturesByDisplayName(name)` | Clones matching display name. |
-| `getCultureCount()` | Number. |
-| `cultureExists(id)` | Boolean. |
-| `_getCultureCanonical(id)` | Live record. **Commands/hierarchy only.** |
-| `searchCultures(query, {limit, sortBy})` | Full-text search. |
-| `getPrimaryCultureForLocation(locationId)` | Walks hierarchy. Null if none. |
-| `getAssociatedCulturesForLocation(locationId)` | Direct descriptive associations. |
-| `getCulturesForLocation(locationId)` | Combined: primary + direct + ancestor. |
-| `getCultureForCharacter(characterId)` | Resolves character's culture. |
-| `getCharactersForCulture(cultureId)` | Characters with explicit culture. |
-| `getCulturesForReligion(religionId)` | Cultures associated with a religion. |
-| `getCultureSummary(id)` | Data projection (not presentation). |
-| `getCultureStatistics()` | Aggregate stats. |
-| `getCulturesWithMythology()` | Filtered clones. |
-| `getCulturesWithAppearance()` | Filtered clones. |
-
-### 3.5 `culture-commands.js`
-
-Write boundary. Single save site.
-
-| Export | Description |
-|---|---|
-| `createCulture(data)` | Validates, creates. Returns `{success, data, reason?, errors?}`. |
-| `updateCulture(id, updates)` | Validates, updates. Unknown fields rejected. |
-| `deleteCulture(id)` | Validates, deletes. |
-| `addLocationToCulture(cultureId, locationId)` | Association helper. |
-| `removeLocationFromCulture(cultureId, locationId)` | Association helper. |
-| `addReligionToCulture(cultureId, religionId)` | Association helper. |
-| `removeReligionFromCulture(cultureId, religionId)` | Association helper. |
-| `addAppearanceOption(cultureId, category, option)` | Appearance helper. |
-| `removeAppearanceOption(cultureId, category, value)` | Appearance helper. |
-| `updateAppearanceWeight(cultureId, category, value, weight)` | Appearance helper. |
-| `updateMythology(cultureId, mythology)` | Full replacement. |
-| `persist()` | **The only save call site.** Returns `{success, reason?}`. |
-
-**The commit tail:** Every successful command runs `hydrateFromMasterData`
-→ `markDataDirty` → `publish` (in-process) → `dispatchEvent` (cross-domain
-`CustomEvent`). Commands do **not** save.
-
-**Field allowlist on `updateCulture`:** Only these top-level fields are
-updatable: `name`, `displayName`, `description`, `icon`, `appearance`,
-`mythology`, `locations`, `religions`, `notes`. Any other field is
-rejected with a specific message.
-
-### 3.6 `culture-generation.js`
-
-Weighted appearance generation.
-
-**Pure core** (no `window.*` lookups, no queries, deterministic under RNG):
-
-| Export | Description |
-|---|---|
-| `rollWeightedValue(options, rng)` | Single weighted value. |
-| `rollWeightedValues(options, count, rng)` | N distinct weighted values. |
-| `rollHeight(heightConfig, gender, rng, fallback?)` | Range-rolled height. |
-| `generateAppearanceFromCulture(culture, gender, opts, rng)` | Full appearance. Null culture → all-undefined fields. |
-
-**Query-integrated wrappers** (resolve via `CultureQueries`, then delegate):
-
-| Export | Throws when |
-|---|---|
-| `generateAppearance(cultureId, gender, opts, rng)` | Culture not found. |
-| `generateAppearanceForLocation(locationId, gender, opts, rng)` | No primary culture applies. |
-| `generateAppearanceWithRandomCulture(gender, opts, rng)` | No cultures exist. |
-
-**RNG contract:** A provider with `pickWeighted`, `randomInt`, `pickRandom`
-is required. Callers pass `window.randomness` explicitly, or the module
-falls back to `window.randomness` if present. There is no `Math.random`
-fallback.
-
-### 3.7 `culture-view-models.js`
-
-Presentation projections.
-
-| Export | Description |
-|---|---|
-| `labelFor(culture)` | displayName or name, always a string. **Public helper.** |
-| `iconFor(culture, {iconPlaceholder?})` | Culture icon or null. **Public helper.** |
-| `buildListRow(culture, options)` | Single list row. |
-| `buildListRows(cultures, options)` | Array of list rows. Skips nulls. |
-| `buildCard(culture)` | Card projection. |
-| `buildDetails(cultureId)` | Details projection. |
-| `buildDropdownOptions(cultures, {selectedId})` | Sorted dropdown items. |
-
-**Policy:** `labelFor` is authoritative across domains. Location, Character,
-and any future subsystem that needs a culture's label must call
-`CultureViewModels.labelFor(culture)`. Do not re-implement the
-`displayName || name` fallback.
-
-### 3.8 `culture-ui-list.js`
-
-DOM rendering.
-
-| Export | Description |
-|---|---|
-| `renderCultureList(containerId, options)` | Renders a list. One delegated click listener per container. |
-| `renderCultureCard(containerId, cultureOrId)` | Renders a card. |
-| `renderCultureDropdown(containerId, options)` | Renders a `<select>`. |
-
-**Icon policy:** `row.icon` (culture icon) is data and is rendered verbatim.
-Any chrome icon (chevrons, markers, close buttons) must route through
-`window._getIcon(name)`. This file currently uses no chrome icons.
-
-**Event delegation:** One click listener per container, attached once.
-The current `onSelect` is read from `container.__cultureOnSelect` at
-click time, so re-rendering with a new callback takes effect without
-re-binding.
-
-### 3.9 `culture-modals.js`
-
-Modal UI.
-
-| Export | Description |
-|---|---|
-| `openCreateCultureModal(onSuccess)` | Create form. |
-| `openEditCultureModal(cultureId, onSuccess)` | Edit form. |
-| `confirmDeleteCulture(cultureId, onSuccess)` | Delete confirmation. |
-| `openCultureDetailsModal(cultureId)` | Read-only details. |
-
-**Persistence:** Every successful command path calls
-`CultureCommands.persist()` exactly once. A failed persist is a second
-toast, not a thrown error — the canonical data is already updated.
-
-**Modal contract:** `openModal` closes the modal when `onConfirm` returns
-`true`, keeps it open when `onConfirm` returns `false`. `onConfirm`
-callbacks return boolean; they do not call `closeTopModal` themselves.
-
-**Legacy aliases** (retained for one release): `window.openCreateCultureModal`,
-`window.openEditCultureModal`, `window.openDeleteCultureModal`,
-`window.openCultureDetailsModal`.
-
-### 3.10 `culture-bootstrap.js`
-
-Load-time verification and initialization.
-
-| Export | Description |
-|---|---|
-| `init()` | Idempotent. Verifies dependencies, hydrates indexes, runs integrity, creates `window.Culture`. |
-
-**What `init()` verifies:**
-
-- Modules: all eight (`CultureState`, `CultureQueries`, `CultureCommands`,
-  `CultureValidation`, `CultureViewModels`, `CultureGeneration`, `CultureUI`,
-  `CultureModals`).
-- Globals: `generateId`, `markDataDirty`, `saveMasterData`, `escapeHtml`,
-  `showToast`, `openModal`, `closeTopModal`.
-- Cross-domain namespaces and methods: `PlaceQueries.getPlaceById`,
-  `PlaceQueries.getAllPlaces`, `ReligionQueries.getReligionById`,
-  `ReligionQueries.getAllReligions`, `CharacterQueries.getCharacterById`,
-  `CharacterQueries.getAllCharacters`.
-- Canonical shape: `masterData.data.cultures` is array or absent
-  (absent → `[]`).
-
-**What `init()` does not verify** (deliberate, lazy-checked at call sites):
-`confirmDialog`, `getIconOptions`, `PlaceQueries`/`ReligionQueries` inside
-the modal edit path.
-
-**What `window.Culture` exposes:**
-
-```js
-window.Culture = {
-    state:     window.CultureState,
-    queries:   window.CultureQueries,
-    commands:  window.CultureCommands,
-    validation: window.CultureValidation,
-    generation: window.CultureGeneration,
-    viewModels: window.CultureViewModels,
-    ui:        window.CultureUI,
-    modals:    window.CultureModals
-};
-```
-
-External callers should prefer `window.Culture.queries.getCultureById(id)`
-over `window.CultureQueries.getCultureById(id)`, but both work.
-
----
-
-## 4. Data Schemas
-
-### 4.1 Culture Record
-
-```javascript
-{
-    id: string,                    // 'culture_1234567890_abc123'
-    name: string,                  // 'Nordic'
-    displayName: string,           // 'Nordic Peoples' (or null)
-    description: string,           // '' or flavor text
-    icon: string | null,           // null = explicitly no icon
-    appearance: {                  // weighted-option map
-        skinTones:      [{value, weight}],
-        eyeColors:      [{value, weight}],
-        hairColors:     [{value, weight}],
-        hairTypes:      [{value, weight}],
-        buildTypes:     [{value, weight}],
-        height: {
-            male:   {min, max},
-            female: {min, max}
-        },
-        commonFeatures: [{value, weight}]
-    },
-    mythology: {
-        creation:   string,
-        afterlife:  string,
-        keyDeities: [string],
-        keyEvents:  [string],
-        cosmology:  string,
-        symbols:    [string],
-        themes:     [string]
-    },
-    locations: [string],           // descriptive association list (place ids)
-    religions: [string],           // descriptive association list (religion ids)
-    notes:     string,
-    createdAt: number,             // Date.now() at creation
-    updatedAt: number              // Date.now() at last update
-}
-```
-
-**Note:** The `locations` and `religions` arrays are the culture's own
-association lists, not fields owned by Location or Religion. Cross-domain
-relationships (a place pointing at a culture via `place.cultureId`) live
-on the other domain's record.
-
-### 4.2 Appearance Roll Result
-
-```javascript
-{
-    skinTone:       string | undefined,
-    eyeColor:       string | undefined,
-    hairColor:      string | undefined,
-    hairType:       string | undefined,
-    build:          string | undefined,
-    height:         number | null,      // null if no range
-    commonFeatures: [string]
-}
-```
-
-**Note:** `undefined` here means "the culture has no options for this
-category" (not "roll failed"). `null` height means no height range was
-available. `generateAppearanceFromCulture(null, ...)` returns a fully
-undefined appearance (except `commonFeatures: []`).
-
-### 4.3 Weighted Option
-
-```javascript
-{
-    value:  string,       // 'Pale'
-    weight: number        // non-negative
-}
-```
-
-### 4.4 Height Range
-
-```javascript
-{
-    min: number,
-    max: number           // must be >= min
-}
-```
-
----
-
-## 5. Known Deferrals
-
-The following are known gaps or deliberate deferrals in the current
-implementation.
-
-### 5.1 No `CultureCascade` module
-
-When a culture is deleted, records in other domains that reference it
-(e.g. `character.cultureId`, `place.cultureId`) are **not** automatically
-cleared. The `cultureDeleted` `CustomEvent` fires, but no listener cleans
-up references.
-
-**Impact:** Deleting a culture can leave dangling references. Queries
-return `null` for the missing culture, but the reference stays.
-
-**Deferral:** A `CultureCascade` module belongs in the codebase but is
-out of scope for this refactor. It must listen to `cultureDeleted` and
-clear references through the owning domains' commands. Do not add this
-to `CultureCommands` — the plan explicitly excludes cross-domain side
-effects from the command module.
-
-### 5.2 `getCultureSummary` / `getCultureStatistics` silently skip missing records
-
-When a culture's `locations` array references a place that no longer
-exists, `getCultureSummary` silently skips it (the place is not added to
-the summary's `locations` array). Same for religions.
-
-**Rationale:** A partial summary is more useful than no summary. The
-caller cannot distinguish "no locations" from "locations that all got
-deleted."
-
-**Deferral:** If the UI needs to surface dangling references, add a
-`danglingReferences` field to the summary. This is a data projection
-choice, not a fallback, and it's deliberate.
-
-### 5.3 `generateAppearanceForLocation` throws when no culture applies
-
-The query-integrated wrapper throws. Character creation (see integration
-notes) must either:
-
-- pre-check `CultureQueries.getPrimaryCultureForLocation(locationId)`
-  and handle `null`; or
-- `try/catch` around `generateAppearanceForLocation` and fall back to
-  `generateAppearanceFromCulture(null, gender, opts, rng)`.
-
-**Deferral:** A `tryGenerateAppearanceForLocation` convenience wrapper
-that returns `null` instead of throwing is a possible future addition.
-Not added now because it would invite callers to ignore missing cultures
-when they should decide explicitly.
-
-### 5.4 `generateAppearanceFromCulture(null, ...)` produces all-undefined appearance
-
-This is intentional. It is the caller's hook for best-effort generation.
-
-**Deferral:** No indication of "best effort" is carried in the result.
-Callers who care must check for `skinTone === undefined`.
-
-### 5.5 No keyboard activation for list rows
-
-`culture-ui-list.js` renders rows with `tabindex="0"` so they're
-screen-reader-announced and focusable, but there is no keydown handler.
-Click (or screen-reader "activate") triggers `onSelect`; Enter/Space on
-a focused row does not.
-
-**Deferral:** Deferred until the design confirms it's wanted. If added,
-must not double-fire (Enter on a focusable element synthesizes a click
-in most browsers).
-
-### 5.6 Bootstrap does not verify modal lazy dependencies
-
-`confirmDialog`, `getIconOptions`, and the modal edit path's use of
-`PlaceQueries` / `ReligionQueries` are checked at call time, not load
-time. A page that only uses create/edit/details modals does not need
-`confirmDialog` to exist.
-
-**Deferral:** If a page requires the delete flow to work, it should
-verify `confirmDialog` before calling `confirmDeleteCulture`. This is a
-page-level concern, not a subsystem concern.
-
-### 5.7 No culture icon in dropdown options
-
-Native `<option>` elements do not render arbitrary HTML, so dropdown
-options omit icons. `CultureViewModels.buildDropdownOptions` returns
-`{id, label, icon, selected}` per item; renderers that want icons must
-build a custom control on top of that projection.
-
-**Deferral:** A custom dropdown control is a future addition, out of
-scope here.
-
-### 5.8 `refreshFromMasterData` is a deprecated alias
-
-Kept as `CultureState.refreshFromMasterData()` for any un-migrated caller.
-Will be removed in a future release. New code uses `hydrateFromMasterData()`.
-
----
-
-## 6. Anti-Patterns
-
-Things that will cause pain if you do them.
-
-### 6.1 Don't save directly
-
-```javascript
-// WRONG
-window.saveMasterData();
-
-// RIGHT
-window.CultureCommands.persist();
-```
-
-`CultureCommands.persist()` is the single save call site. It returns
-`{success, reason}` instead of throwing. Call it once per successful
-command batch, from the UI layer.
-
-### 6.2 Don't mutate canonical data directly
-
-```javascript
-// WRONG
-window.masterData.data.cultures.push(newCulture);
-
-// RIGHT
-window.CultureCommands.createCulture(data);
-```
-
-Commands own the mutation transaction. Direct pushes skip validation,
-index rebuilds, `markDataDirty`, `publish`, and `dispatchEvent` — every
-subscriber and every cross-domain listener will silently miss the change.
-
-### 6.3 Don't call mutation primitives from outside commands
-
-```javascript
-// WRONG (from, say, character-commands.js)
-window.CultureState._updateCulture(id, culture);
-
-// RIGHT
-window.CultureCommands.updateCulture(id, updates);
-```
-
-`_addCulture` / `_updateCulture` / `_removeCulture` are the mechanism,
-not the decision. Commands decide; State executes. Nothing outside
-`CultureCommands` may call these.
-
-### 6.4 Don't use `_getCultureCanonical` from UI
-
-```javascript
-// WRONG (from a renderer)
-var c = window.CultureQueries._getCultureCanonical(id);
-c.notes = 'edited in place';  // mutates canonical, skips everything
-
-// RIGHT
-var c = window.CultureQueries.getCultureById(id);  // clone
-```
-
-`_getCultureCanonical` returns the live object. Any mutation to it
-skips the commit tail. Use it only when you're inside a transaction
-that will re-hydrate afterward.
-
-### 6.5 Don't re-implement the display-name fallback
-
-```javascript
-// WRONG
-var label = culture.displayName || culture.name || 'Unknown';
-
-// RIGHT
-var label = window.CultureViewModels.labelFor(culture);
-```
-
-`labelFor` returns a string, always. It handles displayName, name, and
-the malformed-culture case. Every domain that needs a culture's label
-should call this helper.
-
-### 6.6 Don't route culture icons through `_getIcon`
-
-```javascript
-// WRONG
-var icon = window._getIcon(culture.icon);
-
-// RIGHT
-var icon = culture.icon;  // rendered verbatim
-```
-
-Culture icons are data. `_getIcon` is for chrome (chevrons, markers,
-badges) — not for user-supplied icon strings from a culture record. If
-you add a chrome icon to `culture-ui-list.js`, route it through `_getIcon`.
-
-### 6.7 Don't throw from a UI entry point
-
-```javascript
-// WRONG (in a click handler)
-if (!window.confirmDialog) throw new Error('...');
-
-// RIGHT
-if (!window.confirmDialog) {
-    window.showToast('Confirmation unavailable', 'error');
-    return;
-}
-```
-
-A throw in a click handler shows the user nothing and logs nothing
-useful unless a global error reporter is installed. Toast the user,
-return, and let them know why the action didn't happen.
-
-### 6.8 Don't assume `window.Culture` exists before `init()`
-
-```javascript
-// WRONG (before bootstrap runs)
-window.Culture.queries.getCultureById(id);
-
-// RIGHT
-window.CultureQueries.getCultureById(id);  // always available once loaded
-```
-
-`window.Culture` is created by `CultureBootstrap.init()`. The individual
-namespace objects (`CultureQueries`, etc.) are created when their scripts
-load. If you must call culture functions before bootstrap runs, use the
-individual namespaces.
-
-### 6.9 Don't add to `CultureCommands` for cross-domain concerns
-
-```javascript
-// WRONG (adding cascade cleanup to the delete command)
-function deleteCulture(id) {
-    // ... delete ...
-    // clear character.cultureId — NO, this is cross-domain
-    // clear place.cultureId — NO
-}
-```
-
-Cross-domain side effects belong in a cascade layer, not in `CultureCommands`.
-The command dispatches `cultureDeleted`; a cascade module listens and
-coordinates. When that module exists, add it — do not grow `CultureCommands`.
-
----
-
-## 7. Version History
-
-### 2.0 (2026-07-14) — Post-refactor
-
-Converged to the rank/role/relationship/education reference pattern.
-
-**Structural changes:**
-
-- `CultureState.rebuildIndexes(cultures)` → `hydrateFromMasterData()`
-- Removed `byPrimaryCultureLocation` index and `getByPrimaryCultureLocation`
-  (the relationship lives on `Place.cultureId`)
-- Public reads now return clones; added `_getCultureCanonical(id)` for
-  commands
-- Added mutation primitives `_addCulture`, `_updateCulture`, `_removeCulture`
-- `CultureState.notify(event)` → `publish(eventName, data)`
-- Duplicate-id detection on hydrate (throws on corrupted canonical)
-- Added `CultureState.validateIntegrity()` (warn-only)
-- `CultureCommands` no longer calls `saveMasterData` in `_commit`; added
-  public `persist()` as the single save site
-- Commands route mutation through State primitives
-- `updateCulture` rejects unknown fields (previously silently ignored)
-- `deleteCulture` now calls `validateDelete`
-- Commands dispatch `CustomEvent` for cross-domain listeners
-- Added `CultureBootstrap` module (new file)
-- Added load-time dependency verification to every module
-
-**Documentation:**
-
-- This document (`culture-doc.md`) replaces `culture-docs.txt`
-- Header contracts added to every module
-- Anti-patterns section added
-
-**Behavioural changes:**
-
-- `CultureModals._handleCommandResult` no longer calls `modals.close()`;
-  relies on `openModal`'s close-on-truthy contract. **Verify against
-  `modals-core.js`.**
-- `CultureModals.confirmDeleteCulture` toasts-and-returns on missing
-  `confirmDialog` (previously threw).
-- `CultureUI` per-container listener now reads the current `onSelect`
-  from a per-container property (previously captured the first one).
-- `CultureUI` click handler guards against text-node targets (previously
-  crashed).
-- `CultureViewModels.labelFor` returns `''` for malformed cultures
-  (previously could return `null` or `undefined`).
-- `CultureGeneration.generateAppearanceForLocation` documented to throw
-  (behaviour unchanged, but now explicitly a contract).
-
-### 1.0 (pre-refactor)
-
-Original implementation. Diverged from the reference pattern in:
-
-- State passed arrays to `rebuildIndexes`
-- Public reads returned live records
-- Commands called `save(true)` in `_commit`
-- No `persist()` boundary
-- No `CustomEvent` dispatch
-- `byPrimaryCultureLocation` index declared but never populated
-- `deleteCulture` skipped validation
-- No bootstrap, no load-time verification
-- `culture-docs.txt` described an even earlier API (`CultureState.getCulture`,
-  `CultureQueries.getCultureByLocation`, etc.) that no longer matched the code
-
----
-
-## Appendix A: Full Function List
-
-For quick reference. See section 3 for details.
-
-**culture-constants.js:** `CULTURE_APPEARANCE_CATEGORIES`,
-`CULTURE_DEFAULT_APPEARANCE`, `CULTURE_TEMPLATES`, `getCultureTemplate`,
-`getCultureTemplateNames`, `getAllCultureTemplates`.
-
-**culture-validation.js:** `validateCreate`, `validateUpdate`,
-`validateDelete`.
-
-**culture-state.js:** `hydrateFromMasterData`, `refreshFromMasterData`,
-`getById`, `getByName`, `getByDisplayName`, `getByAssociatedLocation`,
-`getByReligion`, `_getCultureCanonical`, `_addCulture`, `_updateCulture`,
-`_removeCulture`, `subscribe`, `publish`, `validateIntegrity`,
-`getIndexStats`.
-
-**culture-queries.js:** `getCultureById`, `getAllCultures`,
-`getCulturesByName`, `getCulturesByDisplayName`, `getCultureCount`,
-`cultureExists`, `_getCultureCanonical`, `searchCultures`,
-`getPrimaryCultureForLocation`, `getAssociatedCulturesForLocation`,
-`getCulturesForLocation`, `getCultureForCharacter`,
-`getCharactersForCulture`, `getCulturesForReligion`, `getCultureSummary`,
-`getCultureStatistics`, `getCulturesWithMythology`,
-`getCulturesWithAppearance`.
-
-**culture-commands.js:** `createCulture`, `updateCulture`, `deleteCulture`,
-`addLocationToCulture`, `removeLocationFromCulture`, `addReligionToCulture`,
-`removeReligionFromCulture`, `addAppearanceOption`, `removeAppearanceOption`,
-`updateAppearanceWeight`, `updateMythology`, `persist`.
-
-**culture-generation.js:** `rollWeightedValue`, `rollWeightedValues`,
-`rollHeight`, `generateAppearanceFromCulture`, `generateAppearance`,
-`generateAppearanceForLocation`, `generateAppearanceWithRandomCulture`.
-
-**culture-view-models.js:** `labelFor`, `iconFor`, `buildListRow`,
-`buildListRows`, `buildCard`, `buildDetails`, `buildDropdownOptions`.
-
-**culture-ui-list.js:** `renderCultureList`, `renderCultureCard`,
-`renderCultureDropdown`.
-
-**culture-modals.js:** `openCreateCultureModal`, `openEditCultureModal`,
-`confirmDeleteCulture`, `openCultureDetailsModal`.
-
-**culture-bootstrap.js:** `init`.
-
----
-
-## Appendix B: Cross-Domain Integration
-
-### Character → Culture
-
-- `character.cultureId` field
-- `character.appearance` object (rolled from culture)
-- Resolved via `CultureQueries.getCultureForCharacter(characterId)`
-- Generated via `CultureGeneration.generateAppearance(cultureId, gender)`
-
-**Caution:** `generateAppearanceForLocation` throws when no culture applies.
-Character creation must pre-check `getPrimaryCultureForLocation` or
-`try/catch`.
-
-### Location → Culture
-
-- `place.cultureId` field (authoritative primary culture)
-- Set via `LocationCommands.updatePlaceCulture` (or equivalent)
-- Resolved via `CultureQueries.getPrimaryCultureForLocation(locationId)`
-
-**Note:** The primary-culture relationship lives on the place. Culture
-records do not index it.
-
-### Culture → Location (descriptive)
-
-- `culture.locations` array
-- Descriptive association only; does not participate in primary-culture
-  resolution
-- Queried via `CultureQueries.getAssociatedCulturesForLocation(locationId)`
-
-### Culture → Religion
-
-- `culture.religions` array
-- Set via `CultureCommands.addReligionToCulture` / `removeReligionFromCulture`
-- Queried via `CultureQueries.getCulturesForReligion(religionId)`
-
-### Cross-domain events
-
-`CultureCommands` dispatches three `CustomEvent`s on `window`:
-
-| Event | `detail` |
-|---|---|
-| `cultureCreated` | `{culture: <record>}` |
-| `cultureUpdated` | `{culture: <record>}` |
-| `cultureDeleted` | `{culture: <record snapshot>}` |
-
-Other domains may listen. **No domain currently listens.** When the
-`CultureCascade` module is added, it will listen for `cultureDeleted` and
-clear references through the owning domains' commands.
-
-### In-process subscriptions
-
-`CultureState.subscribe(callback)` receives `{type, data}` for every
-command commit. UI modules that need to re-render on culture change
-should subscribe here rather than listen for `CustomEvent`s.
-
----
-
-## Appendix C: File Load Order Cheat Sheet
-
-```
-storage.js
-ids.js
-accessors.js
-modals-core.js
-location-queries.js
-religion-queries.js
-character-queries.js
-culture-constants.js
-culture-validation.js
-culture-state.js
-culture-commands.js
-culture-queries.js
-culture-generation.js
-culture-view-models.js
-culture-ui-list.js
-culture-modals.js
-culture-bootstrap.js    ← last
-```
-
-Missing any of the first seven breaks the bootstrap's dependency check.
-Missing any of 8–16 breaks the module-presence check. Reordering breaks
-the transitive dependency check inside each module's load-time
-verification block.
-
----
-
-*End of document.*
-```
-
----
-
-## What to do next
-
-1. **Delete `culture-docs.txt`.** It describes a pre-refactor API that no longer exists and will actively mislead anyone who reads it.
-2. **Add `<script src="js/culture/culture-bootstrap.js"></script>` after the last culture script** in each of the eight HTML files.
-3. **Verify the `openModal` close-on-truthy contract** against `modals-core.js` before shipping 7/9. If the contract is different, adjust `_handleCommandResult` accordingly.
-4. **Confirm `culture-view-models.js` and `culture-modals.js` are in the script tags** of the eight HTML files. If they were previously loaded dynamically, the bootstrap's module-presence check will now fail at load.
-
-That's all nine deliverables. The subsystem is structurally converged with rank / role / relationship / education.
+================================================================================
+STILL WATERS — CULTURE SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
+
+Scope of this document:
+  - Every culture file provided in this batch (11 files):
+      js/culture/culture-bootstrap.js
+      js/culture/culture-commands.js
+      js/culture/culture-constants.js
+      js/culture/culture-generation.js
+      js/culture/culture-queries.js
+      js/culture/culture-state.js
+      js/culture/culture-ui-list.js
+      js/culture/culture-validation.js
+      js/culture/culture-view-models.js
+      js/culture/culture-modals.js
+      (plus culture-docs.txt — the narrative doc; note it is a
+       proposed culture-doc.md replacement and is NOT loaded as a
+       script)
+  - Every core, character, location, religion, and cross-domain file
+    the culture subsystem depends on, at LOAD time (module-level
+    guards) or at CALL time (typeof-guarded lookups), and how each
+    is used.
+  - The dependency graph across culture layers (constants →
+    validation → state → commands → queries → generation → view
+    models → UI → modals → bootstrap).
+  - Cross-references to the culture subsystem's own narrative doc
+    (culture-docs.txt, which its own §7.1 says should be replaced
+    with culture-doc.md; this file's PART 7 flags the same).
+
+PATHS NOTE:
+  All culture files are at js/culture/. The narrative doc
+  (culture-docs.txt) uses js/culture/ paths in its load order section
+  and refers to "js/ui/modals-core.js" for the modal core — the tree
+  path is js/core/modals-core.js. The narrative doc also refers to
+  "js/core/location/location-queries.js" and
+  "js/core/religion/religion-queries.js" and
+  "js/core/character/character-queries.js"; those are at
+  js/location/location-queries.js, js/religion/religion-queries.js,
+  and js/character/character-queries.js respectively. This document
+  uses tree paths.
+
+Anything not provable from the supplied files is marked [UNVERIFIED].
+
+
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
+
+The culture subsystem follows the same layer chain as the reference
+subsystems (rank / role / relationship / education / location /
+settlement / government / religion):
+
+  CONSTANTS (no deps; pure vocabulary + defaults)
+    js/culture/culture-constants.js
+
+  VALIDATION (pure rules; no deps)
+    js/culture/culture-validation.js
+
+  STATE (owns indexes; reads masterData)
+    js/culture/culture-state.js
+
+  COMMANDS (writes via State primitives; the only saveMasterData
+            site)
+    js/culture/culture-commands.js
+
+  QUERIES (read-only; composes State + PlaceQueries +
+           ReligionQueries + CharacterQueries + LocationQueries)
+    js/culture/culture-queries.js
+
+  GENERATION (pure core + query-integrated wrappers; consumes
+              Queries and randomness)
+    js/culture/culture-generation.js
+
+  VIEW MODELS (presentation shaping; consumes Queries +
+               PlaceQueries + ReligionQueries + CharacterQueries)
+    js/culture/culture-view-models.js
+
+  UI LIST (DOM rendering; consumes ViewModels + Queries)
+    js/culture/culture-ui-list.js
+
+  MODALS (DOM + commands; batch persist per successful action)
+    js/culture/culture-modals.js
+
+  BOOTSTRAP (load-time verification + hydration + namespace)
+    js/culture/culture-bootstrap.js
+
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws/refuses if the dependency
+                          is missing when invoked; the module loads
+                          without it.
+  OPTIONAL              — the module checks and falls back.
+
+Cross-domain references are labeled with their subsystem:
+  [core]        js/core/...
+  [character]   js/character/...
+  [location]    js/location/...
+  [religion]    js/religion/...
+  [randomness]  js/core/randomness.js (window.randomness provider)
+  [formatting]  js/core/formatting.js
+  [icons]       js/core/icons.js
+  [modals]      js/core/modals-core.js
+  [ui]          js/core/ui.js
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS — culture-constants.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-constants.js
+    Owns: window.CULTURE_APPEARANCE_CATEGORIES,
+          window.CULTURE_DEFAULT_APPEARANCE,
+          window.CULTURE_TEMPLATES,
+          window.getCultureTemplate,
+          window.getCultureTemplateNames,
+          window.getAllCultureTemplates.
+    Load-time dependencies: NONE. Pure constants + templates.
+    Call-time dependencies:  NONE.
+    Consumed by:
+      [load] culture-commands.js       (CULTURE_DEFAULT_APPEARANCE
+                                        — LOAD-TIME GUARD;
+                                        window.CULTURE_DEFAULT_
+                                        APPEARANCE missing throws)
+      [call] culture-generation.js     (not directly; appearance
+                                        category names are consumer
+                                        keys, not constants the
+                                        generation layer reads)
+      [call] culture-modals.js         (not directly; icon fallback
+                                        falls back to a free-text
+                                        field)
+    Notes:
+      - The module defines CULTURE_DEFAULT_MYTHOLOGY? No — the
+        constant does not exist in the supplied file. Commands'
+        _requireCultureConstants returns
+        `window.CULTURE_DEFAULT_MYTHOLOGY || _emptyMythology()`,
+        so the mythology fallback is the local _emptyMythology in
+        culture-commands.js. CULTURE_DEFAULT_MYTHOLOGY is
+        optional.
+      - CULTURE_APPEARANCE_CATEGORIES enumerates the seven
+        appearance categories. It is not read by any supplied
+        culture module directly; generation and view models iterate
+        the culture.appearance object keys themselves.
+      - CULTURE_TEMPLATES contains five pre-defined templates
+        (NORDIC, MEDITERRANEAN, DESERT, CELTIC, EASTERN). They are
+        used by UI templates that may load them for quick-create
+        flows. No supplied culture module reads
+        CULTURE_TEMPLATES at load or call time — the templates are
+        UI-invoked (data source).
+      - The module's trailing `if (typeof console !== 'undefined')`
+        block contains no statements — a placeholder, not a
+        dependency.
+      - The icons used by template entries are Unicode typography
+        (e.g. '✦'), not emojis. They are data on the template, not
+        icons.js lookups.
+
+--------------------------------------------------------------------------------
+2.2 VALIDATION — culture-validation.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-validation.js
+    Owns: window.CultureValidation
+      ({ validateCreate, validateUpdate, validateDelete }).
+    Load-time dependencies: NONE. No module-level guard block.
+    Call-time dependencies:  NONE. Pure functions; no window.X reads.
+    Consumed by:
+      [load] culture-commands.js       (validateCreate,
+                                        validateUpdate,
+                                        validateDelete — called at
+                                        call time;
+                                        culture-commands.js's
+                                        load-time guard verifies
+                                        window.CultureValidation
+                                        exists)
+    Notes:
+      - Return shape: { valid: boolean, errors: [{ field, message }] }.
+      - validateUpdate rejects an id mismatch against the original
+        record when context.index is supplied (compare identity, not
+        shape).
+      - validateDelete is shape-only (the id exists). Cross-domain
+        delete rules (e.g. "character references this culture")
+        belong to a future CultureCascade, not here.
+      - No domain defaults; no normalization; no state reads.
+
+--------------------------------------------------------------------------------
+2.3 STATE — culture-state.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-state.js
+    Owns: window.CultureState
+      (hydrateFromMasterData, refreshFromMasterData,
+       getById, getByName, getByDisplayName,
+       getByAssociatedLocation, getByReligion,
+       _getCultureCanonical, _addCulture, _updateCulture,
+       _removeCulture, subscribe, publish,
+       validateIntegrity, getIndexStats).
+    Load-time dependencies: NONE at parse. The module's initial-build
+      try/catch is silent; no guard throws.
+    Call-time dependencies (via window.X):
+      window.masterData            [core] via storage.js — read by
+                                    _readCanonicalCultures; missing
+                                    -> throw at use
+      window.markDataDirty         [core] via storage.js — called by
+                                    every mutation primitive;
+                                    typeof-guarded (non-fatal)
+      window.reportError           OPTIONAL — subscriber error path;
+                                    falls back to console.error
+    Consumed by:
+      [load] culture-commands.js       (_addCulture, _updateCulture,
+                                        _removeCulture,
+                                        _getCultureCanonical,
+                                        hydrateFromMasterData,
+                                        publish —
+                                        culture-commands.js's
+                                        load-time guard requires
+                                        window.CultureState)
+      [load] culture-queries.js        (getById, getByName,
+                                        getByDisplayName,
+                                        getByAssociatedLocation,
+                                        getByReligion,
+                                        _getCultureCanonical —
+                                        culture-queries.js's
+                                        load-time guard requires
+                                        window.CultureState)
+      [load] culture-bootstrap.js      (hydrateFromMasterData,
+                                        validateIntegrity — invoked
+                                        at init)
+    Notes:
+      - INDEXES: byId, byName, byDisplayName, byAssociatedLocation,
+        byReligion. There is NO byPrimaryCultureLocation index —
+        the primary-culture relationship lives on place.cultureId,
+        not on the culture record.
+      - PUBLIC READS ARE CLONES. _getCultureCanonical returns the
+        live record; only CultureCommands (and CultureQueries'
+        internal composing helpers) may call it.
+      - MUTATION PRIMITIVES mutate masterData.data.cultures, call
+        hydrateFromMasterData, then _markDirty. They do NOT call
+        saveMasterData.
+      - hydrateFromMasterData THROWS on duplicate ids. It does NOT
+        throw on a missing masterData — that throws from
+        _readCanonicalCultures at hydrate time.
+      - validateIntegrity is warn-only. Returns
+        [{ level, message }] findings. Never throws.
+      - `refreshFromMasterData` is a deprecated alias.
+      - The module attempts an initial hydrate at load if
+        masterData.data exists. Failures are logged via
+        _reportSubscriberError, not thrown.
+
+--------------------------------------------------------------------------------
+2.4 COMMANDS — culture-commands.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-commands.js
+    Owns: window.CultureCommands
+      ({ createCulture, updateCulture, deleteCulture,
+         addLocationToCulture, removeLocationFromCulture,
+         addReligionToCulture, removeReligionFromCulture,
+         addAppearanceOption, removeAppearanceOption,
+         updateAppearanceWeight, updateMythology, persist }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.generateId                 [core] via ids.js
+      window.CultureState               [culture]
+      window.CultureValidation          [culture]
+      window.CULTURE_DEFAULT_APPEARANCE [culture] via
+                                        culture-constants.js
+    Call-time dependencies (per call):
+      window.saveMasterData             [core] via storage.js — via
+                                        persist(); missing ->
+                                        {success: false}
+      window.CultureValidation          [culture] — via
+                                        _requireCultureValidation
+                                        (redundant with load guard)
+      window.CultureState               [culture] — via
+                                        _requireCultureState
+      window.markDataDirty              [core] via storage.js — via
+                                        _commit; typeof-guarded
+                                        (non-fatal)
+      window.dispatchEvent /
+      window.CustomEvent                browser — via _dispatch;
+                                        wrapped in try/catch
+                                        (non-fatal)
+    Consumed by:
+      [load] culture-modals.js          (all command methods;
+                                        persist — the modals are
+                                        the save owner;
+                                        culture-modals.js's
+                                        load-time guard requires
+                                        CultureCommands AND
+                                        CultureCommands.persist)
+      [load] culture-bootstrap.js       (persist, etc. — verified in
+                                        _REQUIRED_MODULES via the
+                                        module presence check)
+    Notes:
+      - PERSIST CONTRACT (Pattern A shape, but shape varies from
+        rank/religion): persist() calls saveMasterData() and inspects
+        the boolean return. On false it reports
+        { success: false, reason: 'saveMasterData returned false' }
+        — it does NOT read getLastSaveError(). This is a divergence
+        from rank-commands.js and religion-commands.js; see
+        HAZARDS §9.
+      - Every command runs the same shape:
+        validate → clone → mutate via State primitives →
+        hydrate → markDirty → publish → dispatchEvent.
+        Persistence is NOT in that shape.
+      - updateCulture field allowlist (_ALLOWED_UPDATE_FIELDS):
+        name, displayName, description, icon, appearance,
+        mythology, locations, religions, notes. Any other field is
+        rejected with `Field "X" is not updatable via updateCulture.`
+      - Cross-domain side effects are OUT OF SCOPE. The
+        cultureDeleted CustomEvent fires, but no command clears
+        character.cultureId, place.cultureId, etc. A future
+        CultureCascade listens for the event.
+      - _commit calls hydrateFromMasterData, markDataDirty,
+        state.publish, then _dispatch (CustomEvent). If
+        markDataDirty or dispatch fails, the failure is caught and
+        swallowed — the commit still completes.
+      - Appearance and mythology are whole-object replacements on
+        updateCulture. Sub-field mutation goes through the
+        dedicated helpers (addAppearanceOption, etc.), which
+        delegate to updateCulture.
+      - Association helpers (addLocationToCulture, etc.) are
+        wrappers over updateCulture. They read the canonical
+        record to get the current list, slice it, mutate the
+        slice, and hand the new list to updateCulture.
+
+--------------------------------------------------------------------------------
+2.5 QUERIES — culture-queries.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-queries.js
+    Owns: window.CultureQueries
+      ({ getCultureById, getAllCultures, getCulturesByName,
+         getCulturesByDisplayName, getCultureCount,
+         cultureExists, _getCultureCanonical, searchCultures,
+         getPrimaryCultureForLocation,
+         getAssociatedCulturesForLocation,
+         getCulturesForLocation, getCultureForCharacter,
+         getCharactersForCulture, getCulturesForReligion,
+         getCultureSummary, getCultureStatistics,
+         getCulturesWithMythology, getCulturesWithAppearance }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CultureState               [culture]
+      window.masterData                 [core] via storage.js
+      window.PlaceQueries               [location] — used for
+                                        hierarchy walks
+      window.ReligionQueries            [religion] — used in
+                                        getCultureSummary
+      window.CharacterQueries           [character] — used in
+                                        getCultureForCharacter,
+                                        getCharactersForCulture,
+                                        getCultureStatistics
+    Call-time dependencies (soft — checked per call in
+    _resolveCurrentLocationId):
+      window.LocationQueries.getCurrentLocationId
+                                        [location] — semantic
+                                        current-location resolver;
+                                        preferred
+      window.CharacterQueries.getCurrentLocationId
+                                        [character] — raw-field
+                                        fallback
+    Consumed by:
+      [load] culture-generation.js       (getCultureById,
+                                        getPrimaryCultureForLocation,
+                                        getAllCultures —
+                                        culture-generation.js's
+                                        load-time guard requires
+                                        CultureQueries)
+      [load] culture-view-models.js      (getCultureSummary — plus
+                                        _requireQueries guard;
+                                        culture-view-models.js's
+                                        load-time guard requires
+                                        CultureQueries AND
+                                        PlaceQueries AND
+                                        ReligionQueries AND
+                                        CharacterQueries)
+      [load] culture-ui-list.js          (getAllCultures,
+                                        getCultureById —
+                                        culture-ui-list.js's
+                                        load-time guard requires
+                                        CultureQueries AND
+                                        CultureViewModels)
+      [load] culture-modals.js           (getCultureById —
+                                        culture-modals.js's
+                                        load-time guard requires
+                                        CultureQueries)
+      [load] culture-bootstrap.js        (verified in
+                                        _REQUIRED_MODULES)
+    Notes:
+      - LOCATION-RESOLUTION CONTRACT (from the header):
+        _resolveCurrentLocationId prefers
+        LocationQueries.getCurrentLocationId (semantic: explicit
+        field → latest move → birthplace), falls back to
+        CharacterQueries.getCurrentLocationId (raw field only),
+        then null. Do not call window.getCurrentLocationId directly
+        — the name is overloaded (character-queries.js exports a
+        version that takes an id; world.js exports a version that
+        takes a character object).
+      - getCultureForCharacter reads character.birthplaceId
+        (canonical field), not character.birthLocationId (which
+        does not exist). The A3 refactor fixed this.
+      - getPrimaryCultureForLocation walks the place hierarchy up
+        to _MAX_HIERARCHY_DEPTH (100) levels. Returns the first
+        place with a non-null cultureId.
+      - getCulturesForLocation combines primary + direct
+        associations + ancestor associations, deduplicated by id.
+      - getCultureSummary silently skips dangling references
+        (culture.locations or culture.religions pointing at a
+        missing place or religion). See HAZARDS §5.
+      - getCultureStatistics returns counts, averages, and a
+        per-culture summary list. It counts characters by explicit
+        cultureId only.
+
+--------------------------------------------------------------------------------
+2.6 GENERATION — culture-generation.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-generation.js
+    Owns: window.CultureGeneration
+      ({ rollWeightedValue, rollWeightedValues, rollHeight,
+         generateAppearanceFromCulture, generateAppearance,
+         generateAppearanceForLocation,
+         generateAppearanceWithRandomCulture }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CultureQueries            [culture]
+    Call-time dependencies (soft, per call):
+      window.CultureQueries.getCultureById
+                                        [culture] — via
+                                        _requireQueries
+      window.CultureQueries.getPrimaryCultureForLocation
+                                        [culture]
+      window.CultureQueries.getAllCultures
+                                        [culture]
+      window.randomness                [randomness] — via
+                                        _resolveRng, when no
+                                        explicit rng is supplied;
+                                        must expose pickWeighted,
+                                        randomInt, pickRandom
+    Consumed by:
+      [load] culture-bootstrap.js      (verified in
+                                        _REQUIRED_MODULES)
+      [call] character-generator.js    (via
+                                        CultureGeneration.
+                                        generateAppearance* at call
+                                        time — character-generator
+                                        loads in the character
+                                        block, which precedes
+                                        culture; the call is
+                                        typeof-guarded in the
+                                        character module)
+    Notes:
+      - PURE CORE: rollWeightedValue, rollWeightedValues,
+        rollHeight, generateAppearanceFromCulture. No window
+        lookups. Deterministic under seed. What unit tests use.
+      - QUERY-INTEGRATED WRAPPERS: generateAppearance,
+        generateAppearanceForLocation,
+        generateAppearanceWithRandomCulture. Resolve a culture via
+        Queries, then delegate to the pure core.
+      - RNG CONTRACT: the randomness provider is a required
+        argument, not a hidden global. If a caller does not supply
+        one, window.randomness is used. If neither exists, throws.
+        There is NO Math.random fallback.
+      - generateAppearanceFromCulture(null, ...) returns an
+        appearance object with all categories undefined (except
+        commonFeatures: []). This is the caller's hook for
+        "best effort" generation.
+      - The query-integrated wrappers THROW when the culture
+        cannot be resolved. See HAZARDS §6.
+      - generateAppearanceWithRandomCulture returns
+        { culture, appearance } (not the appearance alone).
+
+--------------------------------------------------------------------------------
+2.7 VIEW MODELS — culture-view-models.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-view-models.js
+    Owns: window.CultureViewModels
+      ({ labelFor, iconFor, buildListRow, buildListRows,
+         buildCard, buildDetails, buildDropdownOptions }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CultureQueries            [culture]
+      window.PlaceQueries              [location]
+      window.ReligionQueries           [religion]
+      window.CharacterQueries          [character]
+    Call-time dependencies (soft):
+      window.CultureQueries.getCultureSummary
+                                        [culture] — via
+                                        buildDetails
+      window.PlaceQueries.getPlaceById  [location] — via
+                                        _resolveLocations
+      window.ReligionQueries.getReligionById
+                                        [religion] — via
+                                        _resolveReligions
+    Consumed by:
+      [load] culture-ui-list.js        (buildListRows,
+                                        buildCard,
+                                        buildDropdownOptions —
+                                        culture-ui-list.js's
+                                        load-time guard requires
+                                        CultureViewModels)
+      [load] culture-modals.js         (buildDetails —
+                                        culture-modals.js's
+                                        load-time guard requires
+                                        CultureViewModels)
+      [load] culture-bootstrap.js      (verified in
+                                        _REQUIRED_MODULES)
+    Notes:
+      - labelFor is the CANONICAL display-name resolver. All
+        domains that need a culture's label must call
+        CultureViewModels.labelFor(culture), NOT
+        culture.displayName || culture.name.
+      - labelFor always returns a string. Never null, never
+        undefined.
+      - iconFor returns whatever the culture declared, or null.
+        A placeholder may be supplied via options.iconPlaceholder
+        but is OPT-IN. iconFor does NOT route through icons.js
+        _getIcon — culture icons are data.
+      - buildCard produces presentation rows from
+        culture.appearance and culture.mythology, reading through
+        _resolveLocations / _resolveReligions.
+      - buildDetails reads through CultureQueries.getCultureSummary
+        and then re-derives presentation sections from the
+        summary's raw fields. The summary is a data projection;
+        buildDetails is a presentation projection. The double
+        derivation is deliberate (see HAZARDS §7).
+      - buildDropdownOptions sorts by label, not by id or
+        insertion order.
+
+--------------------------------------------------------------------------------
+2.8 UI LIST — culture-ui-list.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-ui-list.js
+    Owns: window.CultureUI
+      ({ renderCultureList, renderCultureCard,
+         renderCultureDropdown }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CultureViewModels        [culture]
+      window.CultureQueries           [culture]
+      window.escapeHtml (OR window._escapeHtml)
+                                       [formatting] via
+                                       formatting.js — if neither
+                                       exists, throws
+    Call-time dependencies (soft):
+      window.CultureQueries.getAllCultures, getCultureById
+                                       [culture] — for list data
+                                       and click-handler lookups
+      document.getElementById / container.querySelector
+                                       browser DOM
+    Consumed by:
+      [load] culture-bootstrap.js      (verified in
+                                        _REQUIRED_MODULES)
+      Any dashboard page that calls CultureUI.render*.
+    Notes:
+      - EVENT DELEGATION: one click listener per container,
+        attached once. The current onSelect is read from
+        container.__cultureOnSelect at click time, so re-rendering
+        with a new callback takes effect without re-binding.
+      - ICON POLICY: culture-record icons (row.icon) are rendered
+        verbatim; they are DATA, not chrome. Do NOT route them
+        through window._getIcon. No chrome icons are used in this
+        file.
+      - Keyboard activation: rows have tabindex="0" so they are
+        focusable and screen-reader-announced, but there is NO
+        keydown handler. Enter/Space on a focused row does not
+        trigger onSelect. See HAZARDS §8.
+      - renderCultureDropdown emits native <option> elements;
+        icons are omitted (native <option> cannot render arbitrary
+        HTML reliably).
+      - No inline styles. CSS classes only.
+      - No domain reads. Consumes view models, escapes strings,
+        writes HTML.
+
+--------------------------------------------------------------------------------
+2.9 MODALS — culture-modals.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-modals.js
+    Owns: window.CultureModals
+      ({ openCreateCultureModal, openEditCultureModal,
+         confirmDeleteCulture, openCultureDetailsModal }) plus
+      legacy flat aliases (window.openCreateCultureModal,
+      window.openEditCultureModal, window.openDeleteCultureModal,
+      window.openCultureDetailsModal).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.openModal                [modals] via
+                                      js/core/modals-core.js
+      window.closeTopModal            [modals] via
+                                      js/core/modals-core.js
+      window.CultureCommands          [culture]
+      window.CultureCommands.persist  (method guard)
+      window.CultureQueries           [culture]
+      window.CultureViewModels        [culture]
+      window.escapeHtml (OR window._escapeHtml)
+                                       [formatting] via
+                                       formatting.js
+      window.showToast (OR window._showToast)
+                                       [ui] via js/core/ui.js
+    Call-time dependencies (soft — checked per call):
+      window.PlaceQueries.getAllPlaces
+                                       [location] — via
+                                       _placeOptions in
+                                       openEditCultureModal
+      window.ReligionQueries.getAllReligions
+                                       [religion] — via
+                                       _religionOptions in
+                                       openEditCultureModal
+      window.getIconOptions           OPTIONAL UI helper — if
+                                       absent, the icon field
+                                       falls back to a free-text
+                                       input
+      window.confirmDialog            [modals] via
+                                       js/core/modals-core.js —
+                                       used by
+                                       confirmDeleteCulture;
+                                       missing -> toast and
+                                       return
+    Consumed by:
+      [load] culture-bootstrap.js      (verified in
+                                        _REQUIRED_MODULES)
+      Any dashboard that opens culture modals.
+    Notes:
+      - MODAL INFRASTRUCTURE: this file passes titleHtml and
+        contentHtml to openModal. The keys `title` and `content`
+        are SILENTLY IGNORED by js/core/modals-core.js; passing
+        them renders with the default title 'Modal' and an empty
+        body. The K3 refactor corrected every call site. Do not
+        reintroduce `title:` or `content:`.
+      - PERSISTENCE: the modal is the SAVE OWNER. Every successful
+        command path calls CultureCommands.persist() exactly once
+        via _handleCommandResult. A failed persist is a second
+        toast, not a thrown error — the canonical data is already
+        updated.
+      - MODAL CLOSE CONTRACT: onConfirm return value determines
+        whether the modal closes. true closes; false keeps it
+        open. Handlers do NOT call closeTopModal() themselves.
+      - onConfirm receives the modal DOM element (root) as its
+        only argument in the supplied code — the callbacks in this
+        file ignore the parameter and use document.getElementById.
+        This is a KNOWN bug for stacked modals (see HAZARDS §10).
+      - confirmDeleteCulture uses window.confirmDialog, which
+        wraps openModal internally and is not affected by the
+        title/content key issue.
+      - The details modal is read-only (Close button only).
+      - Legacy flat aliases (window.openCreateCultureModal etc.)
+        are retained for one release.
+
+--------------------------------------------------------------------------------
+2.10 BOOTSTRAP — culture-bootstrap.js
+--------------------------------------------------------------------------------
+
+  js/culture/culture-bootstrap.js
+    Owns: window.CultureBootstrap ({ init }) and
+      window.Culture (namespace, installed by init()).
+    Load-time dependencies: NONE at parse. Verification is
+      performed inside init(). Auto-init runs at load if
+      masterData.data exists.
+    init() REQUIRED_MODULES (throw if missing):
+      CultureState, CultureQueries, CultureCommands,
+      CultureValidation, CultureViewModels, CultureGeneration,
+      CultureUI, CultureModals
+    init() REQUIRED_GLOBALS (throw if wrong type):
+      generateId, markDataDirty, saveMasterData, escapeHtml
+      (or _escapeHtml), showToast (or _showToast), openModal,
+      closeTopModal
+    init() CROSS_DOMAIN (throw if namespace or method missing):
+      PlaceQueries.getPlaceById
+      PlaceQueries.getAllPlaces
+      ReligionQueries.getReligionById
+      ReligionQueries.getAllReligions
+      CharacterQueries.getCharacterById
+      CharacterQueries.getAllCharacters
+    init() CANONICAL:
+      masterData.data.cultures must be Array or absent
+      (absent -> coerced to []); non-array throws
+    Consumed by: application bootstrap; any caller that needs
+      window.Culture.
+    Notes:
+      - init() is idempotent. A second call re-hydrates indexes but
+        does not re-run verification.
+      - Auto-init at load is best-effort: a throw is caught and
+        logged (not rethrown) so a top-level throw does not abort
+        subsequent script loading.
+      - After init() succeeds, window.Culture = { state, queries,
+        commands, validation, generation, viewModels, ui, modals }.
+      - Integrity check is warn-only. Findings are logged via
+        console.warn.
+      - CultureBootstrap does NOT verify confirmDialog,
+        getIconOptions, PlaceQueries / ReligionQueries inside the
+        edit modal path, or LocationQueries.getCurrentLocationId.
+        These are lazy-checked at their call sites. See
+        HAZARDS §11.
+
+
+================================================================================
+PART 3 — CORE / CHARACTER / LOCATION / RELIGION DEPENDENCIES
+================================================================================
+
+Legend:
+  core        — js/core/... files
+  char        — js/character/... files
+  loc         — js/location/... files
+  rel         — js/religion/... files
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/core/storage.js
+    Used by:
+      [call] culture-state.js        (masterData — read by
+                                      _readCanonicalCultures;
+                                      missing -> throw at use)
+      [call] culture-commands.js     (saveMasterData — via
+                                      persist(); markDataDirty
+                                      — via _commit,
+                                      typeof-guarded)
+      [call] culture-bootstrap.js    (masterData — verified in
+                                      REQUIRED_GLOBALS; also read
+                                      by _verifyCanonical)
+    Notes:
+      - culture-state.js and culture-commands.js both call
+        markDataDirty. Neither calls saveMasterData except
+        commands' persist().
+      - storage.js must have initialized window.masterData.data
+        before hydrateFromMasterData runs. Under the documented
+        full-app order, initializeStorage() runs in the core
+        block before the culture block.
+
+  js/core/ids.js
+    Used by:
+      [load] culture-commands.js     (generateId — LOAD-TIME
+                                      GUARD; missing -> throw at
+                                      load)
+      [call] culture-bootstrap.js    (generateId — verified in
+                                      REQUIRED_GLOBALS)
+
+  js/core/formatting.js
+    Used by:
+      [load] culture-ui-list.js      (escapeHtml or _escapeHtml
+                                      — LOAD-TIME GUARD)
+      [load] culture-modals.js       (escapeHtml or _escapeHtml
+                                      — LOAD-TIME GUARD)
+
+  js/core/ui.js
+    Used by:
+      [load] culture-modals.js       (showToast or _showToast —
+                                      LOAD-TIME GUARD)
+
+  js/core/modals-core.js
+    Used by:
+      [load] culture-modals.js       (openModal, closeTopModal —
+                                      LOAD-TIME GUARDS)
+      [call] culture-modals.js       (confirmDialog — via
+                                      confirmDeleteCulture;
+                                      missing -> toast and
+                                      return)
+
+  js/core/icons.js
+    Used by: NOT used. Culture records carry an icon field which
+      is data, not chrome. The culture subsystem does not read
+      window.Icons or window.getIcon.
+
+  js/core/randomness.js
+    Used by:
+      [call] culture-generation.js   (window.randomness — via
+                                      _resolveRng when the caller
+                                      does not supply an explicit
+                                      rng; must expose
+                                      pickWeighted, randomInt,
+                                      pickRandom; missing AND no
+                                      explicit rng -> throw)
+
+  js/core/accessors.js
+  js/core/collections.js
+  js/core/time.js
+  js/core/world.js
+  js/core/names.js
+  js/core/validation.js
+  js/core/integrity.js
+  js/core/maintenance.js
+  js/core/ui-state.js
+  js/core/responsive.js
+  js/core/collapsible.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+  js/core/simulation-generators.js
+    Used by: none of the culture files provided in this batch.
+
+  js/core/state.js
+    Not used by culture. state.js reads feature-state modules; it
+    does not reference CultureState.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  CharacterQueries.getCharacterById
+    Used by:
+      [load] culture-queries.js      (HARD — via
+                                      getCultureForCharacter,
+                                      and via the
+                                      _requireCharacterQueries
+                                      guard; missing -> throw at
+                                      load)
+      [load] culture-view-models.js  (HARD —
+                                      _requireCharacterQueries
+                                      guard; called by
+                                      buildDetails /
+                                      getCultureSummary)
+      [call] culture-bootstrap.js    (_verifyCrossDomain
+                                      requires the method)
+    Notes:
+      - The projection carries character.cultureId,
+        character.birthplaceId, and the fields the culture
+        queries read (moves array, currentLocationId). Culture
+        never reads character.relationships or other
+        character-owned containers.
+
+  CharacterQueries.getAllCharacters
+    Used by:
+      [load] culture-queries.js      (via getCharactersForCulture,
+                                      getCultureStatistics;
+                                      HARD — same
+                                      _requireCharacterQueries
+                                      guard)
+      [call] culture-bootstrap.js    (_verifyCrossDomain)
+
+  CharacterQueries.getCurrentLocationId
+    Used by:
+      [call] culture-queries.js      (_resolveCurrentLocationId
+                                      fallback when
+                                      LocationQueries is absent
+                                      or returns null)
+
+  CharacterSystem shim (character-system.js)
+    Provides the projection-returning override of
+    window.getCharacterById. Under the documented load order, this
+    is the version culture sees at runtime. Do not mutate the
+    returned projection.
+
+--------------------------------------------------------------------------------
+3.3 LOCATION DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  PlaceQueries.getPlaceById
+    Used by:
+      [load] culture-queries.js      (HARD — via
+                                      _findPrimaryCultureIdFor
+                                      Location,
+                                      getCulturesForLocation,
+                                      getCultureSummary;
+                                      _requirePlaceQueries guard
+                                      throws at load if missing)
+      [load] culture-view-models.js  (HARD —
+                                      _requirePlaceQueries guard;
+                                      via _resolveLocations)
+      [load] culture-modals.js       (call-time — via
+                                      _placeOptions in
+                                      openEditCultureModal;
+                                      _requirePlaceQueries throws
+                                      if missing)
+      [call] culture-bootstrap.js    (_verifyCrossDomain)
+
+  PlaceQueries.getAllPlaces
+    Used by:
+      [load] culture-queries.js      (via getCultureStatistics)
+      [load] culture-modals.js       (via _placeOptions)
+      [call] culture-bootstrap.js    (_verifyCrossDomain)
+
+  Note on PlaceQueries module name:
+    culture-queries.js, culture-view-models.js,
+    culture-modals.js, and culture-bootstrap.js all read
+    window.PlaceQueries. The natural provider is a facade over the
+    location domain. Under the documented load order, the location
+    block loads before the culture block, so window.PlaceQueries
+    exists at culture load time. [UNVERIFIED]: the exact module
+    that installs window.PlaceQueries is not in the supplied
+    batch. The location subsystem's canonical query surface is
+    window.LocationQueries. If PlaceQueries is not installed by
+    location-queries.js, the culture subsystem's load-time guards
+    will fail. Confirm the provider before deploying culture.
+
+  LocationQueries.getCurrentLocationId
+    Used by:
+      [call] culture-queries.js      (_resolveCurrentLocationId
+                                      preferred resolver; missing
+                                      -> falls back to
+                                      CharacterQueries.
+                                      getCurrentLocationId)
+
+  Note on LocationQueries vs PlaceQueries:
+    Culture reads BOTH. PlaceQueries is the location look-up
+    surface used by hierarchy walks and view models.
+    LocationQueries.getCurrentLocationId is the semantic
+    current-location resolver used by _resolveCurrentLocationId.
+    Do not substitute one for the other.
+
+--------------------------------------------------------------------------------
+3.4 RELIGION DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  ReligionQueries.getReligionById
+    Used by:
+      [load] culture-queries.js      (HARD — via
+                                      getCultureSummary;
+                                      _requireReligionQueries
+                                      guard throws at load if
+                                      missing)
+      [load] culture-view-models.js  (HARD — via
+                                      _resolveReligions)
+      [load] culture-modals.js       (call-time — via
+                                      _religionOptions in
+                                      openEditCultureModal;
+                                      _requireReligionQueries
+                                      throws if missing)
+      [call] culture-bootstrap.js    (_verifyCrossDomain)
+
+  ReligionQueries.getAllReligions
+    Used by:
+      [load] culture-modals.js       (via _religionOptions)
+      [call] culture-bootstrap.js    (_verifyCrossDomain)
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks in the supplied files,
+  (b) call-time window.X lookups in code,
+  (c) culture-bootstrap.js's verify() surface,
+  (d) culture-docs.txt §2 (the culture subsystem's own documented
+      order), adjusted to reflect tree paths,
+  (e) the canonical core / character / location / religion load
+      orders from stillwaters-docs.txt, character-doc.txt,
+      location-docs.txt, and religion-docs.txt.
+
+Group labels:
+
+  C1..C5  — core prerequisites.
+  R1..R4  — character, location, religion prerequisites.
+  CU1..CU10 — culture subsystem.
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - No culture file reads these directly. Loaded as part of the
+      standard core bootstrap.
+
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: escapeHtml required at load by
+      culture-ui-list.js and culture-modals.js.
+    - ids.js: generateId required at load by
+      culture-commands.js.
+    - randomness.js: window.randomness is the default RNG for
+      culture-generation.js at call time.
+    - icons.js, collections.js: not read by culture, but loaded in
+      the standard core bootstrap.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - Not read by any culture file, but required by every
+      downstream subsystem (character, location, religion) that
+      culture depends on.
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  js/core/world.js
+  js/core/names.js
+
+  Notes:
+    - storage.js provides masterData, markDataDirty,
+      saveMasterData. All three are used by culture modules.
+    - initializeStorage() MUST run before culture-state.js's
+      first hydrate. Under the documented order,
+      culture-bootstrap.js::init() calls hydrateFromMasterData;
+      masterData.data.cultures must exist (as [] at minimum) at
+      that point.
+    - world.js provides getPlaceById via window.getPlaceById
+      (world.js's export). PlaceQueries is a SEPARATE facade —
+      see Group R2.
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  Notes:
+    - ui.js provides showToast (HARD load-time guard of
+      culture-modals.js).
+    - modals-core.js provides openModal and closeTopModal (HARD
+      load-time guards of culture-modals.js) and confirmDialog
+      (call-time soft dependency of confirmDeleteCulture).
+
+--------------------------------------------------------------------------------
+GROUP R1 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: initializeStorage()
+
+  js/character/character-commands.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+
+  js/character/character-queries.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+
+  Notes:
+    - Culture reads window.CharacterQueries directly.
+      character-queries.js is what installs it.
+    - Under the documented full-app order, character-system.js
+      loads AFTER character-queries.js and re-installs the
+      projection-returning window.getCharacterById. Culture sees
+      the projection, not the live entity.
+
+--------------------------------------------------------------------------------
+GROUP R2 — LOCATION PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/location/location-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/collections.js
+    <- AFTER: initializeStorage()
+
+  js/location/location-hierarchy.js
+    <- AFTER: js/location/location-state.js
+
+  js/location/location-queries.js
+    <- AFTER: js/location/location-state.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/core/world.js
+
+  js/location/location-commands.js
+    <- AFTER: js/location/location-state.js
+    <- AFTER: js/location/location-hierarchy.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+
+  Notes:
+    - location-queries.js installs window.LocationQueries.
+      Culture reads LocationQueries.getCurrentLocationId at call
+      time via _resolveCurrentLocationId.
+    - PlaceQueries: window.PlaceQueries is a SEPARATE facade.
+      [UNVERIFIED]: the exact module that installs it is not in
+      the supplied batch. The natural assumption (per the
+      settlement doc's parallel situation) is that it is a facade
+      over location-queries.js. If PlaceQueries is not installed,
+      the culture subsystem's load-time guards fail. Confirm the
+      provider.
+
+--------------------------------------------------------------------------------
+GROUP R3 — RELIGION PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/religion/religion-constants.js
+  js/religion/religion-format.js
+  js/religion/religion-validation.js
+  js/religion/religion-state.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: initializeStorage()
+
+  js/religion/religion-queries.js
+    <- AFTER: js/religion/religion-state.js
+    <- AFTER: js/religion/religion-format.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/time.js
+
+  js/religion/religion-rules.js
+  js/religion/religion-commands.js
+  js/religion/religion-laws.js
+  js/religion/religion-inheritance.js
+  js/religion/religion-view-models.js
+  js/religion/religion-render.js
+  js/religion/religion-ui-state.js
+  js/religion/religion-bootstrap.js
+
+  Notes:
+    - Culture reads window.ReligionQueries.getReligionById and
+      getAllReligions. religion-queries.js is what installs it.
+    - The rest of the religion block is the religion domain's own
+      dependency chain. Culture only needs ReligionQueries at
+      load time.
+
+--------------------------------------------------------------------------------
+GROUP CU1 — CULTURE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/culture/culture-constants.js
+
+  Notes:
+    - No dependencies. Loads first in the culture group.
+    - Required at load by culture-commands.js
+      (CULTURE_DEFAULT_APPEARANCE).
+    - culture-generation.js, culture-queries.js, culture-state.js
+      do not read culture-constants.js directly — but the defaults
+      it provides (CULTURE_DEFAULT_APPEARANCE) are consumed by
+      commands' createCulture path.
+
+--------------------------------------------------------------------------------
+GROUP CU2 — CULTURE VALIDATION
+--------------------------------------------------------------------------------
+
+  js/culture/culture-validation.js
+
+  Notes:
+    - No load-time dependencies. Loads BEFORE culture-commands.js
+      (which calls validateCreate / validateUpdate /
+      validateDelete at call time and requires the namespace at
+      load).
+    - Pure functions. No window.X reads.
+
+--------------------------------------------------------------------------------
+GROUP CU3 — CULTURE STATE
+--------------------------------------------------------------------------------
+
+  js/culture/culture-state.js
+    <- after: js/core/storage.js        (masterData — call-time;
+                                          missing -> throw at
+                                          first read/hydrate)
+    <- after: initializeStorage()        (call-time; masterData.data
+                                          must exist before first
+                                          hydrate)
+    <- after: js/core/accessors.js      (not called; listed here
+                                          for completeness — state
+                                          does not invalidate
+                                          accessors because accessor
+                                          caches do not index
+                                          cultures. If a culture
+                                          read path uses
+                                          getCultureById via
+                                          accessors.js, add the
+                                          invalidation. Currently
+                                          culture is not indexed by
+                                          accessors.js.)
+
+  Notes:
+    - No load-time guard. CultureState installs window.CultureState
+      at parse. It attempts an initial hydrate at load if
+      masterData.data exists; failures are logged, not thrown.
+    - Load BEFORE culture-commands.js (which requires
+      window.CultureState at load), culture-queries.js (same),
+      culture-bootstrap.js (same).
+
+--------------------------------------------------------------------------------
+GROUP CU4 — CULTURE COMMANDS
+--------------------------------------------------------------------------------
+
+  js/culture/culture-commands.js
+    <- AFTER: js/culture/culture-constants.js   (LOAD-TIME GUARD —
+                                                  CULTURE_DEFAULT_
+                                                  APPEARANCE)
+    <- AFTER: js/culture/culture-state.js        (LOAD-TIME GUARD —
+                                                  window.CultureState)
+    <- AFTER: js/culture/culture-validation.js   (LOAD-TIME GUARD —
+                                                  window.Culture
+                                                  Validation)
+    <- AFTER: js/core/ids.js                     (LOAD-TIME GUARD —
+                                                  generateId)
+    <- after: js/core/storage.js                 (call-time —
+                                                  saveMasterData;
+                                                  markDataDirty)
+
+  Notes:
+    - CultureCommands.persist is the ONLY saveMasterData call
+      site in the culture domain.
+    - Load BEFORE culture-modals.js (which requires
+      window.CultureCommands AND CultureCommands.persist at
+      load), culture-bootstrap.js (which requires the module
+      surface).
+
+--------------------------------------------------------------------------------
+GROUP CU5 — CULTURE QUERIES
+--------------------------------------------------------------------------------
+
+  js/culture/culture-queries.js
+    <- AFTER: js/culture/culture-state.js       (LOAD-TIME GUARD)
+    <- AFTER: js/core/storage.js                (LOAD-TIME GUARD —
+                                                  masterData)
+    <- AFTER: PlaceQueries                      (LOAD-TIME GUARD —
+                                                  window.PlaceQueries
+                                                  must be installed;
+                                                  [UNVERIFIED]
+                                                  provider)
+    <- AFTER: js/religion/religion-queries.js   (LOAD-TIME GUARD —
+                                                  window.Religion
+                                                  Queries)
+    <- AFTER: js/character/character-queries.js (LOAD-TIME GUARD —
+                                                  window.Character
+                                                  Queries)
+    <- after: js/location/location-queries.js   (call-time, soft —
+                                                  LocationQueries.
+                                                  getCurrentLocationId)
+    <- after: js/character/character-queries.js (call-time, soft —
+                                                  CharacterQueries.
+                                                  getCurrentLocationId
+                                                  fallback)
+
+  Notes:
+    - Load BEFORE culture-generation.js (which requires
+      window.CultureQueries at load), culture-view-models.js
+      (same), culture-ui-list.js (same), culture-modals.js
+      (same), culture-bootstrap.js (same).
+
+--------------------------------------------------------------------------------
+GROUP CU6 — CULTURE GENERATION
+--------------------------------------------------------------------------------
+
+  js/culture/culture-generation.js
+    <- AFTER: js/culture/culture-queries.js     (LOAD-TIME GUARD —
+                                                  window.Culture
+                                                  Queries)
+    <- after: js/core/randomness.js             (call-time, soft —
+                                                  window.randomness
+                                                  when no rng is
+                                                  passed)
+
+  Notes:
+    - Load BEFORE culture-bootstrap.js (verifies presence).
+    - Load BEFORE character-generator.js's first call to
+      CultureGeneration.generateAppearance*.
+
+--------------------------------------------------------------------------------
+GROUP CU7 — CULTURE VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/culture/culture-view-models.js
+    <- AFTER: js/culture/culture-queries.js     (LOAD-TIME GUARD)
+    <- AFTER: PlaceQueries                      (LOAD-TIME GUARD —
+                                                  [UNVERIFIED]
+                                                  provider)
+    <- AFTER: js/religion/religion-queries.js   (LOAD-TIME GUARD)
+    <- AFTER: js/character/character-queries.js (LOAD-TIME GUARD)
+
+  Notes:
+    - Load BEFORE culture-ui-list.js (requires
+      window.CultureViewModels), culture-modals.js (same),
+      culture-bootstrap.js (same).
+
+--------------------------------------------------------------------------------
+GROUP CU8 — CULTURE UI LIST
+--------------------------------------------------------------------------------
+
+  js/culture/culture-ui-list.js
+    <- AFTER: js/culture/culture-view-models.js (LOAD-TIME GUARD)
+    <- AFTER: js/culture/culture-queries.js     (LOAD-TIME GUARD)
+    <- AFTER: js/core/formatting.js             (LOAD-TIME GUARD —
+                                                  escapeHtml or
+                                                  _escapeHtml)
+
+  Notes:
+    - Load BEFORE culture-bootstrap.js (verifies presence).
+    - Load BEFORE any dashboard that calls
+      CultureUI.render*.
+
+--------------------------------------------------------------------------------
+GROUP CU9 — CULTURE MODALS
+--------------------------------------------------------------------------------
+
+  js/culture/culture-modals.js
+    <- AFTER: js/core/modals-core.js            (LOAD-TIME GUARD —
+                                                  openModal,
+                                                  closeTopModal)
+    <- AFTER: js/core/ui.js                     (LOAD-TIME GUARD —
+                                                  showToast or
+                                                  _showToast)
+    <- AFTER: js/core/formatting.js             (LOAD-TIME GUARD —
+                                                  escapeHtml or
+                                                  _escapeHtml)
+    <- AFTER: js/culture/culture-commands.js    (LOAD-TIME GUARD —
+                                                  window.Culture
+                                                  Commands AND
+                                                  CultureCommands.
+                                                  persist)
+    <- AFTER: js/culture/culture-queries.js     (LOAD-TIME GUARD)
+    <- AFTER: js/culture/culture-view-models.js (LOAD-TIME GUARD)
+    <- after: PlaceQueries                      (call-time, soft —
+                                                  getAllPlaces in
+                                                  openEditCulture
+                                                  Modal; missing ->
+                                                  _requirePlace
+                                                  Queries throws)
+    <- after: js/religion/religion-queries.js   (call-time, soft —
+                                                  getAllReligions in
+                                                  openEditCulture
+                                                  Modal; missing ->
+                                                  _requireReligion
+                                                  Queries throws)
+    <- after: window.getIconOptions             (call-time, soft —
+                                                  free-text fallback
+                                                  when missing)
+    <- after: window.confirmDialog              (call-time, soft —
+                                                  toast-and-return
+                                                  when missing)
+
+  Notes:
+    - Load BEFORE culture-bootstrap.js (verifies presence).
+    - Load BEFORE any page that calls
+      window.CultureModals.open*.
+
+--------------------------------------------------------------------------------
+GROUP CU10 — CULTURE BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/culture/culture-bootstrap.js
+    <- AFTER: js/culture/culture-constants.js
+    <- AFTER: js/culture/culture-validation.js
+    <- AFTER: js/culture/culture-state.js
+    <- AFTER: js/culture/culture-commands.js
+    <- AFTER: js/culture/culture-queries.js
+    <- AFTER: js/culture/culture-generation.js
+    <- AFTER: js/culture/culture-view-models.js
+    <- AFTER: js/culture/culture-ui-list.js
+    <- AFTER: js/culture/culture-modals.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/ui.js
+    <- AFTER: js/core/modals-core.js
+    <- AFTER: PlaceQueries                       [UNVERIFIED]
+    <- AFTER: js/religion/religion-queries.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: initializeStorage()
+
+  Notes:
+    - Load LAST in the culture group.
+    - init() runs at load if masterData.data exists. Best-effort:
+      a throw is caught and logged, not rethrown.
+    - If masterData.data is absent, init() is not called at load.
+      The loader calls window.CultureBootstrap.init() explicitly.
+    - After init() succeeds, window.Culture = { state, queries,
+      commands, validation, generation, viewModels, ui, modals }.
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list. Function calls are marked.
+
+  — Group C1: core constants —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  — Group C2: core utilities —
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  — Group C3: core time —
+  js/core/time.js
+
+  — Group C4: core storage —
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                (function call)
+  js/core/accessors.js
+  js/core/world.js
+  js/core/names.js
+
+  — Group C5: core UI primitives —
+  js/core/ui.js
+  js/core/modals-core.js
+
+  — Group R1: character prerequisites —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  — Group R2: location prerequisites —
+  js/location/location-state.js
+  js/location/location-hierarchy.js
+  js/location/location-queries.js
+  js/location/location-commands.js
+
+  — Group R2b: PlaceQueries provider (see [UNVERIFIED] note) —
+  (provider of window.PlaceQueries — not in the supplied batch)
+
+  — Group R3: religion prerequisites —
+  js/religion/religion-constants.js
+  js/religion/religion-format.js
+  js/religion/religion-validation.js
+  js/religion/religion-state.js
+  js/religion/religion-queries.js
+  js/religion/religion-rules.js
+  js/religion/religion-commands.js
+  js/religion/religion-laws.js
+  js/religion/religion-inheritance.js
+  js/religion/religion-view-models.js
+  js/religion/religion-render.js
+  js/religion/religion-ui-state.js
+  js/religion/religion-bootstrap.js
+
+  — Group CU1: culture constants —
+  js/culture/culture-constants.js
+
+  — Group CU2: culture validation —
+  js/culture/culture-validation.js
+
+  — Group CU3: culture state —
+  js/culture/culture-state.js
+
+  — Group CU4: culture commands —
+  js/culture/culture-commands.js
+
+  — Group CU5: culture queries —
+  js/culture/culture-queries.js
+
+  — Group CU6: culture generation —
+  js/culture/culture-generation.js
+
+  — Group CU7: culture view models —
+  js/culture/culture-view-models.js
+
+  — Group CU8: culture UI list —
+  js/culture/culture-ui-list.js
+
+  — Group CU9: culture modals —
+  js/culture/culture-modals.js
+
+  — Group CU10: culture bootstrap —
+  js/culture/culture-bootstrap.js
+
+  — Application bootstrap (function call, only if auto-init did
+     not run) —
+  window.CultureBootstrap.init()
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1.  culture-constants.js before culture-commands.js.
+     Failure without it: culture-commands.js throws at load
+     ("CULTURE_DEFAULT_APPEARANCE is missing").
+
+ 2.  culture-validation.js before culture-commands.js.
+     Failure without it: culture-commands.js throws at load
+     ("window.CultureValidation is missing").
+
+ 3.  culture-state.js before culture-commands.js and
+     culture-queries.js.
+     Failure without it: both throw at load.
+
+ 4.  culture-queries.js before culture-generation.js,
+     culture-view-models.js, culture-ui-list.js,
+     culture-modals.js, culture-bootstrap.js.
+     Failure without it: each throws at load.
+
+ 5.  culture-view-models.js before culture-ui-list.js and
+     culture-modals.js.
+     Failure without it: both throw at load.
+
+ 6.  culture-commands.js before culture-modals.js.
+     Failure without it: culture-modals.js throws at load
+     ("window.CultureCommands is missing" or
+     "CultureCommands.persist is missing").
+
+ 7.  js/core/formatting.js before culture-ui-list.js and
+     culture-modals.js.
+     Failure without it: both throw at load ("escapeHtml missing").
+
+ 8.  js/core/modals-core.js before culture-modals.js.
+     Failure without it: culture-modals.js throws at load
+     ("openModal / closeTopModal missing").
+
+ 9.  js/core/ui.js before culture-modals.js.
+     Failure without it: culture-modals.js throws at load
+     ("showToast / _showToast missing").
+
+ 10. js/core/ids.js before culture-commands.js.
+     Failure without it: culture-commands.js throws at load
+     ("generateId is missing").
+
+ 11. js/core/storage.js AND initializeStorage() before
+     culture-state.js's first hydrate.
+     Failure without it: _readCanonicalCultures throws at hydrate
+     time ("window.masterData is missing" / "masterData.data is
+     missing"). Under the documented order,
+     culture-bootstrap.js::init() is the first hydrate caller,
+     and it runs after the storage block.
+
+ 12. window.PlaceQueries before culture-queries.js,
+     culture-view-models.js, and culture-modals.js.
+     Failure without it: culture-queries.js throws at load;
+     culture-view-models.js throws at load; culture-modals.js
+     throws at call time (first openEditCultureModal).
+     [UNVERIFIED]: the exact module that installs PlaceQueries
+     is not in the supplied batch.
+
+ 13. window.ReligionQueries before culture-queries.js,
+     culture-view-models.js, and culture-modals.js.
+     Failure without it: culture-queries.js throws at load;
+     culture-view-models.js throws at load; culture-modals.js
+     throws at call time.
+
+ 14. window.CharacterQueries before culture-queries.js and
+     culture-view-models.js.
+     Failure without it: both throw at load.
+
+ 15. js/location/location-queries.js before culture-queries.js
+     is used to resolve a character's current location.
+     Failure without it: no load-time throw — LocationQueries is
+     a call-time dependency of _resolveCurrentLocationId —
+     but resolution falls back to CharacterQueries.
+     getCurrentLocationId (raw field), which under-counts
+     characters placed only via move records.
+
+ 16. js/character/character-queries.js before
+     culture-queries.js's first call to
+     window.CharacterQueries.getCurrentLocationId (fallback
+     resolver).
+     Failure without it: no load-time throw if
+     LocationQueries is present; a call-time throw if neither
+     resolver exists.
+
+ 17. js/core/randomness.js (window.randomness) before the first
+     call to CultureGeneration.* that does not supply an
+     explicit rng.
+     Failure without it: _resolveRng throws. No Math.random
+     fallback.
+
+ 18. culture-bootstrap.js loads LAST in the culture group.
+     Failure without it: verify() throws listing the missing
+     modules. Under the documented order every module is present.
+
+ 19. initializeStorage() before CultureBootstrap.init() runs.
+     Failure without it: init() throws at _verifyCanonical if
+     masterData is missing; the auto-init path catches the throw
+     and logs, but window.Culture is not created.
+
+ 20. No dependencies flow FROM core INTO the culture subsystem.
+     state.js does not read CultureState. core/state.js's facade
+     reads LocationUIState, not CultureState.
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+ 1.  culture-docs.txt is out of sync with the code.
+     Its own §7.1 says it should be replaced by culture-doc.md.
+     Its §2 load order uses paths that do not match the tree
+     (js/ui/modals-core.js, js/core/location/..., js/core/religion/...,
+     js/core/character/...). Its §3 API list names files the tree
+     does not contain at those paths (culture-modals.js is
+     described but its own file is at js/culture/culture-modals.js;
+     the docs.txt file references modals-culture.js in this batch
+     — the actual file is culture-modals.js). Do not cite
+     culture-docs.txt as authoritative; this document plus the
+     files themselves are the source of truth.
+
+ 2.  window.PlaceQueries provider is [UNVERIFIED].
+     culture-queries.js, culture-view-models.js,
+     culture-modals.js, and culture-bootstrap.js all read
+     window.PlaceQueries. The supplied location subsystem installs
+     window.LocationQueries, not window.PlaceQueries. Confirm the
+     provider before deploying culture. The natural assumption
+     (matching settlement's parallel situation) is a facade over
+     location-queries.js; if none exists, culture cannot load.
+
+ 3.  window.Culture is created by CultureBootstrap.init(), not at
+     script load.
+     The individual namespace objects (CultureQueries, etc.)
+     exist as soon as their scripts load. window.Culture does not
+     exist until init() runs. Callers that reach window.Culture
+     before init() get undefined. Use the individual namespaces
+     for pre-init calls.
+
+ 4.  CultureBootstrap auto-init does NOT throw on failure.
+     A failure is caught and logged via console.warn. If the
+     caller wants to gate other initialization on culture
+     availability, it must call window.CultureBootstrap.init()
+     explicitly and catch the throw. Do not assume the auto-init
+     guarantees window.Culture exists.
+
+ 5.  getCultureSummary silently skips dangling references.
+     If culture.locations references a deleted place, or
+     culture.religions references a deleted religion, the summary
+     silently omits the reference (does not add it to the summary
+     arrays). This is deliberate: a partial summary is more
+     useful than no summary. A caller cannot distinguish "no
+     locations" from "all locations got deleted" through the
+     summary shape. See culture-docs.txt §5.2.
+
+ 6.  generateAppearanceForLocation throws when no primary culture
+     applies.
+     This is deliberate. Callers who want "best effort" behaviour
+     should:
+       - pre-check CultureQueries.getPrimaryCultureForLocation
+         and handle null; or
+       - call generateAppearanceFromCulture(culture, ...) with
+         the culture object directly (this never throws for a null
+         culture).
+     Character creation must do one of these. See culture-docs.txt
+     §5.3.
+
+ 7.  buildDetails double-derives presentation from
+     getCultureSummary.
+     getCultureSummary is a data projection (what exists).
+     buildDetails is a presentation projection (how to arrange
+     it). The summary may grow to carry more data without
+     buildDetails changing. This is deliberate, not an oversight.
+
+ 8.  culture-ui-list.js list rows lack keyboard activation.
+     Rows have tabindex="0" so they are focusable and
+     screen-reader-announced, but Enter/Space does not trigger
+     onSelect. Click is the only activation. If keyboard
+     activation is added, it must be coordinated with the design
+     to avoid double-firing (Enter on a focusable element
+     synthesizes a click in most browsers). See culture-docs.txt
+     §5.5.
+
+ 9.  CultureCommands.persist does NOT read getLastSaveError.
+     persist() reports `saveMasterData returned false` on
+     failure. rank-commands.js and religion-commands.js surface
+     `getLastSaveError().message`. The culture version is
+     Pattern A shape but discards the failure message. This is a
+     divergence across domains. Callers that need the underlying
+     failure reason (quota exceeded, serialization failure,
+     storage disabled) do not get it. Fix by adopting the same
+     _requireGetLastSaveError pattern rank and religion use.
+
+ 10. culture-modals.js modal callbacks ignore the DOM root
+     parameter.
+     Every onConfirm callback in the supplied file uses
+     document.getElementById to read form inputs. This collides
+     when two culture modals are open simultaneously — the second
+     modal's onConfirm reads the first modal's inputs. rank's
+     modals-rank.js Phase 8.1 fixed this by scoping reads to
+     root.querySelector. culture-modals.js has not adopted the
+     fix. This is a live bug for stacked modals (e.g. create modal
+     open, then details modal open on top). Confirm whether
+     stacked culture modals are reachable in your application;
+     if they are, migrate every _readText / _readRawText /
+     _readMultiSelect to take a root parameter.
+
+ 11. CultureBootstrap does not verify lazy dependencies.
+     confirmDialog, getIconOptions, PlaceQueries /
+     ReligionQueries inside openEditCultureModal, and
+     LocationQueries.getCurrentLocationId are checked at call
+     time, not load time. A page that opens the delete flow
+     without confirmDialog loaded sees a toast "Confirmation
+     dialog unavailable" — a real, working state — but does not
+     throw. Do not assume a page that passes bootstrap is fully
+     functional. This is deliberate; see culture-docs.txt §5.6.
+
+ 12. CULTURE_DEFAULT_MYTHOLOGY does not exist.
+     culture-commands.js reads
+     window.CULTURE_DEFAULT_MYTHOLOGY || _emptyMythology().
+     culture-constants.js does not define
+     CULTURE_DEFAULT_MYTHOLOGY. The local _emptyMythology in
+     culture-commands.js is the active default. If a future
+     culture-constants.js adds CULTURE_DEFAULT_MYTHOLOGY, commands
+     will use it; until then, the fallback is local. Do not
+     assume the constants file provides this value.
+
+ 13. CULTURE_APPEARANCE_CATEGORIES is not read.
+     The constants file defines it; no supplied culture module
+     reads it. Consumers (generation, view models) iterate the
+     culture.appearance object keys directly. The constant is
+     documentation-as-data, not a required lookup table.
+
+ 14. generateAppearanceWithRandomCulture returns
+     { culture, appearance }, not the appearance alone.
+     Callers who only need the appearance must destructure. This
+     is a different return shape than generateAppearance (which
+     returns the appearance alone). Do not assume uniform return
+     shapes across the generation wrappers.
+
+ 15. Appearance and mythology are whole-object replacements on
+     updateCulture.
+     The command allowlist includes `appearance: true` and
+     `mythology: true`, and updateCulture replaces them
+     whole-object. Sub-field mutation must go through the
+     dedicated helpers (addAppearanceOption,
+     removeAppearanceOption, updateAppearanceWeight,
+     updateMythology). Do not pass a partial appearance object
+     expecting a merge; it will replace.
+
+ 16. Association helpers (addLocationToCulture, etc.) delegate to
+     updateCulture.
+     A failure inside updateCulture (validation failure,
+     unknown field rejection) surfaces as a failure from the
+     helper. Callers who swallow a helper's result but call
+     persist() anyway will save nothing new — no warning fires
+     because persist succeeded. This is expected behaviour; do
+     not assume a successful helper without inspecting the
+     result.success field.
+
+ 17. Cross-domain cascade is absent.
+     Deleting a culture fires a cultureDeleted CustomEvent but
+     does not clear character.cultureId, place.cultureId, or any
+     other domain's reference. A future CultureCascade must listen
+     for the event and clear references through the owning
+     domains' commands. Until then, dangling references are
+     expected. See culture-docs.txt §5.1.
+
+ 18. window.getCharacterById in culture code resolves to the
+     projection override.
+     CultureQueries.getCultureForCharacter reads the character
+     projection via CharacterQueries.getCharacterById (not the
+     bare window.getCharacterById). Under the documented full-app
+     order, character-system.js overrides window.getCharacterById
+     with the projection version. Both paths return a projection.
+     Do not mutate the returned character object.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
