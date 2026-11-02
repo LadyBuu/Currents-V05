@@ -5,7 +5,7 @@
  * =============================================================================
  *
  * (Header preserved — see current file. Only the character-enumeration,
- * leader-traits, and time-dependency blocks changed.)
+ * leader-traits, profession-input, and time-dependency blocks changed.)
  *
  * Time dependency:
  *   window.getCurrentYear, defined in js/core/time.js. The deprecated
@@ -49,9 +49,45 @@
  *   traits from that projection. The tenure bonus still uses
  *   leader.startYear, which IS present on the assignment projection.
  *
+ * PROFESSION INPUT:
+ *   The role-diversity, master-concentration, underserved-roles,
+ *   average-skill, and specialization-synergy modifiers are computed
+ *   from each character's professions, read via
+ *   CharacterCommands.getProfessions(character.id).
+ *
+ *   The prior revision read character.professions off the character
+ *   projection. character-state.js::_project no longer includes
+ *   professions (they are in _DOMAIN_OWNED_FIELDS, refused by the
+ *   generic character-update path, and their canonical reader is
+ *   CharacterCommands.getProfessions). Reading professions off the
+ *   projection would read `undefined` and produce zero for every
+ *   settlement — the exact silent-zero bug this section documents.
+ *
+ *   CharacterCommands.getProfessions is a Map lookup + array clone per
+ *   character. That is O(1) per character, so the O(N) iteration cost
+ *   is the same as reading an array field off a projection. There is
+ *   no performance reason to prefer the projection path; there is a
+ *   correctness reason to prefer the command reader.
+ *
+ *   Do not "optimize" by caching a projection across a
+ *   characterChanged event. Professions are mutable; the projection is
+ *   a snapshot. A cache would serve stale profession data.
+ *
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - _computeRoleFacts now reads professions via
+ *       CharacterCommands.getProfessions(character.id) instead of
+ *       character.professions off the projection.
+ *       character-state.js::_project no longer includes professions
+ *       (removed in the same pass to close the character projection
+ *       contract). Without this rewrite, five prosperity modifiers
+ *       (roleDiversity, masterConcentration, underservedRoles,
+ *       averageSkill, specializationSynergy) would silently zero
+ *       out for every settlement.
+ *     - Header PROFESSION INPUT section added.
+ *     - No public signature change, no public return-shape change.
+ *   Previous revision:
  *     - _computeRoleFacts now enumerates characters via
  *       CharacterQueries.getAllCharacters() + LocationQueries.getCurrentLocationId,
  *       matching the fix in settlement-education-queries.js and
@@ -85,6 +121,7 @@
     function _getIndustryQueries()         { return window.IndustryQueries; }
     function _getLocationQueries()         { return window.LocationQueries; }
     function _getCharacterQueries()        { return window.CharacterQueries; }
+    function _getCharacterCommands()       { return window.CharacterCommands; }
     function _getProsperityDefinitions()   { return window.SettlementProsperityDefinitions; }
     function _getRankRules()               { return window.SettlementRankRules; }
     function _getPopulationAccessor()      { return window.getLocationPopulationCount; }
@@ -152,6 +189,23 @@
         return result;
     }
 
+    /**
+     * Computes role-distribution facts for the settlement.
+     *
+     * Professions are read via CharacterCommands.getProfessions per
+     * character. See PROFESSION INPUT in the module header for why the
+     * projection is not read here.
+     *
+     * @private
+     * @param {string} locationId
+     * @returns {{
+     *   roleCount: number,
+     *   totalProfessions: number,
+     *   masterCount: number,
+     *   averageSkill: number,
+     *   roles: Object
+     * }}
+     */
     function _computeRoleFacts(locationId) {
         var characters = _getCharactersInSettlement(locationId);
 
@@ -161,12 +215,36 @@
         var totalSkill = 0;
         var skillSamples = 0;
 
+        var characterCommands = _getCharacterCommands();
+
         for (var i = 0; i < characters.length; i++) {
             var character = characters[i];
-            if (!character) continue;
+            if (!character || !character.id) continue;
 
-            var professions = character.professions;
-            if (!professions || professions.length === 0) continue;
+            // Professions come from CharacterCommands, not from the
+            // projection. See PROFESSION INPUT in the module header.
+            if (typeof characterCommands.getProfessions !== 'function') {
+                continue;
+            }
+
+            var professions;
+            try {
+                professions = characterCommands.getProfessions(character.id);
+            } catch (e) {
+                // A single character throwing should not silently
+                // disable the modifier for the whole settlement. Log
+                // and continue.
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'settlement-prosperity-queries: getProfessions threw ' +
+                        'for character ' + character.id + ':',
+                        e
+                    );
+                }
+                continue;
+            }
+
+            if (!Array.isArray(professions) || professions.length === 0) continue;
 
             for (var j = 0; j < professions.length; j++) {
                 var prof = professions[j];
