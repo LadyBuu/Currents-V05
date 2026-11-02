@@ -3,7 +3,7 @@
  * STILL WATERS - RANK MODALS (modals-rank.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/modals-rank.js
+ * LOCATION: js/ranks/modals-rank.js
  *
  * All modals for the rank domain. Presentation only.
  *
@@ -26,6 +26,42 @@
  *   - read character.relationships, character.professions, or any other
  *     embedded domain container directly — those come off the projection
  *
+ * INHERITANCE UX (2026-11 revision):
+ *   The inheritance fields were renamed and re-hinted so the modal reads
+ *   in the direction the user thinks, not the direction the record stores.
+ *
+ *   The record fields are:
+ *     inheritanceSource: 'none' | 'parent' | 'spouse'
+ *     sourceRankId:      <id of another rank> | null
+ *
+ *   Read as a sentence, the record means: "THIS rank is inherited by the
+ *   [parent | spouse] of the holder of [sourceRankId]." The dependency
+ *   runs from this rank to its source.
+ *
+ *   The user's mental model is the opposite direction: "I'm setting up
+ *   King — what does King pass down?" They expect to configure "the
+ *   SOURCE rank passes THIS rank to X." Same relationship, opposite
+ *   arrow.
+ *
+ *   The modal now reads in the user's direction:
+ *
+ *     This rank is inherited by…        [ Nobody / Children / Spouse ]
+ *     …the holder of this rank          [ <source rank> ]
+ *
+ *   Which reads as a single sentence: "This rank is inherited by the
+ *   children of the holder of King." The user sees the King → Prince
+ *   relationship from the Prince side, spelled out unambiguously.
+ *
+ *   The option labels inside the dropdown were rewritten from
+ *   None / Parent / Spouse to full sentences, the field labels were
+ *   rewritten from "Inheritance source" / "Source rank" to the
+ *   sentence fragments above, and a live hint under each dropdown
+ *   spells out the selected relationship with a concrete example.
+ *
+ *   The Rank Details modal's "Inheritance source / Parent rank / Source
+ *   rank" rows were collapsed into a single "Inheritance" row that
+ *   reads as a sentence.
+ *
  * MODAL CALLBACK API (from modals-core.js):
  *   openModal(options) returns { element, close }.
  *
@@ -40,46 +76,14 @@
  *   input reads. Do NOT use `root.element.querySelector(...)` — the
  *   argument is already the DOM element, not a `{ element }` wrapper.
  *
- *   This file was previously written against the handle shape:
- *
- *     onOpen: function (modal) {
- *         var root = modal.element;       // WRONG — modal is the DOM element
- *     }
- *
- *   The `modal.element` access threw on every modal open, silently
- *   caught by modals-core.js for onOpen and propagated to the browser
- *   console for onConfirm. The net effect was that every rank modal
- *   opened but no confirm button worked. Fixed in this revision: every
- *   onOpen and onConfirm handler now uses the parameter directly.
- *
- *   If you need the handle's `close()` inside a callback, do NOT reach
- *   for it on the parameter. Instead:
- *
- *     var modalHandle = window.openModal({ ... });
- *     // inside onConfirm:
- *     modalHandle.close();     // explicit programmatic close
- *
- *   or call `window.closeTopModal()`. Both are documented in
- *   modals-core.js's CALLBACK CONTRACT section.
- *
  * MODAL INPUT READS:
  *   Every modal reads its inputs via root.querySelector('#id'), NOT
  *   document.getElementById('#id'). The modal-scoped read is required
- *   because:
- *
- *     1. Multiple rank modals can be open simultaneously (the modal stack
- *        allows it). Two open create-rank modals would otherwise both
- *        read the first modal's inputs via getElementById.
- *
- *     2. A completely unrelated modal could define an element with an id
- *        collision (unlikely but possible). Scoped reads are immune.
- *
- *     3. The modal element is the correct scope for the input values;
- *        document is the entire page.
+ *   because two rank modals can be open simultaneously (the modal
+ *   stack allows it).
  *
  *   The helpers _readValue, _readChecked, _readNumber all take a root
- *   element (the modal) as their first argument. Every call site passes
- *   the callback parameter directly.
+ *   element (the modal) as their first argument.
  *
  * DEPENDENCIES (REQUIRED, must load first):
  *   - modals-core.js        (openModal, closeTopModal)
@@ -98,55 +102,48 @@
  *
  * DEPENDENCIES (OPTIONAL, used only if present):
  *   - _showToast — deprecated alias; ui.js still exports it, but
- *                  showToast is the primary name. _toast prefers
- *                  _showToast (for backward compatibility) but falls
- *                  back to showToast. ui.js is required, so at least
- *                  one must be present.
+ *                  showToast is the primary name.
  *
  * INLINE STYLES (KNOWN DEFERRAL):
  *   This file uses inline style attributes for layout. The general
  *   policy across the tree is classes-only; the exceptions here are a
  *   known deferral documented in the rank-doc's Known Deferrals section.
- *
- *   The correctness fixes in this revision (modal callback API,
- *   options shadowing, escapeHtml requirement, DEFAULT_SYMBOL,
- *   RANK_LEVELS requirement, enum reference in dropdown builders) are
- *   independent of the inline-style extraction. Extracting ~200 lines
- *   of layout to a new rank-modals.css is a follow-up PR that touches
- *   only this file and the new CSS file.
+ *   The .modal* + .form-* CSS in common.css gives the modal shell and
+ *   form primitives their styling; the inline styles here are layout
+ *   inside the body.
  *
  * ICON POLICY: No emojis. Icons come from icons.js via Icons.NAME. No
- * inline Unicode glyphs in buttons, badges, or select options. Level
- * glyphs are not shown in the priority dropdown; the level name alone is
- * the option label.
+ * inline Unicode glyphs in buttons, badges, or select options.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Previous revision:
- *     - _escapeHtml given a three-tier fallback. Now hard-requires
- *       formatting.js (see Phase 8).
+ *   Current revision (2026-11 inheritance UX):
+ *     - Field label "Inheritance" → "This rank is inherited by…"
+ *     - Field label "Source rank" → "…the holder of this rank"
+ *     - Option labels replaced with full sentences
+ *     - Added live hint under each inheritance dropdown that updates
+ *       on change and spells out the selected relationship with a
+ *       concrete example (King → Prince / King → Queen Consort)
+ *     - Added _inheritanceHintText(mode) helper
+ *     - Rank Details modal: collapsed "Inheritance source / Parent
+ *       rank / Source rank" into a single sentence row "Inheritance"
+ *     - No behavioural change to any command. No public signature change.
+ *   Previous revision (Phase 8.1):
+ *     - Every onMount / onOpen / onConfirm callback now uses the
+ *       parameter directly as the root element. Previously every
+ *       callback declared `var root = modal.element;` which was always
+ *       undefined because modals-core.js passes the DOM element, not
+ *       a `{ element }` handle.
  *   Phase 8:
- *     - #22 (correctness): openAssignRankModal::onConfirm no longer
- *       shadows the outer `options` parameter with a local `var options`.
- *     - #2, #21 (correctness): _readValue, _readChecked, _readNumber now
- *       take a root element as their first argument.
+ *     - openAssignRankModal::onConfirm no longer shadows the outer
+ *       `options` parameter with a local `var options`.
+ *     - _readValue, _readChecked, _readNumber now take a root element
+ *       as their first argument.
  *     - _escapeHtml deleted. formatting.js is now REQUIRED.
  *     - ui.js promoted to REQUIRED.
  *     - DEFAULT_SYMBOL derived from window.DEFAULT_RANK.symbol at load.
  *     - _buildPriorityOptions no longer falls back to [1, 2, 3, 4, 5].
  *     - Enum dropdowns read from window.NUMBERING_TYPE etc.
- *   Current revision (Phase 8.1):
- *     - CRITICAL (compatibility with modals-core.js): every onOpen and
- *       onConfirm callback now uses the parameter directly as the root
- *       element. Previously every callback declared `var root =
- *       modal.element;` which was always undefined because
- *       modals-core.js passes the DOM element, not a `{ element }`
- *       handle. The `try/catch` in modals-core.js swallowed the onOpen
- *       throw, but onConfirm's throw propagated and left the modal open
- *       with no way to save. This made the entire rank UI unusable.
- *       See MODAL CALLBACK API in the header.
- *     - Header MODAL CALLBACK API section added.
- *     - No public signature change.
  * =============================================================================
  */
 
@@ -261,14 +258,6 @@
     // =========================================================================
     // 2b. MODAL-SCOPED INPUT READERS
     // =========================================================================
-    //
-    // Every reader takes the modal element (or any root element) as its
-    // first argument and uses querySelector. This is required for
-    // correctness when two modals are open simultaneously.
-    //
-    // The root is the CALLBACK PARAMETER from modals-core.js (the DOM
-    // element). It is NOT `modal.element` — see MODAL CALLBACK API in the
-    // header.
 
     function _readValue(root, id) {
         if (!root) return '';
@@ -293,9 +282,6 @@
     // 3. SHARED OPTION BUILDERS
     // =========================================================================
 
-    /**
-     * Default symbol derived from rank-constants.js.
-     */
     var DEFAULT_SYMBOL = (window.DEFAULT_RANK && window.DEFAULT_RANK.symbol) || '⟡';
 
     function _getSymbols() {
@@ -316,15 +302,6 @@
         return html;
     }
 
-    /**
-     * Builds the priority select options.
-     *
-     * Reads priority keys directly from window.RANK_LEVELS. No fallback
-     * list: RANK_LEVELS is required at load.
-     *
-     * The option label is the level name alone. No glyph is rendered in
-     * the dropdown.
-     */
     function _buildPriorityOptions(selected) {
         var levels = window.RANK_LEVELS;
         var keys = Object.keys(levels).map(function (k) { return parseInt(k, 10); })
@@ -342,12 +319,6 @@
         return html;
     }
 
-    /**
-     * Gender restriction options.
-     *
-     * The literals ('either' / 'male' / 'female') match
-     * RankRules._isValidGenderRestriction.
-     */
     function _buildGenderOptions(selected) {
         var opts = [
             { id: 'either', label: 'Either' },
@@ -398,13 +369,20 @@
         return html;
     }
 
+    /**
+     * Inheritance-source dropdown options.
+     *
+     * The labels describe WHO inherits THIS rank — the direction the user
+     * is thinking. "The children of another rank's holder" reads as the
+     * continuation of the field label "This rank is inherited by…".
+     */
     function _buildInheritanceSourceOptions(selected) {
         var sources = window.INHERITANCE_SOURCE
             || { NONE: 'none', PARENT: 'parent', SPOUSE: 'spouse' };
         var opts = [
-            { id: sources.NONE,   label: 'None' },
-            { id: sources.PARENT, label: 'Parent' },
-            { id: sources.SPOUSE, label: 'Spouse' }
+            { id: sources.NONE,   label: 'Nobody — it is held directly' },
+            { id: sources.PARENT, label: 'The children of another rank\'s holder' },
+            { id: sources.SPOUSE, label: 'The spouse of another rank\'s holder' }
         ];
         var html = '';
         for (var i = 0; i < opts.length; i++) {
@@ -413,6 +391,27 @@
                 _esc(opts[i].label) + '</option>';
         }
         return html;
+    }
+
+    /**
+     * Helper text shown under "This rank is inherited by…".
+     *
+     * One sentence per mode, written in the direction the user is
+     * thinking: "when someone holds the source rank, X inherits this
+     * rank." Not "this rank declares its source." The example makes
+     * the direction concrete (King → Prince / King → Queen Consort).
+     */
+    function _inheritanceHintText(mode) {
+        if (mode === 'parent') {
+            return 'When someone holds the source rank, their children ' +
+                'inherit this rank. Example: King (source) → Prince (this rank).';
+        }
+        if (mode === 'spouse') {
+            return 'When someone holds the source rank, their active spouse ' +
+                'inherits this rank. Example: King (source) → Queen Consort ' +
+                '(this rank).';
+        }
+        return 'This rank is granted directly. It does not pass to anyone.';
     }
 
     function _buildRankOptions(selectedId, options) {
@@ -537,17 +536,27 @@
             '</div>' +
 
             '<div class="form-group" style="margin-bottom:8px;">' +
-                '<label class="form-label">Inheritance</label>' +
+                '<label class="form-label">This rank is inherited by…</label>' +
                 '<select id="rankInheritanceSource" class="form-input" style="width:100%;">' +
                     _buildInheritanceSourceOptions('none') +
                 '</select>' +
+                '<small id="rankInheritanceHint" class="form-hint" ' +
+                    'style="display:block;margin-top:4px;font-size:0.55rem;color:var(--dim);">' +
+                    _esc(_inheritanceHintText('none')) +
+                '</small>' +
             '</div>' +
 
             '<div id="rankSourceRankField" style="display:none;margin-bottom:12px;">' +
-                '<label class="form-label">Source rank</label>' +
+                '<label class="form-label">…the holder of this rank</label>' +
                 '<select id="rankSourceRankId" class="form-input" style="width:100%;">' +
                     _buildRankOptions(null, { includeEmpty: true }) +
                 '</select>' +
+                '<small class="form-hint" ' +
+                    'style="display:block;margin-top:4px;font-size:0.55rem;color:var(--dim);">' +
+                    'The rank that triggers this inheritance. ' +
+                    'Choosing "King" means: when someone becomes King, ' +
+                    'the eligible relative receives this rank.' +
+                '</small>' +
             '</div>' +
 
             '<div class="form-checkbox-row" style="margin-bottom:8px;">' +
@@ -583,7 +592,6 @@
             confirmText: 'Create',
             cancelText: 'Cancel',
             onOpen: function (root) {
-                // root is the modal DOM element (see MODAL CALLBACK API).
                 var numbered = root.querySelector('#rankNumbered');
                 var numberingFields = root.querySelector('#rankNumberingFields');
                 if (numbered && numberingFields) {
@@ -602,10 +610,15 @@
 
                 var inher = root.querySelector('#rankInheritanceSource');
                 var sourceRankField = root.querySelector('#rankSourceRankField');
+                var inherHint = root.querySelector('#rankInheritanceHint');
                 if (inher && sourceRankField) {
                     inher.addEventListener('change', function () {
+                        var v = this.value;
                         sourceRankField.style.display =
-                            this.value === 'none' ? 'none' : 'block';
+                            v === 'none' ? 'none' : 'block';
+                        if (inherHint) {
+                            inherHint.textContent = _inheritanceHintText(v);
+                        }
                     });
                 }
 
@@ -616,8 +629,6 @@
                 }
             },
             onConfirm: function (root) {
-                // root is the modal DOM element. Scoped reads via
-                // root.querySelector are the ONLY valid reads here.
                 var numbered = _readChecked(root, 'rankNumbered');
                 var inheritanceSource = _readValue(root, 'rankInheritanceSource') || 'none';
                 var sourceRankId = inheritanceSource === 'none'
@@ -801,10 +812,14 @@
             '</div>' +
 
             '<div class="form-group" style="margin-bottom:8px;">' +
-                '<label class="form-label">Inheritance</label>' +
+                '<label class="form-label">This rank is inherited by…</label>' +
                 '<select id="rankEditInheritanceSource" class="form-input" style="width:100%;">' +
                     _buildInheritanceSourceOptions(rank.inheritanceSource) +
                 '</select>' +
+                '<small id="rankEditInheritanceHint" class="form-hint" ' +
+                    'style="display:block;margin-top:4px;font-size:0.55rem;color:var(--dim);">' +
+                    _esc(_inheritanceHintText(rank.inheritanceSource)) +
+                '</small>' +
             '</div>' +
 
             '<div id="rankEditSourceRankField" style="display:' +
@@ -812,7 +827,7 @@
                     ? 'block'
                     : 'none') +
                 ';margin-bottom:12px;">' +
-                '<label class="form-label">Source rank</label>' +
+                '<label class="form-label">…the holder of this rank</label>' +
                 '<select id="rankEditSourceRankId" class="form-input" style="width:100%;">' +
                     _buildRankOptions(rank.sourceRankId, {
                         excludeIds: (function () {
@@ -822,6 +837,12 @@
                         })()
                     }) +
                 '</select>' +
+                '<small class="form-hint" ' +
+                    'style="display:block;margin-top:4px;font-size:0.55rem;color:var(--dim);">' +
+                    'The rank that triggers this inheritance. ' +
+                    'Choosing "King" means: when someone becomes King, ' +
+                    'the eligible relative receives this rank.' +
+                '</small>' +
             '</div>' +
 
             '<div class="form-checkbox-row" style="margin-bottom:8px;">' +
@@ -863,7 +884,6 @@
             confirmText: 'Save',
             cancelText: 'Cancel',
             onOpen: function (root) {
-                // root is the modal DOM element.
                 var numbered = root.querySelector('#rankEditNumbered');
                 var numberingFields = root.querySelector('#rankEditNumberingFields');
                 if (numbered && numberingFields) {
@@ -882,15 +902,19 @@
 
                 var inher = root.querySelector('#rankEditInheritanceSource');
                 var sourceRankField = root.querySelector('#rankEditSourceRankField');
+                var inherHint = root.querySelector('#rankEditInheritanceHint');
                 if (inher && sourceRankField) {
                     inher.addEventListener('change', function () {
+                        var v = this.value;
                         sourceRankField.style.display =
-                            this.value === 'none' ? 'none' : 'block';
+                            v === 'none' ? 'none' : 'block';
+                        if (inherHint) {
+                            inherHint.textContent = _inheritanceHintText(v);
+                        }
                     });
                 }
             },
             onConfirm: function (root) {
-                // root is the modal DOM element.
                 var numbered = _readChecked(root, 'rankEditNumbered');
                 var inheritanceSource = _readValue(root, 'rankEditInheritanceSource') || 'none';
                 var sourceRankId = inheritanceSource === 'none'
@@ -959,13 +983,6 @@
     // =========================================================================
     // 6. ASSIGN RANK MODAL
     // =========================================================================
-    //
-    // Inline character picker. No dependency on a separate selector modal.
-    // Two modes are supported through options.mode:
-    //   'single'  — one character is selected; the list is single-select
-    //   'bulk'    — many characters are selected via checkboxes
-    //
-    // Default mode is 'single'.
 
     function openAssignRankModal(options) {
         options = options || {};
@@ -1053,10 +1070,6 @@
             return selectedCharacterIds.indexOf(id) !== -1;
         }
 
-        // modalRootRef is captured once in onOpen and used by every
-        // render helper. Two open assign-rank modals would otherwise
-        // both query document.getElementById('#assignRankList') and get
-        // the first modal's list.
         var modalRootRef = null;
 
         function _q(id) {
@@ -1209,7 +1222,6 @@
             confirmText: mode === 'bulk' ? 'Assign to Selected' : 'Assign',
             cancelText: 'Cancel',
             onOpen: function (root) {
-                // root is the modal DOM element.
                 modalRootRef = root;
 
                 function refreshInfo() {
@@ -1280,7 +1292,6 @@
                 renderList();
             },
             onConfirm: function (root) {
-                // root is the modal DOM element.
                 if (!_hasId(selectedRankId)) {
                     _toast('Please select a rank.', 'error');
                     return false;
@@ -1293,9 +1304,6 @@
                 var notes = _readValue(root, 'assignRankNotes');
                 var assignedYear = _readNumber(root, 'assignRankYear', _currentYear());
 
-                // Renamed from `options` to `assignOptions`. The old name
-                // shadowed the function parameter, causing
-                // `options.onComplete` below to check the inner object.
                 var assignOptions = {
                     notes: notes,
                     assignedYear: assignedYear
@@ -1380,6 +1388,24 @@
             sourceRank = RQ.getRank(rank.sourceRankId);
         }
 
+        /**
+         * Single sentence describing this rank's inheritance rule, in the
+         * direction the user thinks: "this rank is inherited by X of the
+         * holder of Y". Matches the field labels and hints in the create
+         * and edit modals.
+         */
+        function _inheritanceSentence() {
+            if (rank.inheritanceSource === 'parent' && sourceRank) {
+                return 'Inherited by the children of the holder of "' +
+                    sourceRank.name + '"';
+            }
+            if (rank.inheritanceSource === 'spouse' && sourceRank) {
+                return 'Inherited by the spouse of the holder of "' +
+                    sourceRank.name + '"';
+            }
+            return 'None — held directly, does not pass to anyone';
+        }
+
         function statBlock(label, value) {
             return '<div style="padding:8px;background:var(--bg3);border-radius:6px;">' +
                 '<div style="font-size:0.5rem;color:var(--dim);text-transform:uppercase;">' +
@@ -1437,15 +1463,9 @@
                     rank.deprecateOnDeath === true ? 'Yes' : 'No') +
                 row('Allows multiple spouses',
                     rank.allowsMultipleSpouses === true ? 'Yes' : 'No') +
-                row('Inheritance source',
-                    rank.inheritanceSource && rank.inheritanceSource !== 'none'
-                        ? rank.inheritanceSource
-                        : 'None') +
+                row('Inheritance', _inheritanceSentence()) +
                 (parentRank
                     ? row('Parent rank', parentRank.name)
-                    : '') +
-                (sourceRank
-                    ? row('Source rank', sourceRank.name)
                     : '') +
                 row('Custom surname rule',
                     rank.customSurnameRule === true ? 'Yes' : 'No') +
