@@ -4,13 +4,76 @@
  * js/settlement/settlement-factory.js
  * =============================================================================
  *
- * (Header preserved — see current file. Only the time-dependency block
- * below changed.)
+ * (Header preserved — see current file. Only the time-dependency block,
+ * the BASE PROSPERITY FIELD section, and the refactor history changed.)
  *
  * Time dependency:
  *   window.getCurrentYear, defined in js/core/time.js. The deprecated
  *   window.getCurrentYearSafe alias is NOT used here.
  *
+ * BASE PROSPERITY FIELD:
+ *   `baseProsperity` is a canonical settlement field, initialized by
+ *   this factory and persisted with the settlement record. It is the
+ *   neutral baseline input to prosperity-derived calculations that
+ *   cannot call SettlementProsperityQueries without creating a query
+ *   cycle.
+ *
+ *   Rationale:
+ *   - SettlementProsperityQueries.getProsperity consumes the crime rate
+ *     (via SettlementCrimeQueries.getCrimeRateValue) as one of its
+ *     modifiers.
+ *   - SettlementCrimeQueries consumes prosperity as one of its
+ *     modifiers.
+ *
+ *   If crime read its prosperity modifier by calling
+ *   SettlementProsperityQueries.getProsperityValue, the two modules
+ *   would form a cycle (crime → prosperity → crime), which the
+ *   architecture explicitly forbids (§20 RECURSION GUARD POLICY
+ *   prohibits masking cycles with flags; the dependency graph must be
+ *   acyclic).
+ *
+ *   baseProsperity breaks the cycle: it is a stored input that crime
+ *   reads directly (`settlement.baseProsperity`) without asking
+ *   SettlementProsperityQueries. The real prosperity VALUE is still
+ *   derived by SettlementProsperityQueries.getProsperity, which does
+ *   NOT read baseProsperity — it uses SettlementProsperityDefinitions.
+ *   BASE_PROSPERITY as its constant baseline. baseProsperity exists
+ *   only for callers that need a stored prosperity input outside the
+ *   prosperity query itself.
+ *
+ *   Coupling: the factory's default (50) MUST equal
+ *   SettlementProsperityDefinitions.BASE_PROSPERITY (50). If that
+ *   constant changes, this default must change with it, or freshly
+ *   created settlements will diverge from the freshness baseline used
+ *   by the prosperity calculation. This is a data-level invariant that
+ *   the code cannot enforce without an import cycle, so it is
+ *   documented here and checked by the settlement-docs consistency
+ *   pass.
+ *
+ *   A future revision may add
+ *   SettlementProsperityCommands.setBaseProsperity(locationId, value)
+ *   to allow explicit adjustment. Until then, baseProsperity is set by
+ *   the factory and never modified by a command; it is a read-only
+ *   input from the domain's perspective.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - getDefaultSettlement now initializes baseProsperity: 50. This
+ *       is the canonical prosperity input read by
+ *       SettlementCrimeQueries.getCrimeRate. Prior revisions read
+ *       settlement.prosperity, which the factory never set, so the
+ *       prosperity term in the crime rate calculation was silently
+ *       zero for every settlement.
+ *     - Header BASE PROSPERITY FIELD section added, documenting the
+ *       field's purpose, its role in breaking the crime ↔ prosperity
+ *       query cycle, and its coupling to
+ *       SettlementProsperityDefinitions.BASE_PROSPERITY.
+ *     - No other field or behaviour change. Every other default value
+ *       is byte-identical to the prior revision.
+ *   Previous revision:
+ *     - Time dependency updated to use window.getCurrentYear rather
+ *       than the deprecated window.getCurrentYearSafe alias.
  * =============================================================================
  */
 
@@ -105,6 +168,10 @@
             watchFounded: null,
             foundedYear: foundedYear,
             lastUpgraded: currentYear,
+            // Neutral prosperity baseline input. MUST equal
+            // SettlementProsperityDefinitions.BASE_PROSPERITY (currently
+            // 50). See BASE PROSPERITY FIELD in the module header.
+            baseProsperity: 50,
             civilLaws: [],
             demolitionHistory: []
         };
