@@ -1,965 +1,1401 @@
-# Complete Selector System Documentation
-
-## File: `js/selectors/selectors-docs.txt`
-
-```text
-# STILL WATERS - COMPLETE SELECTOR SYSTEM DOCUMENTATION
-
-## DOCUMENTATION GENERATED: 2026-07-14
-
----
-
-# TABLE OF CONTENTS
-
-1. [SYSTEM OVERVIEW](#1-system-overview)
-2. [ARCHITECTURE](#2-architecture)
-3. [CORE QUERY HELPERS](#3-core-query-helpers)
-4. [SELECTOR BASE](#4-selector-base)
-5. [CHARACTER SELECTOR](#5-character-selector)
-6. [HOUSEHOLD SELECTOR](#6-household-selector)
-7. [LOCATION DROPDOWN](#7-location-dropdown)
-8. [COMPLETE FUNCTION LIST](#8-complete-function-list)
-9. [DEPENDENCY MAP](#9-dependency-map)
-10. [LOAD ORDER](#10-load-order)
-11. [ICON POLICY](#11-icon-policy)
-
----
-
-# 1. SYSTEM OVERVIEW
-
-## Purpose
-
-The Selector System provides reusable UI components for selecting entities (characters, households, locations) throughout the application. All selectors are built on a common foundation that ensures consistent behavior, styling, and user experience.
-
-## Key Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Core Only** | Selectors depend ONLY on core modules (no system dependencies) |
-| **Single Source of Truth** | Each selector type has one canonical implementation |
-| **Reusable Components** | All selectors share a common base with consistent API |
-| **No Inline Styles** | All styling via CSS classes in external stylesheet |
-| **No Emojis** | All icons from icons.js |
-| **Event Delegation** | Efficient event handling via delegation |
-| **Proper Cleanup** | All event listeners are cleaned up on destroy |
-| **Recursion Guards** | Protection against re-entrant calls |
-
-## Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         SELECTOR SYSTEM                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    CORE LAYER (js/core/)                           │   │
-│  │                                                                     │   │
-│  │  query-helpers.js    ←─── Pure core queries (NO system deps)      │   │
-│  │  selector-base.js    ←─── Shared base class                       │   │
-│  │  modals-core.js      ←─── Modal manager + core wrappers          │   │
-│  │  formatting.js       ←─── HTML escaping                           │   │
-│  │  icons.js            ←─── SVG icons                               │   │
-│  │  accessors.js        ←─── Data access                             │   │
-│  │  time.js             ←─── Time calculations                       │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    SELECTOR LAYER (js/selectors/)                  │   │
-│  │                                                                     │   │
-│  │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐    │   │
-│  │  │ Character       │  │ Household       │  │ Location        │    │   │
-│  │  │ Selector        │  │ Selector        │  │ Dropdown        │    │   │
-│  │  │ (modals-char-   │  │ (modals-        │  │ (location       │    │   │
-│  │  │ selector.js)    │  │ household-      │  │ Dropdown.js)    │    │   │
-│  │  └─────────────────┘  │ selector.js)    │  └─────────────────┘    │   │
-│  │                       └─────────────────┘                          │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                        │
-│                                    ▼                                        │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                    STYLES (css/selectors.css)                      │   │
-│  │                                                                     │   │
-│  │  All selector styles in external stylesheet                        │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-# 2. ARCHITECTURE
-
-## File Structure
-
-```
-js/
-├── core/
-│   ├── query-helpers.js          # Core query utilities (NO system deps)
-│   ├── selector-base.js          # Shared selector base class
-│   ├── modals-core.js            # Modal manager + core wrappers
-│   ├── formatting.js             # HTML escaping
-│   ├── icons.js                  # SVG icons
-│   ├── accessors.js              # Data access
-│   └── time.js                   # Time calculations
-│
-├── selectors/
-│   ├── locationDropdown.js       # Hierarchical location dropdown
-│   ├── modals-char-selector.js   # Character selector modal
-│   └── modals-household-selector.js # Household selector modal
-│
-└── css/
-    └── selectors.css             # All selector styles
-```
-
-## Core Principles
-
-### 1. Core Has NO System Dependencies
-
-All core files (`query-helpers.js`, `selector-base.js`, `modals-core.js`) must NOT depend on any system files (relationship-registry, household-state, etc.).
-
-### 2. Selectors Depend Only on Core
-
-All selector files depend ONLY on core modules. They do NOT directly access system files.
-
-### 3. Data Queries Are Centralized
-
-All data querying logic is centralized in `query-helpers.js` and `accessors.js`. Selectors call these functions rather than implementing their own queries.
-
-### 4. Event Management
-
-- Event delegation is used for list item clicks (single listener on parent)
-- All listeners are tracked and cleaned up on destroy
-- No `cloneNode` workarounds
-
-### 5. Styling
-
-- ALL styling via CSS classes in `selectors.css`
-- NO inline styles in JavaScript
-- Responsive by default
-
----
-
-# 3. CORE QUERY HELPERS
-
-## File: `js/core/query-helpers.js`
-
-### Purpose
-
-Provides basic query utilities using ONLY core dependencies. NO dependencies on system files (relationship-registry, etc.).
-
-### Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `accessors.js` | `getCharacterById`, `getCharacters`, `getPlaceById`, `getPlaces` |
-| `time.js` | `getCurrentYearSafe`, `calculateAge` |
-| `constants.js` | `AGE_GROUPS`, `AGE_GROUPS_MAP` |
-
-### Functions
-
-#### Character Status
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCharacterStatusBasic(char)` | `char` (Object) | string | Gets status: 'single', 'partnered', 'widowed', 'deceased' |
-
-#### Character Roles
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCharacterRoles(char)` | `char` (Object) | Array | Gets roles/professions as array of strings |
-
-#### Character Location
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCharacterLocationId(char)` | `char` (Object) | string\|null | Gets current location ID |
-| `getCharacterLocationName(char)` | `char` (Object) | string | Gets current location name |
-
-#### Parent/Child Queries
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCharacterParents(char)` | `char` (Object) | { father, mother } | Gets parents |
-| `getCharacterChildren(char)` | `char` (Object) | Array | Gets children |
-| `getCharacterHasChildren(char)` | `char` (Object) | boolean | Checks if has children |
-| `getCharacterHasParents(char)` | `char` (Object) | boolean | Checks if has parents |
-
-#### Age Group
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getAgeGroupForAge(age)` | `age` (number) | string | Gets age group key |
-| `getAgeGroupLabel(group)` | `group` (string) | string | Gets age group label |
-
-#### Location Hierarchy
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getLocationHierarchy(place)` | `place` (Object) | Array | Gets full hierarchy |
-| `getLocationHierarchyDisplay(place)` | `place` (Object) | string | Gets formatted hierarchy |
-| `getAllLocationsHierarchical()` | None | Array | Gets flat hierarchical list |
-
-#### Core Accessors Passed Through
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `getCharacterById(id)` | `id` (string) | Object\|null | Gets character by ID |
-| `getCharacters()` | None | Array | Gets all characters |
-| `getPlaceById(id)` | `id` (string) | Object\|null | Gets place by ID |
-| `getPlaces()` | None | Array | Gets all places |
-| `getCurrentYear()` | None | number | Gets current year |
-| `calculateAge(birthYear, isDeceased, deathYear)` | Various | number\|null | Calculates age |
-
----
-
-# 4. SELECTOR BASE
-
-## File: `js/selectors/selector-base.js`
-
-### Purpose
-
-Shared utilities and base class for building selector modals.
-
-### Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `modals-core.js` | `openModal`, `closeTopModal`, `_escapeHtml`, `_showToast`, `_getIcon` |
-| `query-helpers.js` | Various query functions |
-
-### SelectorBase Class
-
-```javascript
-new SelectorBase(options)
-```
-
-**Options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `onSelect` | Function | function() {} | Called when selection is made |
-| `onCancel` | Function | function() {} | Called when cancelled |
-| `filters` | Object | {} | Initial filter state |
-| `title` | string | 'Select' | Modal title |
-
-### SelectorBase Methods
-
-| Method | Parameters | Returns | Description |
-|--------|------------|---------|-------------|
-| `escapeHtml(str)` | `str` (string) | string | Escapes HTML |
-| `getIcon(name)` | `name` (string) | string | Gets SVG icon |
-| `getGenderSymbol(gender)` | `gender` (string) | string | Gets gender symbol |
-| `isBloodRelative(id1, id2)` | `id1` (string), `id2` (string) | boolean | Checks blood relation |
-| `isSpouse(id1, id2)` | `id1` (string), `id2` (string) | boolean | Checks spouse |
-| `openModal(title, content, confirmText, onConfirm)` | Various | Element | Opens modal |
-| `close()` | None | void | Closes selector |
-| `debounce(fn, delay)` | `fn` (Function), `delay` (number) | Function | Debounced function |
-| `showToast(message, type)` | `message` (string), `type` (string) | void | Shows toast |
-
-### Exposed Helpers
-
-| Helper | Description |
-|--------|-------------|
-| `_SelectorBaseHelpers.escapeHtml(str)` | HTML escaping |
-| `_SelectorBaseHelpers.getIcon(name)` | Gets icon |
-| `_SelectorBaseHelpers.getGenderSymbol(gender)` | Gets gender symbol |
-| `_SelectorBaseHelpers.getGenderLabel(gender)` | Gets gender label |
-| `_SelectorBaseHelpers.isBloodRelativeBasic(id1, id2)` | Blood relation check |
-| `_SelectorBaseHelpers.isSpouseBasic(id1, id2)` | Spouse check |
-| `_SelectorBaseHelpers.openModal(options)` | Opens modal |
-| `_SelectorBaseHelpers.closeTopModal()` | Closes modal |
-| `_SelectorBaseHelpers.showToast(message, type)` | Shows toast |
-| `_SelectorBaseHelpers.debounce(fn, delay)` | Debounces function |
-
----
-
-# 5. CHARACTER SELECTOR
-
-## File: `js/selectors/modals-char-selector.js`
-
-### Purpose
-
-Single source of truth for character selection modals.
-
-### Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `selector-base.js` | `SelectorBase` |
-| `query-helpers.js` | `QueryHelpers` |
-| `modals-core.js` | `openModal`, `closeTopModal`, etc. |
-
-### Functions
-
-#### `openCharacterSelector(options)`
-
-Opens the character selector modal.
-
-**Options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `title` | string | 'Select Character' | Modal title |
-| `targetId` | string | null | Target character ID for filtering |
-| `onSelect` | Function | function() {} | Called when character selected |
-| `onCancel` | Function | function() {} | Called when cancelled |
-| `excludeIds` | Array | [] | Character IDs to exclude |
-| `preset` | string | null | Filter preset |
-| `filters` | Object | {} | Filter options |
-
-**Filter Presets:**
-
-| Preset | Description |
-|--------|-------------|
-| `'partner'` | Single, age 21-30, peers |
-| `'father'` | Male, age 31-40, has children |
-| `'mother'` | Female, age 31-40, has children |
-| `'child'` | Age 0-10 |
-| `'master'` | Age 31-40 |
-| `'apprentice'` | Age 11-20 |
-| `'elder'` | Age 61-70 |
-| `'available'` | Single, age 21-30 |
-| `'all'` | No presets |
-
-**Filter Options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `search` | string | '' | Search term |
-| `gender` | string | 'all' | 'all', 'male', 'female' |
-| `status` | string | 'all' | 'all', 'single', 'partnered', 'widowed' |
-| `ageGroup` | string | 'all' | Age group key |
-| `location` | string | 'all' | Location ID |
-| `role` | string | 'all' | Role ID |
-| `showDeceased` | boolean | false | Include deceased |
-| `peers` | boolean | false | Peers (±10 years) |
-| `sameLocation` | boolean | false | Same location |
-| `hasChildren` | boolean | false | Has children |
-| `noChildren` | boolean | false | No children |
-| `hasParents` | boolean | false | Has parents |
-| `orphan` | boolean | false | Orphan |
-| `sortBy` | string | 'age_desc' | 'age_desc', 'age_asc', 'name', 'birth_year' |
-
-**Returns:** `CharacterSelector` instance
-
-#### `closeCharacterSelector()`
-
-Closes the character selector.
-
-### CharacterSelector Class
-
-| Method | Description |
-|--------|-------------|
-| `new CharacterSelector(options)` | Creates instance |
-| `_render()` | Renders modal |
-| `_refresh()` | Refreshes list |
-| `_clearFilters()` | Clears all filters |
-| `close()` | Closes selector |
-
-### Exports
-
-| Export | Description |
-|--------|-------------|
-| `window.openCharacterSelector` | Main function |
-| `window.closeCharacterSelector` | Close function |
-| `window.FILTER_PRESETS` | Filter presets |
-| `window.CharacterSelectorState` | State object |
-
----
-
-# 6. HOUSEHOLD SELECTOR
-
-## File: `js/selectors/modals-household-selector.js`
-
-### Purpose
-
-Single source of truth for household selection modals.
-
-### Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `selector-base.js` | `SelectorBase` |
-| `query-helpers.js` | `QueryHelpers` |
-| `accessors.js` | `getCharacters`, `getPlaceById`, etc. |
-
-### Functions
-
-#### `openHouseholdSelector(options)`
-
-Opens the household selector modal.
-
-**Options:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `title` | string | 'Select Household' | Modal title |
-| `targetCharacterId` | string | null | Target character ID |
-| `onSelect` | Function | function() {} | Called when household selected |
-| `onCancel` | Function | function() {} | Called when cancelled |
-| `preselectedId` | string | null | Pre-selected household ID |
-| `filterConfig` | Object | {} | Filter configuration |
-
-**Filter Configuration:**
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `showActive` | boolean | true | Show active households |
-| `showVacant` | boolean | false | Show vacant households |
-| `showEmpty` | boolean | false | Show empty households |
-| `locationFilter` | string | 'all' | Filter by location |
-| `searchTerm` | string | '' | Search term |
-
-**Returns:** `HouseholdSelector` instance
-
-#### `closeHouseholdSelector()`
-
-Closes the household selector.
-
-### HouseholdSelector Class
-
-| Method | Description |
-|--------|-------------|
-| `new HouseholdSelector(options)` | Creates instance |
-| `_render()` | Renders modal |
-| `_refresh()` | Refreshes list |
-| `_filterHouseholds()` | Applies filters |
-| `_selectHousehold(id)` | Selects household |
-| `close()` | Closes selector |
-
-### Exports
-
-| Export | Description |
-|--------|-------------|
-| `window.openHouseholdSelector` | Main function |
-| `window.closeHouseholdSelector` | Close function |
-| `window.HouseholdSelectorState` | State object |
-
----
-
-# 7. LOCATION DROPDOWN
-
-## File: `js/selectors/locationDropdown.js`
-
-### Purpose
-
-Single source of truth for location dropdown components.
-
-### Dependencies
-
-| Module | Functions Used |
-|--------|----------------|
-| `formatting.js` | `escapeHtml` |
-| `accessors.js` | `getPlaces`, `getPlaceById`, `getLocationTypes`, `getLocationTypePriority` |
-| `world.js` | `getLocationHierarchyDisplay`, `getLocationCountry`, `getLocationDistrict`, `getChildPlaces`, `getPlacesByPriority`, `getPlacePriority` |
-
-### Functions
-
-#### Core Builders
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `buildHierarchicalLocationOptions(locations)` | `locations` (Array) | Array | Builds hierarchical options |
-| `renderHierarchicalLocationOptionsHtml(options, selectedId)` | `options` (Array), `selectedId` (string) | string | Renders as HTML |
-| `getFilteredLocationOptions(selectedId)` | `selectedId` (string) | string | Gets filtered options |
-
-#### Simple Renderers
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `renderSimpleLocationOptions(places, selectedId)` | `places` (Array), `selectedId` (string) | string | Simple location options |
-| `renderLocationOptionsByPriority(priority, selectedId)` | `priority` (number), `selectedId` (string) | string | By priority |
-| `renderLocationOptionsByParent(parentId, selectedId)` | `parentId` (string), `selectedId` (string) | string | By parent |
-
-#### Component Creators
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `createLocationSelector(containerId, options)` | `containerId` (string), `options` (Object) | { getValue, setValue, refresh, destroy } | Creates selector |
-| `createFilterAwareLocationSelector(containerId, options)` | `containerId` (string), `options` (Object) | { getValue, setValue, refresh, destroy } | Filter-aware selector |
-| `refreshAllFilterAwareSelectors()` | None | void | Refreshes all |
-
-#### Filter Functions
-
-| Function | Parameters | Returns | Description |
-|----------|------------|---------|-------------|
-| `registerLocationFilterListener()` | None | void | Registers listener |
-| `notifyLocationFiltersChanged()` | None | void | Notifies listeners |
-| `setLocationFilterFn(fn)` | `fn` (Function) | void | Sets filter function |
-
-### Exports
-
-| Export | Description |
-|--------|-------------|
-| `window.buildHierarchicalLocationOptions` | Builder |
-| `window.renderHierarchicalLocationOptionsHtml` | Renderer |
-| `window.getFilteredLocationOptions` | Filtered options |
-| `window.renderSimpleLocationOptions` | Simple renderer |
-| `window.renderLocationOptionsByPriority` | By priority |
-| `window.renderLocationOptionsByParent` | By parent |
-| `window.createLocationSelector` | Component creator |
-| `window.createFilterAwareLocationSelector` | Filter-aware creator |
-| `window.refreshAllFilterAwareSelectors` | Refresh |
-| `window.registerLocationFilterListener` | Register |
-| `window.notifyLocationFiltersChanged` | Notify |
-| `window.setLocationFilterFn` | Set filter |
-
----
-
-# 8. COMPLETE FUNCTION LIST
-
-## query-helpers.js
-
-| Function | Description |
-|----------|-------------|
-| `getCharacterStatusBasic(char)` | Gets character status |
-| `getCharacterRoles(char)` | Gets character roles |
-| `getCharacterLocationId(char)` | Gets location ID |
-| `getCharacterLocationName(char)` | Gets location name |
-| `getCharacterParents(char)` | Gets parents |
-| `getCharacterChildren(char)` | Gets children |
-| `getCharacterHasChildren(char)` | Checks children |
-| `getCharacterHasParents(char)` | Checks parents |
-| `getAgeGroupForAge(age)` | Gets age group |
-| `getAgeGroupLabel(group)` | Gets age group label |
-| `getLocationHierarchy(place)` | Gets hierarchy |
-| `getLocationHierarchyDisplay(place)` | Gets hierarchy display |
-| `getAllLocationsHierarchical()` | Gets all locations |
-
-## selector-base.js
-
-| Function | Description |
-|----------|-------------|
-| `new SelectorBase(options)` | Creates base selector |
-| `SelectorBase.escapeHtml(str)` | Escapes HTML |
-| `SelectorBase.getIcon(name)` | Gets icon |
-| `SelectorBase.getGenderSymbol(gender)` | Gets gender symbol |
-| `SelectorBase.isBloodRelative(id1, id2)` | Checks blood relation |
-| `SelectorBase.isSpouse(id1, id2)` | Checks spouse |
-| `SelectorBase.openModal(title, content, confirmText, onConfirm)` | Opens modal |
-| `SelectorBase.close()` | Closes selector |
-| `SelectorBase.debounce(fn, delay)` | Debounces function |
-| `SelectorBase.showToast(message, type)` | Shows toast |
-
-## modals-char-selector.js
-
-| Function | Description |
-|----------|-------------|
-| `openCharacterSelector(options)` | Opens character selector |
-| `closeCharacterSelector()` | Closes character selector |
-
-## modals-household-selector.js
-
-| Function | Description |
-|----------|-------------|
-| `openHouseholdSelector(options)` | Opens household selector |
-| `closeHouseholdSelector()` | Closes household selector |
-
-## locationDropdown.js
-
-| Function | Description |
-|----------|-------------|
-| `buildHierarchicalLocationOptions(locations)` | Builds options |
-| `renderHierarchicalLocationOptionsHtml(options, selectedId)` | Renders HTML |
-| `getFilteredLocationOptions(selectedId)` | Gets filtered options |
-| `renderSimpleLocationOptions(places, selectedId)` | Renders simple |
-| `renderLocationOptionsByPriority(priority, selectedId)` | By priority |
-| `renderLocationOptionsByParent(parentId, selectedId)` | By parent |
-| `createLocationSelector(containerId, options)` | Creates selector |
-| `createFilterAwareLocationSelector(containerId, options)` | Creates filter-aware |
-| `refreshAllFilterAwareSelectors()` | Refreshes all |
-| `registerLocationFilterListener()` | Registers listener |
-| `notifyLocationFiltersChanged()` | Notifies listeners |
-| `setLocationFilterFn(fn)` | Sets filter function |
-
----
-
-# 9. DEPENDENCY MAP
-
-## Core Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    CORE DEPENDENCIES                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  constants.js ───────────────────────────────────────────────────────────┐ │
-│  └── AGE_GROUPS, AGE_GROUPS_MAP                                         │ │
-│                                                                             │
-│  accessors.js ──────────────────────────────────────────────────────────┐ │
-│  ├── getCharacterById()                                                  │ │
-│  ├── getCharacters()                                                     │ │
-│  ├── getPlaceById()                                                      │ │
-│  ├── getPlaces()                                                         │ │
-│  ├── getLocationTypes()                                                  │ │
-│  └── getLocationTypeById()                                               │ │
-│                                                                             │
-│  time.js ───────────────────────────────────────────────────────────────┐ │
-│  ├── getCurrentYearSafe()                                                │ │
-│  └── calculateAge()                                                      │ │
-│                                                                             │
-│  formatting.js ─────────────────────────────────────────────────────────┐ │
-│  └── escapeHtml()                                                        │ │
-│                                                                             │
-│  icons.js ──────────────────────────────────────────────────────────────┐ │
-│  └── Icons                                                               │ │
-│                                                                             │
-│  modals-core.js ────────────────────────────────────────────────────────┐ │
-│  ├── openModal()                                                         │ │
-│  ├── closeTopModal()                                                     │ │
-│  ├── _escapeHtml()                                                       │ │
-│  ├── _showToast()                                                        │ │
-│  ├── _getIcon()                                                          │ │
-│  └── _getCurrentYear()                                                   │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Selector Dependencies
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    SELECTOR DEPENDENCIES                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  query-helpers.js ───────────────────────────────────────────────────────┐ │
-│  └── accessors.js, time.js, constants.js                                 │ │
-│                                                                             │
-│  selector-base.js ──────────────────────────────────────────────────────┐ │
-│  └── modals-core.js, query-helpers.js                                    │ │
-│                                                                             │
-│  modals-char-selector.js ───────────────────────────────────────────────┐ │
-│  └── selector-base.js, query-helpers.js                                  │ │
-│                                                                             │
-│  modals-household-selector.js ──────────────────────────────────────────┐ │
-│  └── selector-base.js, query-helpers.js                                  │ │
-│                                                                             │
-│  locationDropdown.js ──────────────────────────────────────────────────┐ │
-│  └── formatting.js, accessors.js, world.js                              │ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-# 10. LOAD ORDER
-
-```html
-<!-- ============================================================ -->
-<!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
-<!-- ============================================================ -->
-
-<!-- 1. Constants (MUST BE FIRST) -->
-<script src="js/core/constants.js"></script>
-
-<!-- 2. Pure utilities -->
-<script src="js/core/randomness.js"></script>
-<script src="js/core/collections.js"></script>
-<script src="js/core/validation.js"></script>
-<script src="js/core/formatting.js"></script>
-<script src="js/core/time.js"></script>
-
-<!-- 3. IDs -->
-<script src="js/core/ids.js"></script>
-
-<!-- 4. Data layer -->
-<script src="js/core/storage.js"></script>
-<script src="js/core/accessors.js"></script>
-<script src="js/core/world.js"></script>
-<script src="js/core/names.js"></script>
-
-<!-- 5. State & integrity -->
-<script src="js/core/state.js"></script>
-<script src="js/core/integrity.js"></script>
-
-<!-- 6. Icons & UI -->
-<script src="js/core/icons.js"></script>
-<script src="js/core/ui.js"></script>
-<script src="js/core/collapsible.js"></script>
-<script src="js/core/responsive.js"></script>
-
-<!-- 7. Core modals (PURE - no system deps) -->
-<script src="js/core/modals-core.js"></script>
-
-<!-- 8. Utilities -->
-<script src="js/core/exportUtils.js"></script>
-
-<!-- 9. QUERY HELPERS - Core query utilities -->
-<script src="js/core/query-helpers.js"></script>
-
-<!-- ============================================================ -->
-<!-- SELECTORS - Depend on core only                              -->
-<!-- ============================================================ -->
-
-<!-- 10. SELECTOR BASE - Shared selector utilities -->
-<script src="js/selectors/selector-base.js"></script>
-
-<!-- 11. SELECTOR COMPONENTS -->
-<script src="js/selectors/locationDropdown.js"></script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- ============================================================ -->
-<!-- STYLES                                                       -->
-<!-- ============================================================ -->
-
-<link rel="stylesheet" href="css/selectors.css">
-
-<!-- ============================================================ -->
-<!-- SYSTEMS - Depend on core + selectors                         -->
-<!-- ============================================================ -->
-
-<!-- Location System -->
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-commands.js"></script>
-<!-- ... -->
-
-<!-- Social System -->
-<script src="js/social/relationship-types.js"></script>
-<!-- ... -->
-```
-
----
-
-# 11. ICON POLICY
-
-## Rules
-
-| Rule | Description |
-|------|-------------|
-| **Rule 1** | NO emojis in code or UI |
-| **Rule 2** | All icons from icons.js via `_getIcon()` or `getIcon()` |
-| **Rule 3** | NO icons in confirm/cancel buttons (plain text only) |
-
-## Available Icons Used by Selectors
-
-| Usage | Icon |
-|-------|------|
-| Person | `PERSON` |
-| Location | `LOCATION` |
-| Search | `SEARCH` |
-| Household | `HOUSEHOLD` |
-| Heart | `HEART` |
-| Circle Dot | `CIRCLE_DOT` |
-| Warning | `WARNING` |
-| Check Simple | `CHECK_SIMPLE` |
-| X Heavy | `X_HEAVY` |
-
----
-
-# 12. CSS CLASS REFERENCE
-
-## Selector Container
-
-| Class | Description |
-|-------|-------------|
-| `.selector-container` | Main container |
-| `.selector-container[data-selector="character"]` | Character selector |
-| `.selector-container[data-selector="household"]` | Household selector |
-
-## Search
-
-| Class | Description |
-|-------|-------------|
-| `.selector-search` | Search container |
-| `.selector-search-icon` | Search icon |
-| `.selector-search-input` | Search input |
-| `.selector-search-clear` | Clear button |
-
-## Filters
-
-| Class | Description |
-|-------|-------------|
-| `.selector-filters` | Filters container |
-| `.filter-row` | Filter row |
-| `.filter-search` | Search filter |
-| `.filter-search-input` | Search input |
-| `.filter-select` | Select filter |
-| `.filter-select-input` | Select input |
-| `.filter-checkboxes` | Checkbox group |
-| `.filter-checkbox` | Single checkbox |
-| `.filter-actions` | Action buttons |
-| `.filter-clear-btn` | Clear button |
-| `.filter-count` | Count display |
-
-## List
-
-| Class | Description |
-|-------|-------------|
-| `.selector-list` | List container |
-| `.selector-empty` | Empty state |
-| `.selector-item` | List item |
-| `.selector-item.is-deceased` | Deceased item |
-| `.selector-item.is-relative` | Relative item |
-| `.selector-item.is-spouse` | Spouse item |
-| `.selector-item-left` | Left side |
-| `.selector-item-gender` | Gender icon |
-| `.selector-item-name` | Name |
-| `.selector-item-right` | Right side |
-
-## Badges
-
-| Class | Description |
-|-------|-------------|
-| `.badge` | Base badge |
-| `.badge-relative` | Relative badge |
-| `.badge-spouse` | Spouse badge |
-| `.badge-deceased` | Deceased badge |
-| `.badge-role` | Role badge |
-| `.badge-more` | More badge |
-| `.badge-current` | Current badge |
-| `.badge-selected` | Selected badge |
-
-## Household Specific
-
-| Class | Description |
-|-------|-------------|
-| `.household-item` | Household item |
-| `.household-item.is-selected` | Selected |
-| `.household-item.is-current` | Current |
-| `.household-item-header` | Header |
-| `.household-item-name` | Name |
-| `.household-item-details` | Details |
-| `.household-item-action` | Action |
-| `.household-members` | Members container |
-| `.household-members-empty` | Empty members |
-| `.household-members-more` | More members |
-| `.household-member` | Single member |
-| `.household-member.member-deceased` | Deceased member |
-| `.household-member.member-relative` | Relative member |
-| `.household-member.member-spouse` | Spouse member |
-| `.household-member.member-target` | Target member |
-| `.member-label` | Member label |
-
-## Footer
-
-| Class | Description |
-|-------|-------------|
-| `.selector-footer` | Footer container |
-| `.selector-hint` | Hint text |
-| `.selector-legend` | Legend |
-| `.legend-item` | Legend item |
-| `.legend-dot` | Legend dot |
-
-## Responsive
-
-| Class | Description |
-|-------|-------------|
-| `.mobile-view` | Mobile layout |
-| `.tablet-view` | Tablet layout |
-| `.desktop-view` | Desktop layout |
-
----
-
-# 13. USAGE EXAMPLES
-
-## Character Selector
-
-```javascript
-// Open character selector
-openCharacterSelector({
-    title: 'Select Father',
-    targetId: currentCharacter.id,
-    preset: 'father',
-    onSelect: function(character) {
-        console.log('Selected:', character.name);
-        // Do something with selected character
-    },
-    onCancel: function() {
-        console.log('Selection cancelled');
-    }
-});
-
-// With custom filters
-openCharacterSelector({
-    title: 'Select Partner',
-    filters: {
-        status: 'single',
-        ageGroup: '21-30',
-        peers: true,
-        sameLocation: true
-    },
-    onSelect: function(character) {
-        // Handle selection
-    }
-});
-```
-
-## Household Selector
-
-```javascript
-// Open household selector
-openHouseholdSelector({
-    title: 'Select Household',
-    targetCharacterId: characterId,
-    filterConfig: {
-        showActive: true,
-        showVacant: false,
-        locationFilter: locationId
-    },
-    onSelect: function(household) {
-        console.log('Selected household:', household.name);
-    }
-});
-```
-
-## Location Dropdown
-
-```javascript
-// Create a location selector component
-var selector = createLocationSelector('locationContainer', {
-    selectedId: currentLocationId,
-    onChange: function(id) {
-        console.log('Location changed:', id);
-        var place = getPlaceById(id);
-        console.log('Name:', place.displayName);
-    }
-});
-
-// Get/set value
-var current = selector.getValue();
-selector.setValue(newLocationId);
-
-// Refresh
-selector.refresh();
-
-// Destroy
-selector.destroy();
-```
-
----
-
-# 14. SUMMARY
-
-| Component | File | Status |
-|-----------|------|--------|
-| Query Helpers | `js/core/query-helpers.js` | ✅ Complete |
-| Selector Base | `js/selectors/selector-base.js` | ✅ Complete |
-| Character Selector | `js/selectors/modals-char-selector.js` | ✅ Complete |
-| Household Selector | `js/selectors/modals-household-selector.js` | ✅ Complete |
-| Location Dropdown | `js/selectors/locationDropdown.js` | ✅ Complete |
-| Selector Styles | `css/selectors.css` | ✅ Complete |
-
-## Key Principles
-
-1. **Core has NO system dependencies** - All core files work without any system loaded
-2. **Selectors depend only on core** - No direct system dependencies
-3. **Event delegation** - Efficient event handling
-4. **Proper cleanup** - All listeners cleaned up on destroy
-5. **CSS classes** - No inline styles
-6. **No emojis** - All icons from icons.js
-7. **Recursion guards** - Protection against re-entrant calls
-
----
-
-# END OF DOCUMENTATION
-
-**Generated:** 2026-07-14
-**Version:** 2.0
-**Core Files:** 2 (query-helpers.js, selector-base.js)
-**Selector Files:** 3 (character, household, location dropdown)
-**Total Files:** 5
-**Total Size:** ~60 KB
-```
+================================================================================
+STILL WATERS — SELECTOR SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
+
+Scope of this document:
+  - Every file in the selector subsystem that was provided:
+      js/selectors/selector-base.js
+      js/selectors/locationDropdown.js
+      js/selectors/modals-char-selector.js
+      js/selectors/modals-household-selector.js
+  - Every core (js/core/) file the selector subsystem depends on,
+    either at load time (module-level guards) or at call time
+    (typeof-guarded lookups), and how each dependency is used.
+  - Every cross-domain file the selector subsystem reaches into (via
+    window.X lookups) and under what conditions.
+  - The inconsistencies between the supplied files and the
+    `selectors-docs.txt` reference document.
+
+Cross-references:
+  - stillwaters-docs.txt (core-level documentation and load order).
+  - stillwaters-character-docs.txt.
+  - stillwaters-location-docs.txt.
+  - selectors-docs.txt (the reference doc; note that it is OUT OF
+    SYNC with the code in several places — see Part 5).
+
+PATHS NOTE:
+  This document uses the paths shown in the repository tree. The
+  selector files live at `js/selectors/`:
+    js/selectors/selector-base.js
+    js/selectors/locationDropdown.js
+    js/selectors/modals-char-selector.js
+    js/selectors/modals-household-selector.js
+  The selectors-docs.txt document incorrectly describes a
+  `js/core/query-helpers.js` file and a `js/core/selector-base.js`
+  file. Neither exists in the tree. There is no `js/core/query-helpers.js`.
+  The `selector-base.js` file is at `js/selectors/selector-base.js`.
+  This document uses tree paths and flags the discrepancy in Part 5.
+
+Anything not provable from the supplied files is marked [UNVERIFIED].
+
+
+================================================================================
+PART 1 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function or method throws or refuses if
+                          the dependency is missing when the function
+                          is invoked; the module loads without it.
+  OPTIONAL              — the module checks for the dependency and
+                          falls back (usually skipping the feature)
+                          when it is absent.
+
+--------------------------------------------------------------------------------
+1.1 SELECTOR-SUBSYSTEM FILES AND WHAT THEY EXPORT
+--------------------------------------------------------------------------------
+
+  js/selectors/selector-base.js
+    Owns: window.SelectorBase (constructor), window.SelectorHelpers
+          (helper object, also aliased as window._SelectorBaseHelpers),
+          plus flat aliases getCharacterDisplayName,
+          getCharacterInitials, isBloodRelativeBasic, isSpouseBasic,
+          getGenderLabel, getGenderSymbol.
+    Scope:
+      - Base class for selector modals: open/close, listener
+        registration and cleanup, debounce, toast, filter config
+        normalization, pure filter predicates, display helpers.
+      - All predicates and display helpers are pure; the class holds
+        only per-instance state.
+    Out of scope:
+      - Concrete selector modals (modals-char-selector.js,
+        modals-household-selector.js).
+      - Family semantics (delegates to FamilyQueries).
+      - Relationship semantics (delegates to RelationshipQueries).
+      - Mutation (all reads).
+
+  js/selectors/locationDropdown.js
+    Owns: window.buildLocationDropdown,
+          window.getLocationHierarchyDisplay,
+          window.getLocationCountry,
+          window.getLocationDistrict,
+          window.getLocationTypeLabel.
+    Scope:
+      - Builds `<option>` markup for a location `<select>`.
+      - Formats a place's hierarchy for display.
+      - Resolves country/district ancestors (SUPERSET of world.js's
+        same-named exports — accepts place OR id).
+      - Returns the display name for a location type.
+    Out of scope:
+      - Hierarchy walks (delegated to world.js).
+      - District and country resolution internals (delegated to
+        world.js).
+      - Formatting internals (delegated to formatting.js).
+      - Mutation (all reads).
+
+  js/selectors/modals-char-selector.js
+    Owns: window.openCharacterSelector,
+          window.closeCharacterSelector,
+          window.FILTER_PRESETS,
+          window._openCharacterSelector,
+          window.openUnifiedCharacterSelector.
+    Scope:
+      - Character selector modal: build, filter, sort, render, pick.
+      - Per-modal local state (`this._root`, `this._elements`).
+    Out of scope:
+      - Character mutation (CharacterCommands).
+      - Family relationship resolution (FamilyQueries).
+      - Relationship domain queries (RelationshipQueries).
+      - Modal lifecycle (modals-core.js).
+      - Rendering CSS (external stylesheet).
+
+  js/selectors/modals-household-selector.js
+    Owns: window.openHouseholdSelector.
+    Scope:
+      - Household selector modal: classify, filter, search, render,
+        pick.
+      - Uses SelectorHelpers.isBloodRelativeBasic to badge blood
+        relatives of the anchor character (when `characterId` is
+        supplied).
+    Out of scope:
+      - Household query layer (HouseholdQueries).
+      - Family semantics (FamilyQueries).
+      - Mutation (all reads).
+
+--------------------------------------------------------------------------------
+1.2 CORE FILES THE SELECTOR SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+    Provides: escapeHtml.
+    Used for:
+      - selector-base.js's openModal re-export and
+        SelectorBase.prototype.escapeHtml
+        (load-time guard; the module throws if window.escapeHtml is
+        missing at load).
+      - locationDropdown.js uses a LOCAL _escapeHtml fallback
+        (formatting.js not required).
+      - modals-char-selector.js inherits escapeHtml via
+        SelectorBase.prototype.
+      - modals-household-selector.js REQUIRES escapeHtml at load
+        time (`_requireFunction('escapeHtml (formatting.js)',
+        window.escapeHtml)`).
+    Verdict:
+      - REQUIRED (load-time) by selector-base.js.
+      - REQUIRED (load-time) by modals-household-selector.js.
+      - SOFT in locationDropdown.js (local fallback).
+      - Inherited in modals-char-selector.js (via SelectorBase).
+
+  js/core/icons.js
+    Provides: Icons (and, indirectly, getIcon / getGenderIcon).
+    Used for:
+      - selector-base.js's getGenderSymbol uses window.getGenderIcon
+        when present, then falls back to window.Icons[name], then
+        to text. It does NOT require icons.js at load (soft).
+      - SelectorBase.prototype.getIcon uses window.getIcon when
+        present, then window.Icons[name], else ''.
+      - modals-char-selector.js reads icons via SelectorHelpers's
+        getGenderSymbol, which needs icons.js to render SVG (else
+        text fallback).
+      - modals-household-selector.js reads icons via a local
+        _getIcon(name) which uses window.Icons[name] if present.
+      - locationDropdown.js does not use icons.
+    Verdict:
+      - OPTIONAL for all four files (icons fall back to text or '').
+
+  js/core/accessors.js
+    Provides: getCharacters, getPlaceById, getCharacterById,
+              getPlaces.
+    Used for:
+      - selector-base.js: getCharacterById at LOAD time
+        (`if (typeof window.getCharacterById !== 'function') throw`).
+      - modals-char-selector.js: getCharacters at LOAD time
+        (`if (typeof window.getCharacters !== 'function') throw`).
+        Also reads getPlaces at call time (in _buildFilters, soft).
+        Also reads getPlaceById at call time (in
+        _getCharacterLocationName, soft).
+      - modals-household-selector.js: does NOT directly read
+        accessors.js. It reads through HouseholdQueries.
+      - locationDropdown.js: getPlaces and getPlaceById at LOAD time
+        (`_requireFunction('getPlaces (accessors.js)', ...)` and
+        `_requireFunction('getPlaceById (accessors.js)', ...)`).
+    Verdict:
+      - REQUIRED (load-time) by selector-base.js, modals-char-selector.js,
+        and locationDropdown.js.
+      - Not consumed by modals-household-selector.js directly.
+
+  js/core/time.js
+    Provides: getCurrentYear (canonical), getCurrentYearSafe
+              (deprecated), calculateAge.
+    Used for:
+      - selector-base.js's _currentYear prefers
+        window.getCurrentYear, falls back to
+        window.getCurrentYearSafe, else null. _characterAge uses
+        _currentYear. calculateAge is not called directly.
+      - modals-char-selector.js REQUIRES calculateAge AND
+        getCurrentYear at load.
+      - modals-household-selector.js does not require time.js.
+      - locationDropdown.js does not require time.js.
+    Verdict:
+      - REQUIRED (load-time) by modals-char-selector.js.
+      - OPTIONAL for selector-base.js (both _currentYear branches are
+        typeof-guarded).
+      - Not consumed by modals-household-selector.js or
+        locationDropdown.js.
+
+  js/core/modals-core.js
+    Provides: openModal, closeTopModal (and, per its header, alertDialog,
+              confirmDialog, successDialog, errorDialog,
+              openPreviewModal — none of which the selectors use).
+    Used for:
+      - selector-base.js: openModal and closeTopModal at LOAD time
+        (both guards throw).
+      - modals-char-selector.js: openModal (via SelectorBase) and
+        closeTopModal (not called directly; SelectorBase.close()
+        delegates).
+      - modals-household-selector.js: openModal and closeTopModal at
+        LOAD time (both guards throw).
+      - locationDropdown.js: does NOT use modals-core.js.
+    Verdict:
+      - REQUIRED (load-time) by selector-base.js and
+        modals-household-selector.js.
+      - REQUIRED (load-time) indirectly by modals-char-selector.js
+        (via SelectorBase).
+
+  js/core/collections.js
+    Provides: debounce (and other utilities).
+    Used for:
+      - selector-base.js's debounce method prefers window.debounce,
+        falls back to a local simple implementation. SOFT.
+      - modals-char-selector.js inherits via SelectorBase.prototype
+        .debounce.
+    Verdict:
+      - OPTIONAL (soft fallback in selector-base.js).
+
+  js/core/ui.js
+    Provides: showToast.
+    Used for:
+      - selector-base.js's showToast method calls window.showToast
+        if present. SOFT.
+      - modals-char-selector.js inherits via SelectorBase.prototype
+        .showToast.
+    Verdict:
+      - OPTIONAL (soft).
+
+  js/core/constants/constants.js
+    Provides: LOCAL_STORAGE_KEYS, APP_CONSTANTS.
+    Used for:
+      - Not used directly by any selector file.
+      - Used by ui.js, ui-state.js, storage.js, etc. (indirect).
+    Verdict:
+      - Not consumed by the selector subsystem.
+
+  js/core/constants/age-constants.js
+    Provides: AGE_GROUPS, LIFE_STAGES.
+    Used for:
+      - modals-char-selector.js reads window.AGE_GROUPS at call time
+        in _buildFilters (soft: `var ageGroups = window.AGE_GROUPS ||
+        []`, so an absent age-constants.js yields no age-group
+        options). NOT a load-time dependency.
+    Verdict:
+      - SOFT (call-time).
+
+  js/core/world.js
+    Provides: getParentChain, getLocationCountry, getLocationDistrict,
+              and various hierarchy helpers.
+    Used for:
+      - locationDropdown.js prefers world.getParentChain,
+        world.getLocationCountry, and world.getLocationDistrict when
+        present, and falls back to local walkers when absent. SOFT.
+      - No other selector file reads world.js.
+    Verdict:
+      - OPTIONAL (soft — local fallbacks exist in locationDropdown.js).
+
+  js/core/storage.js
+    Provides: masterData, markDataDirty, saveMasterData,
+              getLastSaveError, initializeStorage.
+    Used for:
+      - Not called by any selector file directly.
+      - Indirectly required by accessors.js (which the selectors
+        require).
+    Verdict:
+      - Transitive dependency via accessors.js. The selectors do not
+        read storage.js directly.
+
+  js/core/names.js, js/core/validation.js, js/core/integrity.js,
+  js/core/maintenance.js, js/core/randomness.js,
+  js/core/simulation-generators.js, js/core/ids.js
+    Not consumed by the selector subsystem.
+
+  js/core/state.js
+    Provides: compatibility facade over feature state modules.
+    Used for:
+      - Not called by any selector file. state.js reads
+        LocationUIState, not selectors.
+    Verdict:
+      - Not consumed by the selector subsystem.
+
+  js/core/ui-state.js
+    Not consumed by the selector subsystem.
+
+  js/core/responsive.js, js/core/collapsible.js, js/core/tab-manager.js,
+  js/core/exportUtils.js
+    Not consumed by the selector subsystem.
+
+  js/core/query-helpers.js
+    selectors-docs.txt describes this file as existing at
+    js/core/query-helpers.js. IT DOES NOT EXIST in the tree. Neither
+    selector-base.js nor modals-char-selector.js nor
+    modals-household-selector.js nor locationDropdown.js require it,
+    reference it, or read from it. See Part 5 for the full
+    discrepancy list.
+
+--------------------------------------------------------------------------------
+1.3 CROSS-DOMAIN FILES THE SELECTOR SUBSYSTEM DEPENDS ON
+--------------------------------------------------------------------------------
+
+  js/character/character-queries.js
+    Provides: CharacterQueries.getCharacterSummary.
+    Used by: modals-char-selector.js — REQUIRED (load-time); the
+             guard throws if CharacterQueries or getCharacterSummary
+             is missing. Uses getCharacterSummary at call time in
+             _render, _refresh, and the row-click handler.
+
+  js/character/character-commands.js
+    Provides: CharacterCommands.getProfessions.
+    Used by: modals-char-selector.js — REQUIRED (load-time); the
+             guard throws if CharacterCommands or getProfessions is
+             missing. Used at call time in _getCharacterRoles.
+
+  js/character/family-queries.js
+    Provides: FamilyQueries.getChildIds,
+              FamilyQueries.getAllParentIds, and (at call time)
+              FamilyQueries.isBloodRelated.
+    Used by:
+      - modals-char-selector.js: REQUIRED (load-time) for
+        getChildIds and getAllParentIds (the guard throws if either
+        is missing). The same module reads isBloodRelated at call
+        time when SelectorHelpers.isBloodRelativeBasic is invoked
+        (soft — falls back to false if absent).
+      - modals-household-selector.js: OPTIONAL (call-time). The
+        module logs a debug message if FamilyQueries.isBloodRelated
+        is missing and skips the relative badge. It does NOT throw at
+        load.
+      - selector-base.js: reads FamilyQueries.isBloodRelated at call
+        time in isBloodRelativeBasic (soft — returns false if
+        missing).
+
+  js/relationships/relationship-queries.js
+    Provides: RelationshipQueries.getRelationshipBetween (or the
+              flat global equivalent window.getRelationshipBetween).
+    Used by:
+      - selector-base.js: reads the relationship module at call time
+        in isSpouseBasic (soft — returns false if missing).
+      - modals-char-selector.js: reads
+        RelationshipQueries.getActiveCommittedPartners at call time
+        in _getCharacterIsPartnered (soft — returns false if
+        missing). Also used to compute "Partnered" badge in
+        _buildList via _getCharacterIsPartnered.
+    The flat global window.getRelationshipBetween is also recognized
+    by isSpouseBasic as a fallback.
+
+  js/households/household-queries.js
+    Provides: HouseholdQueries.getHousehold,
+              HouseholdQueries.getAllHouseholds,
+              HouseholdQueries.getHouseholdMembers,
+              HouseholdQueries.getCharacterHousehold.
+    Used by: modals-household-selector.js — REQUIRED (load-time);
+             each of the four methods is guarded.
+
+  js/location/location-queries.js
+    Not consumed directly by the selector subsystem.
+    locationDropdown.js reads window.getPlaces and window.getPlaceById
+    (both from accessors.js), and window.getParentChain /
+    window.getLocationCountry / window.getLocationDistrict (from
+    world.js). It does NOT read LocationQueries.
+
+  js/location/location-state.js
+    Not consumed by the selector subsystem.
+
+  js/location/location-ui-state.js
+    Not consumed by the selector subsystem.
+
+  js/selectors/selector-base.js
+    Provides: window.SelectorBase and window.SelectorHelpers.
+    Used by:
+      - modals-char-selector.js: REQUIRED (load-time) for
+        window.SelectorBase and either window._SelectorBaseHelpers
+        or window.SelectorHelpers.
+      - modals-household-selector.js: REQUIRED (load-time) for
+        window.SelectorHelpers.isBloodRelativeBasic (or the alias
+        window._SelectorBaseHelpers.isBloodRelativeBasic).
+
+  Other js/character/* files (mortality, children, modals, etc.)
+  Other js/location/* files
+  js/culture/*, js/religion/*, js/ranks/*, js/roles/*, js/names/*,
+  js/events/*, js/settlement/*, js/industry/*, js/government/*,
+  js/education/*, js/crime/*, js/households/* (other than
+  household-queries.js)
+    Not consumed by the selector subsystem.
+
+--------------------------------------------------------------------------------
+1.4 SELECTOR-SUBSYSTEM FILE DEPENDENCY MATRIX
+--------------------------------------------------------------------------------
+
+Columns:
+  CORE   — required core files (load-time unless marked "(call)")
+  DOM    — cross-domain files required at load time
+  DOM(opt) — cross-domain files used at call time only
+  LOC    — other selector files (load-time unless marked)
+
+selector-base.js
+  CORE   formatting.js (escapeHtml — load-time guard),
+         modals-core.js (openModal, closeTopModal — load-time
+         guards),
+         accessors.js (getCharacterById — load-time guard),
+         collections.js (debounce — soft),
+         ui.js (showToast — soft),
+         icons.js (Icons — soft),
+         time.js (getCurrentYear / getCurrentYearSafe — soft).
+  DOM    None at load time.
+  DOM(opt) family-queries.js (isBloodRelated — call-time, soft),
+         relationship-queries.js (getRelationshipBetween or the
+         flat global getRelationshipBetween — call-time, soft).
+  LOC    None.
+  Notes  The selector-base load-time guards are: getCharacterById,
+         openModal, closeTopModal, escapeHtml. Those four MUST be
+         present when selector-base.js loads.
+
+locationDropdown.js
+  CORE   accessors.js (getPlaces, getPlaceById — load-time guards),
+         formatting.js (formatLocationHierarchy — soft),
+         world.js (getParentChain, getLocationCountry,
+         getLocationDistrict — soft).
+  DOM    None.
+  DOM(opt) None.
+  LOC    None.
+  Notes  Also reads window.getLocationTypeById at call time (soft)
+         in the fallback country/district resolvers, and reads
+         window.formatLocationHierarchy at call time.
+
+modals-char-selector.js
+  CORE   formatting.js (via SelectorBase — inherited),
+         icons.js (via SelectorBase.getGenderSymbol — soft),
+         accessors.js (getCharacters, getPlaceById — getCharacters
+         at load, getPlaceById soft),
+         time.js (calculateAge, getCurrentYear — load-time guards),
+         constants/age-constants.js (AGE_GROUPS — soft, call-time).
+  DOM    selector-base.js (SelectorBase, SelectorHelpers —
+         load-time),
+         character-queries.js (CharacterQueries.getCharacterSummary
+         — load-time),
+         character-commands.js (CharacterCommands.getProfessions —
+         load-time),
+         family-queries.js (FamilyQueries.getChildIds,
+         FamilyQueries.getAllParentIds — load-time).
+  DOM(opt) relationship-queries.js (getActiveCommittedPartners —
+         call-time, soft),
+         family-queries.js (isBloodRelated — call-time, soft; only
+         reached via SelectorHelpers.isBloodRelativeBasic).
+  LOC    None.
+  Notes  Loads under the documented selector load order AFTER
+         selector-base.js.
+
+modals-household-selector.js
+  CORE   formatting.js (escapeHtml — load-time guard),
+         modals-core.js (openModal, closeTopModal — load-time
+         guards),
+         icons.js (Icons — soft; used inside _getIcon).
+  DOM    selector-base.js (SelectorHelpers.isBloodRelativeBasic —
+         load-time),
+         household-queries.js (HouseholdQueries.getHousehold,
+         getAllHouseholds, getHouseholdMembers,
+         getCharacterHousehold — all load-time guards).
+  DOM(opt) family-queries.js (isBloodRelated — call-time, soft;
+         only reached via SelectorHelpers.isBloodRelativeBasic).
+  LOC    None.
+
+--------------------------------------------------------------------------------
+1.5 INVERSE: WHICH SELECTOR FILES USE WHICH CORE FILE
+--------------------------------------------------------------------------------
+
+  formatting.js     — selector-base.js (load-time),
+                      locationDropdown.js (soft),
+                      modals-char-selector.js (inherited from
+                      SelectorBase),
+                      modals-household-selector.js (load-time).
+
+  icons.js          — selector-base.js (soft via getGenderSymbol /
+                      getIcon),
+                      modals-household-selector.js (soft via
+                      _getIcon).
+                      Not used by locationDropdown.js.
+
+  accessors.js      — selector-base.js (getCharacterById, load),
+                      modals-char-selector.js (getCharacters, load;
+                      getPlaces / getPlaceById, soft),
+                      locationDropdown.js (getPlaces / getPlaceById,
+                      load).
+
+  time.js           — selector-base.js (soft),
+                      modals-char-selector.js (load-time).
+
+  modals-core.js    — selector-base.js (load-time),
+                      modals-household-selector.js (load-time).
+                      modals-char-selector.js inherits via
+                      SelectorBase.
+
+  collections.js    — selector-base.js (soft fallback in debounce).
+
+  ui.js             — selector-base.js (soft fallback in toast).
+
+  constants/age-constants.js — modals-char-selector.js (soft).
+
+  world.js          — locationDropdown.js (soft).
+
+
+================================================================================
+PART 2 — ARCHITECTURE AND INTERFACE CONTRACTS
+================================================================================
+
+2.1 SELECTOR-BASE (window.SelectorBase + window.SelectorHelpers)
+--------------------------------------------------------------------------------
+
+  window.SelectorBase is a constructor. Subclasses call:
+
+      SelectorBase.call(this, options);
+      Subclass.prototype = Object.create(SelectorBase.prototype);
+      Subclass.prototype.constructor = Subclass;
+
+  The constructor guarantees (per the file):
+    - this.options  — the caller's options object (never null)
+    - this.state    — { filters, isOpen, onSelect, onCancel }
+    - this._modal   — null until openModal() is called
+    - this._listeners — array of tracked listener records
+
+  The prototype provides:
+    openModal(title, content, cancelText, onConfirmExtra, openOptions)
+    close()
+    escapeHtml(str)
+    getIcon(name)
+    getGenderSymbol(gender)
+    isBloodRelative(aId, bId)
+    isSpouse(aId, bId)
+    debounce(fn, delay)
+    showToast(message, type)
+    _registerListener(el, eventType, handler)
+    _cleanupListeners()
+
+  openModal wiring:
+    - Passes titleHtml / contentHtml / confirmText / cancelText to
+      window.openModal.
+    - Connects window.openModal's onCancel to state.onCancel. Every
+      non-confirmed close (Cancel button, overlay click, Escape,
+      close X, closeTopModal) fires state.onCancel exactly once.
+    - If the caller supplies an openOptions.onMount callback, the
+      modal shell invokes it synchronously after insertion into the
+      DOM. That is the intended replacement for the historical
+      setTimeout(0) hack in modals-char-selector.js.
+
+  close() wiring:
+    - Sets state.isOpen = false.
+    - Removes every tracked listener via _cleanupListeners().
+    - Calls this._modal.close() (which does NOT fire state.onCancel
+      per modals-core.js's contract).
+    - Clears this._modal.
+    - Callers who want onCancel semantics should let the modal close
+      via user action (Cancel, overlay, Escape, close X), or call
+      state.onCancel themselves.
+
+  WINDOW.SELECTORHELPERS (helper object):
+    getDefaultFilterConfig, normalizeFilterConfig,
+    matchGender, matchStatus, matchAge, matchLocation,
+    matchExcludeIds, matchRelationship, matchesCharacter,
+    isBloodRelativeBasic, isSpouseBasic,
+    getCharacterDisplayName, getCharacterInitials,
+    getGenderLabel, getGenderSymbol,
+    version (currently 3).
+
+  The same object is exposed under both window.SelectorHelpers and
+  window._SelectorBaseHelpers for backward compatibility.
+
+  Flat aliases (also installed on window):
+    getCharacterDisplayName, getCharacterInitials,
+    isBloodRelativeBasic, isSpouseBasic,
+    getGenderLabel, getGenderSymbol.
+
+  isBloodRelativeBasic semantics:
+    - Fails closed: returns false when FamilyQueries is not loaded
+      or throws.
+    - Fails closed on missing or equal ids.
+
+  isSpouseBasic semantics:
+    - Reads window.getRelationshipBetween if it is a function, or
+      window.RelationshipQueries.getRelationshipBetween.
+    - Returns true only when the relationship record has
+      type === 'marriage' AND status === 'ongoing'.
+    - Fails closed on missing module or missing record.
+
+  getGenderSymbol semantics:
+    - Prefers window.getGenderIcon(gender) — the icons.js helper.
+    - Falls back to window.Icons[name] with MALE / FEMALE /
+      GENDER_NEUTRAL.
+    - Final fallback: escaped text label.
+    - No emojis, ever.
+
+2.2 locationDropdown.js
+--------------------------------------------------------------------------------
+
+  window.buildLocationDropdown(selectedId, placeholder, showAllOption)
+    Builds `<option>` inner HTML for a `<select>`. Sorted
+    alphabetically by display name. Emits:
+      - "All locations" when showAllOption is truthy
+      - A placeholder option when showAllOption is falsy and
+        placeholder is a non-empty string
+      - An empty leading option when neither is provided and
+        selectedId is missing, so the select does not auto-select
+        the first place
+
+  window.getLocationHierarchyDisplay(placeOrId)
+    Accepts a place object OR a place id. Delegates to
+    world.getParentChain when present; otherwise walks the local
+    parent chain. Formats via window.formatLocationHierarchy when
+    present; otherwise joins names with ' → '.
+    Returns '' for missing or unresolvable input.
+
+  window.getLocationCountry(placeOrId)
+    Accepts a place object OR a place id.
+    Delegates to world.getLocationCountry when present.
+    Falls back to a local walker when absent.
+    SHADOWS world.js's same-named export under the documented load
+    order. The winning function is a SUPERSET (accepts place OR id;
+    delegates to world's version when called with a place).
+    See SHADOWING in the module header for the full contract.
+
+  window.getLocationDistrict(placeOrId)
+    Same story as getLocationCountry, for district.
+
+  window.getLocationTypeLabel(typeId)
+    Returns the display name for a location type or 'Unknown'.
+    Reads window.getLocationTypeById at call time.
+
+  SHADOWING:
+    Under the documented load order (world.js before locationDropdown.js),
+    locationDropdown's getLocationCountry / getLocationDistrict overwrite
+    world.js's. Runtime callers should assume the SUPERSET contract.
+
+2.3 modals-char-selector.js
+--------------------------------------------------------------------------------
+
+  window.openCharacterSelector(options)
+    Options:
+      title         string  default 'Select Character'
+      targetId      string  target character id (used to compute
+                            "peers" and "blood relative" / "spouse"
+                            badges)
+      onSelect      Function called with the chosen character
+                            projection
+      onCancel      Function called when the modal closes without
+                            a pick
+      excludeIds    array of ids to exclude
+      preset        key into FILTER_PRESETS
+      filters       object overriding the default filters
+
+  FILTER_PRESETS:
+    'partner'    status=single, ageGroup='21-30', peers=true,
+                 showDeceased=false
+    'father'     gender=male, ageGroup='31-40', hasChildren=true,
+                 showDeceased=false
+    'mother'     gender=female, ageGroup='31-40', hasChildren=true,
+                 showDeceased=false
+    'child'      ageGroup='0-10', showDeceased=false
+    'master'     ageGroup='31-40', showDeceased=false
+    'apprentice' ageGroup='11-20', showDeceased=false
+    'elder'      ageGroup='61-70', showDeceased=false
+    'available'  status=single, ageGroup='21-30', showDeceased=false
+    'all'        (empty)
+
+  Default filters:
+    search='', gender='all', status='all', ageGroup='all',
+    location='all', role='all', showDeceased=false, peers=false,
+    sameLocation=false, hasChildren=false, noChildren=false,
+    isHead=false, isNotHead=false, hasParents=false, orphan=false,
+    sortBy='age_desc'
+
+  Filter predicates (via SelectorHelpers and local adapters):
+    - search: substring match on name + surname
+    - gender: exact match against char.gender
+    - status: 'partnered' via
+      RelationshipQueries.getActiveCommittedPartners; 'single' is
+      the negation
+    - ageGroup: parsed into [min, max]; '+' for the open-ended band
+    - location: exact match against char.currentLocationId
+    - hasChildren / noChildren: via FamilyQueries.getChildIds
+    - hasParents / orphan: via FamilyQueries.getAllParentIds
+    - role: matches a name returned by CharacterCommands.getProfessions
+
+  DOM scoping:
+    - The modal element is stored on this._root.
+    - Every DOM query is scoped via this._root.querySelector.
+    - Every listener is registered via this._registerListener
+      (from SelectorBase) so it can be removed by close()'s
+      _cleanupListeners.
+    - The row-click handler and the Escape/Enter keydown handler
+      are scoped to the modal.
+
+  Modal mount:
+    - _render passes _cacheElements and _attachEvents through
+      openOptions.onMount, not setTimeout(0). This eliminates
+      the collision where two stacked selectors shared id-scoped
+      DOM lookups.
+
+  Badges:
+    - "Relative" and "Spouse" badges are computed via
+      SelectorHelpers.isBloodRelativeBasic / isSpouseBasic when
+      targetId is supplied.
+    - "Partnered" badge is computed via
+      RelationshipQueries.getActiveCommittedPartners.
+    - "Deceased" badge from char.isDeceased.
+
+  Row click:
+    - Calls SelectorBase.prototype.close() (state.onCancel does NOT
+      fire, because close() is programmatic), then fires
+      state.onSelect(character). The cleanup listener order
+      ensures onSelect fires on a stable, closed modal.
+
+  Cancel paths:
+    - The modal's Cancel button, overlay click, Escape, close X,
+      and any closeTopModal call from external code all fire
+      state.onCancel via openModal's wiring.
+
+  window.closeCharacterSelector:
+    - Finds the topmost `.modal .selector-container[data-selector="character"]`
+      and clicks its close button. If none found, no-op.
+
+2.4 modals-household-selector.js
+--------------------------------------------------------------------------------
+
+  window.openHouseholdSelector(options)
+    Options:
+      title         string  default 'Select Household'
+      onSelect      Function called with the household snapshot
+      onCancel      Function called on every non-confirmed close
+      characterId   string  optional; enables current-household
+                            highlighting and relative badges
+      filterConfig  object  see below
+
+    filterConfig:
+      showActive      boolean default true
+      showVacant      boolean default true
+      showEmpty       boolean default true
+      showDeprecated  boolean default false
+      showDeleted     boolean default false
+      searchText      string  default ''
+
+  Household classification:
+    'active'      has living members
+    'vacant'      has members but none living
+    'empty'       has no members
+    'deprecated'  persisted status is 'deprecated' or 'destroyed'
+
+  Row badges:
+    - Status badge per classification (Active / Vacant / Empty /
+      Deprecated) with a colored chip
+    - current: shown when household.id === getCharacterHousehold(
+      characterId).id
+    - relative: shown when SelectorHelpers.isBloodRelativeBasic
+      (characterId, memberId) is true for any member
+
+  Row click:
+    - Uses _resolveHouseholdSnapshot(householdId) to tolerate
+      HouseholdQueries.getHousehold returning a record object, an
+      id string, or null. See HOUSEHOLDQUERIES GET-HOUSEHOLD
+      CONTRACT in the module header.
+    - Calls closeTopModal, then schedules onSelect(snapshot) via
+      setTimeout(0). This preserves the same call shape as the
+      historical implementation and lets the modal removal complete
+      before the caller's onSelect runs.
+
+  Cancel paths:
+    - The modal's Cancel button, overlay click, Escape, close X, and
+      closeTopModal all fire onCancel (via the modal shell's wiring).
+
+  DOM scoping:
+    - Uses modal.element (from window.openModal's return) as the
+      scope. Every query is root.querySelector.
+    - Delegated row-click is bound to listEl.
+
+  Style policy:
+    - This module still uses inline style attributes on rows and
+      filter chips. The header acknowledges this as a deferred
+      cleanup (TODO: selectors-css-migration). Do NOT claim the
+      module is CSS-only in the docs; fix the code first.
+
+2.5 What the selector subsystem does NOT do
+--------------------------------------------------------------------------------
+
+  - No mutation. Every function is a read.
+  - No domain logic. Family, relationship, household, character
+    semantics delegate to the owning modules.
+  - No persistence. Does not call saveMasterData or markDataDirty.
+  - No cross-tab sync. Does not subscribe to masterDataUpdated.
+  - No icons in confirm/cancel buttons (plain text only, per
+    selectors-docs.txt's icon policy).
+
+
+================================================================================
+PART 3 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guards in the four selector files,
+  (b) call-time window.X lookups in code,
+  (c) the documented overall core and character load orders,
+  (d) selectors-docs.txt's load-order section (extended, since that
+      document is out of sync with the code in a few places).
+
+Group S0 is the core prerequisites; Groups S1..S5 are the selector
+subsystem itself; Group S6 is the application bootstrap.
+
+--------------------------------------------------------------------------------
+GROUP S0 — CORE FILES REQUIRED BY THE SELECTOR SUBSYSTEM
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/time.js
+  js/core/storage.js
+  js/core/accessors.js
+  js/core/world.js
+  js/core/modals-core.js
+  js/core/ui.js
+
+  Rationale per file:
+    - constants.js: soft dependency; the selectors do not read it
+      directly, but ui.js and ui-state.js require it (and ui.js is
+      used by selector-base.js's showToast). Load it here for the
+      canonical key names.
+    - age-constants.js: soft dependency of modals-char-selector.js
+      (AGE_GROUPS for the age-group filter dropdown). Not a
+      load-time guard.
+    - formatting.js: escapeHtml, required at load by
+      selector-base.js and modals-household-selector.js.
+    - icons.js: Icons, used by selector-base.js's getGenderSymbol
+      and modals-household-selector.js's _getIcon (both soft).
+    - collections.js: debounce, used by selector-base.js's
+      debounce (soft fallback).
+    - ids.js: not read by the selectors directly. Included because
+      the documented core order loads it here, and the character
+      and location subsystems need it.
+    - time.js: required at load by modals-char-selector.js
+      (calculateAge, getCurrentYear); soft fallback in
+      selector-base.js's _currentYear.
+    - storage.js: not read by the selectors directly; required
+      transitively via accessors.js. Load it here so
+      initializeStorage() (below) can be invoked before
+      accessors.js.
+    - accessors.js: getCharacterById required at load by
+      selector-base.js; getCharacters required at load by
+      modals-char-selector.js; getPlaces / getPlaceById required at
+      load by locationDropdown.js.
+    - world.js: getParentChain, getLocationCountry,
+      getLocationDistrict used at call time by
+      locationDropdown.js (soft fallback exists).
+    - modals-core.js: openModal, closeTopModal required at load by
+      selector-base.js and modals-household-selector.js.
+    - ui.js: showToast used at call time by selector-base.js
+      (soft).
+
+  BOOTSTRAP CALL:
+    After storage.js, invoke window.initializeStorage() so that
+    window.masterData is populated before accessors.js hydrates.
+
+--------------------------------------------------------------------------------
+GROUP S1 — CHARACTER DOMAIN (SUBSET)
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+  js/character/family-rules.js
+  js/character/family-state.js
+  js/character/family-queries.js
+  js/character/family-commands.js
+
+  Rationale:
+    - modals-char-selector.js requires CharacterCommands.
+      getProfessions at load, CharacterQueries.getCharacterSummary
+      at load, FamilyQueries.getChildIds / getAllParentIds at load.
+    - selector-base.js reads FamilyQueries.isBloodRelated at call
+      time (via SelectorHelpers.isBloodRelativeBasic).
+    - character-state.js and character-commands.js must load
+      before character-queries.js and family-queries.js. See
+      stillwaters-character-docs.txt for the canonical character
+      load order.
+    - family-rules.js and family-state.js are required by
+      family-queries.js and family-commands.js.
+    - character-commands.js's own load-time dependencies (ids.js,
+      time.js, character-state.js) are satisfied by Group S0 and the
+      earlier files in this group.
+
+  If you only load the selector subsystem (no other character
+  domain use), you still need the whole chain above because the
+  selectors load-require CharacterCommands and CharacterQueries.
+
+--------------------------------------------------------------------------------
+GROUP S2 — HOUSEHOLD DOMAIN (SUBSET)
+--------------------------------------------------------------------------------
+
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+  js/households/household-queries.js
+
+  Rationale:
+    - modals-household-selector.js requires HouseholdQueries.
+      getHousehold, getAllHouseholds, getHouseholdMembers,
+      getCharacterHousehold at load.
+    - HouseholdQueries requires household-state.js and the
+      household constants/rules.
+    - household-commands.js is NOT required by the selector (the
+      selector is a read-only picker).
+
+  If you do not use the household selector, skip this group.
+
+--------------------------------------------------------------------------------
+GROUP S3 — RELATIONSHIP DOMAIN (SUBSET)
+--------------------------------------------------------------------------------
+
+  js/relationships/relationship-queries.js
+
+  Rationale:
+    - selector-base.js's isSpouseBasic calls
+      RelationshipQueries.getRelationshipBetween or the flat
+      global window.getRelationshipBetween at call time.
+    - modals-char-selector.js's _getCharacterIsPartnered calls
+      RelationshipQueries.getActiveCommittedPartners at call time.
+    - Both are soft; if relationship-queries.js is missing, the
+      corresponding predicate fails closed (returns false), and the
+      "Partnered" badge / "Spouse" badges are omitted. The selector
+      still works.
+
+  If you want the Partnered and Spouse badges, load this file.
+  Otherwise skip.
+
+--------------------------------------------------------------------------------
+GROUP S4 — SELECTOR BASE
+--------------------------------------------------------------------------------
+
+  js/selectors/selector-base.js
+
+  Rationale:
+    - Load-time guards: getCharacterById, openModal, closeTopModal,
+      escapeHtml.
+    - Installs window.SelectorBase and window.SelectorHelpers.
+    - Must load before modals-char-selector.js and
+      modals-household-selector.js.
+
+--------------------------------------------------------------------------------
+GROUP S5 — CONCRETE SELECTORS
+--------------------------------------------------------------------------------
+
+  js/selectors/locationDropdown.js
+  js/selectors/modals-char-selector.js
+  js/selectors/modals-household-selector.js
+
+  Rationale:
+    - locationDropdown.js has no dependency on selector-base.js.
+      It can load before or after; the load order below places it
+      here because that is its group.
+    - modals-char-selector.js requires window.SelectorBase and
+      window.SelectorHelpers at load; both installed by
+      selector-base.js. It also requires CharacterQueries,
+      CharacterCommands, and FamilyQueries.
+    - modals-household-selector.js requires SelectorHelpers and
+      HouseholdQueries.
+    - Order within this group is unimportant.
+
+--------------------------------------------------------------------------------
+GROUP S6 — APPLICATION BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  - initializeStorage() must have been called between Group S0
+    (after storage.js) and any state module in Group S1 or S2.
+  - Any application-level bootstrap (dashboard wiring, tab manager
+    init, toolbar binding) runs after Group S5.
+  - The selector subsystem does not require its own init() call.
+    Every selector modal is opened by the caller on demand.
+
+
+================================================================================
+PART 4 — FLAT LOAD SEQUENCE
+================================================================================
+
+  — Group S0: core prerequisites —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/time.js
+  js/core/storage.js
+
+  — Group S0 bootstrap call —
+  initializeStorage()      (function call)
+
+  — Group S0: remaining core —
+  js/core/accessors.js
+  js/core/world.js
+  js/core/modals-core.js
+  js/core/ui.js
+
+  — Group S1: character subset —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+  js/character/family-rules.js
+  js/character/family-state.js
+  js/character/family-queries.js
+  js/character/family-commands.js
+
+  — Group S2: household subset (optional — needed for the household
+    selector) —
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+  js/households/household-queries.js
+
+  — Group S3: relationship subset (optional — needed for Partnered
+    and Spouse badges) —
+  js/relationships/relationship-queries.js
+
+  — Group S4: selector base —
+  js/selectors/selector-base.js
+
+  — Group S5: concrete selectors —
+  js/selectors/locationDropdown.js
+  js/selectors/modals-char-selector.js
+  js/selectors/modals-household-selector.js
+
+
+================================================================================
+PART 5 — DISCREPANCIES BETWEEN selectors-docs.txt AND THE CODE
+================================================================================
+
+The selectors-docs.txt reference document is OUT OF SYNC with the
+code in several places. Below is the full list of divergences,
+verified against the four supplied selector files.
+
+1. **`js/core/query-helpers.js` does not exist.**
+   selectors-docs.txt describes it as a core file with a large
+   surface (getCharacterStatusBasic, getCharacterRoles,
+   getCharacterLocationId, getCharacterParents,
+   getCharacterChildren, getAgeGroupForAge, getAgeGroupLabel,
+   getLocationHierarchy, getLocationHierarchyDisplay,
+   getAllLocationsHierarchical, etc.). No supplied selector file
+   references it. modals-char-selector.js and
+   modals-household-selector.js read those concepts through
+   CharacterCommands, CharacterQueries, FamilyQueries, and
+   HouseholdQueries directly. Treat the "CORE QUERY HELPERS"
+   section as describing a file that does not exist in the tree.
+
+2. **`js/core/selector-base.js` does not exist.**
+   The selector-base.js file is at `js/selectors/selector-base.js`.
+   selectors-docs.txt's Architecture Diagram and File Structure
+   place it under `js/core/`. Do not move it: the selector modals
+   load-time guard window.SelectorBase, which is installed by
+   js/selectors/selector-base.js. The file's own header says "LOCATION:
+   js/selectors/selector-base.js".
+
+3. **selector-base.js does not expose the helper object under
+   `_SelectorBaseHelpers.escapeHtml` and friends.**
+   selectors-docs.txt (section 4, "Exposed Helpers") lists
+   `_SelectorBaseHelpers.escapeHtml`, `_SelectorBaseHelpers.getIcon`,
+   `_SelectorBaseHelpers.getGenderSymbol`,
+   `_SelectorBaseHelpers.getGenderLabel`,
+   `_SelectorBaseHelpers.isBloodRelativeBasic`,
+   `_SelectorBaseHelpers.isSpouseBasic`,
+   `_SelectorBaseHelpers.openModal`,
+   `_SelectorBaseHelpers.closeTopModal`,
+   `_SelectorBaseHelpers.showToast`,
+   `_SelectorBaseHelpers.debounce`.
+
+   In the code, window._SelectorBaseHelpers is an ALIAS for
+   window.SelectorHelpers, and SelectorHelpers exposes:
+   getDefaultFilterConfig, normalizeFilterConfig, matchGender,
+   matchStatus, matchAge, matchLocation, matchExcludeIds,
+   matchRelationship, matchesCharacter, isBloodRelativeBasic,
+   isSpouseBasic, getCharacterDisplayName, getCharacterInitials,
+   getGenderLabel, getGenderSymbol, version.
+
+   The helper object does NOT include escapeHtml, getIcon, openModal,
+   closeTopModal, showToast, or debounce. Those are methods on the
+   SelectorBase class, not on the helper object.
+   modals-char-selector.js calls them via `this.escapeHtml(...)` and
+   `this.debounce(...)` (class methods), not via
+   `_SelectorBaseHelpers.escapeHtml(...)` (helper object method).
+
+4. **SelectorBase.openModal signature.**
+   selectors-docs.txt (section 4) lists
+   `openModal(title, content, confirmText, onConfirm)`.
+   The code's signature is
+   `openModal(title, content, cancelText, onConfirmExtra, openOptions)`.
+   The parameter names differ, and the code's openModal does NOT
+   render a confirm button. It renders a cancel button only, and the
+   selection is the subclass's job via row clicks. modals-char-selector.js
+   calls it as `this.openModal(title, content, 'Cancel', function () {},
+   { onMount: ... })`.
+
+5. **locationDropdown.js does not export the surface described in
+   selectors-docs.txt section 7.**
+   The docs describe `buildHierarchicalLocationOptions`,
+   `renderHierarchicalLocationOptionsHtml`,
+   `getFilteredLocationOptions`, `renderSimpleLocationOptions`,
+   `renderLocationOptionsByPriority`, `renderLocationOptionsByParent`,
+   `createLocationSelector`, `createFilterAwareLocationSelector`,
+   `refreshAllFilterAwareSelectors`, `registerLocationFilterListener`,
+   `notifyLocationFiltersChanged`, `setLocationFilterFn`.
+   The code exports `buildLocationDropdown`,
+   `getLocationHierarchyDisplay`, `getLocationCountry`,
+   `getLocationDistrict`, `getLocationTypeLabel`.
+   The docs describe a different (and larger) surface. Callers should
+   trust the code's surface. `window.getFilteredLocationOptions`, if
+   a caller needs it, does not exist in the supplied locationDropdown.js.
+   Any caller that uses it must shim it or use
+   buildLocationDropdown directly.
+
+6. **modals-char-selector.js does not export
+   `window.CharacterSelectorState`.**
+   selectors-docs.txt (section 5, "Exports") lists
+   `window.CharacterSelectorState` as an export.
+   The code exports only `window.openCharacterSelector`,
+   `window.closeCharacterSelector`, `window.FILTER_PRESETS`,
+   `window._openCharacterSelector`, `window.openUnifiedCharacterSelector`.
+   No `CharacterSelectorState` is installed.
+
+7. **modals-household-selector.js does not export
+   `window.HouseholdSelectorState`.**
+   Same story as CharacterSelectorState. The code exports only
+   `window.openHouseholdSelector`.
+
+8. **modals-household-selector.js's filterConfig differs from the
+   docs.**
+   The docs list `showActive`, `showVacant`, `showEmpty`,
+   `locationFilter`, `searchTerm` (5 fields).
+   The code's `_defaultFilterConfig()` returns `showActive`,
+   `showVacant`, `showEmpty`, `showDeprecated`, `showDeleted`,
+   `searchText` (6 fields).
+   The docs also omit `showDeprecated` and `showDeleted`, and the
+   code uses `searchText` (not `searchTerm`) and has no
+   `locationFilter`.
+
+9. **modals-household-selector.js does not have a
+   `_selectHousehold(id)` method or a `_filterHouseholds()` method
+   as the docs describe.**
+   The code inlines filtering into a local `_render()` and
+   selection into the delegated row-click handler. The docs list
+   `_selectHousehold` and `_filterHouseholds` as public class methods.
+
+10. **selector-base.js does not call `_getIcon` on modals-core.js.**
+    selectors-docs.txt lists `_getIcon` (from modals-core.js) as a
+    dependency of selector-base.js. Neither the code nor any other
+    supplied selector file reads `_getIcon`. The icons-related read
+    is via window.getIcon (from icons.js) or window.Icons.
+
+11. **selector-base.js does not call `_escapeHtml` on modals-core.js.**
+    Same story: escapeHtml comes from formatting.js via the load-time
+    guard, not from modals-core.js.
+
+12. **`_showToast` on modals-core.js.**
+    selectors-docs.txt lists `_showToast` as a modals-core.js
+    dependency of selector-base.js. In the code, selector-base.js's
+    showToast calls window.showToast (from ui.js). `_showToast` is
+    NOT called.
+
+13. **`getCurrentYearSafe` vs `getCurrentYear`.**
+    selectors-docs.txt (section 3, Core Dependencies) lists
+    `getCurrentYearSafe` as the canonical accessor.
+    The code's selector-base.js prefers window.getCurrentYear and
+    only falls back to window.getCurrentYearSafe. modals-char-selector.js
+    requires window.getCurrentYear (canonical) at load time.
+    The docs' assumption of getCurrentYearSafe as canonical is
+    stale; the canonical accessor is getCurrentYear.
+
+14. **`AGE_GROUPS_MAP`.**
+    selectors-docs.txt (section 3) lists `AGE_GROUPS_MAP` as a
+    constants.js dependency. There is no `AGE_GROUPS_MAP` in the
+    supplied constants.js (age-constants.js defines AGE_GROUPS, and
+    constants.js defines LOCAL_STORAGE_KEYS and APP_CONSTANTS). No
+    selector file reads AGE_GROUPS_MAP.
+
+15. **"No inline styles" policy vs. actual code.**
+    selectors-docs.txt's Key Principles say "No inline styles: All
+    styling via CSS classes in external stylesheet." The
+    modals-household-selector.js file still uses inline style
+    attributes for the row layout, the filter chip layout, and the
+    status badge colors. Its own header acknowledges this as a
+    deferred cleanup (TODO: selectors-css-migration). Do not rely on
+    the docs' claim that the selectors are CSS-only.
+
+16. **"Core has NO system dependencies."**
+    selectors-docs.txt asserts that all core files work without any
+    system loaded, and that selectors depend only on core. The
+    supplied selector files contradict this: modals-char-selector.js
+    load-requires character-queries.js, character-commands.js, and
+    family-queries.js; modals-household-selector.js load-requires
+    household-queries.js. Those are domain files, not core. The docs'
+    "Core Only" principle is aspirational but not what the code does.
+    See Part 1 for the actual dependency list.
+
+17. **Docs say `query-helpers.js` is "NO system deps".**
+    As noted above, the file does not exist. If a future revision
+    re-introduces a query-helpers.js, this docs entry should be
+    updated; until then, the modals-char-selector.js and
+    modals-household-selector.js code reads their data through the
+    domain modules, not a core query-helpers layer.
+
+18. **Docs say modals-char-selector.js depends on query-helpers.js.**
+    It does not. Its dependencies are selector-base.js,
+    character-queries.js, character-commands.js, family-queries.js,
+    time.js, accessors.js, and (optionally) relationship-queries.js
+    and age-constants.js. The same is true of
+    modals-household-selector.js, which depends on selector-base.js
+    and household-queries.js.
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+ 1. formatting.js before selector-base.js.
+    Failure without it: selector-base.js throws at load ("escapeHtml
+    missing").
+
+ 2. modals-core.js before selector-base.js.
+    Failure without it: selector-base.js throws at load
+    ("openModal / closeTopModal missing").
+
+ 3. accessors.js before selector-base.js.
+    Failure without it: selector-base.js throws at load
+    ("getCharacterById missing").
+
+ 4. storage.js and a successful initializeStorage() call before
+    accessors.js.
+    Failure without it: accessors.js loads fine but its hydrate
+    path throws on first access (masterData missing). The selectors
+    then throw on first data read.
+
+ 5. accessors.js before modals-char-selector.js.
+    Failure without it: modals-char-selector.js throws at load
+    ("getCharacters missing").
+
+ 6. time.js before modals-char-selector.js.
+    Failure without it: modals-char-selector.js throws at load
+    ("calculateAge / getCurrentYear missing").
+
+ 7. selector-base.js before modals-char-selector.js.
+    Failure without it: modals-char-selector.js throws at load
+    ("SelectorBase missing" or "SelectorHelpers missing").
+
+ 8. character-queries.js, character-commands.js, and
+    family-queries.js before modals-char-selector.js.
+    Failure without them: modals-char-selector.js throws at load
+    ("CharacterQueries.getCharacterSummary missing" /
+    "CharacterCommands.getProfessions missing" /
+    "FamilyQueries.getChildIds / getAllParentIds missing").
+
+ 9. character-state.js before character-commands.js and
+    character-queries.js.
+    Failure without it: those two throw at load.
+
+10. family-rules.js, family-state.js before family-queries.js.
+    Failure without them: family-queries.js throws at load.
+
+11. household-queries.js before modals-household-selector.js.
+    Failure without it: modals-household-selector.js throws at load
+    ("HouseholdQueries.getHousehold / getAllHouseholds /
+    getHouseholdMembers / getCharacterHousehold missing").
+
+12. selector-base.js before modals-household-selector.js.
+    Failure without it: modals-household-selector.js throws at load
+    ("SelectorHelpers missing" or
+    "SelectorHelpers.isBloodRelativeBasic missing").
+
+13. formatting.js and modals-core.js before
+    modals-household-selector.js.
+    Failure without them: modals-household-selector.js throws at
+    load ("escapeHtml missing" / "openModal / closeTopModal
+    missing").
+
+14. world.js before locationDropdown.js (for the call-time fallback
+    to be unnecessary).
+    Failure without it: locationDropdown.js still works (it has
+    local fallbacks for getParentChain, getLocationCountry, and
+    getLocationDistrict), but hierarchy walks and country/district
+    resolution use the fallback walkers rather than world.js.
+
+15. accessors.js before locationDropdown.js.
+    Failure without it: locationDropdown.js throws at load
+    ("getPlaces / getPlaceById missing").
+
+16. household-commands.js is NOT a load-time dependency of
+    modals-household-selector.js. The selector is a read-only
+    picker; it does not mutate. Do not add a load-time dependency
+    on household-commands.js.
+
+17. family-queries.js is a load-time dependency of
+    modals-char-selector.js (getChildIds, getAllParentIds) but only
+    a call-time soft dependency of modals-household-selector.js
+    (isBloodRelated). If you do not want the relative badge, you can
+    skip family-queries.js for the household selector page (but
+    modals-char-selector.js still needs it if you load that).
+
+18. relationship-queries.js is optional for every selector. Both
+    "Partnered" and "Spouse" badges fall back to omission when it is
+    absent. Do not add a load-time dependency; the badges are
+    feature-gated by design.
+
+19. selector-base.js does NOT require collections.js or ui.js at
+    load time. It has soft fallbacks for both. The docs claim
+    otherwise; trust the code.
+
+20. locationDropdown.js's getLocationCountry / getLocationDistrict
+    shadow world.js's same-named exports under the documented load
+    order. Runtime callers should assume the SUPERSET contract
+    (accepts place OR id). If you need world.js's original
+    place-only resolver, reach for it before locationDropdown.js
+    loads, or read it from a module-local capture.
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+ 1. selectors-docs.txt is out of sync with the code.
+    Do not trust the docs' export lists, dependency lists, or
+    load-order section without checking them against the code.
+    The specific divergences are enumerated in Part 5.
+
+ 2. modals-char-selector.js and modals-household-selector.js are
+    NOT "core-only" despite the docs' claim. They require domain
+    modules at load time (character-queries.js, character-commands.js,
+    family-queries.js, and household-queries.js respectively). A
+    page that loads the selectors but not those domains will fail
+    at load with a clear error from the selector files' own guards.
+
+ 3. The modals-household-selector.js file still uses inline style
+    attributes. The docs' "no inline styles" claim is aspirational
+    for this file. Do not assume a CSS migration has landed.
+
+ 4. window.getFilteredLocationOptions does not exist in the supplied
+    locationDropdown.js. If a caller needs it, either shim it or use
+    window.buildLocationDropdown directly. Do not assume the
+    selectors-docs.txt surface exists.
+
+ 5. modals-household-selector.js's _resolveHouseholdSnapshot
+    defensively handles HouseholdQueries.getHousehold returning a
+    record object, an id string, or null. Do not "simplify" this
+    by removing the guard; the extra shape handling is the whole
+    point of the function.
+
+ 6. SelectorBase.close() does NOT fire state.onCancel. This is
+    intentional and matches modals-core.js's modal-close contract.
+    Callers who need cancel semantics must let the modal close via
+    user action, or call state.onCancel themselves.
+
+ 7. Every modal in the selector subsystem scopes its DOM reads via
+    the modal element (root) or its descendants. Do not regress this
+    to document.getElementById / document.querySelector. Two stacked
+    selectors of the same type share element ids, and the document-
+    scoped lookup returns the OLDER modal.
+
+ 8. window.selectors and js/core/state.js. state.js reads
+    LocationUIState, not any selector. Do not add a selector
+    dependency to state.js; selectors are on-demand modals, not
+    runtime state modules.
+
+ 9. modals-char-selector.js inherits escapeHtml, debounce, and
+    showToast from SelectorBase.prototype. If a caller reaches into
+    the instance from outside (e.g. to override one of these for a
+    test), it must be careful not to break the base class's contract
+    for subsequent instances. The base class holds no global state;
+    per-instance overrides are safe but persistent for that instance.
+
+10. The locationDropdown.js getLocationCountry / getLocationDistrict
+    shadowing is intentional. Do not "fix" it by renaming world.js's
+    exports; the superset contract is what runtime callers rely on.
+    If world.js ever renames its exports to avoid the collision,
+    locationDropdown.js's fallbacks become the canonical resolvers
+    and no caller breaks.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
