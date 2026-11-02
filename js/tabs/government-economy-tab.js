@@ -1,19 +1,71 @@
-// js/economy/economy-details-tab.js
+// js/tabs/government-economy-tab.js
 /**
  * =============================================================================
- * ECONOMY DETAILS TAB (js/tabs/govermnment-economy-tab.js)
+ * ECONOMY DETAILS TAB (js/tabs/government-economy-tab.js)
  * =============================================================================
- * 
- * PURPOSE: Provides a modular tab for viewing and editing economy details
- *          aggregated across an entire settlement hierarchy.
- * 
- * DEPENDENCIES:
- *   - accessors.js (getPlaceById, getPlaces, getCharacters)
- *   - settlement-state.js (SettlementState)
- *   - formatting.js (escapeHtml)
- *   - icons.js (Icons)
- *   - ui.js (showToast)
- *   - modals-core.js (openModal)
+ *
+ * PURPOSE:
+ *   Modular tab for viewing and editing economy details aggregated across
+ *   an entire settlement hierarchy.
+ *
+ * =============================================================================
+ * SETTLEMENT INTEGRATION STATUS — READ THIS
+ * =============================================================================
+ *
+ * This tab is a PREVIEW for writes. Reads are fully functional — the tab
+ * aggregates population, prosperity, crime, justice, watch, and salary
+ * budget across the settlement hierarchy using the data already present
+ * in each location's settlement record.
+ *
+ * Writes (Edit modal) route through SettlementState._updateSettlementData,
+ * a PRIVATE method. If that method does not exist on your build, every
+ * write fails with a visible toast and the modal stays open.
+ *
+ * What's missing on the settlement side (all of it user-facing):
+ *
+ *   1. Canonical write commands.
+ *      SettlementGovernmentCommands.setProsperity /
+ *      setCrimeRate / setSalaryBudget do not exist in this build. The
+ *      tab falls back to _updateSettlementData.
+ *
+ *   2. Consumer integration.
+ *      prosperity / crimeRate / justiceSeverity / watch / salaryBudget
+ *      are written to each location's settlement record and read back by
+ *      this tab and by the government departments tab. No other system
+ *      consults them unless it explicitly reads settlementData directly.
+ *
+ *   3. Canonical enum for justice severity.
+ *      The tab uses 'lenient' | 'medium' | 'harsh' | 'extreme' locally.
+ *      If SettlementGovernmentDefinitions defines a canonical set, this
+ *      tab's values are not guaranteed to match it.
+ *
+ * What IS wired in this revision:
+ *
+ *   - Modal API uses titleHtml / contentHtml (key translation).
+ *   - Every onOpen / onConfirm scoped to root.querySelector.
+ *   - Aggregated writes check the _updateSettlementData return per
+ *     location and report failures (missing method → 0 successes → user
+ *     sees "0 updated, N failed").
+ *   - saveMasterData() and invalidateAccessorCaches() run once per
+ *     successful batch.
+ *   - Banner + integration status panel render on every view.
+ *
+ * =============================================================================
+ * DEPENDENCIES (checked at load time):
+ *   - accessors.js        (getPlaceById)
+ *   - formatting.js       (escapeHtml)
+ *   - icons.js            (Icons)
+ *   - ui.js               (showToast)
+ *   - modals-core.js      (openModal)
+ *   - time.js             (getCurrentYear, calculateAge)
+ *
+ * DEPENDENCIES (checked at call time, integration panel reports
+ * presence or absence):
+ *   - SettlementState
+ *   - window.getSettlementData / getOrCreateSettlementData
+ *   - SettlementGovernmentCommands (optional; not used by this tab yet)
+ *   - LocationQueries.getCurrentLocationId (optional; raw-field fallback
+ *     when absent)
  * =============================================================================
  */
 
@@ -21,60 +73,219 @@
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // =========================================================================
+
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'government-economy-tab.js: formatting.js (escapeHtml) must ' +
+            'load first.'
+        );
+    }
+    if (!window.Icons || typeof window.Icons !== 'object') {
+        throw new Error(
+            'government-economy-tab.js: icons.js must load first.'
+        );
+    }
+    if (typeof window.openModal !== 'function') {
+        throw new Error(
+            'government-economy-tab.js: modals-core.js must load first ' +
+            '(openModal missing).'
+        );
+    }
+    if (typeof window.getCurrentYear !== 'function') {
+        throw new Error(
+            'government-economy-tab.js: time.js (getCurrentYear) must ' +
+            'load first.'
+        );
+    }
+    if (typeof window.calculateAge !== 'function') {
+        throw new Error(
+            'government-economy-tab.js: time.js (calculateAge) must load ' +
+            'first.'
+        );
+    }
+
+    // =========================================================================
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
+        return typeof window.getPlaceById === 'function'
+            ? window.getPlaceById(id)
+            : null;
     }
 
-    function _getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
+    function _escapeHtml(value) {
+        return window.escapeHtml(value);
     }
 
-    function _getCharacters() {
-        return typeof window.getCharacters === 'function' ? window.getCharacters() : [];
-    }
-
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof str !== 'string') return String(str);
-        return str.replace(/[&<>"']/g, function(m) {
-            if (m === '&') return '&amp;';
-            if (m === '<') return '&lt;';
-            if (m === '>') return '&gt;';
-            if (m === '"') return '&quot;';
-            if (m === "'") return '&#039;';
-            return m;
-        });
+    function _escapeNumber(n) {
+        return window.escapeHtml(
+            typeof n === 'number' && isFinite(n) ? String(n) : '0'
+        );
     }
 
     function _getIcon(name) {
-        if (typeof window.getIcon === 'function') return window.getIcon(name);
-        if (typeof window.Icons !== 'undefined' && window.Icons[name]) return window.Icons[name];
-        return '';
+        var svg = window.Icons[name];
+        return typeof svg === 'string' ? svg : '';
     }
 
     function _showToast(message, type) {
         if (typeof window.showToast === 'function') {
-            window.showToast(message, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(message, type);
+            window.showToast(message, type || 'info');
         }
     }
 
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        return null;
+    function _openModal(opts) {
+        var forwarded = {};
+        for (var k in opts) {
+            if (Object.prototype.hasOwnProperty.call(opts, k)) {
+                forwarded[k] = opts[k];
+            }
+        }
+        if (forwarded.titleHtml === undefined && forwarded.title !== undefined) {
+            forwarded.titleHtml = forwarded.title;
+        }
+        if (forwarded.contentHtml === undefined && forwarded.content !== undefined) {
+            forwarded.contentHtml = forwarded.content;
+        }
+        return window.openModal(forwarded);
     }
 
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData();
+    function _getCurrentYear() {
+        return window.getCurrentYear();
     }
 
-    function _getSettlementState() {
-        return typeof window.SettlementState !== 'undefined' ? window.SettlementState : null;
+    /**
+     * Age of a character. Takes the full character projection so the
+     * deceased flag reaches calculateAge. Passing only birth/death years
+     * used to return "age today if alive" for the dead.
+     */
+    function _calculateCharacterAge(character, asOfYear) {
+        if (!character) return null;
+        var birthYear = character.birthYear;
+        if (typeof birthYear !== 'number' || !isFinite(birthYear)) return null;
+        return window.calculateAge(
+            birthYear,
+            character.isDeceased === true,
+            character.deathYear,
+            asOfYear
+        );
     }
+
+    /**
+     * Current-location resolver for population aggregation.
+     *
+     * Prefers LocationQueries.getCurrentLocationId — the semantic
+     * resolver (explicit field → latest move → birthplace). Falls back
+     * to CharacterQueries.getCurrentLocationId (raw field) when the
+     * location domain is absent. Returns null when neither resolves.
+     */
+    function _resolveCharacterLocation(character) {
+        if (!character || !character.id) return null;
+
+        if (window.LocationQueries &&
+            typeof window.LocationQueries.getCurrentLocationId === 'function') {
+            try {
+                var semantic = window.LocationQueries.getCurrentLocationId(character.id);
+                if (typeof semantic === 'string' && semantic.length > 0) {
+                    return semantic;
+                }
+                return null;
+            } catch (e) {
+                // fall through to raw field
+            }
+        }
+
+        if (window.CharacterQueries &&
+            typeof window.CharacterQueries.getCurrentLocationId === 'function') {
+            try {
+                return window.CharacterQueries.getCurrentLocationId(character.id);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        return character.currentLocationId || null;
+    }
+
+    // =========================================================================
+    // 3. SETTLEMENT INTEGRATION DETECTION
+    // =========================================================================
+
+    function _detectSettlementState() {
+        if (typeof window.SettlementState === 'undefined'
+            || window.SettlementState === null) {
+            return { ok: false, reason: 'window.SettlementState is not loaded.' };
+        }
+        if (typeof window.SettlementState._updateSettlementData !== 'function') {
+            return {
+                ok: false,
+                reason: 'SettlementState._updateSettlementData (private) ' +
+                    'is not available. Writes will fail.'
+            };
+        }
+        return { ok: true, reason: 'Available.' };
+    }
+
+    function _detectSettlementReadAccessor() {
+        if (typeof window.getSettlementData === 'function') {
+            return { ok: true, reason: 'window.getSettlementData is available.' };
+        }
+        if (typeof window.getOrCreateSettlementData === 'function') {
+            return {
+                ok: true,
+                reason: 'window.getOrCreateSettlementData is available ' +
+                    '(fallback).'
+            };
+        }
+        return {
+            ok: false,
+            reason: 'Neither window.getSettlementData nor ' +
+                'window.getOrCreateSettlementData is loaded. Reads will fail.'
+        };
+    }
+
+    function _detectCanonicalWriteCommands() {
+        if (typeof window.SettlementGovernmentCommands === 'undefined'
+            || window.SettlementGovernmentCommands === null) {
+            return {
+                ok: false,
+                reason: 'SettlementGovernmentCommands is not loaded. This ' +
+                    'tab falls back to the private settlement write path.'
+            };
+        }
+        return { ok: true, reason: 'Available. (Not yet used by this tab.)' };
+    }
+
+    function _detectLocationQueries() {
+        if (window.LocationQueries
+            && typeof window.LocationQueries.getCurrentLocationId === 'function') {
+            return {
+                ok: true,
+                reason: 'LocationQueries.getCurrentLocationId is available.'
+            };
+        }
+        return {
+            ok: false,
+            reason: 'LocationQueries.getCurrentLocationId is unavailable. ' +
+                'Population counts fall back to the raw currentLocationId field.'
+        };
+    }
+
+    function _getIntegrationStatus() {
+        return {
+            settlementState: _detectSettlementState(),
+            readAccessor: _detectSettlementReadAccessor(),
+            writeCommands: _detectCanonicalWriteCommands(),
+            locationQueries: _detectLocationQueries()
+        };
+    }
+
+    // =========================================================================
+    // 4. SETTLEMENT DATA ACCESS
+    // =========================================================================
 
     function _getSettlementData(locationId) {
         if (typeof window.getSettlementData === 'function') {
@@ -83,67 +294,96 @@
         if (typeof window.getOrCreateSettlementData === 'function') {
             return window.getOrCreateSettlementData(locationId);
         }
-        var state = _getSettlementState();
-        if (state && typeof state.getSettlementData === 'function') {
-            return state.getSettlementData(locationId);
+        if (window.SettlementState
+            && typeof window.SettlementState.getSettlementData === 'function') {
+            return window.SettlementState.getSettlementData(locationId);
         }
         return null;
     }
 
-    function _updateSettlementData(locationId, updates) {
-        var state = _getSettlementState();
-        if (state && typeof state._updateSettlementData === 'function') {
-            return state._updateSettlementData(locationId, updates);
+    function _writeSettlementData(locationId, updates) {
+        if (typeof window.SettlementState === 'undefined'
+            || window.SettlementState === null
+            || typeof window.SettlementState._updateSettlementData !== 'function') {
+            return { ok: false, reason: 'settlement-write-unavailable' };
         }
-        return null;
+        try {
+            var result = window.SettlementState._updateSettlementData(
+                locationId, updates
+            );
+            if (result === null || result === undefined) {
+                return {
+                    ok: false,
+                    reason: '_updateSettlementData returned ' +
+                        (result === null ? 'null' : 'undefined')
+                };
+            }
+            return { ok: true };
+        } catch (e) {
+            return {
+                ok: false,
+                reason: (e && e.message) ? e.message : 'update threw'
+            };
+        }
     }
 
-    function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
-
-    function _calculateAge(birthYear, deathYear, currentYear) {
-        if (typeof window.calculateAge === 'function') {
-            return window.calculateAge(birthYear, false, deathYear, currentYear);
-        }
-        if (!birthYear) return null;
-        var year = currentYear || _getCurrentYear();
-        if (deathYear && deathYear < year) year = deathYear;
-        return Math.max(0, year - birthYear);
-    }
+    // =========================================================================
+    // 5. HIERARCHY WALK
+    // =========================================================================
 
     function _getChildPlaces(placeId) {
-        var allPlaces = _getPlaces();
-        var children = [];
-        for (var i = 0; i < allPlaces.length; i++) {
-            if (allPlaces[i].parentId === placeId || allPlaces[i].parentPlaceId === placeId) {
-                children.push(allPlaces[i]);
+        if (window.LocationQueries
+            && typeof window.LocationQueries.getPlaceChildren === 'function') {
+            try {
+                var list = window.LocationQueries.getPlaceChildren(placeId, false);
+                return Array.isArray(list) ? list : [];
+            } catch (e) {
+                // fall through
             }
         }
-        return children;
+        if (window.LocationState
+            && typeof window.LocationState.getPlacesByParentId === 'function') {
+            try {
+                var list2 = window.LocationState.getPlacesByParentId(placeId);
+                return Array.isArray(list2) ? list2 : [];
+            } catch (e) {
+                // fall through
+            }
+        }
+        return [];
     }
 
     function _getAllDescendantPlaceIds(placeId) {
         var result = [placeId];
-        var children = _getChildPlaces(placeId);
-        for (var i = 0; i < children.length; i++) {
-            var descendantIds = _getAllDescendantPlaceIds(children[i].id);
-            result = result.concat(descendantIds);
+        var seen = {};
+        seen[placeId] = true;
+
+        var stack = _getChildPlaces(placeId);
+        while (stack.length > 0) {
+            var next = stack.shift();
+            if (!next || !next.id) continue;
+            if (seen[next.id]) continue;
+            seen[next.id] = true;
+            result.push(next.id);
+            var kids = _getChildPlaces(next.id);
+            for (var i = 0; i < kids.length; i++) {
+                stack.push(kids[i]);
+            }
         }
         return result;
     }
 
     // =========================================================================
-    // 2. AGGREGATED POPULATION CALCULATIONS
+    // 6. AGGREGATION
     // =========================================================================
 
     function _getSettlementPopulationForHierarchy(locationId) {
         var placeIds = _getAllDescendantPlaceIds(locationId);
-        var characters = _getCharacters();
-        
+        var inHierarchy = {};
+        for (var i = 0; i < placeIds.length; i++) {
+            inHierarchy[placeIds[i]] = true;
+        }
+
         var stats = {
             total: 0,
             living: 0,
@@ -157,41 +397,30 @@
             byLocation: {}
         };
 
-        // Initialize stats for each location
-        for (var i = 0; i < placeIds.length; i++) {
-            stats.byLocation[placeIds[i]] = {
-                total: 0,
-                living: 0,
-                deceased: 0,
-                adults: 0,
-                children: 0,
-                elderly: 0,
-                literate: 0,
-                totalWealth: 0,
-                wealthCount: 0
+        for (var p = 0; p < placeIds.length; p++) {
+            stats.byLocation[placeIds[p]] = {
+                total: 0, living: 0, deceased: 0,
+                adults: 0, children: 0, elderly: 0,
+                literate: 0, totalWealth: 0, wealthCount: 0
             };
         }
 
+        var characters = (typeof window.getCharacters === 'function')
+            ? window.getCharacters()
+            : [];
+
         for (var c = 0; c < characters.length; c++) {
             var char = characters[c];
-            var charLocation = char.currentLocationId || char.locationId;
-            
-            // Check if character belongs anywhere in this hierarchy
-            var belongs = false;
-            for (var p = 0; p < placeIds.length; p++) {
-                if (charLocation === placeIds[p]) {
-                    belongs = true;
-                    break;
-                }
-            }
-            if (!belongs) continue;
+            if (!char) continue;
 
-            var locStats = stats.byLocation[charLocation] || stats.byLocation[locationId];
-            if (!locStats) {
-                // Fallback to root location
-                locStats = stats.byLocation[locationId];
-                if (!locStats) continue;
-            }
+            var charLoc = _resolveCharacterLocation(char);
+            // Strict: exclude characters whose location is not in the
+            // hierarchy. The old code silently attributed them to the
+            // root location, inflating the count.
+            if (!charLoc || !inHierarchy[charLoc]) continue;
+
+            var locStats = stats.byLocation[charLoc];
+            if (!locStats) continue;
 
             stats.total++;
             locStats.total++;
@@ -199,9 +428,9 @@
             if (!char.isDeceased) {
                 stats.living++;
                 locStats.living++;
-                
-                var age = _calculateAge(char.birthYear, char.deathYear);
-                if (age !== null) {
+
+                var age = _calculateCharacterAge(char);
+                if (age !== null && age !== undefined) {
                     if (age < 18) {
                         stats.children++;
                         locStats.children++;
@@ -213,13 +442,13 @@
                         locStats.adults++;
                     }
                 }
-                
-                if (char.isLiterate) {
+
+                if (char.isLiterate === true) {
                     stats.literate++;
                     locStats.literate++;
                 }
-                
-                if (char.wealth !== undefined && char.wealth !== null) {
+
+                if (typeof char.wealth === 'number' && isFinite(char.wealth)) {
                     stats.totalWealth += char.wealth;
                     stats.wealthCount++;
                     locStats.totalWealth += char.wealth;
@@ -231,27 +460,32 @@
             }
         }
 
-        // Calculate rates
-        stats.literacyRate = stats.living > 0 ? Math.round((stats.literate / stats.living) * 100) : 0;
-        stats.averageWealth = stats.wealthCount > 0 ? Math.round(stats.totalWealth / stats.wealthCount) : 0;
+        stats.literacyRate = stats.living > 0
+            ? Math.round((stats.literate / stats.living) * 100)
+            : 0;
+        stats.averageWealth = stats.wealthCount > 0
+            ? Math.round(stats.totalWealth / stats.wealthCount)
+            : 0;
 
-        // Calculate rates for each location
         for (var locId in stats.byLocation) {
-            var loc = stats.byLocation[locId];
-            loc.literacyRate = loc.living > 0 ? Math.round((loc.literate / loc.living) * 100) : 0;
-            loc.averageWealth = loc.wealthCount > 0 ? Math.round(loc.totalWealth / loc.wealthCount) : 0;
+            if (!Object.prototype.hasOwnProperty.call(stats.byLocation, locId)) {
+                continue;
+            }
+            var ls = stats.byLocation[locId];
+            ls.literacyRate = ls.living > 0
+                ? Math.round((ls.literate / ls.living) * 100)
+                : 0;
+            ls.averageWealth = ls.wealthCount > 0
+                ? Math.round(ls.totalWealth / ls.wealthCount)
+                : 0;
         }
 
         return stats;
     }
 
-    // =========================================================================
-    // 3. AGGREGATED SETTLEMENT DATA
-    // =========================================================================
-
     function _getAggregatedSettlementData(locationId) {
         var placeIds = _getAllDescendantPlaceIds(locationId);
-        
+
         var aggregated = {
             prosperity: 0,
             crimeRate: 0,
@@ -259,7 +493,6 @@
             hasWatch: false,
             watchSize: 0,
             governmentSalaryBudget: 0,
-            salaryBudgetAllocated: 0,
             locationCount: 0,
             locationsWithData: 0
         };
@@ -274,51 +507,48 @@
         for (var i = 0; i < placeIds.length; i++) {
             var data = _getSettlementData(placeIds[i]);
             if (!data) continue;
-            
+
             aggregated.locationCount++;
             aggregated.locationsWithData++;
 
-            // Prosperity (weighted average)
-            if (data.prosperity !== undefined && data.prosperity !== null) {
+            if (typeof data.prosperity === 'number' && isFinite(data.prosperity)) {
                 prosperitySum += data.prosperity;
                 prosperityCount++;
             }
 
-            // Crime rate (average)
-            if (data.crimeRate !== undefined && data.crimeRate !== null) {
+            if (typeof data.crimeRate === 'number' && isFinite(data.crimeRate)) {
                 crimeSum += data.crimeRate;
                 crimeCount++;
             }
 
-            // Justice severity (mode)
             if (data.justiceSeverity) {
-                justiceCounts[data.justiceSeverity] = (justiceCounts[data.justiceSeverity] || 0) + 1;
+                justiceCounts[data.justiceSeverity] =
+                    (justiceCounts[data.justiceSeverity] || 0) + 1;
                 justiceCount++;
             }
 
-            // Watch (OR - if any location has watch, the settlement has watch)
             if (data.hasWatch) {
                 aggregated.hasWatch = true;
                 aggregated.watchSize += (data.watchSize || 0);
             }
 
-            // Salary budget (sum)
-            if (data.governmentSalaryBudget) {
+            if (typeof data.governmentSalaryBudget === 'number' &&
+                isFinite(data.governmentSalaryBudget)) {
                 aggregated.governmentSalaryBudget += data.governmentSalaryBudget;
-            }
-            if (data.salaryBudgetAllocated) {
-                aggregated.salaryBudgetAllocated += data.salaryBudgetAllocated;
             }
         }
 
-        // Calculate averages
-        aggregated.prosperity = prosperityCount > 0 ? Math.round(prosperitySum / prosperityCount) : 0;
-        aggregated.crimeRate = crimeCount > 0 ? Math.round((crimeSum / crimeCount) * 100) / 100 : 0;
+        aggregated.prosperity = prosperityCount > 0
+            ? Math.round(prosperitySum / prosperityCount)
+            : 0;
+        aggregated.crimeRate = crimeCount > 0
+            ? Math.round((crimeSum / crimeCount) * 100) / 100
+            : 0;
 
-        // Find mode for justice severity
         var maxJusticeCount = 0;
         var modeJustice = 'medium';
         for (var j in justiceCounts) {
+            if (!Object.prototype.hasOwnProperty.call(justiceCounts, j)) continue;
             if (justiceCounts[j] > maxJusticeCount) {
                 maxJusticeCount = justiceCounts[j];
                 modeJustice = j;
@@ -330,41 +560,134 @@
     }
 
     // =========================================================================
-    // 4. RENDER FUNCTIONS
+    // 7. RENDER
     // =========================================================================
+
+    function _renderIntegrationBanner() {
+        return (
+            '<div class="eco-integration-banner" role="note" ' +
+                'style="padding:10px 14px;margin-bottom:14px;' +
+                'background:var(--warning-soft);' +
+                'border:1px solid var(--warning);' +
+                'border-radius:6px;font-size:0.65rem;line-height:1.5;' +
+                'color:var(--text);">' +
+                '<strong>Reads are live; writes are a preview.</strong> ' +
+                'This tab aggregates population, prosperity, crime, justice, ' +
+                'watch, and salary budget from each location\'s settlement ' +
+                'record. Edits write through a private settlement method ' +
+                '(<code>SettlementState._updateSettlementData</code>) — ' +
+                'no canonical command exists yet. Other systems read these ' +
+                'fields only if they explicitly touch <code>settlementData</code>. ' +
+                'The writes work; the enforcement is not wired.' +
+            '</div>'
+        );
+    }
+
+    function _renderIntegrationStatus(status) {
+        function line(label, entry) {
+            var color = entry.ok ? 'var(--ok)' : 'var(--danger-lt)';
+            var glyph = entry.ok ? '✓' : '✗';
+            return (
+                '<div class="eco-integration-line" ' +
+                    'style="display:flex;gap:8px;align-items:flex-start;' +
+                    'padding:3px 0;font-size:0.6rem;">' +
+                    '<span style="color:' + color + ';font-weight:600;' +
+                        'min-width:12px;">' + glyph + '</span>' +
+                    '<span style="color:var(--dim);min-width:170px;">' +
+                        _escapeHtml(label) + '</span>' +
+                    '<span style="color:var(--text);flex:1;">' +
+                        _escapeHtml(entry.reason) + '</span>' +
+                '</div>'
+            );
+        }
+
+        return (
+            '<div class="eco-integration-status" ' +
+                'style="padding:10px 14px;margin-bottom:14px;' +
+                'background:var(--bg2);' +
+                'border:1px solid var(--border);' +
+                'border-radius:6px;">' +
+                '<div style="font-size:0.65rem;font-weight:600;' +
+                    'color:var(--accent);margin-bottom:6px;' +
+                    'font-family:var(--f-display);letter-spacing:0.05em;' +
+                    'text-transform:uppercase;">' +
+                    'Settlement integration status' +
+                '</div>' +
+                line('Settlement write path', status.settlementState) +
+                line('Settlement read path', status.readAccessor) +
+                line('Canonical write command', status.writeCommands) +
+                line('Location resolver', status.locationQueries) +
+            '</div>'
+        );
+    }
+
+    function _renderStatCard(iconName, value, label, sub) {
+        var iconSvg = _getIcon(iconName);
+        return (
+            '<div class="eco-stat-card">' +
+                '<div class="eco-stat-icon">' + iconSvg + '</div>' +
+                '<div class="eco-stat-content">' +
+                    '<div class="eco-stat-value">' +
+                        _escapeHtml(value) + '</div>' +
+                    '<div class="eco-stat-label">' +
+                        _escapeHtml(label) + '</div>' +
+                    (sub
+                        ? '<div class="eco-stat-sub">' +
+                            _escapeHtml(sub) + '</div>'
+                        : '') +
+                '</div>' +
+            '</div>'
+        );
+    }
 
     function _renderEconomyDetails(place) {
         if (!place) {
-            return '<div class="eco-details-empty">Select a location to view economy details.</div>';
+            return '<div class="eco-details-empty">' +
+                'Select a location to view economy details.</div>';
         }
 
         var population = _getSettlementPopulationForHierarchy(place.id);
         var settlementData = _getAggregatedSettlementData(place.id);
-        var currentYear = _getCurrentYear();
         var childPlaces = _getChildPlaces(place.id);
+        var status = _getIntegrationStatus();
 
         var html = '<div class="eco-details-container">';
-        
+
         // Header
         html += '<div class="eco-details-header">';
-        html += '<h3>' + _escapeHtml(place.displayName || place.name) + ' - Economy</h3>';
+        html += '<h3>' +
+            _escapeHtml(place.displayName || place.name) + ' - Economy' +
+            '</h3>';
         html += '<div class="eco-details-actions">';
-        html += '<button class="eco-btn eco-btn-edit" data-action="edit-economy">' + _getIcon('EDIT') + ' Edit</button>';
-        html += '<button class="eco-btn eco-btn-refresh" data-action="refresh-economy">' + _getIcon('REFRESH') + ' Refresh</button>';
+        html += '<button class="eco-btn eco-btn-edit" ' +
+            'data-action="edit-economy">' +
+            _getIcon('EDIT') + ' Edit' +
+            '</button>';
+        html += '<button class="eco-btn eco-btn-refresh" ' +
+            'data-action="refresh-economy">' +
+            _getIcon('REFRESH') + ' Refresh' +
+            '</button>';
         html += '</div>';
         html += '</div>';
 
-        // Location hierarchy info
+        // Banner + status
+        html += _renderIntegrationBanner();
+        html += _renderIntegrationStatus(status);
+
+        // Hierarchy summary
         html += '<div class="eco-hierarchy-info">';
         html += '<span class="eco-hierarchy-label">Settlement includes:</span> ';
-        html += '<span class="eco-hierarchy-count">' + (settlementData.locationCount || 0) + ' locations</span>';
+        html += '<span class="eco-hierarchy-count">' +
+            (settlementData.locationCount || 0) + ' locations</span>';
         if (childPlaces.length > 0) {
             html += ' <span class="eco-hierarchy-children">(';
-            var childNames = [];
+            var names = [];
             for (var c = 0; c < Math.min(childPlaces.length, 3); c++) {
-                childNames.push(_escapeHtml(childPlaces[c].displayName || childPlaces[c].name));
+                names.push(_escapeHtml(
+                    childPlaces[c].displayName || childPlaces[c].name
+                ));
             }
-            html += childNames.join(', ');
+            html += names.join(', ');
             if (childPlaces.length > 3) {
                 html += ' +' + (childPlaces.length - 3) + ' more';
             }
@@ -372,85 +695,88 @@
         }
         html += '</div>';
 
-        // Economy stats grid
+        // Stat grid
         html += '<div class="eco-stats-grid">';
-
-        // Population
-        html += '<div class="eco-stat-card">';
-        html += '<div class="eco-stat-icon">' + _getIcon('PERSON') + '</div>';
-        html += '<div class="eco-stat-content">';
-        html += '<div class="eco-stat-value">' + population.living.toLocaleString() + '</div>';
-        html += '<div class="eco-stat-label">Living Population</div>';
-        html += '<div class="eco-stat-sub">Total: ' + population.total.toLocaleString() + ' | Deceased: ' + population.deceased.toLocaleString() + '</div>';
-        html += '</div>';
-        html += '</div>';
-
-        // Age breakdown
-        html += '<div class="eco-stat-card">';
-        html += '<div class="eco-stat-icon">' + _getIcon('AGE_GROUPS') + '</div>';
-        html += '<div class="eco-stat-content">';
-        html += '<div class="eco-stat-value">' + population.adults.toLocaleString() + '</div>';
-        html += '<div class="eco-stat-label">Adults (18-59)</div>';
-        html += '<div class="eco-stat-sub">Children: ' + population.children.toLocaleString() + ' | Elderly: ' + population.elderly.toLocaleString() + '</div>';
-        html += '</div>';
-        html += '</div>';
-
-        // Literacy
-        html += '<div class="eco-stat-card">';
-        html += '<div class="eco-stat-icon">' + _getIcon('BOOK') + '</div>';
-        html += '<div class="eco-stat-content">';
-        html += '<div class="eco-stat-value">' + population.literacyRate + '%</div>';
-        html += '<div class="eco-stat-label">Literacy Rate</div>';
-        html += '<div class="eco-stat-sub">' + population.literate.toLocaleString() + ' literate individuals</div>';
-        html += '</div>';
+        html += _renderStatCard(
+            'PERSON',
+            population.living.toLocaleString(),
+            'Living Population',
+            'Total: ' + population.total.toLocaleString() +
+                ' | Deceased: ' + population.deceased.toLocaleString()
+        );
+        html += _renderStatCard(
+            'AGE_GROUPS',
+            population.adults.toLocaleString(),
+            'Adults (18-59)',
+            'Children: ' + population.children.toLocaleString() +
+                ' | Elderly: ' + population.elderly.toLocaleString()
+        );
+        html += _renderStatCard(
+            'BOOK',
+            population.literacyRate + '%',
+            'Literacy Rate',
+            population.literate.toLocaleString() + ' literate individuals'
+        );
+        html += _renderStatCard(
+            'COIN',
+            population.averageWealth.toLocaleString(),
+            'Average Wealth (gold)',
+            'Total: ' + population.totalWealth.toLocaleString()
+        );
         html += '</div>';
 
-        // Wealth
-        html += '<div class="eco-stat-card">';
-        html += '<div class="eco-stat-icon">' + _getIcon('COIN') + '</div>';
-        html += '<div class="eco-stat-content">';
-        html += '<div class="eco-stat-value">' + population.averageWealth.toLocaleString() + '</div>';
-        html += '<div class="eco-stat-label">Average Wealth (gold)</div>';
-        html += '<div class="eco-stat-sub">Total wealth: ' + population.totalWealth.toLocaleString() + '</div>';
-        html += '</div>';
-        html += '</div>';
-
-        html += '</div>'; // end eco-stats-grid
-
-        // Settlement-specific economy data
+        // Settlement detail block
         html += '<div class="eco-settlement-details">';
         html += '<h4>Settlement Economy (Aggregated)</h4>';
 
-        // Prosperity
+        // Prosperity bar
         var prosperity = settlementData.prosperity || 0;
         var prosperityLabel = 'Unknown';
-        var prosperityColor = '#999';
-        if (prosperity >= 80) { prosperityLabel = 'Booming'; prosperityColor = '#28a745'; }
-        else if (prosperity >= 60) { prosperityLabel = 'Prosperous'; prosperityColor = '#5cb85c'; }
-        else if (prosperity >= 40) { prosperityLabel = 'Stable'; prosperityColor = '#f0ad4e'; }
-        else if (prosperity >= 20) { prosperityLabel = 'Declining'; prosperityColor = '#d9534f'; }
-        else { prosperityLabel = 'Crisis'; prosperityColor = '#c9302c'; }
+        var prosperityToken = 'var(--tmut)';
+        if (prosperity >= 80) {
+            prosperityLabel = 'Booming'; prosperityToken = 'var(--ok)';
+        } else if (prosperity >= 60) {
+            prosperityLabel = 'Prosperous'; prosperityToken = 'var(--ok)';
+        } else if (prosperity >= 40) {
+            prosperityLabel = 'Stable'; prosperityToken = 'var(--warning)';
+        } else if (prosperity >= 20) {
+            prosperityLabel = 'Declining'; prosperityToken = 'var(--danger-lt)';
+        } else {
+            prosperityLabel = 'Crisis'; prosperityToken = 'var(--danger)';
+        }
 
         html += '<div class="eco-prosperity">';
         html += '<div class="eco-prosperity-label">Prosperity (Average)</div>';
         html += '<div class="eco-prosperity-bar">';
-        html += '<div class="eco-prosperity-fill" style="width:' + Math.min(100, prosperity) + '%; background:' + prosperityColor + ';"></div>';
+        html += '<div class="eco-prosperity-fill" ' +
+            'style="width:' + Math.min(100, prosperity) + '%; ' +
+            'background:' + prosperityToken + ';"></div>';
         html += '</div>';
-        html += '<div class="eco-prosperity-value">' + Math.round(prosperity) + '% - ' + prosperityLabel + '</div>';
+        html += '<div class="eco-prosperity-value">' +
+            Math.round(prosperity) + '% - ' + prosperityLabel +
+            '</div>';
         html += '</div>';
 
-        // Crime rate
+        // Crime
         var crimeRate = settlementData.crimeRate || 0;
         var crimeLabel = 'Low';
-        var crimeColor = '#28a745';
-        if (crimeRate > 0.5) { crimeLabel = 'Extreme'; crimeColor = '#c9302c'; }
-        else if (crimeRate > 0.3) { crimeLabel = 'High'; crimeColor = '#d9534f'; }
-        else if (crimeRate > 0.15) { crimeLabel = 'Moderate'; crimeColor = '#f0ad4e'; }
-        else if (crimeRate > 0.05) { crimeLabel = 'Low'; crimeColor = '#5cb85c'; }
+        var crimeToken = 'var(--ok)';
+        if (crimeRate > 0.5) {
+            crimeLabel = 'Extreme'; crimeToken = 'var(--danger)';
+        } else if (crimeRate > 0.3) {
+            crimeLabel = 'High'; crimeToken = 'var(--danger-lt)';
+        } else if (crimeRate > 0.15) {
+            crimeLabel = 'Moderate'; crimeToken = 'var(--warning)';
+        } else if (crimeRate > 0.05) {
+            crimeLabel = 'Low'; crimeToken = 'var(--ok)';
+        }
 
         html += '<div class="eco-crime">';
         html += '<div class="eco-crime-label">Crime Rate (Average)</div>';
-        html += '<div class="eco-crime-value" style="color:' + crimeColor + ';">' + Math.round(crimeRate * 100) + '% - ' + crimeLabel + '</div>';
+        html += '<div class="eco-crime-value" style="color:' +
+            crimeToken + ';">' +
+            Math.round(crimeRate * 100) + '% - ' + crimeLabel +
+            '</div>';
         html += '</div>';
 
         // Justice
@@ -462,42 +788,43 @@
 
         html += '<div class="eco-justice">';
         html += '<div class="eco-justice-label">Justice Severity (Mode)</div>';
-        html += '<div class="eco-justice-value">' + justiceLabel + '</div>';
+        html += '<div class="eco-justice-value">' +
+            _escapeHtml(justiceLabel) + '</div>';
         html += '</div>';
 
         // Watch
-        var hasWatch = settlementData.hasWatch || false;
+        var hasWatch = settlementData.hasWatch === true;
         var watchSize = settlementData.watchSize || 0;
+
         html += '<div class="eco-watch">';
         html += '<div class="eco-watch-label">Watch (Any Location)</div>';
         html += '<div class="eco-watch-value">';
         if (hasWatch) {
-            html += 'Active <span class="eco-watch-size">(Total: ' + watchSize + ' members)</span>';
+            html += 'Active <span class="eco-watch-size">(Total: ' +
+                watchSize + ' members)</span>';
         } else {
             html += 'None';
         }
         html += '</div>';
         html += '</div>';
 
-        // Government salary budget
+        // Salary budget
         var salaryBudget = settlementData.governmentSalaryBudget || 0;
-        var salaryAllocated = settlementData.salaryBudgetAllocated || 0;
         html += '<div class="eco-salary-budget">';
-        html += '<div class="eco-salary-label">Government Salary Budget (Total)</div>';
-        html += '<div class="eco-salary-value">' + salaryBudget.toLocaleString() + ' gold/year</div>';
-        if (salaryAllocated > 0) {
-            html += '<div class="eco-salary-sub">Allocated: ' + salaryAllocated.toLocaleString() + ' gold</div>';
-        }
+        html += '<div class="eco-salary-label">' +
+            'Government Salary Budget (Total)</div>';
+        html += '<div class="eco-salary-value">' +
+            salaryBudget.toLocaleString() + ' gold/year</div>';
         html += '</div>';
 
-        html += '</div>'; // end eco-settlement-details
+        html += '</div>'; // settlement-details
 
         // Location breakdown
         if (settlementData.locationCount > 1) {
             html += '<div class="eco-location-breakdown">';
             html += '<h4>Location Breakdown</h4>';
             html += '<div class="eco-breakdown-grid">';
-            
+
             var placeIds = _getAllDescendantPlaceIds(place.id);
             for (var i = 0; i < placeIds.length; i++) {
                 var locPlace = _getPlaceById(placeIds[i]);
@@ -505,77 +832,110 @@
                 var locData = _getSettlementData(placeIds[i]);
                 var locPop = population.byLocation[placeIds[i]];
                 if (!locPop || locPop.total === 0) continue;
-                
+
                 html += '<div class="eco-breakdown-item">';
-                html += '<div class="eco-breakdown-name">' + _escapeHtml(locPlace.displayName || locPlace.name) + '</div>';
+                html += '<div class="eco-breakdown-name">' +
+                    _escapeHtml(locPlace.displayName || locPlace.name) +
+                    '</div>';
                 html += '<div class="eco-breakdown-stats">';
-                html += '<span class="eco-breakdown-pop">' + locPop.living + ' living</span>';
-                if (locData) {
-                    html += ' <span class="eco-breakdown-prosperity">Prosperity: ' + Math.round(locData.prosperity || 0) + '%</span>';
+                html += '<span class="eco-breakdown-pop">' +
+                    locPop.living + ' living</span>';
+                if (locData && typeof locData.prosperity === 'number') {
+                    html += ' <span class="eco-breakdown-prosperity">' +
+                        'Prosperity: ' + Math.round(locData.prosperity) + '%' +
+                        '</span>';
                 }
                 html += '</div>';
                 html += '</div>';
             }
-            
+
             html += '</div>';
             html += '</div>';
         }
 
-        html += '</div>'; // end eco-details-container
-
+        html += '</div>';
         return html;
     }
 
     // =========================================================================
-    // 5. EDIT MODAL
+    // 8. EDIT MODAL
     // =========================================================================
 
-    function _openEditEconomyModal(placeId) {
+    function _openEditEconomyModal(placeId, onComplete) {
         var place = _getPlaceById(placeId);
         if (!place) {
             _showToast('Location not found', 'error');
             return;
         }
 
+        var status = _detectSettlementState();
+        if (!status.ok) {
+            _showToast(
+                'Settlement write path unavailable. Economy edits cannot ' +
+                'be saved on this build.',
+                'error'
+            );
+            return;
+        }
+
         var aggregated = _getAggregatedSettlementData(placeId);
-        var currentProsperity = aggregated.prosperity || 50;
-        var currentCrimeRate = aggregated.crimeRate || 0.1;
+        var currentProsperity = aggregated.prosperity || 0;
+        var currentCrimeRate = aggregated.crimeRate || 0;
         var currentJustice = aggregated.justiceSeverity || 'medium';
-        var currentWatch = aggregated.hasWatch || false;
+        var currentWatch = aggregated.hasWatch === true;
         var currentWatchSize = aggregated.watchSize || 0;
         var currentSalaryBudget = aggregated.governmentSalaryBudget || 0;
 
         var content = '<div class="eco-edit-form">';
 
-        // Warning about aggregated editing
-        content += '<div class="eco-edit-warning">';
-        content += '<p><strong>Note:</strong> Changes will apply to the entire settlement hierarchy (' + 
-                   _escapeHtml(place.displayName || place.name) + ' and all sub-locations).</p>';
-        content += '</div>';
+        content += '<div class="eco-edit-warning" ' +
+            'style="padding:10px;margin-bottom:12px;' +
+            'background:var(--warning-soft);' +
+            'border:1px solid var(--warning);border-radius:6px;' +
+            'font-size:0.6rem;">' +
+            '<p><strong>Aggregated edit.</strong> These values apply to ' +
+            'every location in the settlement hierarchy (' +
+            _escapeHtml(place.displayName || place.name) +
+            ' and all descendants).' +
+            '</p>' +
+            '<p>Stored via <code>SettlementState._updateSettlementData</code> — ' +
+            'a private method. There is no canonical command for these ' +
+            'fields yet.</p>' +
+            '</div>';
 
         // Prosperity
         content += '<div class="form-group">';
-        content += '<label for="eco-prosperity-input">Prosperity (0-100)</label>';
-        content += '<input type="range" id="eco-prosperity-input" class="form-range" min="0" max="100" value="' + Math.round(currentProsperity) + '">';
-        content += '<span id="eco-prosperity-display" class="eco-range-display">' + Math.round(currentProsperity) + '%</span>';
+        content += '<label for="eco-prosperity-input">' +
+            'Prosperity (0-100)</label>';
+        content += '<input type="range" id="eco-prosperity-input" ' +
+            'class="form-range" min="0" max="100" value="' +
+            Math.round(currentProsperity) + '">';
+        content += '<span id="eco-prosperity-display" ' +
+            'class="eco-range-display">' +
+            Math.round(currentProsperity) + '%</span>';
         content += '</div>';
 
-        // Crime Rate
+        // Crime
         content += '<div class="form-group">';
         content += '<label for="eco-crime-input">Crime Rate (0-100%)</label>';
-        content += '<input type="range" id="eco-crime-input" class="form-range" min="0" max="100" value="' + Math.round(currentCrimeRate * 100) + '">';
-        content += '<span id="eco-crime-display" class="eco-range-display">' + Math.round(currentCrimeRate * 100) + '%</span>';
+        content += '<input type="range" id="eco-crime-input" ' +
+            'class="form-range" min="0" max="100" value="' +
+            Math.round(currentCrimeRate * 100) + '">';
+        content += '<span id="eco-crime-display" ' +
+            'class="eco-range-display">' +
+            Math.round(currentCrimeRate * 100) + '%</span>';
         content += '</div>';
 
-        // Justice Severity
+        // Justice
         content += '<div class="form-group">';
         content += '<label for="eco-justice-select">Justice Severity</label>';
         content += '<select id="eco-justice-select" class="form-control">';
         var justiceOptions = ['lenient', 'medium', 'harsh', 'extreme'];
         var justiceLabels = ['Lenient', 'Medium', 'Harsh', 'Extreme'];
         for (var i = 0; i < justiceOptions.length; i++) {
-            var selected = (justiceOptions[i] === currentJustice) ? ' selected' : '';
-            content += '<option value="' + justiceOptions[i] + '"' + selected + '>' + justiceLabels[i] + '</option>';
+            var sel = (justiceOptions[i] === currentJustice) ? ' selected' : '';
+            content += '<option value="' + justiceOptions[i] + '"' +
+                sel + '>' + justiceLabels[i] + '</option>';
         }
         content += '</select>';
         content += '</div>';
@@ -584,94 +944,119 @@
         content += '<div class="form-group">';
         content += '<label>Watch</label>';
         content += '<div class="eco-watch-toggle">';
-        content += '<label><input type="radio" name="eco-watch" value="active"' + (currentWatch ? ' checked' : '') + '> Active</label>';
-        content += '<label><input type="radio" name="eco-watch" value="inactive"' + (!currentWatch ? ' checked' : '') + '> Inactive</label>';
+        content += '<label><input type="radio" name="eco-watch" ' +
+            'value="active"' + (currentWatch ? ' checked' : '') +
+            '> Active</label>';
+        content += '<label><input type="radio" name="eco-watch" ' +
+            'value="inactive"' + (!currentWatch ? ' checked' : '') +
+            '> Inactive</label>';
         content += '</div>';
         content += '</div>';
 
         content += '<div class="form-group">';
         content += '<label for="eco-watch-size-input">Watch Size (Total)</label>';
-        content += '<input type="number" id="eco-watch-size-input" class="form-control" min="0" max="1000" value="' + currentWatchSize + '">';
+        content += '<input type="number" id="eco-watch-size-input" ' +
+            'class="form-control" min="0" max="1000" value="' +
+            currentWatchSize + '">';
         content += '</div>';
 
-        // Salary Budget
+        // Salary
         content += '<div class="form-group">';
-        content += '<label for="eco-salary-input">Government Salary Budget (gold/year)</label>';
-        content += '<input type="number" id="eco-salary-input" class="form-control" min="0" step="10" value="' + Math.round(currentSalaryBudget) + '">';
+        content += '<label for="eco-salary-input">' +
+            'Government Salary Budget (gold/year)</label>';
+        content += '<input type="number" id="eco-salary-input" ' +
+            'class="form-control" min="0" step="10" value="' +
+            Math.round(currentSalaryBudget) + '">';
         content += '</div>';
 
         content += '</div>';
 
         _openModal({
-            title: 'Edit Economy for ' + (place.displayName || place.name) + ' Hierarchy',
+            title: 'Edit Economy for ' +
+                (place.displayName || place.name) + ' Hierarchy',
             content: content,
             confirmText: 'Save Changes',
             cancelText: 'Cancel',
-            onOpen: function() {
-                // Prosperity slider
-                var prosperitySlider = document.getElementById('eco-prosperity-input');
-                var prosperityDisplay = document.getElementById('eco-prosperity-display');
+            onMount: function(root) {
+                var prosperitySlider =
+                    root.querySelector('#eco-prosperity-input');
+                var prosperityDisplay =
+                    root.querySelector('#eco-prosperity-display');
                 if (prosperitySlider && prosperityDisplay) {
                     prosperitySlider.addEventListener('input', function() {
                         prosperityDisplay.textContent = this.value + '%';
                     });
                 }
 
-                // Crime slider
-                var crimeSlider = document.getElementById('eco-crime-input');
-                var crimeDisplay = document.getElementById('eco-crime-display');
+                var crimeSlider = root.querySelector('#eco-crime-input');
+                var crimeDisplay = root.querySelector('#eco-crime-display');
                 if (crimeSlider && crimeDisplay) {
                     crimeSlider.addEventListener('input', function() {
                         crimeDisplay.textContent = this.value + '%';
                     });
                 }
 
-                // Watch toggle
-                var watchRadios = document.querySelectorAll('input[name="eco-watch"]');
-                var watchSizeInput = document.getElementById('eco-watch-size-input');
-                if (watchRadios && watchSizeInput) {
-                    function updateWatchSize() {
-                        var active = document.querySelector('input[name="eco-watch"]:checked');
+                var watchRadios =
+                    root.querySelectorAll('input[name="eco-watch"]');
+                var watchSizeInput =
+                    root.querySelector('#eco-watch-size-input');
+                if (watchRadios.length > 0 && watchSizeInput) {
+                    var updateWatchSize = function() {
+                        var active = root.querySelector(
+                            'input[name="eco-watch"]:checked'
+                        );
                         if (active && active.value === 'active') {
                             watchSizeInput.disabled = false;
-                            if (parseInt(watchSizeInput.value) < 1) {
+                            if (parseInt(watchSizeInput.value, 10) < 1) {
                                 watchSizeInput.value = 1;
                             }
                         } else {
                             watchSizeInput.disabled = true;
                             watchSizeInput.value = 0;
                         }
-                    }
+                    };
                     for (var r = 0; r < watchRadios.length; r++) {
                         watchRadios[r].addEventListener('change', updateWatchSize);
                     }
                     updateWatchSize();
                 }
             },
-            onConfirm: function() {
-                var prosperitySlider = document.getElementById('eco-prosperity-input');
-                var crimeSlider = document.getElementById('eco-crime-input');
-                var justiceSelect = document.getElementById('eco-justice-select');
-                var watchActive = document.querySelector('input[name="eco-watch"]:checked');
-                var watchSizeInput = document.getElementById('eco-watch-size-input');
-                var salaryInput = document.getElementById('eco-salary-input');
+            onConfirm: function(root) {
+                var prosperitySlider =
+                    root.querySelector('#eco-prosperity-input');
+                var crimeSlider = root.querySelector('#eco-crime-input');
+                var justiceSelect = root.querySelector('#eco-justice-select');
+                var watchActiveEl =
+                    root.querySelector('input[name="eco-watch"]:checked');
+                var watchSizeEl = root.querySelector('#eco-watch-size-input');
+                var salaryEl = root.querySelector('#eco-salary-input');
 
-                var prosperity = prosperitySlider ? parseInt(prosperitySlider.value) : 50;
-                var crimeRate = crimeSlider ? parseInt(crimeSlider.value) / 100 : 0.1;
-                var justice = justiceSelect ? justiceSelect.value : 'medium';
-                var hasWatch = watchActive ? watchActive.value === 'active' : false;
-                var watchSize = watchSizeInput ? parseInt(watchSizeInput.value) || 0 : 0;
-                var salaryBudget = salaryInput ? parseInt(salaryInput.value) || 0 : 0;
+                if (!prosperitySlider || !crimeSlider || !justiceSelect) {
+                    _showToast('Form not found in modal', 'error');
+                    return false;
+                }
+
+                var prosperity = parseInt(prosperitySlider.value, 10);
+                var crimeRate = parseInt(crimeSlider.value, 10) / 100;
+                var justice = justiceSelect.value || 'medium';
+                var hasWatch = watchActiveEl
+                    ? watchActiveEl.value === 'active'
+                    : false;
+                var watchSize = watchSizeEl
+                    ? (parseInt(watchSizeEl.value, 10) || 0)
+                    : 0;
+                var salaryBudget = salaryEl
+                    ? (parseInt(salaryEl.value, 10) || 0)
+                    : 0;
 
                 if (hasWatch && watchSize < 1) {
                     _showToast('Watch size must be at least 1', 'error');
-                    return;
+                    return false;
                 }
 
-                // Apply to ALL locations in the hierarchy
                 var placeIds = _getAllDescendantPlaceIds(placeId);
                 var successCount = 0;
-                var errorCount = 0;
+                var failureReasons = [];
 
                 for (var i = 0; i < placeIds.length; i++) {
                     var updates = {
@@ -684,45 +1069,60 @@
                         lastUpdated: _getCurrentYear()
                     };
 
-                    var result = _updateSettlementData(placeIds[i], updates);
-                    if (result) {
+                    var write = _writeSettlementData(placeIds[i], updates);
+                    if (write.ok) {
                         successCount++;
                     } else {
-                        errorCount++;
+                        if (failureReasons.length < 3) {
+                            failureReasons.push(write.reason);
+                        }
                     }
                 }
 
-                _saveMasterData();
+                if (successCount === 0) {
+                    _showToast(
+                        'Failed to update economy. ' +
+                        (failureReasons[0] || 'settlement write unavailable'),
+                        'error'
+                    );
+                    return false;
+                }
 
-                // Invalidate caches
+                if (typeof window.saveMasterData === 'function') {
+                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
+                }
                 if (typeof window.invalidateAccessorCaches === 'function') {
-                    window.invalidateAccessorCaches();
-                }
-                if (typeof window.SettlementState !== 'undefined' && 
-                    typeof window.SettlementState.invalidateCache === 'function') {
-                    window.SettlementState.invalidateCache();
+                    try { window.invalidateAccessorCaches(); } catch (e) { /* ignore */ }
                 }
 
-                _showToast('Economy updated for ' + successCount + ' locations in ' + 
-                          (place.displayName || place.name) + ' hierarchy', 'success');
-
-                // Refresh the tab
-                if (typeof window.refreshEconomyDetailsTab === 'function') {
-                    window.refreshEconomyDetailsTab(placeId);
+                var failedCount = placeIds.length - successCount;
+                if (failedCount > 0) {
+                    _showToast(
+                        'Economy updated for ' + successCount + ' of ' +
+                        placeIds.length + ' location(s). ' +
+                        failedCount + ' failed. (Local only.)',
+                        'warning'
+                    );
+                } else {
+                    _showToast(
+                        'Economy updated for ' + successCount +
+                        ' location(s) in ' +
+                        (place.displayName || place.name) +
+                        ' hierarchy. (Local only.)',
+                        'warning'
+                    );
                 }
+
+                if (typeof onComplete === 'function') onComplete();
+                return true;
             }
         });
     }
 
     // =========================================================================
-    // 6. MAIN EXPORTED FUNCTIONS
+    // 9. MAIN RENDER
     // =========================================================================
 
-    /**
-     * Renders the economy details tab for a specific location (aggregates all descendants)
-     * @param {string} containerId - The ID of the container element
-     * @param {string} locationId - The ID of the location to display
-     */
     function renderEconomyDetailsTab(containerId, locationId) {
         var container = document.getElementById(containerId);
         if (!container) {
@@ -734,67 +1134,65 @@
         container.innerHTML = _renderEconomyDetails(place);
         container.dataset.locationId = locationId || '';
 
-        // Set up event listeners
-        var editBtn = container.querySelector('[data-action="edit-economy"]');
-        if (editBtn) {
-            editBtn.addEventListener('click', function() {
-                var currentLocationId = container.dataset.locationId;
-                if (currentLocationId) {
-                    _openEditEconomyModal(currentLocationId);
-                } else {
-                    _showToast('No location selected', 'warning');
-                }
-            });
-        }
+        if (!container._ecoBound) {
+            container._ecoBound = true;
 
-        var refreshBtn = container.querySelector('[data-action="refresh-economy"]');
-        if (refreshBtn) {
-            refreshBtn.addEventListener('click', function() {
+            container.addEventListener('click', function(e) {
+                var target = e.target.closest('[data-action]');
+                if (!target) return;
+
+                var action = target.dataset.action;
                 var currentLocationId = container.dataset.locationId;
-                if (currentLocationId) {
+                var refresh = function() {
                     renderEconomyDetailsTab(containerId, currentLocationId);
-                    _showToast('Economy data refreshed', 'info');
+                };
+
+                switch (action) {
+                    case 'edit-economy':
+                        if (currentLocationId) {
+                            _openEditEconomyModal(currentLocationId, refresh);
+                        } else {
+                            _showToast('No location selected', 'warning');
+                        }
+                        break;
+
+                    case 'refresh-economy':
+                        if (currentLocationId) {
+                            renderEconomyDetailsTab(containerId, currentLocationId);
+                            _showToast('Economy data refreshed', 'info');
+                        }
+                        break;
                 }
             });
         }
     }
 
-    /**
-     * Refreshes the economy details tab
-     * @param {string} locationId - The ID of the location to display
-     */
-    function refreshEconomyDetailsTab(locationId) {
-        var container = document.querySelector('.eco-details-tab-container');
+    function refreshEconomyDetailsTab(locationId, containerId) {
+        var id = containerId || 'economy-details-tab';
+        var container = document.getElementById(id);
         if (!container) {
-            var containers = document.querySelectorAll('.eco-details-tab-container, #economy-details-tab');
-            if (containers.length > 0) {
-                container = containers[0];
-            }
+            var candidates = document.querySelectorAll(
+                '.eco-details-tab-container, #economy-details-tab'
+            );
+            if (candidates.length === 0) return;
+            container = candidates[0];
+            id = container.id || id;
         }
-        if (container) {
-            renderEconomyDetailsTab(container.id || 'economy-details-tab', locationId);
-        }
+        renderEconomyDetailsTab(id, locationId);
     }
 
-    /**
-     * Gets the settlement hierarchy for a location
-     * @param {string} locationId - The ID of the location
-     * @returns {Array} Array of place IDs in the hierarchy
-     */
     function getSettlementHierarchy(locationId) {
         return _getAllDescendantPlaceIds(locationId);
     }
 
-    /**
-     * Opens the edit economy modal programmatically
-     * @param {string} locationId - The ID of the location to edit
-     */
     function editEconomyForLocation(locationId) {
-        _openEditEconomyModal(locationId);
+        _openEditEconomyModal(locationId, function() {
+            refreshEconomyDetailsTab(locationId);
+        });
     }
 
     // =========================================================================
-    // 7. EXPORTS
+    // 10. EXPORTS
     // =========================================================================
 
     window.EconomyDetailsTab = {
@@ -802,6 +1200,7 @@
         refresh: refreshEconomyDetailsTab,
         edit: editEconomyForLocation,
         getHierarchy: getSettlementHierarchy,
+        getIntegrationStatus: _getIntegrationStatus,
         _renderDetails: _renderEconomyDetails,
         _openEditModal: _openEditEconomyModal,
         _getPopulation: _getSettlementPopulationForHierarchy,
@@ -810,7 +1209,6 @@
         _getDescendantIds: _getAllDescendantPlaceIds
     };
 
-    // Legacy aliases
     window.renderEconomyDetailsTab = renderEconomyDetailsTab;
     window.refreshEconomyDetailsTab = refreshEconomyDetailsTab;
 
