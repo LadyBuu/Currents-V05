@@ -160,6 +160,34 @@
  *   user-visible outcome (the place is being deleted regardless; the
  *   caller already treats failed > 0 as "surface the failure").
  *
+ * CROSS-DOMAIN LEADER CLEANUP (NEW):
+ *   When a character dies, the character-lifecycle death dispatch
+ *   (family, relationship, rank) does NOT naturally reach into the
+ *   location domain. Prior to this revision, a deceased leader
+ *   remained isActive: true in place.leaderAssignments until a
+ *   subsequent assignLeader (which ends the old active assignment) or
+ *   endLeaderTerm (which ends it explicitly) was called by another
+ *   flow. Every consumer that reads LocationQueries.getCurrentLeader
+ *   saw the dead character as the current leader.
+ *
+ *   This module now:
+ *     1. Exposes LocationCommands.handleCharacterDeath(characterId, year)
+ *        that ends every active leader assignment held by the
+ *        character, across every place, in one commit.
+ *     2. Registers itself at load via window.registerDeathHandler (the
+ *        hook exposed by character-lifecycle.js) so the death dispatch
+ *        calls handleCharacterDeath automatically.
+ *
+ *   The registration is additive: if the caller ALSO wires the dispatch
+ *   explicitly (e.g. by calling LocationCommands.handleCharacterDeath
+ *   from their own death handler), the second call is idempotent — a
+ *   leader assignment that is already isActive: false is skipped.
+ *
+ *   Under the documented load order, character-lifecycle.js loads
+ *   before this file, so window.registerDeathHandler is present. If a
+ *   future load order changes, the registration is skipped with a
+ *   debug log and the caller must wire handleCharacterDeath manually.
+ *
  * RESULT ENVELOPE `success` FIELD:
  *   _ok() always returns { success: true, ...payload }, and it REFUSES
  *   to let the payload shadow the `success` guard. This is not
@@ -176,7 +204,19 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (B1):
+ *   Current revision:
+ *     - Added LocationCommands.handleCharacterDeath(characterId, year).
+ *       Ends every active leader assignment held by the character,
+ *       across every place, in one commit. Returns the list of
+ *       affected place ids.
+ *     - Added load-time registration via window.registerDeathHandler
+ *       (from character-lifecycle.js) so the death dispatch calls
+ *       handleCharacterDeath automatically. See CROSS-DOMAIN LEADER
+ *       CLEANUP in the module header.
+ *     - Header CROSS-DOMAIN LEADER CLEANUP section added.
+ *     - No behavioural change to any existing command. No public
+ *       signature change.
+ *   Previous revision (B1):
  *     - _cleanupCharactersAtPlaces now resolves each character's
  *       current location via World.getCurrentLocationId (semantic),
  *       with CharacterQueries.getCurrentLocationId as a raw-field
@@ -1406,6 +1446,81 @@
         });
     }
 
+    /**
+     * Ends every active leader assignment held by the character, across
+     * every place, in one commit.
+     *
+     * This is the death-dispatch hook. See CROSS-DOMAIN LEADER CLEANUP
+     * in the module header.
+     *
+     * @param {string} characterId
+     * @param {number} year  The end year for every ended assignment.
+     *                       Missing/invalid uses getCurrentYear().
+     * @returns { success, affectedPlaceIds, unchanged? }
+     */
+    function handleCharacterDeath(characterId, year) {
+        if (!_validId(characterId)) {
+            return _fail('handleCharacterDeath: characterId is required.');
+        }
+
+        var endYear = (typeof year === 'number' && Number.isFinite(year))
+            ? year
+            : window.getCurrentYear();
+
+        var placeIds = LS.getAllPlaceIds();
+        var affectedPlaceIds = [];
+
+        for (var i = 0; i < placeIds.length; i++) {
+            var place = LS._getPlaceCanonical(placeIds[i]);
+            if (!place) continue;
+            if (!Array.isArray(place.leaderAssignments)) continue;
+
+            var changed = false;
+            for (var j = 0; j < place.leaderAssignments.length; j++) {
+                var a = place.leaderAssignments[j];
+                if (!a) continue;
+                if (a.characterId !== characterId) continue;
+                if (a.isActive !== true) continue;
+                if (a.endYear !== null && a.endYear !== undefined) continue;
+
+                a.isActive = false;
+                a.endYear = endYear;
+                changed = true;
+            }
+
+            if (changed) {
+                // If the place's leaderId pointer references this
+                // character, clear it so getCurrentLeader's fast-path
+                // (via place.leaderId, if any consumer reads it) does
+                // not return a stale pointer.
+                if (place.leaderId === characterId) {
+                    place.leaderId = null;
+                }
+                place.updatedAt = Date.now();
+                affectedPlaceIds.push(place.id);
+            }
+        }
+
+        if (affectedPlaceIds.length === 0) {
+            return _ok({
+                affectedPlaceIds: [],
+                unchanged: true
+            });
+        }
+
+        window.markDataDirty();
+        _commit('leaderTermEndedByDeath', {
+            characterId: characterId,
+            endYear: endYear,
+            placeIds: affectedPlaceIds
+        });
+
+        return _ok({
+            affectedPlaceIds: affectedPlaceIds,
+            unchanged: false
+        });
+    }
+
     function updatePlaceCulture(placeId, cultureId) {
         if (!_validId(placeId)) {
             return _fail('updatePlaceCulture: placeId is required');
@@ -1466,8 +1581,49 @@
         assignGovernment: assignGovernment,
         assignLeader: assignLeader,
         endLeaderTerm: endLeaderTerm,
-        updatePlaceCulture: updatePlaceCulture
+        updatePlaceCulture: updatePlaceCulture,
+
+        // Cross-domain death hook. Registered via registerDeathHandler
+        // below. See CROSS-DOMAIN LEADER CLEANUP in the module header.
+        handleCharacterDeath: handleCharacterDeath
     };
+
+    // =========================================================================
+    // 14. DEATH HANDLER REGISTRATION
+    // =========================================================================
+    //
+    // Register handleCharacterDeath with character-lifecycle.js's death
+    // dispatch. Under the documented load order, character-lifecycle.js
+    // loads before this file, so registerDeathHandler is available.
+    //
+    // If a future load order changes, the registration is skipped with
+    // a debug log and callers must wire handleCharacterDeath manually.
+    //
+    // Idempotent: if a caller also wires handleCharacterDeath from its
+    // own death handler, the second call is a no-op (see the
+    // "if (a.isActive !== true) continue" guard inside the function).
+
+    if (typeof window.registerDeathHandler === 'function') {
+        try {
+            window.registerDeathHandler(function (characterId, info) {
+                var year = info && typeof info.deathYear === 'number'
+                    ? info.deathYear
+                    : null;
+                handleCharacterDeath(characterId, year);
+            });
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'location-commands: failed to register death handler:', e
+                );
+            }
+        }
+    } else if (typeof console !== 'undefined' && console.debug) {
+        console.debug(
+            'location-commands: window.registerDeathHandler not available; ' +
+            'LocationCommands.handleCharacterDeath must be wired by the caller.'
+        );
+    }
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.LocationCommands;
