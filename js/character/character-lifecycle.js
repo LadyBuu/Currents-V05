@@ -20,7 +20,9 @@
  *       - relationship consequences via
  *         RelationshipIntegrations.handleCharacterDeath
  *       - rank consequences via RankIssues.handleCharacterDeath
- *       - any registered death handler (see DEATH HANDLER HOOK)
+ *       - location leader-term cleanup via LocationCommands.handleCharacterDeath
+ *         (registered by location-commands.js via registerDeathHandler)
+ *       - any other registered death handler (see DEATH HANDLER HOOK)
  *   - Orchestrate the settlement annual processing step (see
  *     SETTLEMENT ANNUAL PROCESSING below)
  *   - Life stage classification
@@ -39,6 +41,9 @@
  *   - Succession / inheritance         -> future succession domain
  *   - Relationship termination logic   -> relationship-integration.js
  *   - Rank deprecation logic           -> rank-issues.js
+ *   - Location leader-term cleanup     -> location-commands.js
+ *                                         (LocationCommands.handleCharacterDeath,
+ *                                          registered via registerDeathHandler)
  *   - Settlement financial effects     -> settlement-annual-processor.js
  *   - CURRENT YEAR OWNERSHIP           -> time.js (getCurrentYear)
  *   - CLOCK ADVANCEMENT                -> the caller (see CLOCK below)
@@ -142,11 +147,41 @@
  *   called from both _die (simulation path) and killCharacter (command
  *   path). This ensures the two paths cannot drift.
  *
+ *   LEADER-TERM CLEANUP:
+ *     The location domain's leader assignments are stored on place
+ *     records (place.leaderAssignments). A character who is an active
+ *     leader in one or more places must have those assignments ended
+ *     when they die; otherwise LocationQueries.getCurrentLeader
+ *     returns the dead character as the settlement's current leader
+ *     indefinitely, and downstream consumers (settlement prosperity,
+ *     settlement leader-modifier, UI leader displays) read stale data.
+ *
+ *     This module does NOT call LocationCommands.handleCharacterDeath
+ *     directly. Instead, location-commands.js registers itself via
+ *     window.registerDeathHandler at load (see CROSS-DOMAIN LEADER
+ *     CLEANUP in location-commands.js), and _invokeDeathHandlers
+ *     (below) fires it alongside every other registered handler.
+ *
+ *     This keeps the character-lifecycle module free of a hard
+ *     load-time dependency on location-commands.js and preserves the
+ *     "optional cross-domain cleanup" contract: if
+ *     location-commands.js is not loaded, leader-term cleanup is
+ *     skipped, and the character domain still functions normally.
+ *     Under the documented load order, location-commands.js loads
+ *     before character-lifecycle.js's auto-bootstrap runs, so the
+ *     registration is present when deaths occur.
+ *
+ *     See CROSS-DOMAIN LEADER CLEANUP in location-commands.js for the
+ *     other side of this contract.
+ *
  * DEATH HANDLER HOOK (Phase 3.13):
  *   The named dispatch above only reaches the domains that load
  *   before this file. Under the documented load order, that means
  *   FamilyCommands and RankIssues, but NOT RelationshipIntegrations
- *   (which loads after character-lifecycle.js).
+ *   (which loads after character-lifecycle.js) and NOT
+ *   LocationCommands (which registers via the hook rather than via
+ *   the named dispatch, because the location domain prefers the
+ *   registration path).
  *
  *   To close that gap, this module exposes registerDeathHandler(fn).
  *   Any module that loads after character-lifecycle.js may register a
@@ -156,6 +191,8 @@
  *
  *   RelationshipIntegrations registers itself at load time (see
  *   relationship-integrations.js's REGISTRATION HOOKS section).
+ *   LocationCommands registers itself at load time (see
+ *   location-commands.js's DEATH HANDLER REGISTRATION section).
  *
  *   Handler contract:
  *     fn(characterId, { deathYear }) -> any
@@ -167,7 +204,9 @@
  *   domain that registers via the hook AND is present in the named
  *   dispatch (e.g. a hypothetical future state where the load order
  *   changes) will be called twice. That is safe because the command
- *   layer is idempotent per character id.
+ *   layer is idempotent per character id (see
+ *   LocationCommands.handleCharacterDeath's isActive guard, for
+ *   example).
  *
  *   Registration returns an unregister function. Callers who need to
  *   tear down (test harnesses, hot reload) should call it. In a
@@ -225,6 +264,8 @@
  *   - relationships/relationship-integration.js:
  *                                       RelationshipIntegrations.handleCharacterDeath
  *   - ranks/rank-issues.js:            RankIssues.handleCharacterDeath
+ *   - location/location-commands.js:   LocationCommands.handleCharacterDeath
+ *                                      (registered via registerDeathHandler)
  *   - event-log.js:                    logEvent
  *   - settlement-annual-processor.js:  processAllSettlementsAnnual
  *                                      (see SETTLEMENT ANNUAL PROCESSING)
@@ -234,6 +275,23 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - Header CROSS-DOMAIN DEATH DISPATCH gains a LEADER-TERM CLEANUP
+ *       subsection. Documents that location-commands.js registers
+ *       LocationCommands.handleCharacterDeath via registerDeathHandler
+ *       at load, that _invokeDeathHandlers fires it alongside every
+ *       other registered handler, and that this module does NOT call
+ *       LocationCommands.handleCharacterDeath directly (which would
+ *       introduce a load-time dependency the character domain does
+ *       not need).
+ *     - SCOPE and OUT OF SCOPE updated to name the leader-term cleanup
+ *       and its owner.
+ *     - Header DEATH HANDLER HOOK updated to name location-commands.js
+ *       as one of the modules that registers a handler.
+ *     - No behavioural change. No code changes. Header documentation
+ *       only. The registration path already exists — location-commands.js
+ *       now opts into it — and the handler fires through the existing
+ *       _invokeDeathHandlers call.
+ *   Previous revision:
  *     - advanceMortality now runs the settlement domain's annual
  *       financial effects once per simulated year, via
  *       SettlementAnnualProcessor.processAllSettlementsAnnual({ year }).
@@ -492,6 +550,12 @@
     //   first. The Phase 3.13 registerDeathHandler hook is the
     //   load-order-independent path; relationship-integrations.js
     //   registers itself there.
+    //
+    //   LocationCommands.handleCharacterDeath is NOT in the named
+    //   dispatch below. location-commands.js registers itself via
+    //   registerDeathHandler at load. See LEADER-TERM CLEANUP in the
+    //   module header for the rationale (no load-time dependency from
+    //   character-lifecycle to location-commands).
 
     function _notifyCrossDomainDeath(characterId, year) {
         if (!_hasId(characterId)) return;
@@ -558,6 +622,11 @@
                 }
             }
         }
+
+        // LocationCommands.handleCharacterDeath is NOT dispatched here.
+        // It is registered by location-commands.js via
+        // registerDeathHandler and runs via _invokeDeathHandlers below.
+        // See LEADER-TERM CLEANUP in the module header.
     }
 
     /**
@@ -590,8 +659,10 @@
 
         // Phase 3.13: invoke registered handlers. These reach the
         // domains that load after this file (notably the relationship
-        // domain) via the registration hook. The named dispatch above
-        // reaches the domains that load before it.
+        // domain) and the domains that prefer the registration hook
+        // (notably LocationCommands.handleCharacterDeath) via the
+        // registration hook. The named dispatch above reaches the
+        // domains that load before it.
         _invokeDeathHandlers(character.id, year);
     }
 
@@ -1136,7 +1207,8 @@
      *   - passes the death year as referenceYear (so simulation-driven
      *     deaths from children-commands work correctly),
      *   - dispatches cross-domain consequences (family + relationship
-     *     + rank + registered handlers),
+     *     + rank + registered handlers, including the location domain's
+     *     leader-term cleanup registered by location-commands.js),
      *   - logs the death event.
      *
      * THROW CONTRACT:
@@ -1375,10 +1447,10 @@
 
     // Phase 3.13: expose registerDeathHandler on window so that
     // modules that load after this file (notably
-    // relationship-integrations.js) can register without assuming the
-    // CharacterLifecycle namespace is populated. Both paths are
-    // equivalent; the window global is the one the relationship
-    // integration's registration block checks for.
+    // relationship-integrations.js and location-commands.js) can
+    // register without assuming the CharacterLifecycle namespace is
+    // populated. Both paths are equivalent; the window global is the
+    // one the registration blocks check for.
     window.registerDeathHandler = registerDeathHandler;
 
     if (typeof module !== 'undefined' && module.exports) {
