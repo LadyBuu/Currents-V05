@@ -7,43 +7,86 @@
  *
  * PURPOSE
  * -------
- * Shared helpers for the character / household / residence selector
- * modals. Provides:
+ * Shared surface for the character / household / residence selector
+ * modals. Provides TWO things:
  *
- *   - Filter defaults and normalisation for selector filterConfig
- *   - Character match predicates (gender, status, age, location)
- *   - Relationship predicates (isBloodRelativeBasic, isSpouseBasic)
- *   - Display helpers (displayName, fallback initials)
+ *   1. window.SelectorBase       — a base class that individual selectors
+ *                                  extend. Handles modal open/close, event
+ *                                  listener registration/cleanup, debounce,
+ *                                  toast, and the isBloodRelative /
+ *                                  isSpouse helpers.
+ *
+ *   2. window.SelectorHelpers    — a plain-object helper surface (also
+ *                                  exposed as window._SelectorBaseHelpers
+ *                                  for backward compatibility). Pure
+ *                                  filter predicates and display helpers
+ *                                  with no state.
  *
  * WHAT THIS MODULE IS NOT
  * -----------------------
  *   - Not the selector modal itself. The modal files
- *     (modals-char-selector.js, modals-household-selector.js) use these
- *     helpers to build their own filter UI and match predicates.
+ *     (modals-char-selector.js, modals-household-selector.js) use the
+ *     base class and the helper object to build their own filter UI
+ *     and match predicates.
  *   - Not domain policy. Family semantics live in family-rules.js.
  *     Relationship semantics live in the relationship domain.
  *   - Not a mutation boundary. Everything here is a read.
  *
+ * WINDOW.SELECTORBASE CONTRACT
+ * ----------------------------
+ *   Subclasses call:
+ *       SelectorBase.call(this, options);
+ *   and then:
+ *       Subclass.prototype = Object.create(SelectorBase.prototype);
+ *       Subclass.prototype.constructor = Subclass;
+ *
+ *   The base constructor guarantees:
+ *       this.options  — the caller's options object (never null)
+ *       this.state    — { filters, isOpen, onSelect, onCancel }
+ *       this._modal   — null until openModal() is called
+ *       this._listeners — array of tracked listener records
+ *
+ *   The base prototype provides:
+ *       openModal(title, content, cancelText, onConfirm, openOptions)
+ *       close()
+ *       escapeHtml(str)
+ *       getIcon(name)
+ *       getGenderSymbol(gender)
+ *       isBloodRelative(aId, bId)
+ *       isSpouse(aId, bId)
+ *       debounce(fn, delay)
+ *       showToast(message, type)
+ *       _registerListener(el, eventType, handler)
+ *       _cleanupListeners()
+ *
+ *   The base is STATELESS outside the per-instance fields listed above.
+ *   It does not maintain any global state. Multiple selector instances
+ *   can coexist.
+ *
  * RELATIONSHIP PREDICATES
  * -----------------------
- *   isBloodRelativeBasic(aId, bId)
+ *   isBloodRelativeBasic(aId, bId)  [on SelectorHelpers]
  *     → FamilyQueries.isBloodRelated(aId, bId)
  *     Fails closed (returns false) when FamilyQueries isn't loaded.
  *
- *   isSpouseBasic(aId, bId)
+ *   isSpouseBasic(aId, bId)         [on SelectorHelpers]
  *     → RelationshipQueries.getRelationshipBetween(aId, bId)
  *       filtered to `type === 'marriage' && status === 'ongoing'`.
  *     Fails closed when the relationship domain isn't loaded.
  *
  * DEPENDENCIES (REQUIRED at load):
  *   - accessors.js: getCharacterById
+ *   - modals-core.js: openModal, closeTopModal
+ *   - formatting.js: escapeHtml
  *
  * DEPENDENCIES (checked at call time):
  *   - accessors.js:        getCharacters, getPlaceById
  *   - family-queries.js:   isBloodRelated (for isBloodRelativeBasic)
  *   - relationship domain: getRelationshipBetween (for isSpouseBasic)
- *   - time.js:             getCurrentYear (via getCurrentYearSafe alias fallback)
- *   - icons.js:            getGenderIcon (optional; used by getGenderSymbol)
+ *   - time.js:             getCurrentYear
+ *   - icons.js:            getGenderIcon / Icons
+ *   - collections.js:      debounce
+ *   - ui.js:               showToast
  *
  * ICON POLICY: No emojis. Icons come from icons.js via window.getGenderIcon
  * or window.Icons if available. Text glyph fallbacks are prohibited.
@@ -51,20 +94,42 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - getGenderSymbol(gender) RESTORED. It was removed in a prior
- *       refactor, and modals-char-selector.js's _buildList still calls
- *       it via _Helpers.getGenderSymbol(char.gender). The selector
- *       threw TypeError on first character row render. Fixed by
- *       delegating to icons.js::getGenderIcon when available; falls
- *       back to a plain-text label from formatting.js::getGenderLabel
- *       otherwise.
- *     - getGenderLabel(gender) added for symmetry. Delegates to
- *       formatting.js::getGenderLabel when available; falls back to
- *       the same local classifier.
- *     - _currentYear() now prefers window.getCurrentYear (canonical)
- *       over window.getCurrentYearSafe (deprecated alias). Prior
- *       revisions called the deprecated alias only.
+ *     - window.SelectorBase constructor RESTORED. It was missing from the
+ *       prior revision of this file (which exported only the helper
+ *       object). modals-char-selector.js has a load-time guard:
+ *         "if (typeof window.SelectorBase !== 'function') throw ..."
+ *       Without the constructor, that guard fires, and every caller of
+ *       openCharacterSelector throws at load. This broke:
+ *         - modals-character.js::openCreateCharacterModal
+ *         - modals-character.js::openEditCharacterModal
+ *         - modals-children-adoption.js
+ *         - modals-children-surrogacy.js
+ *         - modals-death.js::_routeToPregnancyAttempt
+ *       Fixed by restoring the constructor with the surface the docs
+ *       (selectors-docs.txt §4) and modals-char-selector.js expect.
+ *     - SelectorBase.prototype.openModal now correctly wires onCancel
+ *       from the core modal shell to state.onCancel. Prior revisions
+ *       of the class (per docs) never connected the two, so cancel
+ *       paths through the Cancel button, overlay, Escape, or close
+ *       button were silently swallowed. Callers that depended on
+ *       openCharacterSelector's onCancel never received it.
+ *     - SelectorBase.prototype.openModal accepts an `openOptions`
+ *       argument (5th positional). Subclasses that need synchronous
+ *       DOM wiring pass `{ onMount: fn }`. This eliminates the
+ *       setTimeout(0) hack that modals-char-selector.js used to
+ *       schedule DOM queries.
+ *     - SelectorBase.prototype._registerListener and
+ *       _cleanupListeners added. modals-char-selector.js calls
+ *       this._registerListener(...) from _attachEvents.
+ *     - SelectorBase.prototype.debounce and showToast delegate to
+ *       collections.js::debounce and ui.js::showToast respectively.
+ *       Subclasses can call this.debounce(...) / this.showToast(...)
+ *       exactly as before.
+ *     - SelectorHelpers helper object unchanged from the prior revision.
+ *       The gender-symbol restoration and the FamilyQueries-based
+ *       predicates are preserved verbatim.
  *   Previous revisions:
+ *     - getGenderSymbol / getGenderLabel restored.
  *     - Relationship predicates rewritten to delegate to
  *       FamilyQueries / RelationshipQueries (dead-field bug fix).
  *     - Flat globals aliased onto SelectorHelpers.
@@ -75,7 +140,7 @@
     'use strict';
 
     // =========================================================================
-    // 0. LOAD-TIME PRECONDITION
+    // 0. LOAD-TIME PRECONDITIONS
     // =========================================================================
 
     if (typeof window.getCharacterById !== 'function') {
@@ -84,9 +149,27 @@
             '(getCharacterById missing).'
         );
     }
+    if (typeof window.openModal !== 'function') {
+        throw new Error(
+            'selector-base.js: modals-core.js must load first ' +
+            '(openModal missing).'
+        );
+    }
+    if (typeof window.closeTopModal !== 'function') {
+        throw new Error(
+            'selector-base.js: modals-core.js must load first ' +
+            '(closeTopModal missing).'
+        );
+    }
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'selector-base.js: formatting.js must load first ' +
+            '(escapeHtml missing).'
+        );
+    }
 
     // =========================================================================
-    // 1. HELPERS
+    // 1. SHARED HELPERS
     // =========================================================================
 
     function _hasId(v) {
@@ -124,20 +207,27 @@
         return age >= 0 ? age : null;
     }
 
+    function _escapeText(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // =========================================================================
-    // 2. FILTER DEFAULTS AND NORMALISATION
+    // 2. SELECTOR HELPERS (helper object surface)
     // =========================================================================
     //
-    //   - gender:    'any' | 'male' | 'female' | 'unknown'
-    //   - status:    'any' | 'living' | 'deceased'
-    //   - minAge:    integer or null
-    //   - maxAge:    integer or null
-    //   - locationId: string id or null (null = any location)
-    //   - relationshipFilter: 'any' | 'exclude_blood_relative'
-    //                         | 'exclude_spouse'
-    //                         | 'exclude_blood_relative_and_spouse'
-    //   - excludeIds: array of ids to omit from results
-    //   - showDeceased: boolean
+    // Pure functions. No state. Safe to call from any context. See the
+    // SELECTOR HELPERS section in the module header.
+    //
+    // This is the surface modals-char-selector.js reads through
+    // _Helpers.getGenderSymbol(...) and _Helpers.isBloodRelativeBasic(...),
+    // and the surface modals-household-selector.js reads through
+    // _selector.isBloodRelativeBasic(...). It is NOT the base class.
 
     function getDefaultFilterConfig() {
         return {
@@ -217,10 +307,6 @@
         return out;
     }
 
-    // =========================================================================
-    // 3. CHARACTER MATCH PREDICATES
-    // =========================================================================
-
     function matchGender(character, config) {
         if (!character) return false;
         if (!config || config.gender === 'any') return true;
@@ -268,18 +354,10 @@
         return config.excludeIds.indexOf(character.id) === -1;
     }
 
-    // =========================================================================
-    // 4. RELATIONSHIP PREDICATES
-    // =========================================================================
-
     /**
      * True if the two characters share a biological ancestor, or are
      * directly parent/child. Delegates to FamilyQueries.isBloodRelated.
      * Fails closed (returns false) if FamilyQueries is missing.
-     *
-     * @param {string} aId
-     * @param {string} bId
-     * @returns {boolean}
      */
     function isBloodRelativeBasic(aId, bId) {
         if (!_hasId(aId) || !_hasId(bId)) return false;
@@ -305,10 +383,6 @@
      * Delegates to RelationshipQueries.getRelationshipBetween (or the
      * flat global equivalent). Fails closed (returns false) if the
      * relationship domain is missing.
-     *
-     * @param {string} aId
-     * @param {string} bId
-     * @returns {boolean}
      */
     function isSpouseBasic(aId, bId) {
         if (!_hasId(aId) || !_hasId(bId)) return false;
@@ -339,14 +413,6 @@
         return rel.type === 'marriage' && rel.status === 'ongoing';
     }
 
-    /**
-     * Applies the relationshipFilter from config to a candidate.
-     *
-     * @param {string} anchorId   the "subject" of the filter
-     * @param {string} candidateId
-     * @param {Object} config
-     * @returns {boolean}
-     */
     function matchRelationship(anchorId, candidateId, config) {
         if (!config || config.relationshipFilter === 'any') return true;
         if (!_hasId(anchorId) || !_hasId(candidateId)) return true;
@@ -366,10 +432,6 @@
         return true;
     }
 
-    // =========================================================================
-    // 5. COMPOSITE MATCH
-    // =========================================================================
-
     function matchesCharacter(character, config, anchorId) {
         if (!character) return false;
         if (!matchExcludeIds(character, config)) return false;
@@ -382,10 +444,6 @@
         }
         return true;
     }
-
-    // =========================================================================
-    // 6. DISPLAY HELPERS
-    // =========================================================================
 
     function getCharacterDisplayName(character) {
         if (!character) return '';
@@ -407,14 +465,6 @@
         return '';
     }
 
-    /**
-     * Returns the gender label ('Male' / 'Female' / 'Unknown').
-     * Delegates to formatting.js::getGenderLabel when available;
-     * otherwise a local classifier with identical output.
-     *
-     * @param {string} gender
-     * @returns {string}
-     */
     function getGenderLabel(gender) {
         if (typeof window.getGenderLabel === 'function') {
             var fromFormatting = window.getGenderLabel(gender);
@@ -429,23 +479,6 @@
         }
     }
 
-    /**
-     * Returns the gender symbol as trusted HTML (an SVG from icons.js)
-     * when icons are available, or a plain-text label as a fallback.
-     *
-     * modals-char-selector.js::_buildList calls this via
-     * _Helpers.getGenderSymbol(char.gender). The output is inserted
-     * into the selector row via innerHTML, so the returned string must
-     * be either trusted SVG (from icons.js) or HTML-escaped text.
-     *
-     * Priority:
-     *   1. window.getGenderIcon(gender)   — SVG markup (icons.js)
-     *   2. window.Icons[GENDER_ICON_NAME] — SVG markup by name
-     *   3. plain-text label from getGenderLabel, HTML-escaped
-     *
-     * @param {string} gender
-     * @returns {string}
-     */
     function getGenderSymbol(gender) {
         if (typeof window.getGenderIcon === 'function') {
             try {
@@ -468,25 +501,10 @@
             }
         }
 
-        // Text fallback. Escape in case a caller inserts into innerHTML.
         return _escapeText(getGenderLabel(gender));
     }
 
-    function _escapeText(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    // =========================================================================
-    // 7. EXPORTS
-    // =========================================================================
-
-    window.SelectorHelpers = {
+    var SelectorHelpers = {
         // Filter config
         getDefaultFilterConfig: getDefaultFilterConfig,
         normalizeFilterConfig: normalizeFilterConfig,
@@ -514,8 +532,246 @@
         version: 3
     };
 
-    // Backward-compat aliases.
-    window._SelectorBaseHelpers = window.SelectorHelpers;
+    // =========================================================================
+    // 3. SELECTOR BASE CLASS
+    // =========================================================================
+    //
+    // See WINDOW.SELECTORBASE CONTRACT in the module header. This is the
+    // class modals-char-selector.js extends via:
+    //
+    //     SelectorBase.call(this, options);
+    //     CharacterSelector.prototype = Object.create(SelectorBase.prototype);
+    //
+    // The class is intentionally thin. It owns:
+    //   - the modal handle (this._modal)
+    //   - the listener registry (this._listeners)
+    //   - the caller's options and state
+    //   - delegating open/close/escape/debounce/toast
+    //
+    // It does NOT own:
+    //   - filter state (subclass-specific)
+    //   - rendering (subclass-specific)
+    //   - data queries (subclass-specific)
+
+    function SelectorBase(options) {
+        options = options || {};
+
+        this.options = options;
+
+        this.state = {
+            filters: (options.filters && typeof options.filters === 'object')
+                ? options.filters
+                : {},
+            isOpen: false,
+            onSelect: typeof options.onSelect === 'function'
+                ? options.onSelect
+                : function () {},
+            onCancel: typeof options.onCancel === 'function'
+                ? options.onCancel
+                : function () {}
+        };
+
+        this._modal = null;
+        this._listeners = [];
+    }
+
+    /**
+     * Opens the modal shell for this selector.
+     *
+     * @param {string} title         trusted HTML for the modal title
+     * @param {string} content       trusted HTML for the modal body
+     * @param {string} [cancelText]  text for the cancel button (default
+     *                               'Cancel'). The modal does not render
+     *                               a confirm button; selection is the
+     *                               subclass's job via row clicks.
+     * @param {Function} [onConfirmExtra]
+     *                               Ignored. Kept for backward
+     *                               compatibility with modals-char-selector.js's
+     *                               call shape. The base does not render a
+     *                               confirm button, so onConfirm is a no-op
+     *                               from the caller's perspective.
+     * @param {Object} [openOptions]
+     *                               Extra options passed to openModal.
+     *                               Recognized:
+     *                                 onMount(root) — called after the
+     *                                                 modal is inserted
+     *                                                 into the DOM. Use
+     *                                                 this instead of
+     *                                                 setTimeout(0) to
+     *                                                 wire listeners
+     *                                                 synchronously.
+     * @returns {{ element, close }} the modal handle
+     */
+    SelectorBase.prototype.openModal = function (
+        title,
+        content,
+        cancelText,
+        onConfirmExtra,
+        openOptions
+    ) {
+        // openModal on the core shell requires a cancelText or the button
+        // does not render. Default to 'Cancel' so cancellation always
+        // works.
+        if (_isMissing(cancelText) || cancelText === '') cancelText = 'Cancel';
+
+        openOptions = (openOptions && typeof openOptions === 'object')
+            ? openOptions
+            : {};
+
+        var self = this;
+
+        var modalOptions = {
+            titleHtml: title,
+            contentHtml: content,
+            confirmText: '',
+            cancelText: cancelText,
+            // The base never renders a confirm button; returning false
+            // keeps the modal open if modals-core ever renders one
+            // anyway.
+            onConfirm: function () { return false; },
+            onCancel: function () {
+                self.state.isOpen = false;
+                self._cleanupListeners();
+                self.state.onCancel();
+            }
+        };
+
+        if (typeof openOptions.onMount === 'function') {
+            modalOptions.onMount = function (root) {
+                try {
+                    openOptions.onMount(root);
+                } catch (e) {
+                    if (typeof console !== 'undefined' && console.error) {
+                        console.error(
+                            'selector-base.js: onMount threw:', e
+                        );
+                    }
+                }
+            };
+        }
+
+        this._modal = window.openModal(modalOptions);
+        this.state.isOpen = true;
+        return this._modal;
+    };
+
+    /**
+     * Programmatically closes the modal. Does NOT fire state.onCancel.
+     * Use this for "selection made, close the picker" flows.
+     *
+     * If the caller wants the cancel path to fire, they must either
+     * click the modal's Cancel button / overlay / Escape / close button
+     * (which all fire state.onCancel via openModal's wiring), or call
+     * close() and then state.onCancel() themselves.
+     */
+    SelectorBase.prototype.close = function () {
+        this.state.isOpen = false;
+        this._cleanupListeners();
+        if (this._modal && typeof this._modal.close === 'function') {
+            this._modal.close();
+        }
+        this._modal = null;
+    };
+
+    SelectorBase.prototype.escapeHtml = function (str) {
+        return window.escapeHtml(str);
+    };
+
+    SelectorBase.prototype.getIcon = function (name) {
+        if (typeof window.getIcon === 'function') {
+            return window.getIcon(name);
+        }
+        if (window.Icons && window.Icons[name]) {
+            return window.Icons[name];
+        }
+        return '';
+    };
+
+    SelectorBase.prototype.getGenderSymbol = function (gender) {
+        return SelectorHelpers.getGenderSymbol(gender);
+    };
+
+    SelectorBase.prototype.isBloodRelative = function (aId, bId) {
+        return SelectorHelpers.isBloodRelativeBasic(aId, bId);
+    };
+
+    SelectorBase.prototype.isSpouse = function (aId, bId) {
+        return SelectorHelpers.isSpouseBasic(aId, bId);
+    };
+
+    SelectorBase.prototype.debounce = function (fn, delay) {
+        if (typeof window.debounce === 'function') {
+            return window.debounce(fn, delay);
+        }
+        // Local fallback. Same contract as collections.js::debounce
+        // minus .cancel() and .flush(); subclasses that need those
+        // should call window.debounce directly.
+        var timer = null;
+        return function () {
+            var args = arguments;
+            var ctx = this;
+            if (timer !== null) clearTimeout(timer);
+            timer = setTimeout(function () {
+                timer = null;
+                fn.apply(ctx, args);
+            }, typeof delay === 'number' ? delay : 0);
+        };
+    };
+
+    SelectorBase.prototype.showToast = function (message, type) {
+        if (typeof window.showToast === 'function') {
+            window.showToast(message, type);
+        }
+    };
+
+    /**
+     * Registers an event listener and tracks it for cleanup. Subclasses
+     * that call _registerListener must ensure _cleanupListeners runs
+     * (which close() and the modal's onCancel path both do).
+     *
+     * @param {Element|Document|Window} el
+     * @param {string} eventType
+     * @param {Function} handler
+     */
+    SelectorBase.prototype._registerListener = function (el, eventType, handler) {
+        if (!el || typeof el.addEventListener !== 'function') return;
+        if (typeof handler !== 'function') return;
+        el.addEventListener(eventType, handler);
+        this._listeners.push({
+            el: el,
+            eventType: eventType,
+            handler: handler
+        });
+    };
+
+    /**
+     * Removes every tracked listener and clears the registry. Called by
+     * close() and by the modal's onCancel wiring. Safe to call multiple
+     * times.
+     */
+    SelectorBase.prototype._cleanupListeners = function () {
+        for (var i = 0; i < this._listeners.length; i++) {
+            var l = this._listeners[i];
+            if (l && l.el && typeof l.el.removeEventListener === 'function') {
+                l.el.removeEventListener(l.eventType, l.handler);
+            }
+        }
+        this._listeners = [];
+    };
+
+    // =========================================================================
+    // 4. EXPORTS
+    // =========================================================================
+
+    // Helper object surface (used by modals-char-selector.js and
+    // modals-household-selector.js for predicates and display helpers).
+    window.SelectorHelpers = SelectorHelpers;
+    window._SelectorBaseHelpers = SelectorHelpers;
+
+    // Base class surface (used by modals-char-selector.js via inheritance).
+    window.SelectorBase = SelectorBase;
+
+    // Flat-global aliases preserved from prior revisions.
     window.getCharacterDisplayName = getCharacterDisplayName;
     window.getCharacterInitials = getCharacterInitials;
     window.isBloodRelativeBasic = isBloodRelativeBasic;
@@ -524,7 +780,10 @@
     window.getGenderSymbol = getGenderSymbol;
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = window.SelectorHelpers;
+        module.exports = {
+            SelectorBase: SelectorBase,
+            SelectorHelpers: SelectorHelpers
+        };
     }
 
 })();
