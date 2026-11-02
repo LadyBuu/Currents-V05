@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Settlement Manager</title>
 
-    <!-- Theme tokens MUST load first. They define every CSS custom property. -->
+    <!-- Theme tokens MUST load first. -->
     <link rel="stylesheet" href="css/themes.css" />
 
-    <!-- Structural styles consume the tokens. No color values inside. -->
+    <!-- Structural styles consume the tokens. -->
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/settlement.css" />
     <link rel="stylesheet" href="css/location-list.css" />
@@ -18,9 +18,7 @@
 </head>
 <body>
 
-    <!-- ================================================================ -->
-    <!-- TOP BAR                                                          -->
-    <!-- ================================================================ -->
+    <!-- TOP BAR -->
     <header class="topbar" role="banner">
         <button class="burger-btn" id="burgerBtn" type="button" aria-label="Toggle sidebar">☰</button>
         <h1 class="title">Settlement Manager</h1>
@@ -30,7 +28,7 @@
         <button class="btn" id="addSettlementBtn" type="button">+ Add Settlement</button>
 
         <label class="year-label" for="yearInput">Year</label>
-        <input type="number" class="year-input" id="yearInput" name="yearInput" inputmode="numeric" min="-10000" max="9999" />
+        <input type="number" class="year-input" id="yearInput" name="yearInput" inputmode="numeric" />
         <button class="btn" id="setYearBtn" type="button">Set</button>
         <button class="btn" id="exportBtn" type="button">Export</button>
         <button class="btn" id="importBtn" type="button">Import</button>
@@ -45,12 +43,9 @@
         </div>
     </header>
 
-    <!-- ================================================================ -->
-    <!-- APP LAYOUT                                                       -->
-    <!-- ================================================================ -->
+    <!-- APP LAYOUT -->
     <div class="app-layout">
 
-        <!-- SIDEBAR -->
         <aside class="sidebar" id="sidebar" aria-label="Locations">
             <h3>Locations</h3>
             <div id="locationTreeContainer" class="location-tree">
@@ -58,39 +53,62 @@
             </div>
         </aside>
 
-        <!-- MAIN PANEL -->
         <main class="main-panel" id="mainPanel" role="main">
             <nav class="panel-tabs" id="panelTabs" role="tablist" aria-label="Settlement tabs">
-                <button class="tab-btn active" role="tab" type="button" data-tab="location"     aria-selected="true"  tabindex="0"><span class="tab-icon" aria-hidden="true">◈</span> Location</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="overview"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▤</span> Overview</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="features"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">⚙</span> Features</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="economy"      aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">◆</span> Economy</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="religion"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">✝</span> Religion</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="industry"     aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▣</span> Industry</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="education"    aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▤</span> Education</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="history"      aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">◷</span> History</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="roles"        aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">◯</span> Roles</button>
-                <button class="tab-btn"        role="tab" type="button" data-tab="government"   aria-selected="false" tabindex="-1"><span class="tab-icon" aria-hidden="true">▥</span> Government</button>
+                <button class="tab-btn is-active" role="tab" type="button" data-tab="location" aria-selected="true" tabindex="0">
+                    <span class="tab-icon" aria-hidden="true">◈</span> Location
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="overview" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">▤</span> Overview
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="features" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">⚙</span> Features
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="economy" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">◆</span> Economy
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="religion" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">✝</span> Religion
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="industry" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">▣</span> Industry
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="education" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">▤</span> Education
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="history" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">◷</span> History
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="roles" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">◯</span> Roles
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="government" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">▥</span> Government
+                </button>
+                <button class="tab-btn" role="tab" type="button" data-tab="crime" aria-selected="false" tabindex="-1">
+                    <span class="tab-icon" aria-hidden="true">⚔</span> Crime
+                </button>
             </nav>
 
             <div class="tab-content" id="tabContent" role="tabpanel">
-                <div class="tab-pane active" id="tab-location"   data-tab-content="location"></div>
-                <div class="tab-pane"        id="tab-overview"   data-tab-content="overview"></div>
-                <div class="tab-pane"        id="tab-features"   data-tab-content="features"></div>
-                <div class="tab-pane"        id="tab-economy"    data-tab-content="economy"></div>
-                <div class="tab-pane"        id="tab-religion"   data-tab-content="religion"></div>
-                <div class="tab-pane"        id="tab-industry"   data-tab-content="industry"></div>
-                <div class="tab-pane"        id="tab-education"  data-tab-content="education"></div>
-                <div class="tab-pane"        id="tab-history"    data-tab-content="history"></div>
-                <div class="tab-pane"        id="tab-roles"      data-tab-content="roles"></div>
-                <div class="tab-pane"        id="tab-government" data-tab-content="government"></div>
+                <div class="tab-pane is-active" id="tab-location"    data-tab-content="location"></div>
+                <div class="tab-pane"           id="tab-overview"    data-tab-content="overview"></div>
+                <div class="tab-pane"           id="tab-features"    data-tab-content="features"></div>
+                <div class="tab-pane"           id="tab-economy"     data-tab-content="economy"></div>
+                <div class="tab-pane"           id="tab-religion"    data-tab-content="religion"></div>
+                <div class="tab-pane"           id="tab-industry"    data-tab-content="industry"></div>
+                <div class="tab-pane"           id="tab-education"   data-tab-content="education"></div>
+                <div class="tab-pane"           id="tab-history"     data-tab-content="history"></div>
+                <div class="tab-pane"           id="tab-roles"       data-tab-content="roles"></div>
+                <div class="tab-pane"           id="tab-government"  data-tab-content="government"></div>
+                <div class="tab-pane"           id="tab-crime"       data-tab-content="crime"></div>
             </div>
         </main>
     </div>
 
-    <!-- ================================================================ -->
-    <!-- CORE (no domain dependencies)                                    -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- CORE (no domain dependencies)                                -->
+    <!-- ============================================================ -->
     <script src="js/core/constants.js"></script>
     <script src="js/core/constants/age-constants.js"></script>
     <script src="js/core/constants/character-constants.js"></script>
@@ -131,9 +149,9 @@
     <script src="js/core/state/location-ui-state.js"></script>
     <script src="js/core/state.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- CHARACTER (cross-domain dependency of Location + Settlement)     -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- CHARACTER (Location + Settlement + Crime dependencies)       -->
+    <!-- ============================================================ -->
     <script src="js/character/character-state.js"></script>
     <script src="js/character/character-commands.js"></script>
     <script src="js/character/character-queries.js"></script>
@@ -141,35 +159,22 @@
     <script src="js/character/family-queries.js"></script>
     <script src="js/character/family-commands.js"></script>
     <script src="js/character/character-lifecycle.js"></script>
+    <script src="js/character/mortality-rules.js"></script>
+    <script src="js/character/mortality-queries.js"></script>
+    <script src="js/character/mortality-statistics.js"></script>
+    <script src="js/character/modals-death.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- SELECTORS                                                        -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- SELECTORS                                                    -->
+    <!-- ============================================================ -->
     <script src="js/selectors/selector-base.js"></script>
     <script src="js/selectors/locationDropdown.js"></script>
     <script src="js/selectors/modals-char-selector.js"></script>
     <script src="js/selectors/modals-household-selector.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- LOCATION SYSTEM (canonical order per location-docs.txt §2)       -->
-    <!-- ================================================================ -->
-    <script src="js/location/location-state.js"></script>
-    <script src="js/location/location-hierarchy.js"></script>
-    <script src="js/location/location-commands.js"></script>
-    <script src="js/location/location-queries.js"></script>
-    <script src="js/location/location-movement.js"></script>
-    <script src="js/location/location-view-models.js"></script>
-    <script src="js/location/location-ui-state.js"></script>
-    <script src="js/location/location-ui-list.js"></script>
-    <script src="js/location/location-presentation.js"></script>
-    <script src="js/location/modals-location-helper.js"></script>
-    <script src="js/location/modals-location.js"></script>
-    <script src="js/location/modals-moves.js"></script>
-    <script src="js/location/location-bootstrap.js"></script>
-
-    <!-- ================================================================ -->
-    <!-- HOUSEHOLD / ROLES / RANKS / NAMES                                -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- HOUSEHOLD / ROLES / RANKS / NAMES                            -->
+    <!-- ============================================================ -->
     <script src="js/households/household-constants.js"></script>
     <script src="js/households/household-queries.js"></script>
     <script src="js/households/household-commands.js"></script>
@@ -186,9 +191,26 @@
     <script src="js/names/name-queries.js"></script>
     <script src="js/names/name-commands.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- SETTLEMENT SYSTEM                                                -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- LOCATION SYSTEM (canonical load order)                       -->
+    <!-- ============================================================ -->
+    <script src="js/location/location-state.js"></script>
+    <script src="js/location/location-hierarchy.js"></script>
+    <script src="js/location/location-commands.js"></script>
+    <script src="js/location/location-queries.js"></script>
+    <script src="js/location/location-movement.js"></script>
+    <script src="js/location/location-view-models.js"></script>
+    <script src="js/location/location-ui-state.js"></script>
+    <script src="js/location/location-ui-list.js"></script>
+    <script src="js/location/location-presentation.js"></script>
+    <script src="js/location/modals-location-helper.js"></script>
+    <script src="js/location/modals-location.js"></script>
+    <script src="js/location/modals-moves.js"></script>
+    <script src="js/location/location-bootstrap.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- SETTLEMENT SYSTEM                                            -->
+    <!-- ============================================================ -->
 
     <!-- 1. Definitions -->
     <script src="js/settlement/settlement-fiscal-definitions.js"></script>
@@ -248,18 +270,28 @@
     <script src="js/settlement/modals-settlement-economy.js"></script>
     <script src="js/settlement/modals-settlement-roles.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- GOVERNMENT / RELIGION / INDUSTRY / EDUCATION                     -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- GOVERNMENT / RELIGION / INDUSTRY / EDUCATION                 -->
+    <!-- ============================================================ -->
     <script src="js/government/government-state.js"></script>
     <script src="js/government/government-commands.js"></script>
     <script src="js/government/government-queries.js"></script>
     <script src="js/government/government-rules.js"></script>
 
+    <script src="js/religion/religion-constants.js"></script>
+    <script src="js/religion/religion-format.js"></script>
+    <script src="js/religion/religion-validation.js"></script>
     <script src="js/religion/religion-state.js"></script>
-    <script src="js/religion/religion-commands.js"></script>
     <script src="js/religion/religion-queries.js"></script>
+    <script src="js/religion/religion-rules.js"></script>
+    <script src="js/religion/religion-commands.js"></script>
     <script src="js/religion/religion-laws.js"></script>
+    <script src="js/religion/religion-inheritance.js"></script>
+    <script src="js/religion/religion-view-models.js"></script>
+    <script src="js/religion/religion-render.js"></script>
+    <script src="js/religion/religion-ui-state.js"></script>
+    <script src="js/religion/modals-religion.js"></script>
+    <script src="js/religion/religion-bootstrap.js"></script>
 
     <script src="js/industry/industry-constants.js"></script>
     <script src="js/industry/industry-state.js"></script>
@@ -275,9 +307,23 @@
     <script src="js/education/education-learning.js"></script>
     <script src="js/education/education-annual.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- TAB RENDERERS                                                    -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- CRIME SYSTEM (loads LAST in the domain chain)                -->
+    <!-- ============================================================ -->
+    <script src="js/crime/crime-constants.js"></script>
+    <script src="js/crime/crime-state.js"></script>
+    <script src="js/crime/crime-law-integration.js"></script>
+    <script src="js/crime/crime-queries.js"></script>
+    <script src="js/crime/crime-commands.js"></script>
+    <script src="js/crime/crime-view-models.js"></script>
+    <script src="js/crime/crime-ui-stats.js"></script>
+    <script src="js/crime/modals-crime.js"></script>
+    <script src="js/crime/vendetta-system.js"></script>
+    <script src="js/crime/crime-bootstrap.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- TAB RENDERERS                                                -->
+    <!-- ============================================================ -->
     <script src="js/tabs/location-tab.js"></script>
     <script src="js/tabs/settlement-overview-tab.js"></script>
     <script src="js/tabs/settlement-features-tab.js"></script>
@@ -289,9 +335,9 @@
     <script src="js/tabs/settlement-roles-tab.js"></script>
     <script src="js/tabs/government-details-tab.js"></script>
 
-    <!-- ================================================================ -->
-    <!-- THEME SWITCHER (must run before orchestrator)                    -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- THEME SWITCHER                                               -->
+    <!-- ============================================================ -->
     <script>
     (function () {
         'use strict';
@@ -331,11 +377,7 @@
 
         function apply(id) {
             if (!byId[id]) id = 'dark';
-            if (id === 'dark') {
-                document.documentElement.setAttribute('data-theme', 'dark');
-            } else {
-                document.documentElement.setAttribute('data-theme', id);
-            }
+            document.documentElement.setAttribute('data-theme', id);
             themeName.textContent = byId[id].label;
             try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
         }
@@ -343,10 +385,8 @@
         function buildMenu() {
             var html = '';
             for (var i = 0; i < THEMES.length; i++) {
-                html += '<li role="none">' +
-                    '<button role="menuitem" type="button" data-theme-id="' +
-                    THEMES[i].id + '">' + THEMES[i].label + '</button>' +
-                    '</li>';
+                html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                    THEMES[i].id + '">' + THEMES[i].label + '</button></li>';
             }
             themeMenu.innerHTML = html;
         }
@@ -355,7 +395,6 @@
             themeMenu.hidden = false;
             themeBtn.setAttribute('aria-expanded', 'true');
         }
-
         function closeMenu() {
             themeMenu.hidden = true;
             themeBtn.setAttribute('aria-expanded', 'false');
@@ -365,28 +404,24 @@
             e.stopPropagation();
             if (themeMenu.hidden) openMenu(); else closeMenu();
         });
-
         themeMenu.addEventListener('click', function (e) {
             var btn = e.target.closest('[data-theme-id]');
             if (!btn) return;
             apply(btn.getAttribute('data-theme-id'));
             closeMenu();
         });
-
         document.addEventListener('click', function (e) {
-            if (!themeMenu.hidden && !themeMenu.contains(e.target) && e.target !== themeBtn) {
-                closeMenu();
-            }
+            if (themeMenu.hidden) return;
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
         });
-
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape' && !themeMenu.hidden) closeMenu();
         });
 
-        // Restore saved theme or follow OS.
         var saved = null;
         try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
-
         buildMenu();
 
         if (saved && byId[saved]) {
@@ -405,16 +440,13 @@
     })();
     </script>
 
-    <!-- ================================================================ -->
-    <!-- ORCHESTRATOR                                                     -->
-    <!-- ================================================================ -->
+    <!-- ============================================================ -->
+    <!-- ORCHESTRATOR                                                 -->
+    <!-- ============================================================ -->
     <script>
     (function () {
         'use strict';
 
-        // -----------------------------------------------------------------
-        // Element handles
-        // -----------------------------------------------------------------
         var treeContainer   = document.getElementById('locationTreeContainer');
         var burgerBtn       = document.getElementById('burgerBtn');
         var sidebar         = document.getElementById('sidebar');
@@ -425,7 +457,10 @@
         var setYearBtn      = document.getElementById('setYearBtn');
         var addLocationBtn  = document.getElementById('addLocationBtn');
         var addSettlementBtn= document.getElementById('addSettlementBtn');
-        var tabButtons      = Array.prototype.slice.call(document.querySelectorAll('.tab-btn'));
+
+        var tabButtons = Array.prototype.slice.call(
+            document.querySelectorAll('.tab-btn')
+        );
 
         var tabPanes = {
             location:   document.getElementById('tab-location'),
@@ -437,12 +472,13 @@
             education:  document.getElementById('tab-education'),
             history:    document.getElementById('tab-history'),
             roles:      document.getElementById('tab-roles'),
-            government: document.getElementById('tab-government')
+            government: document.getElementById('tab-government'),
+            crime:      document.getElementById('tab-crime')
         };
 
-        var selectedId     = null;
-        var activeTabId    = 'location';
-        var isInitialized  = false;
+        var selectedId    = null;
+        var activeTabId   = 'location';
+        var isInitialized = false;
 
         // -----------------------------------------------------------------
         // Bootstrapping
@@ -456,18 +492,28 @@
                     console.error('[settlement-manager] storage init failed:', e);
                 }
             }
-
             if (typeof window.LocationBootstrap !== 'undefined'
                 && typeof window.LocationBootstrap.init === 'function') {
                 try { window.LocationBootstrap.init(); } catch (e) {
                     console.error('[settlement-manager] location bootstrap failed:', e);
                 }
             }
-
             if (typeof window.SettlementState !== 'undefined'
                 && typeof window.SettlementState.rebuildIndexes === 'function') {
                 try { window.SettlementState.rebuildIndexes(); } catch (e) {
                     console.error('[settlement-manager] settlement index rebuild failed:', e);
+                }
+            }
+            if (typeof window.ReligionBootstrap !== 'undefined'
+                && typeof window.ReligionBootstrap.init === 'function') {
+                try { window.ReligionBootstrap.init(); } catch (e) {
+                    console.error('[settlement-manager] religion bootstrap failed:', e);
+                }
+            }
+            if (typeof window.CrimeBootstrap !== 'undefined'
+                && typeof window.CrimeBootstrap.init === 'function') {
+                try { window.CrimeBootstrap.init(); } catch (e) {
+                    console.error('[settlement-manager] crime bootstrap failed:', e);
                 }
             }
 
@@ -478,18 +524,16 @@
         }
 
         // -----------------------------------------------------------------
-        // Tree rendering
+        // Tree
         // -----------------------------------------------------------------
         function renderTree() {
             if (!treeContainer) return;
-
             if (typeof window.LocationUI === 'undefined'
                 || typeof window.LocationUI.renderLocationList !== 'function') {
                 treeContainer.innerHTML =
                     '<div class="empty-state">Location UI not loaded.</div>';
                 return;
             }
-
             try {
                 window.LocationUI.renderLocationList('locationTreeContainer', {
                     selectedId: selectedId,
@@ -522,18 +566,16 @@
         function selectLocation(id) {
             if (!id) return;
             selectedId = id;
-
             if (typeof window.SettlementUIState !== 'undefined'
                 && typeof window.SettlementUIState.setSelectedLocationId === 'function') {
                 window.SettlementUIState.setSelectedLocationId(id);
             }
-
             renderTree();
             renderActiveTab();
         }
 
         // -----------------------------------------------------------------
-        // Tab dispatch
+        // Tabs
         // -----------------------------------------------------------------
         function activateTab(tabId) {
             activeTabId = tabId;
@@ -542,18 +584,28 @@
                 var btn = tabButtons[i];
                 var isActive = btn.dataset.tab === tabId;
                 btn.classList.toggle('active', isActive);
+                btn.classList.toggle('is-active', isActive);
                 btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
                 btn.setAttribute('tabindex', isActive ? '0' : '-1');
             }
 
             for (var key in tabPanes) {
                 if (!Object.prototype.hasOwnProperty.call(tabPanes, key)) continue;
-                var pane = tabPanes[key];
-                if (!pane) continue;
-                pane.classList.toggle('active', key === tabId);
+                if (tabPanes[key]) {
+                    tabPanes[key].classList.toggle('active', key === tabId);
+                    tabPanes[key].classList.toggle('is-active', key === tabId);
+                }
             }
 
             renderActiveTab();
+        }
+
+        for (var i = 0; i < tabButtons.length; i++) {
+            (function (btn) {
+                btn.addEventListener('click', function () {
+                    activateTab(btn.dataset.tab);
+                });
+            })(tabButtons[i]);
         }
 
         function renderActiveTab() {
@@ -567,15 +619,30 @@
                 return;
             }
 
-            var renderer = getTabRenderer(id);
-            if (!renderer) {
-                container.innerHTML =
-                    '<div class="empty-state">This tab is not available.</div>';
-                return;
-            }
-
             try {
-                renderer(container, selectedId);
+                if (id === 'location') {
+                    renderLocationTab(container, selectedId);
+                } else if (id === 'overview') {
+                    renderSettlementOverview(container, selectedId);
+                } else if (id === 'features') {
+                    renderSettlementFeatures(container, selectedId);
+                } else if (id === 'economy') {
+                    renderSettlementEconomy(container, selectedId);
+                } else if (id === 'religion') {
+                    renderSettlementReligion(container, selectedId);
+                } else if (id === 'industry') {
+                    renderSettlementIndustry(container, selectedId);
+                } else if (id === 'education') {
+                    renderSettlementEducation(container, selectedId);
+                } else if (id === 'history') {
+                    renderSettlementHistory(container, selectedId);
+                } else if (id === 'roles') {
+                    renderSettlementRoles(container, selectedId);
+                } else if (id === 'government') {
+                    renderGovernment(container, selectedId);
+                } else if (id === 'crime') {
+                    renderCrimeTab(container, selectedId);
+                }
             } catch (e) {
                 console.error('[settlement-manager] tab "' + id + '" failed:', e);
                 container.innerHTML =
@@ -583,63 +650,259 @@
             }
         }
 
-        function getTabRenderer(tabId) {
-            if (tabId === 'location') {
-                return function (c, locId) {
-                    if (typeof window.LocationTab !== 'undefined'
-                        && typeof window.LocationTab.render === 'function') {
-                        return window.LocationTab.render(c, locId);
-                    }
-                    if (typeof window.renderLocationDetails === 'function') {
-                        return window.renderLocationDetails(c.id, locId);
-                    }
-                    c.innerHTML = '<div class="empty-state">Location tab not available.</div>';
-                };
+        // -----------------------------------------------------------------
+        // Tab renderers (delegated to per-tab modules)
+        // -----------------------------------------------------------------
+        function renderLocationTab(c, id) {
+            if (typeof window.LocationTab !== 'undefined'
+                && typeof window.LocationTab.render === 'function') {
+                return window.LocationTab.render(c, id);
             }
-
-            var tabModuleMap = {
-                overview:    { global: 'SettlementOverviewTab',  fn: 'render' },
-                features:    { global: 'SettlementFeaturesTab',  fn: 'render' },
-                economy:     { global: 'SettlementEconomyTab',   fn: 'render' },
-                religion:    { global: 'SettlementReligionTab',  fn: 'render' },
-                industry:    { global: 'SettlementIndustryTab',  fn: 'render' },
-                education:   { global: 'SettlementEducationTab', fn: 'render' },
-                history:     { global: 'SettlementHistoryTab',   fn: 'render' },
-                roles:       { global: 'SettlementRolesTab',     fn: 'render' },
-                government:  { global: 'GovernmentDetailsTab',   fn: 'render' }
-            };
-
-            var spec = tabModuleMap[tabId];
-            if (!spec) return null;
-
-            var mod = window[spec.global];
-            if (mod && typeof mod[spec.fn] === 'function') {
-                return function (c, locId) { return mod[spec.fn](c, locId); };
+            if (typeof window.renderLocationDetails === 'function') {
+                return window.renderLocationDetails(c.id, id);
             }
-
-            return function (c) {
-                c.innerHTML = '<div class="empty-state">This tab is not available.</div>';
-            };
+            c.innerHTML = '<div class="empty-state">Location tab not available.</div>';
         }
 
-        for (var i = 0; i < tabButtons.length; i++) {
-            (function (btn) {
-                btn.addEventListener('click', function () {
-                    activateTab(btn.dataset.tab);
+        function renderSettlementOverview(c, id) {
+            if (typeof window.SettlementOverviewTab !== 'undefined'
+                && typeof window.SettlementOverviewTab.render === 'function') {
+                return window.SettlementOverviewTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Overview tab not available.</div>';
+        }
+
+        function renderSettlementFeatures(c, id) {
+            if (typeof window.SettlementFeaturesTab !== 'undefined'
+                && typeof window.SettlementFeaturesTab.render === 'function') {
+                return window.SettlementFeaturesTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Features tab not available.</div>';
+        }
+
+        function renderSettlementEconomy(c, id) {
+            if (typeof window.SettlementEconomyTab !== 'undefined'
+                && typeof window.SettlementEconomyTab.render === 'function') {
+                return window.SettlementEconomyTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Economy tab not available.</div>';
+        }
+
+        function renderSettlementReligion(c, id) {
+            if (typeof window.SettlementReligionTab !== 'undefined'
+                && typeof window.SettlementReligionTab.render === 'function') {
+                return window.SettlementReligionTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Religion tab not available.</div>';
+        }
+
+        function renderSettlementIndustry(c, id) {
+            if (typeof window.SettlementIndustryTab !== 'undefined'
+                && typeof window.SettlementIndustryTab.render === 'function') {
+                return window.SettlementIndustryTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Industry tab not available.</div>';
+        }
+
+        function renderSettlementEducation(c, id) {
+            if (typeof window.SettlementEducationTab !== 'undefined'
+                && typeof window.SettlementEducationTab.render === 'function') {
+                return window.SettlementEducationTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Education tab not available.</div>';
+        }
+
+        function renderSettlementHistory(c, id) {
+            if (typeof window.SettlementHistoryTab !== 'undefined'
+                && typeof window.SettlementHistoryTab.render === 'function') {
+                return window.SettlementHistoryTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">History tab not available.</div>';
+        }
+
+        function renderSettlementRoles(c, id) {
+            if (typeof window.SettlementRolesTab !== 'undefined'
+                && typeof window.SettlementRolesTab.render === 'function') {
+                return window.SettlementRolesTab.render(c, id);
+            }
+            c.innerHTML = '<div class="empty-state">Roles tab not available.</div>';
+        }
+
+        function renderGovernment(c, id) {
+            if (typeof window.GovernmentDetailsTab !== 'undefined'
+                && typeof window.GovernmentDetailsTab.render === 'function') {
+                return window.GovernmentDetailsTab.render(c, id);
+            }
+            if (typeof window.renderGovernmentDetailsTab === 'function') {
+                return window.renderGovernmentDetailsTab(c.id, id);
+            }
+            c.innerHTML = '<div class="empty-state">Government tab not available.</div>';
+        }
+
+        // -----------------------------------------------------------------
+        // Crime tab
+        // -----------------------------------------------------------------
+        function renderCrimeTab(container, locationId) {
+            var Stats = window.CrimeStatsUI;
+            var Queries = window.CrimeQueries;
+            var Modals = window.CrimeModals;
+
+            if (!Stats || !Queries || !Modals) {
+                container.innerHTML =
+                    '<div class="empty-state">Crime modules not loaded.</div>';
+                return;
+            }
+
+            // Tear down any prior registration for our sub-containers so
+            // CrimeStatsUI.refreshAll does not try to render into a DOM
+            // node that no longer exists after this function replaces
+            // container.innerHTML.
+            if (typeof Stats.unmount === 'function') {
+                Stats.unmount('crimeStatsPanel');
+                Stats.unmount('crimeRecentList');
+                Stats.unmount('crimeVendettaList');
+            }
+
+            container.innerHTML =
+                '<div class="crime-tab">' +
+
+                    '<div class="crime-tab__toolbar">' +
+                        '<button type="button" class="btn primary" id="crimeActionMurder">Record Murder</button>' +
+                        '<button type="button" class="btn" id="crimeActionExecution">Record Execution</button>' +
+                        '<button type="button" class="btn" id="crimeActionVendetta">Create Vendetta</button>' +
+                    '</div>' +
+
+                    '<section class="crime-tab__section">' +
+                        '<h3 class="crime-tab__heading">Statistics</h3>' +
+                        '<div id="crimeStatsPanel"></div>' +
+                    '</section>' +
+
+                    '<section class="crime-tab__section">' +
+                        '<h3 class="crime-tab__heading">Recent Crimes</h3>' +
+                        '<div id="crimeRecentList"></div>' +
+                    '</section>' +
+
+                    '<section class="crime-tab__section">' +
+                        '<h3 class="crime-tab__heading">Active Vendettas</h3>' +
+                        '<div id="crimeVendettaList"></div>' +
+                    '</section>' +
+
+                '</div>';
+
+            // Stats
+            try {
+                Stats.renderStatsPanel('crimeStatsPanel', {
+                    locationId: locationId,
+                    year: (typeof window.getCurrentYear === 'function')
+                        ? window.getCurrentYear()
+                        : undefined
                 });
-            })(tabButtons[i]);
+            } catch (e) {
+                console.error('[settlement-manager] renderStatsPanel failed:', e);
+                var statsEl = container.querySelector('#crimeStatsPanel');
+                if (statsEl) {
+                    statsEl.innerHTML =
+                        '<div class="error-state">Error rendering statistics.</div>';
+                }
+            }
+
+            // Recent crimes
+            var crimes = [];
+            try {
+                crimes = Queries.getCrimesByLocation(locationId) || [];
+            } catch (e) {
+                console.error('[settlement-manager] getCrimesByLocation failed:', e);
+            }
+            crimes.sort(function (a, b) { return (b.year || 0) - (a.year || 0); });
+            try {
+                Stats.renderCrimeList('crimeRecentList', crimes.slice(0, 10), {
+                    emptyMessage: 'No crimes recorded in this settlement.'
+                });
+            } catch (e) {
+                console.error('[settlement-manager] renderCrimeList failed:', e);
+            }
+
+            // Active vendettas — walk this settlement's households and
+            // intersect with the crime domain's active vendettas for each.
+            var activeVendettas = [];
+            var seen = Object.create(null);
+            try {
+                if (window.HouseholdQueries
+                    && typeof window.HouseholdQueries.getAllHouseholds === 'function') {
+                    var households = window.HouseholdQueries.getAllHouseholds() || [];
+                    for (var hi = 0; hi < households.length; hi++) {
+                        var hh = households[hi];
+                        if (!hh || !hh.id) continue;
+                        if (hh.locationId !== locationId) continue;
+                        var list = Queries.getActiveVendettas(hh.id) || [];
+                        for (var vi = 0; vi < list.length; vi++) {
+                            var v = list[vi];
+                            if (!v || !v.id) continue;
+                            if (seen[v.id]) continue;
+                            seen[v.id] = true;
+                            activeVendettas.push(v);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('[settlement-manager] vendetta scan failed:', e);
+            }
+            try {
+                Stats.renderVendettaList('crimeVendettaList', activeVendettas, {
+                    emptyMessage: 'No active vendettas in this settlement.'
+                });
+            } catch (e) {
+                console.error('[settlement-manager] renderVendettaList failed:', e);
+            }
+
+            // Action buttons
+            var murderBtn = container.querySelector('#crimeActionMurder');
+            if (murderBtn) {
+                murderBtn.addEventListener('click', function () {
+                    Modals.openMurderModal({
+                        locationId: locationId,
+                        onComplete: function () {
+                            renderCrimeTab(container, locationId);
+                        }
+                    });
+                });
+            }
+
+            var execBtn = container.querySelector('#crimeActionExecution');
+            if (execBtn) {
+                execBtn.addEventListener('click', function () {
+                    Modals.openExecutionModal({
+                        locationId: locationId,
+                        onComplete: function () {
+                            renderCrimeTab(container, locationId);
+                        }
+                    });
+                });
+            }
+
+            var vendettaBtn = container.querySelector('#crimeActionVendetta');
+            if (vendettaBtn) {
+                vendettaBtn.addEventListener('click', function () {
+                    Modals.openVendettaModal({
+                        onComplete: function () {
+                            renderCrimeTab(container, locationId);
+                        }
+                    });
+                });
+            }
         }
 
         // -----------------------------------------------------------------
         // Sidebar
         // -----------------------------------------------------------------
-        function toggleSidebar() { sidebar.classList.toggle('open'); }
-        function closeSidebar()  { sidebar.classList.remove('open'); }
+        function toggleSidebar() { if (sidebar) sidebar.classList.toggle('open'); }
+        function closeSidebar()  { if (sidebar) sidebar.classList.remove('open'); }
 
-        burgerBtn.addEventListener('click', toggleSidebar);
+        if (burgerBtn) burgerBtn.addEventListener('click', toggleSidebar);
 
         document.addEventListener('click', function (e) {
             if (window.innerWidth > 768) return;
+            if (!sidebar) return;
             if (sidebar.contains(e.target)) return;
             if (e.target === burgerBtn) return;
             closeSidebar();
@@ -661,165 +924,186 @@
             try { yearInput.value = String(window.getCurrentYear()); } catch (e) {}
         }
 
-        setYearBtn.addEventListener('click', function () {
-            if (typeof window.isValidYear !== 'function') return;
-            var val = parseInt(yearInput.value, 10);
-            if (isNaN(val)) {
-                window.alert('Enter a valid year.');
-                return;
-            }
-            if (!window.isValidYear(val)) {
-                window.alert('Year is outside the allowed range.');
-                return;
-            }
-            if (window.masterData && window.masterData.data) {
-                window.masterData.data.currentYear = val;
-            }
-            if (typeof window.markDataDirty === 'function') window.markDataDirty();
-            if (typeof window.saveMasterData === 'function') window.saveMasterData();
-            renderActiveTab();
-        });
+        if (setYearBtn) {
+            setYearBtn.addEventListener('click', function () {
+                if (typeof window.isValidYear !== 'function') return;
+                var val = parseInt(yearInput.value, 10);
+                if (isNaN(val)) { window.alert('Enter a valid year.'); return; }
+                if (!window.isValidYear(val)) {
+                    window.alert('Year is outside the allowed range.');
+                    return;
+                }
+                if (window.masterData && window.masterData.data) {
+                    window.masterData.data.currentYear = val;
+                }
+                if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                if (typeof window.saveMasterData === 'function') window.saveMasterData();
+                renderActiveTab();
+            });
+        }
+
+        // -----------------------------------------------------------------
+        // Add location / settlement
+        // -----------------------------------------------------------------
+        if (addLocationBtn) {
+            addLocationBtn.addEventListener('click', function () {
+                if (typeof window.openAddPlaceModal !== 'function') {
+                    window.alert('Add Location modal not loaded.'); return;
+                }
+                window.openAddPlaceModal(null, function (newId) {
+                    if (newId) {
+                        renderTree();
+                        selectLocation(newId);
+                    }
+                });
+            });
+        }
+
+        if (addSettlementBtn) {
+            addSettlementBtn.addEventListener('click', function () {
+                if (!selectedId) {
+                    window.alert('Select a location first.'); return;
+                }
+                if (typeof window.SettlementFactory === 'undefined'
+                    || typeof window.SettlementFactory.ensureSettlement !== 'function') {
+                    window.alert('SettlementFactory not loaded.'); return;
+                }
+                try {
+                    var result = window.SettlementFactory.ensureSettlement(selectedId);
+                    if (!result || result.success !== true) {
+                        window.alert('Could not create settlement: ' +
+                            (result && result.code ? result.code : 'unknown'));
+                        return;
+                    }
+                    activateTab('overview');
+                } catch (e) {
+                    console.error('[settlement-manager] createSettlement failed:', e);
+                    window.alert('Could not create settlement: ' +
+                        (e.message || 'unknown'));
+                }
+            });
+        }
 
         // -----------------------------------------------------------------
         // Export / Import
         // -----------------------------------------------------------------
-        exportBtn.addEventListener('click', function () {
-            if (typeof window.exportToJSON !== 'function') {
-                window.alert('Export module not available.');
-                return;
-            }
-            if (!window.masterData) {
-                window.alert('No data to export.');
-                return;
-            }
-            try {
-                window.exportToJSON(window.masterData, 'stillwaters');
-            } catch (e) {
-                window.alert('Export failed: ' + (e.message || 'unknown'));
-            }
-        });
-
-        importBtn.addEventListener('click', function () {
-            fileInput.value = '';
-            fileInput.click();
-        });
-
-        fileInput.addEventListener('change', function () {
-            var file = this.files && this.files[0];
-            if (!file) return;
-
-            var reader = new FileReader();
-            reader.onload = function (ev) {
-                try {
-                    var text = ev.target.result;
-                    var parsed = JSON.parse(text);
-
-                    var dataToInstall = null;
-                    if (parsed && parsed.data && parsed.data.characters !== undefined) {
-                        dataToInstall = parsed.data;
-                    } else if (parsed && parsed.characters !== undefined) {
-                        dataToInstall = parsed;
-                    } else if (parsed && parsed.data) {
-                        dataToInstall = parsed.data;
-                    }
-
-                    if (!dataToInstall) {
-                        window.alert('Unrecognized file format.');
-                        return;
-                    }
-
-                    if (typeof window.normalizeMasterData !== 'function') {
-                        window.alert('Schema module not available; cannot import.');
-                        return;
-                    }
-
-                    var envelope = window.normalizeMasterData({
-                        schemaVersion: window.STORAGE_SCHEMA_VERSION,
-                        savedAt: new Date().toISOString(),
-                        data: dataToInstall
-                    });
-
-                    window.masterData = envelope;
-
-                    if (typeof window.invalidateAccessorCaches === 'function') {
-                        window.invalidateAccessorCaches();
-                    }
-
-                    if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                    if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
-                        window.alert('Save failed after import.');
-                        return;
-                    }
-
-                    if (typeof window.LocationBootstrap !== 'undefined'
-                        && typeof window.LocationBootstrap.init === 'function') {
-                        try { window.LocationBootstrap.init(); } catch (e) {}
-                    }
-                    if (typeof window.SettlementState !== 'undefined'
-                        && typeof window.SettlementState.rebuildIndexes === 'function') {
-                        try { window.SettlementState.rebuildIndexes(); } catch (e) {}
-                    }
-
-                    selectedId = null;
-                    syncYearInput();
-                    renderTree();
-                    pickInitialSelection();
-                    renderActiveTab();
-
-                    window.alert('Import complete.');
-                } catch (err) {
-                    window.alert('Invalid JSON: ' + err.message);
+        if (exportBtn) {
+            exportBtn.addEventListener('click', function () {
+                if (typeof window.exportToJSON !== 'function') {
+                    window.alert('Export module not available.'); return;
                 }
-            };
-            reader.onerror = function () {
-                window.alert('Failed to read file.');
-            };
-            reader.readAsText(file);
-            this.value = '';
-        });
-
-        // -----------------------------------------------------------------
-        // Add Location / Add Settlement
-        // -----------------------------------------------------------------
-        addLocationBtn.addEventListener('click', function () {
-            if (typeof window.openAddPlaceModal !== 'function') {
-                window.alert('Add Location modal not loaded.');
-                return;
-            }
-            window.openAddPlaceModal(null, function (newId) {
-                if (newId) {
-                    renderTree();
-                    selectLocation(newId);
+                if (!window.masterData) {
+                    window.alert('No data to export.'); return;
                 }
+                try { window.exportToJSON(window.masterData, 'stillwaters'); }
+                catch (e) { window.alert('Export failed: ' + (e.message || 'unknown')); }
             });
-        });
+        }
 
-        addSettlementBtn.addEventListener('click', function () {
-            if (!selectedId) {
-                window.alert('Select a location first.');
-                return;
-            }
-            if (typeof window.SettlementFactory === 'undefined'
-                || typeof window.SettlementFactory.ensureSettlement !== 'function') {
-                window.alert('SettlementFactory not loaded.');
-                return;
-            }
-            try {
-                var result = window.SettlementFactory.ensureSettlement(selectedId);
-                if (!result || result.success !== true) {
-                    window.alert('Could not create settlement: ' +
-                        (result && result.code ? result.code : 'unknown'));
-                    return;
-                }
-                activateTab('overview');
-            } catch (e) {
-                console.error('[settlement-manager] createSettlement failed:', e);
-                window.alert('Could not create settlement: ' + (e.message || 'unknown'));
-            }
-        });
+        if (importBtn && fileInput) {
+            importBtn.addEventListener('click', function () {
+                fileInput.value = '';
+                fileInput.click();
+            });
+
+            fileInput.addEventListener('change', function () {
+                var file = this.files && this.files[0];
+                if (!file) return;
+
+                var reader = new FileReader();
+                reader.onload = function (ev) {
+                    try {
+                        var parsed = JSON.parse(ev.target.result);
+                        var dataToInstall = null;
+                        if (parsed && parsed.data && parsed.data.places !== undefined) {
+                            dataToInstall = parsed.data;
+                        } else if (parsed && parsed.places !== undefined) {
+                            dataToInstall = parsed;
+                        } else if (parsed && parsed.data) {
+                            dataToInstall = parsed.data;
+                        }
+                        if (!dataToInstall) {
+                            window.alert('Unrecognized import format.'); return;
+                        }
+
+                        if (typeof window.normalizeMasterData !== 'function') {
+                            window.alert('Schema module not available.'); return;
+                        }
+
+                        window.masterData = window.normalizeMasterData({
+                            schemaVersion: window.STORAGE_SCHEMA_VERSION,
+                            savedAt: new Date().toISOString(),
+                            data: dataToInstall
+                        });
+
+                        if (typeof window.invalidateAccessorCaches === 'function') {
+                            window.invalidateAccessorCaches();
+                        }
+                        if (typeof window.markDataDirty === 'function') window.markDataDirty();
+                        if (typeof window.saveMasterData === 'function'
+                            && !window.saveMasterData()) {
+                            window.alert('Save failed after import.'); return;
+                        }
+
+                        if (window.LocationBootstrap
+                            && typeof window.LocationBootstrap.init === 'function') {
+                            try { window.LocationBootstrap.init(); } catch (e) {}
+                        }
+                        if (window.SettlementState
+                            && typeof window.SettlementState.rebuildIndexes === 'function') {
+                            try { window.SettlementState.rebuildIndexes(); } catch (e) {}
+                        }
+                        if (window.CrimeBootstrap
+                            && typeof window.CrimeBootstrap.reinit === 'function') {
+                            try { window.CrimeBootstrap.reinit(); } catch (e) {}
+                        }
+
+                        selectedId = null;
+                        syncYearInput();
+                        renderTree();
+                        pickInitialSelection();
+                        renderActiveTab();
+
+                        window.alert('Import complete.');
+                    } catch (err) {
+                        window.alert('Invalid JSON: ' + err.message);
+                    }
+                };
+                reader.onerror = function () {
+                    window.alert('Failed to read file.');
+                };
+                reader.readAsText(file);
+                this.value = '';
+            });
+        }
 
         // -----------------------------------------------------------------
-        // Initialization
+        // Cross-domain events
+        // -----------------------------------------------------------------
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('masterDataUpdated', function () {
+                renderTree();
+                renderActiveTab();
+            });
+
+            // Crime commands dispatch these. If the active tab is Crime,
+            // re-render so the stats/lists reflect the new record.
+            var _crimeEvents = [
+                'crimeRecorded', 'crimeSolved', 'crimeDeleted',
+                'vendettaCreated', 'vendettaDeath', 'vendettaEscalated',
+                'vendettaResolved', 'vendettaDeleted'
+            ];
+            for (var ci = 0; ci < _crimeEvents.length; ci++) {
+                (function (eventName) {
+                    window.addEventListener(eventName, function () {
+                        if (activeTabId === 'crime') renderActiveTab();
+                    });
+                })(_crimeEvents[ci]);
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Init
         // -----------------------------------------------------------------
         function onDomReady(fn) {
             if (document.readyState === 'loading') {
