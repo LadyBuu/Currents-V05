@@ -20,7 +20,7 @@
  *
  * SHARED HELPERS
  * --------------
- *   _escapeHtml, _toast, _close, and _runCommand are aliases to the
+ *   _escapeHtml, _toast, and _runCommand are aliases to the
  *   corresponding helpers exported by modals-location-helper.js. They
  *   were previously defined locally in this file AND in
  *   modals-location.js; both files were byte-identical copies. This
@@ -29,6 +29,12 @@
  *   The helper module (modals-location-helper.js) must load BEFORE this
  *   file. It owns the LocationCommands.persist dependency; this file
  *   does not need to call persist() directly.
+ *
+ *   _close was previously aliased here as well but never called: the
+ *   only close path in this module is inside _runCommand, which already
+ *   closes via the helper. The alias has been removed. If a future
+ *   modal in this file needs an explicit close, it should call
+ *   window.LocationModals.close() directly.
  *
  * Bulk move:
  *   Calls LocationCommands.bulkRecordMoves once for the whole batch, then
@@ -82,7 +88,7 @@
  * Depends on (checked at load time):
  *   - LocationViewModels
  *   - LocationCommands
- *   - modals-location-helper.js  (escapeHtml, toast, close, runCommand)
+ *   - modals-location-helper.js  (escapeHtml, toast, runCommand)
  *   - window.openModal, window.closeTopModal
  *
  * Optional, used when present (via the helper's fallbacks):
@@ -91,22 +97,29 @@
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Current revision (B2):
+ *   Current revision (B2b):
+ *     - Removed the _close alias. It was assigned from
+ *       window.LocationModals.close but never called in this file.
+ *       Every successful command path closes via _runCommand, which
+ *       internally calls the helper's close(). A caller that needs an
+ *       explicit close in a future modal calls
+ *       window.LocationModals.close() directly. Removed to eliminate
+ *       the divergence risk if the helper's close() semantics change.
+ *     - No behavioural change to any modal entry point.
+ *   Previous revision (B2):
  *     - Local copies of _escapeHtml, _toast, _close, and _runCommand
  *       removed. All four now alias the shared helpers exported by
  *       modals-location-helper.js, matching modals-location.js. Prior
  *       revisions had byte-identical duplicates in this file and in
  *       modals-location.js; the extraction that consolidated them into
  *       the helper was applied to modals-location.js but not to this
- *       file. Both _runCommand implementations are currently identical
- *       in behaviour; there is no structural guarantee they stay that
- *       way. The extraction closes that drift risk.
+ *       file. Both _runCommand implementations were identical in
+ *       behaviour; there was no structural guarantee they stayed that
+ *       way. The extraction closed that drift risk.
  *     - Added load-time dependency on modals-location-helper.js (same
  *       guard shape as modals-location.js).
- *     - No behavioural change to any modal entry point. Every
- *       onConfirm still routes through _runCommand, which now delegates
- *       to the shared helper.
- *   Previous revision:
+ *     - No behavioural change to any modal entry point.
+ *   Previous revision (B1):
  *     - CRITICAL (compatibility with modals-core.js): every onConfirm
  *       callback now accepts the modal DOM element as its parameter
  *       and scopes its DOM reads via `root.querySelector`. Previously
@@ -159,9 +172,11 @@
     var LC = window.LocationCommands;
 
     // Local aliases to the shared helpers. Keep the call sites short.
+    // NOTE: _close is intentionally NOT aliased here. This file has no
+    // direct close path; every successful command closes inside
+    // _runCommand. See SHARED HELPERS in the header.
     var _escapeHtml = window.LocationModals.escapeHtml;
     var _toast = window.LocationModals.toast;
-    var _close = window.LocationModals.close;
     var _runCommand = window.LocationModals.runCommand;
 
     // =========================================================================
