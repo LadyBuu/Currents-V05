@@ -25,14 +25,13 @@
  *
  *   1. Canonical write commands.
  *      SettlementGovernmentCommands.setProsperity /
- *      setCrimeRate / setSalaryBudget do not exist in this build. The
- *      tab falls back to _updateSettlementData.
+ *      setCrimeRate / setSalaryBudget do not exist in this build.
  *
  *   2. Consumer integration.
  *      prosperity / crimeRate / justiceSeverity / watch / salaryBudget
  *      are written to each location's settlement record and read back by
  *      this tab and by the government departments tab. No other system
- *      consults them unless it explicitly reads settlementData directly.
+ *      consults them.
  *
  *   3. Canonical enum for justice severity.
  *      The tab uses 'lenient' | 'medium' | 'harsh' | 'extreme' locally.
@@ -42,13 +41,15 @@
  * What IS wired in this revision:
  *
  *   - Modal API uses titleHtml / contentHtml (key translation).
- *   - Every onOpen / onConfirm scoped to root.querySelector.
+ *   - Every onMount / onConfirm scoped to root.querySelector.
  *   - Aggregated writes check the _updateSettlementData return per
- *     location and report failures (missing method → 0 successes → user
- *     sees "0 updated, N failed").
+ *     location and report failures.
  *   - saveMasterData() and invalidateAccessorCaches() run once per
  *     successful batch.
  *   - Banner + integration status panel render on every view.
+ *   - All inline style="" attributes removed; every visual is a class
+ *     from gov-manager.css, driven by themes.css tokens. Colours are
+ *     theme-aware; nothing is hardcoded.
  *
  * =============================================================================
  * DEPENDENCIES (checked at load time):
@@ -120,12 +121,6 @@
         return window.escapeHtml(value);
     }
 
-    function _escapeNumber(n) {
-        return window.escapeHtml(
-            typeof n === 'number' && isFinite(n) ? String(n) : '0'
-        );
-    }
-
     function _getIcon(name) {
         var svg = window.Icons[name];
         return typeof svg === 'string' ? svg : '';
@@ -157,11 +152,6 @@
         return window.getCurrentYear();
     }
 
-    /**
-     * Age of a character. Takes the full character projection so the
-     * deceased flag reaches calculateAge. Passing only birth/death years
-     * used to return "age today if alive" for the dead.
-     */
     function _calculateCharacterAge(character, asOfYear) {
         if (!character) return null;
         var birthYear = character.birthYear;
@@ -174,14 +164,6 @@
         );
     }
 
-    /**
-     * Current-location resolver for population aggregation.
-     *
-     * Prefers LocationQueries.getCurrentLocationId — the semantic
-     * resolver (explicit field → latest move → birthplace). Falls back
-     * to CharacterQueries.getCurrentLocationId (raw field) when the
-     * location domain is absent. Returns null when neither resolves.
-     */
     function _resolveCharacterLocation(character) {
         if (!character || !character.id) return null;
 
@@ -414,9 +396,6 @@
             if (!char) continue;
 
             var charLoc = _resolveCharacterLocation(char);
-            // Strict: exclude characters whose location is not in the
-            // hierarchy. The old code silently attributed them to the
-            // root location, inflating the count.
             if (!charLoc || !inHierarchy[charLoc]) continue;
 
             var locStats = stats.byLocation[charLoc];
@@ -565,12 +544,7 @@
 
     function _renderIntegrationBanner() {
         return (
-            '<div class="eco-integration-banner" role="note" ' +
-                'style="padding:10px 14px;margin-bottom:14px;' +
-                'background:var(--warning-soft);' +
-                'border:1px solid var(--warning);' +
-                'border-radius:6px;font-size:0.65rem;line-height:1.5;' +
-                'color:var(--text);">' +
+            '<div class="eco-integration-banner" role="note">' +
                 '<strong>Reads are live; writes are a preview.</strong> ' +
                 'This tab aggregates population, prosperity, crime, justice, ' +
                 'watch, and salary budget from each location\'s settlement ' +
@@ -585,32 +559,24 @@
 
     function _renderIntegrationStatus(status) {
         function line(label, entry) {
-            var color = entry.ok ? 'var(--ok)' : 'var(--danger-lt)';
+            var glyphClass = entry.ok
+                ? 'eco-integration-glyph is-ok'
+                : 'eco-integration-glyph is-missing';
             var glyph = entry.ok ? '✓' : '✗';
             return (
-                '<div class="eco-integration-line" ' +
-                    'style="display:flex;gap:8px;align-items:flex-start;' +
-                    'padding:3px 0;font-size:0.6rem;">' +
-                    '<span style="color:' + color + ';font-weight:600;' +
-                        'min-width:12px;">' + glyph + '</span>' +
-                    '<span style="color:var(--dim);min-width:170px;">' +
+                '<div class="eco-integration-line">' +
+                    '<span class="' + glyphClass + '">' + glyph + '</span>' +
+                    '<span class="eco-integration-label">' +
                         _escapeHtml(label) + '</span>' +
-                    '<span style="color:var(--text);flex:1;">' +
+                    '<span class="eco-integration-value">' +
                         _escapeHtml(entry.reason) + '</span>' +
                 '</div>'
             );
         }
 
         return (
-            '<div class="eco-integration-status" ' +
-                'style="padding:10px 14px;margin-bottom:14px;' +
-                'background:var(--bg2);' +
-                'border:1px solid var(--border);' +
-                'border-radius:6px;">' +
-                '<div style="font-size:0.65rem;font-weight:600;' +
-                    'color:var(--accent);margin-bottom:6px;' +
-                    'font-family:var(--f-display);letter-spacing:0.05em;' +
-                    'text-transform:uppercase;">' +
+            '<div class="eco-integration-status">' +
+                '<div class="gov-integration-status-title">' +
                     'Settlement integration status' +
                 '</div>' +
                 line('Settlement write path', status.settlementState) +
@@ -640,6 +606,45 @@
         );
     }
 
+    function _prosperityBucket(prosperity) {
+        if (prosperity >= 80) {
+            return { label: 'Booming', className: 'is-ok' };
+        }
+        if (prosperity >= 60) {
+            return { label: 'Prosperous', className: 'is-ok' };
+        }
+        if (prosperity >= 40) {
+            return { label: 'Stable', className: 'is-warning' };
+        }
+        if (prosperity >= 20) {
+            return { label: 'Declining', className: 'is-danger' };
+        }
+        return { label: 'Crisis', className: 'is-danger-strong' };
+    }
+
+    function _crimeBucket(crimeRate) {
+        if (crimeRate > 0.5) {
+            return { label: 'Extreme', className: 'is-danger-strong' };
+        }
+        if (crimeRate > 0.3) {
+            return { label: 'High', className: 'is-danger' };
+        }
+        if (crimeRate > 0.15) {
+            return { label: 'Moderate', className: 'is-warning' };
+        }
+        if (crimeRate > 0.05) {
+            return { label: 'Low', className: 'is-ok' };
+        }
+        return { label: 'Low', className: 'is-ok' };
+    }
+
+    function _justiceLabel(justiceSeverity) {
+        if (justiceSeverity === 'lenient') return 'Lenient';
+        if (justiceSeverity === 'harsh') return 'Harsh';
+        if (justiceSeverity === 'extreme') return 'Extreme';
+        return 'Medium';
+    }
+
     function _renderEconomyDetails(place) {
         if (!place) {
             return '<div class="eco-details-empty">' +
@@ -659,12 +664,10 @@
             _escapeHtml(place.displayName || place.name) + ' - Economy' +
             '</h3>';
         html += '<div class="eco-details-actions">';
-        html += '<button class="eco-btn eco-btn-edit" ' +
-            'data-action="edit-economy">' +
+        html += '<button class="eco-btn" data-action="edit-economy">' +
             _getIcon('EDIT') + ' Edit' +
             '</button>';
-        html += '<button class="eco-btn eco-btn-refresh" ' +
-            'data-action="refresh-economy">' +
+        html += '<button class="eco-btn" data-action="refresh-economy">' +
             _getIcon('REFRESH') + ' Refresh' +
             '</button>';
         html += '</div>';
@@ -729,67 +732,42 @@
         html += '<div class="eco-settlement-details">';
         html += '<h4>Settlement Economy (Aggregated)</h4>';
 
-        // Prosperity bar
+        // Prosperity
         var prosperity = settlementData.prosperity || 0;
-        var prosperityLabel = 'Unknown';
-        var prosperityToken = 'var(--tmut)';
-        if (prosperity >= 80) {
-            prosperityLabel = 'Booming'; prosperityToken = 'var(--ok)';
-        } else if (prosperity >= 60) {
-            prosperityLabel = 'Prosperous'; prosperityToken = 'var(--ok)';
-        } else if (prosperity >= 40) {
-            prosperityLabel = 'Stable'; prosperityToken = 'var(--warning)';
-        } else if (prosperity >= 20) {
-            prosperityLabel = 'Declining'; prosperityToken = 'var(--danger-lt)';
-        } else {
-            prosperityLabel = 'Crisis'; prosperityToken = 'var(--danger)';
-        }
+        var prosperityBucket = _prosperityBucket(prosperity);
 
         html += '<div class="eco-prosperity">';
         html += '<div class="eco-prosperity-label">Prosperity (Average)</div>';
         html += '<div class="eco-prosperity-bar">';
-        html += '<div class="eco-prosperity-fill" ' +
-            'style="width:' + Math.min(100, prosperity) + '%; ' +
-            'background:' + prosperityToken + ';"></div>';
+        html += '<div class="eco-prosperity-fill ' +
+            prosperityBucket.className + '" ' +
+            'data-width="' + Math.min(100, Math.round(prosperity)) + '"></div>';
         html += '</div>';
         html += '<div class="eco-prosperity-value">' +
-            Math.round(prosperity) + '% - ' + prosperityLabel +
+            Math.round(prosperity) + '% - ' +
+            _escapeHtml(prosperityBucket.label) +
             '</div>';
         html += '</div>';
 
         // Crime
         var crimeRate = settlementData.crimeRate || 0;
-        var crimeLabel = 'Low';
-        var crimeToken = 'var(--ok)';
-        if (crimeRate > 0.5) {
-            crimeLabel = 'Extreme'; crimeToken = 'var(--danger)';
-        } else if (crimeRate > 0.3) {
-            crimeLabel = 'High'; crimeToken = 'var(--danger-lt)';
-        } else if (crimeRate > 0.15) {
-            crimeLabel = 'Moderate'; crimeToken = 'var(--warning)';
-        } else if (crimeRate > 0.05) {
-            crimeLabel = 'Low'; crimeToken = 'var(--ok)';
-        }
+        var crimeBucket = _crimeBucket(crimeRate);
 
         html += '<div class="eco-crime">';
         html += '<div class="eco-crime-label">Crime Rate (Average)</div>';
-        html += '<div class="eco-crime-value" style="color:' +
-            crimeToken + ';">' +
-            Math.round(crimeRate * 100) + '% - ' + crimeLabel +
+        html += '<div class="eco-crime-value ' + crimeBucket.className + '">' +
+            Math.round(crimeRate * 100) + '% - ' +
+            _escapeHtml(crimeBucket.label) +
             '</div>';
         html += '</div>';
 
         // Justice
         var justiceSeverity = settlementData.justiceSeverity || 'medium';
-        var justiceLabel = 'Medium';
-        if (justiceSeverity === 'lenient') justiceLabel = 'Lenient';
-        else if (justiceSeverity === 'harsh') justiceLabel = 'Harsh';
-        else if (justiceSeverity === 'extreme') justiceLabel = 'Extreme';
 
         html += '<div class="eco-justice">';
         html += '<div class="eco-justice-label">Justice Severity (Mode)</div>';
         html += '<div class="eco-justice-value">' +
-            _escapeHtml(justiceLabel) + '</div>';
+            _escapeHtml(_justiceLabel(justiceSeverity)) + '</div>';
         html += '</div>';
 
         // Watch
@@ -817,7 +795,7 @@
             salaryBudget.toLocaleString() + ' gold/year</div>';
         html += '</div>';
 
-        html += '</div>'; // settlement-details
+        html += '</div>';
 
         // Location breakdown
         if (settlementData.locationCount > 1) {
@@ -854,7 +832,25 @@
         }
 
         html += '</div>';
+
+        // Apply prosperity bar widths after mount (CSS can't take a
+        // runtime width from a data attribute). See render.
         return html;
+    }
+
+    /**
+     * Applies the prosperity-bar width from the data-width attribute on
+     * each .eco-prosperity-fill element inside the container. Called
+     * after the container's innerHTML is set.
+     */
+    function _applyProsperityBarWidths(container) {
+        var fills = container.querySelectorAll('.eco-prosperity-fill');
+        for (var i = 0; i < fills.length; i++) {
+            var w = fills[i].getAttribute('data-width');
+            if (w !== null) {
+                fills[i].style.width = w + '%';
+            }
+        }
     }
 
     // =========================================================================
@@ -888,16 +884,11 @@
 
         var content = '<div class="eco-edit-form">';
 
-        content += '<div class="eco-edit-warning" ' +
-            'style="padding:10px;margin-bottom:12px;' +
-            'background:var(--warning-soft);' +
-            'border:1px solid var(--warning);border-radius:6px;' +
-            'font-size:0.6rem;">' +
+        content += '<div class="eco-edit-warning">' +
             '<p><strong>Aggregated edit.</strong> These values apply to ' +
             'every location in the settlement hierarchy (' +
             _escapeHtml(place.displayName || place.name) +
-            ' and all descendants).' +
-            '</p>' +
+            ' and all descendants).</p>' +
             '<p>Stored via <code>SettlementState._updateSettlementData</code> — ' +
             'a private method. There is no canonical command for these ' +
             'fields yet.</p>' +
@@ -1133,6 +1124,11 @@
         var place = locationId ? _getPlaceById(locationId) : null;
         container.innerHTML = _renderEconomyDetails(place);
         container.dataset.locationId = locationId || '';
+
+        // Apply the prosperity bar width. The bar's percentage is a
+        // runtime value (0-100) so it lives in a data attribute that
+        // this function converts to a CSS width.
+        _applyProsperityBarWidths(container);
 
         if (!container._ecoBound) {
             container._ecoBound = true;
