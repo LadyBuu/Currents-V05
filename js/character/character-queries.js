@@ -37,12 +37,19 @@
  *   state.js; this module only reads it. Every read in this module
  *   trusts the projection to include the fields listed below.
  *
+ *   The AUTHORITATIVE list of projection fields lives in
+ *   character-state.js::PROJECTION CONTENTS (AUTHORITATIVE). This
+ *   section is a summary for the consumers of THIS module; it is not
+ *   the source of truth. If `_project` changes, update that section
+ *   first, then cross-check this one.
+ *
  *   GUARANTEED FIELDS (this module's reads break silently if any is
  *   removed from the projection):
  *
  *     id                  string
  *     name                string
  *     surname             string | null
+ *     surnameSource       string | null       (names.js reads this)
  *     gender              'male' | 'female' | 'unknown'
  *     birthYear           number | null
  *     isDeceased          boolean
@@ -57,7 +64,6 @@
  *     notes               string
  *     epithet             string
  *     surnameRules        object | null       (names.js reads this)
- *     surnameSource       string | null       (names.js reads this)
  *     isDeleted           boolean
  *     traits              string[]
  *     moves               MoveRecord[]
@@ -73,6 +79,18 @@
  *   use the module named):
  *
  *     professions         → CharacterCommands.getProfessions / getProfession
+ *                            (REMOVED from _project. Prior revisions of
+ *                            _project emitted this field, and
+ *                            settlement-prosperity-queries.js read it
+ *                            off the projection. Both were removed in
+ *                            the same revision: _project no longer
+ *                            emits professions, and settlement now
+ *                            reads via CharacterCommands.getProfessions.
+ *                            See PROFESSION INPUT in
+ *                            settlement-prosperity-queries.js and
+ *                            BELOW-CONTRACT FIELDS in
+ *                            character-state.js's PROJECTION CONTENTS
+ *                            header.)
  *     subjectProgress     → CharacterCommands.getSubjectProgress /
  *                           getSubjectProgressAll
  *     isLiterate          → CharacterCommands.isLiterate
@@ -279,40 +297,43 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
+ *     - GUARANTEED FIELDS list gains `surnameSource`. This matches
+ *       character-state.js::_project's current output (surnameSource
+ *       was added there in the same pass to close the projection /
+ *       names.js contract).
+ *     - NOT IN THE PROJECTION CONTRACT now carries a note under
+ *       `professions` documenting that the field was removed from
+ *       _project in the current revision, and that settlement now
+ *       reads via CharacterCommands.getProfessions. The prior
+ *       revision listed professions as "not in the projection
+ *       contract", but _project actually emitted it — that
+ *       contradiction has been closed from both sides.
+ *     - Pointer to character-state.js::PROJECTION CONTENTS
+ *       (AUTHORITATIVE) added at the top of the CHARACTER PROJECTION
+ *       CONTRACT section. This module's GUARANTEED FIELDS list is a
+ *       consumer-facing summary; the authoritative source of truth
+ *       for what _project emits lives in character-state.js.
+ *     - No behavioural change. No code changes. Header
+ *       documentation only.
+ *   Previous revisions:
  *     - Header CHARACTER PROJECTION CONTRACT section added. Names the
  *       fields that must remain on the projection (this module and the
  *       eleven modules named in accessors.js depend on them), and the
- *       fields that must NOT be read off the projection (professions,
- *       subjectProgress, etc. — each has a dedicated reader). Closes
- *       the contract that accessors.js's CONCRETE DEPENDENCY GRAPH
- *       only half-documented.
+ *       fields that must NOT be read off the projection.
  *     - Header NAME ALIASES section extended: RUNTIME RESOLUTION OF
  *       window.getCharacterById subsection added. Documents that under
  *       the documented load order the projection-returning version
- *       wins, and that accessors.getCharacterById remains reachable
- *       but is not the sanctioned live-entity path (which is
- *       CharacterState.getLiveCharacterForMutation).
+ *       wins.
  *     - Header FAMILY DELEGATION section extended: documents that
  *       FamilyQueries is OPTIONAL and that getCharacterSummary.family
  *       defaults to null/0/false when FamilyQueries is missing.
  *     - Header MOVE HISTORY section extended: enumerates the exact
- *       per-record shape (matching character-state.js::_cloneMoves) so
- *       a caller does not need to read character-state.js to know the
- *       fields.
+ *       per-record shape (matching character-state.js::_cloneMoves).
  *     - Header PROFESSIONS AND OTHER CHARACTER-OWNED STORES section
  *       added. Documents the out-of-contract reads.
  *     - Inline comment added near getCharacterSummary's profession
  *       resolution: "Do NOT read projection.professions; use
- *       CharacterCommands.getProfessions." The code already did; the
- *       comment prevents a future regression.
- *     - No behavioural change. Every function's return value is
- *       identical.
- *   Previous revisions:
- *     - getMoveHistory, getCharactersAtLocation, getCharacterById
- *       alias added.
- *     - LOCATION DISPLAY section added.
- *     - DEATH CAUSE section added.
- *     - traits added to summary and facts.
+ *       CharacterCommands.getProfessions."
  * =============================================================================
  */
 
@@ -642,10 +663,11 @@
 
         var rankDisplay = _resolveRankDisplay(projection.id, projection.activeRankId);
 
-        // Do NOT read projection.professions here. The projection is
-        // not guaranteed to include professions; CharacterCommands is
-        // the canonical reader. See PROFESSIONS AND OTHER
-        // CHARACTER-OWNED STORES in the header.
+        // Do NOT read projection.professions here. The projection does
+        // not include professions (see NOT IN THE PROJECTION CONTRACT
+        // in the header and BELOW-CONTRACT FIELDS in
+        // character-state.js's PROJECTION CONTENTS section).
+        // CharacterCommands is the canonical reader.
         var primaryProfession = null;
         var professionCount = 0;
         if (typeof window.CharacterCommands !== 'undefined'
@@ -703,6 +725,9 @@
             id: projection.id,
             name: projection.name,
             surname: projection.surname,
+            surnameSource: _isMissing(projection.surnameSource)
+                ? null
+                : projection.surnameSource,
             fullName: fullName,
             gender: _isMissing(projection.gender) ? 'unknown' : projection.gender,
             age: age,
