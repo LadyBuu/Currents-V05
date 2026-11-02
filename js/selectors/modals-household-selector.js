@@ -69,15 +69,58 @@
  *   every non-confirmed close path (Escape, overlay click, close
  *   button, Cancel button).
  *
+ * HOUSEHOLDQUERIES GET-HOUSEHOLD CONTRACT
+ * ---------------------------------------
+ *   The picker treats the value returned by
+ *   HouseholdQueries.getHousehold(householdId) as a RECORD OBJECT
+ *   (with .name, .id, .locationName, etc.).
+ *
+ *   If a future refactor of HouseholdQueries changes getHousehold to
+ *   return an id (string) or null-on-missing, the row click path
+ *   assumes the returned value can be passed to the caller's onSelect
+ *   as a household snapshot. A change in return shape would silently
+ *   surface a string (or null) to onSelect callers.
+ *
+ *   To close that risk, _resolveHouseholdSnapshot(id) below handles
+ *   three cases:
+ *     - object with .id     → returned as-is (canonical record)
+ *     - string id           → re-fetched via getHousehold; if still
+ *                             a string, wrapped as { id, name: id }
+ *     - null / undefined    → not selectable (row click is a no-op)
+ *
+ *   If the return shape changes to something else entirely, the
+ *   guards will surface it as "not selectable" rather than silently
+ *   passing garbage to the caller.
+ *
+ * STYLE POLICY
+ * ------------
+ *   The module's own docs (selectors-docs.txt) state "no inline
+ *   styles". This module currently uses a handful of inline style
+ *   strings on rows and filter chips for dynamic colors and per-row
+ *   layout.
+ *
+ *   TODO(selectors-css-migration): the inline styles in
+ *   _renderHouseholdRow and _renderFilterUI should move to
+ *   css/selectors.css. Dynamic per-row color (status badge tint)
+ *   should use a data-attribute-driven rule
+ *   (`[data-status="vacant"]`). This is a deferred cleanup, not a
+ *   runtime bug.
+ *
+ *   Until then, this header is honest: the module violates its own
+ *   CSS-only policy. Do not "fix" the docs to claim otherwise; fix
+ *   the code when the CSS migration lands.
+ *
  * DEPENDENCIES (REQUIRED, verified at load):
  *   - formatting.js        (escapeHtml)
  *   - modals-core.js       (openModal, closeTopModal)
  *   - household-queries.js (HouseholdQueries)
- *   - selector-base.js     (SelectorHelpers)
+ *   - selector-base.js     (SelectorHelpers, with isBloodRelativeBasic)
  *
  * DEPENDENCIES (OPTIONAL, checked at call time):
- *   - family-queries.js    (FamilyQueries) — used when characterId is set
- *                          to compute blood-relative badges
+ *   - family-queries.js    (FamilyQueries.isBloodRelated) — used by
+ *                          SelectorHelpers.isBloodRelativeBasic when
+ *                          characterId is set to compute blood-relative
+ *                          badges
  *   - icons.js             (Icons) — used for status icons if present
  *
  * ICON POLICY: Icons come from icons.js if loaded. No emojis.
@@ -85,45 +128,39 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - openModal call site switched from `title:`/`content:` to
- *       `titleHtml:`/`contentHtml:`. The prior call site rendered an
- *       empty modal — the picker's title bar said "Modal" and the
- *       body was blank, so no rows could be clicked. Same bug class
- *       that modals-role-select.js documents having fixed.
- *     - The `window._openModal` fallback was removed. It was a phantom:
- *       no module in the tree ever exported `_openModal`, and the
- *       fallback resolved to undefined, which the load-time guard
- *       caught as "missing openModal" — meaning the module could not
- *       load at all if `window.openModal` were absent. The fallback
- *       was dead and misleading.
- *     - onCancel is now threaded through the modal options. The prior
- *       revision called `onCancel()` inside the modal's own
- *       `onCancel` handler but the handler only fired if the caller
- *       passed an onCancel to openModal — which the code did, but
- *       the surrounding wiring had a duplicate `onCancel()` fire
- *       when the caller clicked Cancel after already closing via a
- *       row. Simplified: one modal-level onCancel that invokes the
- *       caller's onCancel exactly once per non-confirmed close.
- *     - The list container's click handler is now scoped to
- *       `listEl` (a descendant of `root = modal.element`) and uses
- *       addEventListener instead of onclick. Prior revision used
- *       `listEl.onclick = ...`, which is a single-handler slot:
- *       re-rendering the list preserved the handler, but any
- *       future addition of a second listener would have silently
- *       replaced the row-click handler.
- *     - _currentHouseholdId now tolerates HouseholdQueries returning
- *       a household id (string) as well as a household record
- *       (object with .id). The exact return shape of
- *       getCharacterHousehold is not visible in the core/selector
- *       surface; both shapes are handled so a future refactor of
- *       HouseholdQueries does not break the "current" badge.
- *     - Header MODAL INFRASTRUCTURE section added.
- *     - No other behavioural change. Filtering, sorting, row
- *       rendering, and relationship badges are unchanged.
+ *     - Added load-time guards for SelectorHelpers.isBloodRelativeBasic
+ *       and FamilyQueries.isBloodRelated. Prior revisions verified the
+ *       SelectorHelpers object existed but did not verify the specific
+ *       predicate used by _householdHasBloodRelative. A future
+ *       selector-base.js edit that renamed or removed
+ *       isBloodRelativeBasic would have thrown a TypeError at call
+ *       time (deep inside the row-render path) rather than a clear
+ *       error at load.
+ *     - Added _resolveHouseholdSnapshot(householdId) helper. The row
+ *       click path now goes through it instead of calling
+ *       HouseholdQueries.getHousehold directly. The helper handles
+ *       the three possible return shapes (record object, id string,
+ *       null) so a future HouseholdQueries refactor does not silently
+ *       surface an id string or null to the caller's onSelect.
+ *       See HOUSEHOLDQUERIES GET-HOUSEHOLD CONTRACT in the header.
+ *     - Header STYLE POLICY section added, marking the inline styles
+ *       as a documented deferred cleanup (TODO comment) rather than
+ *       a policy contradiction.
+ *     - Header HOUSEHOLDQUERIES GET-HOUSEHOLD CONTRACT section added.
+ *     - No behavioural change to filtering, sorting, or row
+ *       rendering.
  *   Previous revisions:
- *     - Dropped FamilyAccessors; parentage via FamilyQueries.
- *     - No char.motherId / char.fatherId / char.relationships reads.
- *     - DOM lookups scoped to modal element.
+ *     - openModal call site switched from `title:`/`content:` to
+ *       `titleHtml:`/`contentHtml:`.
+ *     - window._openModal fallback removed.
+ *     - onCancel threaded through the modal options; the modal-level
+ *       onCancel invokes the caller's onCancel exactly once per
+ *       non-confirmed close.
+ *     - list container's click handler scoped to listEl and uses
+ *       addEventListener.
+ *     - _getCurrentHouseholdId tolerates HouseholdQueries returning a
+ *       household id (string) as well as a household record (object
+ *       with .id).
  * =============================================================================
  */
 
@@ -184,10 +221,33 @@
         'HouseholdQueries.getCharacterHousehold',
         _queries.getCharacterHousehold
     );
+
+    // The selector predicate path is required at load, not just the
+    // helper object. See REFACTOR HISTORY.
     var _selector = _requireObject(
         'SelectorHelpers (selector-base.js)',
         window.SelectorHelpers || window._SelectorBaseHelpers
     );
+    _requireFunction(
+        'SelectorHelpers.isBloodRelativeBasic',
+        _selector.isBloodRelativeBasic
+    );
+
+    // FamilyQueries is optional: only used when a characterId is
+    // supplied AND SelectorHelpers.isBloodRelativeBasic needs the
+    // underlying isBloodRelated. If FamilyQueries is missing, the
+    // predicate fails closed (per selector-base.js) and this module
+    // never throws. Guard is a warning, not a load failure.
+    if (typeof window.FamilyQueries === 'undefined'
+        || typeof window.FamilyQueries.isBloodRelated !== 'function') {
+        if (typeof console !== 'undefined' && console.debug) {
+            console.debug(
+                'modals-household-selector: FamilyQueries.isBloodRelated is ' +
+                'not loaded; relative badges will be omitted. Load ' +
+                'family-queries.js to enable them.'
+            );
+        }
+    }
 
     // =========================================================================
     // 1. HELPERS
@@ -309,21 +369,62 @@
     }
 
     // =========================================================================
+    // 3b. HOUSEHOLD SNAPSHOT RESOLUTION
+    // =========================================================================
+    //
+    // See HOUSEHOLDQUERIES GET-HOUSEHOLD CONTRACT in the header. Handles
+    // the three possible return shapes of HouseholdQueries.getHousehold.
+    //
+    // Returns:
+    //   object record  → returned as-is
+    //   string id      → re-fetched; if still a string, wrapped as
+    //                    { id, name: id }
+    //   null/undefined → null (not selectable)
+
+    function _resolveHouseholdSnapshot(householdId) {
+        if (!_hasId(householdId)) return null;
+
+        var fetched = null;
+        try {
+            fetched = _queries.getHousehold(householdId);
+        } catch (e) {
+            if (typeof console !== 'undefined' && console.warn) {
+                console.warn(
+                    'modals-household-selector: getHousehold threw', e
+                );
+            }
+            return null;
+        }
+
+        if (_isMissing(fetched)) return null;
+
+        if (typeof fetched === 'object' && _hasId(fetched.id)) {
+            return fetched;
+        }
+
+        // String-return shape. Some query modules return the id as a
+        // minimal record; wrap it so the caller's onSelect receives an
+        // object with at least { id, name }.
+        if (typeof fetched === 'string' && fetched.length > 0) {
+            return { id: fetched, name: fetched };
+        }
+
+        // Unrecognized shape. Treat as not selectable rather than
+        // passing garbage to the caller.
+        if (typeof console !== 'undefined' && console.warn) {
+            console.warn(
+                'modals-household-selector: unrecognized getHousehold ' +
+                'return shape for id "' + householdId + '" (got ' +
+                typeof fetched + '); treating as not selectable.'
+            );
+        }
+        return null;
+    }
+
+    // =========================================================================
     // 4. CHARACTER-CENTRIC BADGES
     // =========================================================================
 
-    /**
-     * Returns the character's current household id, or null.
-     *
-     * HouseholdQueries.getCharacterHousehold's exact return shape is not
-     * pinned by the core contract. Historically it returned a household
-     * record (object with .id). A reasonable refactor might make it
-     * return the id directly (string), matching other query modules.
-     * Both shapes are handled so the "current" badge survives either.
-     *
-     * @private
-     * @returns {string|null}
-     */
     function _getCurrentHouseholdId(characterId) {
         if (!_hasId(characterId)) return null;
         var current = _queries.getCharacterHousehold(characterId);
@@ -363,6 +464,9 @@
     // =========================================================================
     // 5. ROW RENDERING
     // =========================================================================
+    //
+    // TODO(selectors-css-migration): inline styles below should move
+    // to css/selectors.css. See STYLE POLICY in the header.
 
     function _statusBadgeForClassification(classification) {
         switch (classification) {
@@ -396,6 +500,7 @@
         var html = '';
         html += '<button type="button" class="' + rowClasses.join(' ') + '"'
              + ' data-household-id="' + _escapeHtml(household.id) + '"'
+             + ' data-status="' + _escapeHtml(classification) + '"'
              + ' style="display:flex;align-items:center;gap:8px;width:100%;'
              + 'text-align:left;padding:8px 10px;margin-bottom:4px;'
              + 'background:var(--bg2);border:1px solid var(--border);'
@@ -622,8 +727,19 @@
             var hid = row.getAttribute('data-household-id');
             if (!_hasId(hid)) return;
 
-            var snapshot = _queries.getHousehold(hid);
-            if (!snapshot) return;
+            // Resolve through the defensive helper. See
+            // HOUSEHOLDQUERIES GET-HOUSEHOLD CONTRACT in the header.
+            var snapshot = _resolveHouseholdSnapshot(hid);
+            if (!snapshot) {
+                if (typeof console !== 'undefined' && console.warn) {
+                    console.warn(
+                        'modals-household-selector: household ' + hid +
+                        ' is not selectable (missing or unrecognized ' +
+                        'getHousehold return shape).'
+                    );
+                }
+                return;
+            }
 
             selectionMade = true;
             _closeTopModal();
