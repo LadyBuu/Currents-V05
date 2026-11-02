@@ -40,31 +40,19 @@
  *   4. Canonical enum source.
  *      The tab defines its own PUNISHMENT_TYPES / LAW_CATEGORIES /
  *      SEVERITY_LEVELS, which do not match SettlementLawDefinitions.*.
- *      Reconciling them requires the settlement-law-* files, which are
- *      not available at the time this file was rewritten.
  *
  * What IS wired in this revision:
  *
- *   - The modal API uses titleHtml / contentHtml (key translation in
- *     _openModal). Before this, the modal body was empty and typing
- *     into the form was impossible.
- *   - Every onConfirm / onOpen reads inputs via root.querySelector,
- *     not document.getElementById. Two open modals no longer cross-read.
- *   - Every write inspects the _updateSettlementData return value. A
- *     failed write shows a toast and keeps the modal open; the tab
- *     never reports success on a null/undefined return.
- *   - Every successful write calls saveMasterData() and
- *     invalidateAccessorCaches() once.
- *   - The banner and integration-status panel are rendered on every
- *     view. The user is told, every time, that these laws are stored
- *     locally and consumed by nothing.
- *
- * When the settlement side is wired:
- *   - Replace the fallback write with SettlementLawCommands.addCivilLaw.
- *   - Replace the fallback read with SettlementLawQueries.getCivilLaws.
- *   - Replace the local PUNISHMENT_TYPES / LAW_CATEGORIES /
- *     SEVERITY_LEVELS with SettlementLawDefinitions.* values.
- *   - Delete the banner and integration-status panel.
+ *   - Modal API uses titleHtml / contentHtml (key translation).
+ *   - Every onConfirm / onMount reads inputs via root.querySelector.
+ *   - Every write inspects the _updateSettlementData return value; a
+ *     failed write shows a toast and keeps the modal open.
+ *   - saveMasterData() and invalidateAccessorCaches() run once per
+ *     successful write.
+ *   - Banner + integration status panel render on every view.
+ *   - All inline style="" attributes removed; every visual is a class
+ *     from gov-manager.css, driven by themes.css tokens. Colours are
+ *     theme-aware; nothing is hardcoded.
  *
  * =============================================================================
  * DEPENDENCIES (checked at load time):
@@ -80,12 +68,6 @@
  *   - SettlementState (window.SettlementState._updateSettlementData)
  *   - window.getSettlementData / window.getOrCreateSettlementData
  *
- * MODAL KEY TRANSLATION:
- *   modals-core.js reads titleHtml / contentHtml. The call sites pass
- *   title / content. The local _openModal translates.
- *
- * MODAL INPUT SCOPING:
- *   Every onConfirm reads inputs via root.querySelector.
  * =============================================================================
  */
 
@@ -183,9 +165,6 @@
         if (typeof window.generateId === 'function') {
             return window.generateId(prefix);
         }
-        // Defensive fallback. generateId is a core dependency; if it is
-        // absent the page is missing core/ids.js. The fallback keeps the
-        // tab functional so the user can still see their data.
         return prefix + '_' + Date.now() + '_' +
             Math.random().toString(36).slice(2, 8);
     }
@@ -193,10 +172,6 @@
     // =========================================================================
     // 3. SETTLEMENT INTEGRATION DETECTION
     // =========================================================================
-    //
-    // Each check reports "present" or "missing" and a short reason. The
-    // integration-status panel reads these and shows them, so a user can
-    // see exactly which piece of the settlement domain needs wiring.
 
     function _detectSettlementState() {
         if (typeof window.SettlementState === 'undefined'
@@ -410,7 +385,7 @@
 
     function _persistAndInvalidate() {
         if (typeof window.saveMasterData === 'function') {
-            try { window.saveMasterData(); } catch (e) { /* logged below */ }
+            try { window.saveMasterData(); } catch (e) { /* ignore */ }
         }
         if (typeof window.invalidateAccessorCaches === 'function') {
             try { window.invalidateAccessorCaches(); } catch (e) { /* ignore */ }
@@ -451,11 +426,11 @@
     };
 
     var SEVERITY_LEVELS = {
-        minor:   { label: 'Minor',   token: 'var(--ok)' },
-        medium:  { label: 'Medium',  token: 'var(--warning)' },
-        major:   { label: 'Major',   token: 'var(--danger-lt)' },
-        severe:  { label: 'Severe',  token: 'var(--danger)' },
-        capital: { label: 'Capital', token: 'var(--danger)' }
+        minor:   { label: 'Minor',   className: 'is-minor' },
+        medium:  { label: 'Medium',  className: 'is-medium' },
+        major:   { label: 'Major',   className: 'is-major' },
+        severe:  { label: 'Severe',  className: 'is-severe' },
+        capital: { label: 'Capital', className: 'is-capital' }
     };
 
     // =========================================================================
@@ -464,12 +439,7 @@
 
     function _renderIntegrationBanner() {
         return (
-            '<div class="law-integration-banner" role="note" ' +
-                'style="padding:10px 14px;margin-bottom:14px;' +
-                'background:var(--warning-soft);' +
-                'border:1px solid var(--warning);' +
-                'border-radius:6px;font-size:0.65rem;line-height:1.5;' +
-                'color:var(--text);">' +
+            '<div class="gov-integration-banner" role="note">' +
                 '<strong>Preview only — not wired to the settlement domain.</strong> ' +
                 'Laws created here are stored in <code>settlementData.civilLaws</code> ' +
                 'and nothing else in the game reads them. Crime, religion, ' +
@@ -482,32 +452,24 @@
 
     function _renderIntegrationStatus(status) {
         function line(label, entry) {
-            var color = entry.ok ? 'var(--ok)' : 'var(--danger-lt)';
+            var glyphClass = entry.ok
+                ? 'gov-integration-glyph is-ok'
+                : 'gov-integration-glyph is-missing';
             var glyph = entry.ok ? '✓' : '✗';
             return (
-                '<div class="law-integration-line" ' +
-                    'style="display:flex;gap:8px;align-items:flex-start;' +
-                    'padding:3px 0;font-size:0.6rem;">' +
-                    '<span style="color:' + color + ';font-weight:600;' +
-                        'min-width:12px;">' + glyph + '</span>' +
-                    '<span style="color:var(--dim);min-width:150px;">' +
+                '<div class="gov-integration-line">' +
+                    '<span class="' + glyphClass + '">' + glyph + '</span>' +
+                    '<span class="gov-integration-label">' +
                         _escapeHtml(label) + '</span>' +
-                    '<span style="color:var(--text);flex:1;">' +
+                    '<span class="gov-integration-value">' +
                         _escapeHtml(entry.reason) + '</span>' +
                 '</div>'
             );
         }
 
         return (
-            '<div class="law-integration-status" ' +
-                'style="padding:10px 14px;margin-bottom:14px;' +
-                'background:var(--bg2);' +
-                'border:1px solid var(--border);' +
-                'border-radius:6px;">' +
-                '<div style="font-size:0.65rem;font-weight:600;' +
-                    'color:var(--accent);margin-bottom:6px;' +
-                    'font-family:var(--f-display);letter-spacing:0.05em;' +
-                    'text-transform:uppercase;">' +
+            '<div class="gov-integration-status">' +
+                '<div class="gov-integration-status-title">' +
                     'Settlement integration status' +
                 '</div>' +
                 line('Settlement write path', status.settlementState) +
@@ -525,37 +487,35 @@
 
         var punishmentIcon = _getIcon(punishment.icon);
         var categoryIcon = _getIcon(category.icon);
-        var statusToken = law.isActive ? 'var(--ok)' : 'var(--danger-lt)';
+        var statusClass = law.isActive ? 'is-active' : 'is-inactive';
         var statusLabel = law.isActive ? 'Active' : 'Inactive';
 
         var html = '<div class="law-item" data-law-id="' +
             _escapeHtml(law.id) + '">';
 
-        // Header
         html += '<div class="law-header">';
         html += '<div class="law-title">';
         html += '<span class="law-name">' +
             _escapeHtml(law.name) + '</span>';
-        html += '<span class="law-status" style="color:' +
-            statusToken + ';">● ' + statusLabel + '</span>';
+        html += '<span class="law-status ' + statusClass + '">● ' +
+            statusLabel + '</span>';
         html += '</div>';
         html += '<div class="law-actions">';
-        html += '<button class="law-btn law-btn-edit" ' +
+        html += '<button type="button" class="law-btn law-btn-edit" ' +
             'data-action="edit-law" data-law-id="' +
             _escapeHtml(law.id) + '">' + _getIcon('EDIT') + '</button>';
-        html += '<button class="law-btn law-btn-delete" ' +
+        html += '<button type="button" class="law-btn law-btn-delete" ' +
             'data-action="delete-law" data-law-id="' +
             _escapeHtml(law.id) + '">' + _getIcon('X_HEAVY') + '</button>';
         html += '</div>';
         html += '</div>';
 
-        // Body
         html += '<div class="law-details">';
         html += '<div class="law-meta">';
         html += '<span class="law-category">' + categoryIcon + ' ' +
             _escapeHtml(category.label) + '</span>';
-        html += '<span class="law-severity" style="color:' +
-            severity.token + ';">' + _escapeHtml(severity.label) + '</span>';
+        html += '<span class="law-severity ' + severity.className + '">' +
+            _escapeHtml(severity.label) + '</span>';
         html += '<span class="law-jurisdiction">' +
             _escapeHtml(law.jurisdiction || 'Local') + '</span>';
         html += '</div>';
@@ -635,11 +595,11 @@
         html += '<h3>Civil Laws - ' +
             _escapeHtml(place.displayName || place.name) + '</h3>';
         html += '<div class="law-tab-actions">';
-        html += '<button class="law-btn law-btn-add" ' +
+        html += '<button type="button" class="law-btn law-btn-add" ' +
             'data-action="add-law">' +
             _getIcon('PLUS') + ' Add Law' +
             '</button>';
-        html += '<button class="law-btn law-btn-refresh" ' +
+        html += '<button type="button" class="law-btn" ' +
             'data-action="refresh-laws">' +
             _getIcon('REFRESH') + ' Refresh' +
             '</button>';
@@ -657,7 +617,7 @@
                 'Civil laws cannot be loaded or saved here. ' +
                 'See the integration status above.'
             );
-            html += '</div>'; // law-tab-container
+            html += '</div>';
             return html;
         }
 
@@ -673,12 +633,12 @@
             '</div>';
         html += '<div class="law-stat">' +
             '<span class="law-stat-label">Active</span>' +
-            '<span class="law-stat-value" style="color:var(--ok);">' +
+            '<span class="law-stat-value is-active">' +
             activeLaws.length + '</span>' +
             '</div>';
         html += '<div class="law-stat">' +
             '<span class="law-stat-label">Inactive</span>' +
-            '<span class="law-stat-value" style="color:var(--danger-lt);">' +
+            '<span class="law-stat-value is-inactive">' +
             inactiveLaws.length + '</span>' +
             '</div>';
         html += '</div>';
@@ -687,7 +647,7 @@
         if (laws.length === 0) {
             html += '<div class="law-empty">';
             html += '<p>No civil laws established for this location.</p>';
-            html += '<button class="law-btn law-btn-add" ' +
+            html += '<button type="button" class="law-btn law-btn-add" ' +
                 'data-action="add-law">' +
                 _getIcon('PLUS') + ' Create First Law' +
                 '</button>';
@@ -712,7 +672,7 @@
                 html += '<span class="law-toggle-icon">' +
                     _getIcon('TRIANGLE_RIGHT') + '</span>';
                 html += '</div>';
-                html += '<div class="law-section-body" style="display:none;">';
+                html += '<div class="law-section-body is-collapsed">';
                 html += '<div class="law-list">';
                 for (var i = 0; i < inactiveLaws.length; i++) {
                     html += _renderLawItem(inactiveLaws[i]);
@@ -723,7 +683,7 @@
             }
         }
 
-        html += '</div>'; // law-tab-container
+        html += '</div>';
         return html;
     }
 
@@ -809,11 +769,11 @@
         html += '<div class="form-group">';
         html += '<label>Punishment</label>';
         html += '<div class="form-row">';
-        html += '<div class="form-group" style="flex:1;">';
+        html += '<div class="form-group is-grow">';
         html += '<select id="law-punishment-type" class="form-control">' +
             punOptions + '</select>';
         html += '</div>';
-        html += '<div class="form-group" style="flex:0 0 120px;">';
+        html += '<div class="form-group is-shrink">';
         html += '<input type="number" id="law-punishment-amount" ' +
             'class="form-control" min="0" ' +
             'value="' + _escapeNumber(law.punishmentAmount || 0) + '" ' +
@@ -902,9 +862,6 @@
             return;
         }
 
-        // Pre-flight: if the settlement write path is unavailable, warn
-        // loudly and do not open the modal. Better than letting the user
-        // type a whole form and then get "Save failed".
         var status = _detectSettlementState();
         if (!status.ok) {
             _showToast(
@@ -1085,19 +1042,17 @@
                 }
             });
 
-            // Toggle for inactive laws
             container.addEventListener('click', function(e) {
                 var toggle = e.target.closest('[data-toggle="inactive-laws"]');
                 if (!toggle) return;
                 var body = toggle.nextElementSibling;
                 if (!body) return;
-                var isHidden = body.style.display === 'none';
-                body.style.display = isHidden ? 'block' : 'none';
+                var collapsed = body.classList.toggle('is-collapsed');
                 var icon = toggle.querySelector('.law-toggle-icon');
                 if (icon) {
-                    icon.innerHTML = isHidden
-                        ? _getIcon('TRIANGLE_DOWN')
-                        : _getIcon('TRIANGLE_RIGHT');
+                    icon.innerHTML = collapsed
+                        ? _getIcon('TRIANGLE_RIGHT')
+                        : _getIcon('TRIANGLE_DOWN');
                 }
             });
         }
@@ -1107,9 +1062,6 @@
         var id = containerId || 'laws-tab';
         var container = document.getElementById(id);
         if (!container) {
-            // Fallback — search by class on the page. Warning: this
-            // returns the first match; if two civil-laws tabs are on the
-            // page, pass the id to disambiguate.
             var candidates = document.querySelectorAll(
                 '.law-tab-container, #laws-tab'
             );
