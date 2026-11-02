@@ -126,7 +126,7 @@
     <script src="js/core/maintenance.js"></script>
 
     <!-- ============================================================ -->
-    <!-- CORE STORAGE (schema → storage → init)                       -->
+    <!-- CORE STORAGE                                                 -->
     <!-- ============================================================ -->
     <script src="js/core/storage-schema.js"></script>
     <script src="js/core/storage.js"></script>
@@ -134,24 +134,20 @@
     (function () {
         if (typeof window.initializeStorage === 'function') {
             try { window.initializeStorage(); }
-            catch (e) {
-                if (typeof console !== 'undefined' && console.error) {
-                    console.error('storage.js initializeStorage failed at boot:', e);
-                }
-            }
+            catch (e) { console.error('storage init failed at boot:', e); }
         }
     })();
     </script>
 
     <!-- ============================================================ -->
-    <!-- CORE DATA ACCESSORS                                          -->
+    <!-- CORE ACCESSORS                                               -->
     <!-- ============================================================ -->
     <script src="js/core/accessors.js"></script>
     <script src="js/core/world.js"></script>
     <script src="js/core/names.js"></script>
 
     <!-- ============================================================ -->
-    <!-- CORE UI (ui → responsive → collapsible)                      -->
+    <!-- CORE UI                                                      -->
     <!-- ============================================================ -->
     <script src="js/core/ui.js"></script>
     <script src="js/core/ui-state.js"></script>
@@ -161,8 +157,7 @@
     <script src="js/core/exportUtils.js"></script>
 
     <!-- ============================================================ -->
-    <!-- FEATURE-STATE (only the ones with no missing deps)           -->
-    <!-- role-state, name-state, rank-state load with their domains  -->
+    <!-- FEATURE-STATE (no missing deps)                              -->
     <!-- ============================================================ -->
     <script src="js/core/census-state.js"></script>
     <script src="js/core/matchmaker-state.js"></script>
@@ -171,7 +166,7 @@
     <script src="js/location/location-ui-state.js"></script>
 
     <!-- ============================================================ -->
-    <!-- CHARACTER (state → commands → queries → family → mortality → lifecycle) -->
+    <!-- CHARACTER                                                    -->
     <!-- ============================================================ -->
     <script src="js/character/character-state.js"></script>
     <script src="js/character/character-commands.js"></script>
@@ -189,8 +184,21 @@
     <script src="js/character/character-lifecycle.js"></script>
     <script src="js/character/modals-death.js"></script>
 
+    <!-- Flat aliases for crime domain. If character-lifecycle exports
+         killCharacter on a namespace rather than flat, install the flat
+         alias that crime-commands.js + crime-bootstrap.js expect. -->
+    <script>
+    (function () {
+        if (typeof window.killCharacter === 'function') return;
+        if (window.CharacterLifecycle
+            && typeof window.CharacterLifecycle.killCharacter === 'function') {
+            window.killCharacter = window.CharacterLifecycle.killCharacter;
+        }
+    })();
+    </script>
+
     <!-- ============================================================ -->
-    <!-- ROLES — skill-utils → constants → state → queries → commands -->
+    <!-- ROLES                                                        -->
     <!-- ============================================================ -->
     <script src="js/roles/skill-utils.js"></script>
     <script src="js/roles/role-constants.js"></script>
@@ -199,17 +207,18 @@
     <script src="js/roles/role-commands.js"></script>
 
     <!-- ============================================================ -->
-    <!-- RANKS — constants → rules → state → assignment → queries → commands -->
+    <!-- RANKS — queries BEFORE assignment BEFORE commands            -->
+    <!-- (rank-assignment.js needs rank-queries.js)                   -->
     <!-- ============================================================ -->
     <script src="js/ranks/rank-constants.js"></script>
     <script src="js/ranks/rank-rules.js"></script>
     <script src="js/ranks/rank-state.js"></script>
-    <script src="js/ranks/rank-assignment.js"></script>
     <script src="js/ranks/rank-queries.js"></script>
+    <script src="js/ranks/rank-assignment.js"></script>
     <script src="js/ranks/rank-commands.js"></script>
 
     <!-- ============================================================ -->
-    <!-- NAMES — queries → rules → state → commands                   -->
+    <!-- NAMES                                                        -->
     <!-- ============================================================ -->
     <script src="js/names/name-queries.js"></script>
     <script src="js/names/name-rules.js"></script>
@@ -222,7 +231,7 @@
     <script src="js/core/state.js"></script>
 
     <!-- ============================================================ -->
-    <!-- SELECTORS (with getFilteredLocationOptions shim)             -->
+    <!-- SELECTORS                                                    -->
     <!-- ============================================================ -->
     <script src="js/selectors/selector-base.js"></script>
     <script src="js/selectors/locationDropdown.js"></script>
@@ -241,7 +250,7 @@
     <script src="js/selectors/modals-household-selector.js"></script>
 
     <!-- ============================================================ -->
-    <!-- HOUSEHOLDS — constants → rules → queries → commands          -->
+    <!-- HOUSEHOLDS                                                   -->
     <!-- ============================================================ -->
     <script src="js/households/household-constants.js"></script>
     <script src="js/households/household-rules.js"></script>
@@ -249,7 +258,7 @@
     <script src="js/households/household-commands.js"></script>
 
     <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM                                              -->
+    <!-- LOCATION                                                     -->
     <!-- ============================================================ -->
     <script src="js/location/location-state.js"></script>
     <script src="js/location/location-hierarchy.js"></script>
@@ -265,9 +274,9 @@
     <script src="js/location/location-bootstrap.js"></script>
 
     <!-- ============================================================ -->
-    <!-- SETTLEMENT — definitions → rules → state → commit → queries -->
-    <!-- → commands → factory → annual → view-models → ui-state →     -->
-    <!-- tabs → ui-list → modals                                       -->
+    <!-- SETTLEMENT (definitions → rules → state → commit → queries   -->
+    <!-- → commands → factory → processor → view-models → ui-state    -->
+    <!-- → tabs → ui-list → modals)                                    -->
     <!-- ============================================================ -->
     <script src="js/settlement/settlement-fiscal-definitions.js"></script>
     <script src="js/settlement/settlement-government-definitions.js"></script>
@@ -313,23 +322,11 @@
     <script src="js/settlement/settlement-view-models.js"></script>
     <script src="js/settlement/settlement-ui-state.js"></script>
 
-    <!-- SettlementTabs must load BEFORE any tab renderer that calls
-         registerTabRenderer (including settlement-overview-tab.js). -->
     <script src="js/settlement/settlement-tabs.js"></script>
-
     <script src="js/settlement/settlement-ui-list.js"></script>
     <script src="js/settlement/modals-settlement-core.js"></script>
     <script src="js/settlement/modals-settlement-economy.js"></script>
     <script src="js/settlement/modals-settlement-roles.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- GOVERNMENT — constants → state → rules → queries → commands -->
-    <!-- ============================================================ -->
-    <script src="js/government/government-constants.js"></script>
-    <script src="js/government/government-state.js"></script>
-    <script src="js/government/government-rules.js"></script>
-    <script src="js/government/government-queries.js"></script>
-    <script src="js/government/government-commands.js"></script>
 
     <!-- ============================================================ -->
     <!-- RELIGION                                                     -->
@@ -350,18 +347,41 @@
     <script src="js/religion/religion-bootstrap.js"></script>
 
     <!-- ============================================================ -->
-    <!-- INDUSTRY — constants → state → types → rules → queries → commands → processor -->
+    <!-- INDUSTRY — government-queries.js requires IndustryQueries,    -->
+    <!-- so INDUSTRY MUST COME BEFORE GOVERNMENT.                      -->
+    <!--                                                            -->
+    <!-- Full industry load order (per the tree): constants → state  -->
+    <!-- → types → type-defaults → type-init → type-commands →       -->
+    <!-- rules → economics → migration → queries → commands →       -->
+    <!-- processor → bootstrap. All files are declared because the   -->
+    <!-- processor and the migration boot require them.               -->
     <!-- ============================================================ -->
     <script src="js/industry/industry-constants.js"></script>
     <script src="js/industry/industry-state.js"></script>
     <script src="js/industry/industry-types.js"></script>
+    <script src="js/industry/industry-type-defaults.js"></script>
+    <script src="js/industry/industry-type-init.js"></script>
+    <script src="js/industry/industry-type-commands.js"></script>
     <script src="js/industry/industry-rules.js"></script>
+    <script src="js/industry/industry-economics.js"></script>
+    <script src="js/industry/industry-migration.js"></script>
     <script src="js/industry/industry-queries.js"></script>
     <script src="js/industry/industry-commands.js"></script>
     <script src="js/industry/industry-processor.js"></script>
+    <script src="js/industry/industry-bootstrap.js"></script>
 
     <!-- ============================================================ -->
-    <!-- EDUCATION — constants → rules → state → commands → queries → learning → annual -->
+    <!-- GOVERNMENT — after industry (queries needs IndustryQueries)  -->
+    <!-- constants → state → rules → queries → commands               -->
+    <!-- ============================================================ -->
+    <script src="js/government/government-constants.js"></script>
+    <script src="js/government/government-state.js"></script>
+    <script src="js/government/government-rules.js"></script>
+    <script src="js/government/government-queries.js"></script>
+    <script src="js/government/government-commands.js"></script>
+
+    <!-- ============================================================ -->
+    <!-- EDUCATION                                                    -->
     <!-- ============================================================ -->
     <script src="js/education/education-constants.js"></script>
     <script src="js/education/education-rules.js"></script>
@@ -372,7 +392,7 @@
     <script src="js/education/education-annual.js"></script>
 
     <!-- ============================================================ -->
-    <!-- CRIME SYSTEM (last domain)                                   -->
+    <!-- CRIME (last domain)                                          -->
     <!-- ============================================================ -->
     <script src="js/crime/crime-constants.js"></script>
     <script src="js/crime/crime-state.js"></script>
@@ -387,16 +407,7 @@
 
     <!-- ============================================================ -->
     <!-- TAB RENDERERS                                                -->
-    <!--                                                              -->
-    <!-- settlement-overview-tab.js SELF-REGISTERS via                -->
-    <!-- SettlementTabs.registerTabRenderer('overview', ...) on load. -->
-    <!-- SettlementTabs MUST be loaded before this file. It is        -->
-    <!-- (settlement-tabs.js loads above, right after ui-state).      -->
-    <!--                                                              -->
-    <!-- The orchestrator does NOT call renderSettlementOverview      -->
-    <!-- directly. It calls SettlementTabs.activateTab('overview'),   -->
-    <!-- which invokes the registered renderer with the correct       -->
-    <!-- (container, context) signature.                              -->
+    <!-- (settlement-overview-tab.js self-registers via SettlementTabs) -->
     <!-- ============================================================ -->
     <script src="js/tabs/location-tab.js"></script>
     <script src="js/tabs/settlement-overview-tab.js"></script>
@@ -465,14 +476,8 @@
             themeMenu.innerHTML = html;
         }
 
-        function openMenu() {
-            themeMenu.hidden = false;
-            themeBtn.setAttribute('aria-expanded', 'true');
-        }
-        function closeMenu() {
-            themeMenu.hidden = true;
-            themeBtn.setAttribute('aria-expanded', 'false');
-        }
+        function openMenu() { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); }
+        function closeMenu() { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); }
 
         themeBtn.addEventListener('click', function (e) {
             e.stopPropagation();
@@ -532,26 +537,9 @@
         var addLocationBtn  = document.getElementById('addLocationBtn');
         var addSettlementBtn= document.getElementById('addSettlementBtn');
 
-        var tabPanes = {
-            location:   document.getElementById('tab-location'),
-            overview:   document.getElementById('tab-overview'),
-            features:   document.getElementById('tab-features'),
-            economy:    document.getElementById('tab-economy'),
-            religion:   document.getElementById('tab-religion'),
-            industry:   document.getElementById('tab-industry'),
-            education:  document.getElementById('tab-education'),
-            history:    document.getElementById('tab-history'),
-            roles:      document.getElementById('tab-roles'),
-            government: document.getElementById('tab-government'),
-            crime:      document.getElementById('tab-crime')
-        };
-
         var selectedId    = null;
         var isInitialized = false;
 
-        // -----------------------------------------------------------------
-        // Bootstrapping
-        // -----------------------------------------------------------------
         function bootstrap() {
             if (isInitialized) return;
             isInitialized = true;
@@ -576,10 +564,17 @@
                     console.error('[settlement-manager] crime bootstrap failed:', e);
                 }
             }
+            if (window.IndustryBootstrap && typeof window.IndustryBootstrap.init === 'function') {
+                try { window.IndustryBootstrap.init(); } catch (e) {
+                    console.error('[settlement-manager] industry bootstrap failed:', e);
+                }
+            }
+            if (window.GovernmentBootstrap && typeof window.GovernmentBootstrap.init === 'function') {
+                try { window.GovernmentBootstrap.init(); } catch (e) {
+                    console.error('[settlement-manager] government bootstrap failed:', e);
+                }
+            }
 
-            // Initialize SettlementTabs once. It wires tab-bar clicks and
-            // renders the active tab. Its renderer registry was populated
-            // by the self-registering tab files during script load.
             if (window.SettlementTabs && typeof window.SettlementTabs.init === 'function') {
                 try { window.SettlementTabs.init(); } catch (e) {
                     console.error('[settlement-manager] SettlementTabs.init failed:', e);
@@ -591,9 +586,6 @@
             pickInitialSelection();
         }
 
-        // -----------------------------------------------------------------
-        // Tree
-        // -----------------------------------------------------------------
         function renderTree() {
             if (!treeContainer) return;
             if (!window.LocationUI || typeof window.LocationUI.renderLocationList !== 'function') {
@@ -620,9 +612,7 @@
             if (!window.LocationQueries) return;
             try {
                 var roots = window.LocationQueries.getRootPlaces({});
-                if (roots && roots.length > 0) {
-                    selectLocation(roots[0].id);
-                }
+                if (roots && roots.length > 0) selectLocation(roots[0].id);
             } catch (e) {
                 console.error('[settlement-manager] initial selection failed:', e);
             }
@@ -631,27 +621,16 @@
         function selectLocation(id) {
             if (!id) return;
             selectedId = id;
-
             if (window.SettlementUIState && typeof window.SettlementUIState.setSelectedLocationId === 'function') {
                 window.SettlementUIState.setSelectedLocationId(id);
             }
-
             renderTree();
-
-            // Re-render whatever tab is currently active. Delegated to
-            // SettlementTabs, which owns the active-tab id and the
-            // renderer registry.
             if (window.SettlementTabs && typeof window.SettlementTabs.renderActiveTab === 'function') {
                 try { window.SettlementTabs.renderActiveTab(); }
-                catch (e) {
-                    console.error('[settlement-manager] renderActiveTab failed:', e);
-                }
+                catch (e) { console.error('[settlement-manager] renderActiveTab failed:', e); }
             }
         }
 
-        // -----------------------------------------------------------------
-        // Sidebar
-        // -----------------------------------------------------------------
         function toggleSidebar() { if (sidebar) sidebar.classList.toggle('open'); }
         function closeSidebar()  { if (sidebar) sidebar.classList.remove('open'); }
 
@@ -664,16 +643,9 @@
             if (e.target === burgerBtn) return;
             closeSidebar();
         });
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') closeSidebar();
-        });
-        window.addEventListener('resize', function () {
-            if (window.innerWidth > 768) closeSidebar();
-        });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSidebar(); });
+        window.addEventListener('resize', function () { if (window.innerWidth > 768) closeSidebar(); });
 
-        // -----------------------------------------------------------------
-        // Year
-        // -----------------------------------------------------------------
         function syncYearInput() {
             if (typeof window.getCurrentYear !== 'function') return;
             try { yearInput.value = String(window.getCurrentYear()); } catch (e) {}
@@ -684,12 +656,8 @@
                 if (typeof window.isValidYear !== 'function') return;
                 var val = parseInt(yearInput.value, 10);
                 if (isNaN(val)) { window.alert('Enter a valid year.'); return; }
-                if (!window.isValidYear(val)) {
-                    window.alert('Year is outside the allowed range.'); return;
-                }
-                if (window.masterData && window.masterData.data) {
-                    window.masterData.data.currentYear = val;
-                }
+                if (!window.isValidYear(val)) { window.alert('Year is outside the allowed range.'); return; }
+                if (window.masterData && window.masterData.data) window.masterData.data.currentYear = val;
                 if (typeof window.markDataDirty === 'function') window.markDataDirty();
                 if (typeof window.saveMasterData === 'function') window.saveMasterData();
                 if (window.SettlementTabs && typeof window.SettlementTabs.renderActiveTab === 'function') {
@@ -698,19 +666,13 @@
             });
         }
 
-        // -----------------------------------------------------------------
-        // Add location / settlement
-        // -----------------------------------------------------------------
         if (addLocationBtn) {
             addLocationBtn.addEventListener('click', function () {
                 if (typeof window.openAddPlaceModal !== 'function') {
                     window.alert('Add Location modal not loaded.'); return;
                 }
                 window.openAddPlaceModal(null, function (newId) {
-                    if (newId) {
-                        renderTree();
-                        selectLocation(newId);
-                    }
+                    if (newId) { renderTree(); selectLocation(newId); }
                 });
             });
         }
@@ -738,65 +700,41 @@
             });
         }
 
-        // -----------------------------------------------------------------
-        // Export / Import
-        // -----------------------------------------------------------------
         if (exportBtn) {
             exportBtn.addEventListener('click', function () {
-                if (typeof window.exportToJSON !== 'function') {
-                    window.alert('Export module not available.'); return;
-                }
-                if (!window.masterData) {
-                    window.alert('No data to export.'); return;
-                }
+                if (typeof window.exportToJSON !== 'function') { window.alert('Export module not available.'); return; }
+                if (!window.masterData) { window.alert('No data to export.'); return; }
                 try { window.exportToJSON(window.masterData, 'stillwaters'); }
                 catch (e) { window.alert('Export failed: ' + (e.message || 'unknown')); }
             });
         }
 
         if (importBtn && fileInput) {
-            importBtn.addEventListener('click', function () {
-                fileInput.value = '';
-                fileInput.click();
-            });
-
+            importBtn.addEventListener('click', function () { fileInput.value = ''; fileInput.click(); });
             fileInput.addEventListener('change', function () {
                 var file = this.files && this.files[0];
                 if (!file) return;
-
                 var reader = new FileReader();
                 reader.onload = function (ev) {
                     try {
                         var parsed = JSON.parse(ev.target.result);
                         var dataToInstall = null;
-                        if (parsed && parsed.data && parsed.data.places !== undefined) {
-                            dataToInstall = parsed.data;
-                        } else if (parsed && parsed.places !== undefined) {
-                            dataToInstall = parsed;
-                        } else if (parsed && parsed.data) {
-                            dataToInstall = parsed.data;
-                        }
-                        if (!dataToInstall) {
-                            window.alert('Unrecognized import format.'); return;
-                        }
-                        if (typeof window.normalizeMasterData !== 'function') {
-                            window.alert('Schema module not available.'); return;
-                        }
+                        if (parsed && parsed.data && parsed.data.places !== undefined) dataToInstall = parsed.data;
+                        else if (parsed && parsed.places !== undefined) dataToInstall = parsed;
+                        else if (parsed && parsed.data) dataToInstall = parsed.data;
+                        if (!dataToInstall) { window.alert('Unrecognized import format.'); return; }
+                        if (typeof window.normalizeMasterData !== 'function') { window.alert('Schema module not available.'); return; }
 
                         window.masterData = window.normalizeMasterData({
                             schemaVersion: window.STORAGE_SCHEMA_VERSION,
                             savedAt: new Date().toISOString(),
                             data: dataToInstall
                         });
-
-                        if (typeof window.invalidateAccessorCaches === 'function') {
-                            window.invalidateAccessorCaches();
-                        }
+                        if (typeof window.invalidateAccessorCaches === 'function') window.invalidateAccessorCaches();
                         if (typeof window.markDataDirty === 'function') window.markDataDirty();
                         if (typeof window.saveMasterData === 'function' && !window.saveMasterData()) {
                             window.alert('Save failed after import.'); return;
                         }
-
                         if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
                             try { window.LocationBootstrap.init(); } catch (e) {}
                         }
@@ -806,16 +744,13 @@
                         if (window.CrimeBootstrap && typeof window.CrimeBootstrap.reinit === 'function') {
                             try { window.CrimeBootstrap.reinit(); } catch (e) {}
                         }
-
                         selectedId = null;
                         syncYearInput();
                         renderTree();
                         pickInitialSelection();
-
                         if (window.SettlementTabs && typeof window.SettlementTabs.renderActiveTab === 'function') {
                             window.SettlementTabs.renderActiveTab();
                         }
-
                         window.alert('Import complete.');
                     } catch (err) {
                         window.alert('Invalid JSON: ' + err.message);
@@ -827,9 +762,6 @@
             });
         }
 
-        // -----------------------------------------------------------------
-        // Cross-domain events
-        // -----------------------------------------------------------------
         if (typeof window.addEventListener === 'function') {
             window.addEventListener('masterDataUpdated', function () {
                 renderTree();
@@ -837,7 +769,6 @@
                     window.SettlementTabs.renderActiveTab();
                 }
             });
-
             var _crimeEvents = [
                 'crimeRecorded', 'crimeSolved', 'crimeDeleted',
                 'vendettaCreated', 'vendettaDeath', 'vendettaEscalated',
@@ -858,15 +789,9 @@
             }
         }
 
-        // -----------------------------------------------------------------
-        // Init
-        // -----------------------------------------------------------------
         function onDomReady(fn) {
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', fn);
-            } else {
-                fn();
-            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+            else fn();
         }
         onDomReady(bootstrap);
 
