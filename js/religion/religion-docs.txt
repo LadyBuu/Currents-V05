@@ -1,198 +1,1780 @@
-## 1. Ownership Contract
+================================================================================
+STILL WATERS — RELIGION SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
 
-The religion subsystem is split into fourteen modules, each with a
-single layer of responsibility. The rule is the same as the
-rank/role/relationship/education reference set: **every module owns
-exactly one thing, and everything else is out of scope.**
+Scope of this document:
+  - Every religion file provided in this batch (14 files):
+      js/religion/religion-constants.js
+      js/religion/religion-format.js
+      js/religion/religion-validation.js
+      js/religion/religion-state.js
+      js/religion/religion-queries.js
+      js/religion/religion-rules.js
+      js/religion/religion-commands.js
+      js/religion/religion-laws.js
+      js/religion/religion-inheritance.js
+      js/religion/religion-view-models.js
+      js/religion/religion-render.js
+      js/religion/religion-ui-state.js
+      js/religion/religion-bootstrap.js
+      js/religion/modals-religion.js
+  - Every core, character, location, settlement, selector, and other
+    cross-domain file the religion subsystem depends on, at LOAD time
+    (module-level guards) or at CALL time (typeof-guarded lookups), and
+    how each is used.
+  - The dependency graph across religion layers (constants → format →
+    validation → state → queries → rules → commands → laws →
+    inheritance → view models → render → UI state → bootstrap →
+    modals).
+  - Cross-references to religion-docs.txt (the narrative doc).
 
-| Module | Owns | Does NOT own |
-|---|---|---|
-| `ReligionConstants` | Frozen vocabulary (traits, inheritance rules, worship types, conversion reasons, default templates) | Display names, validation, state |
-| `ReligionFormat` | Display names for every religion enum (trait, inheritance rule, worship type, conversion reason, law type/category/domain/severity) | Colors, icons, CSS classes |
-| `ReligionValidation` | Structural validation (enum membership, required fields, type checks, year integer-ness); resolves law enums from the canonical namespaced source | Domain rules (eligibility), orchestration, mutation |
-| `ReligionState` | Derived indexes, mutation primitives, subscriptions; canonical array ownership via slice-and-reassign | Canonical data ownership, persistence, query semantics, mutation policy |
-| `ReligionQueries` | Semantic reads, analytics, cross-domain composition; returns character-domain projections for follower reads | Mutation, rendering, presentation defaults |
-| `ReligionRules` | Pure policy ("can X happen?"), inheritance algorithm | Validation, orchestration, mutation, persistence |
-| `ReligionCommands` | Write boundary, validation orchestration, rule orchestration, transaction commit, truthful `persist()` | Canonical data ownership, cross-domain side effects, presentation |
-| `ReligionLaws` | Law queries, crime-mapping queries, law statistics | Law mutation (moved to Commands in Phase 7) |
-| `ReligionInheritance` | Thin adapter: fetch facts → call Rules → call Commands for assignment; provenance observer | The inheritance algorithm, the assignment mutation, display names |
-| `ReligionViewModels` | Presentation-ready projections (row shapes, detail models, sorting) | DOM, event handlers, queries, canonical reads |
-| `ReligionRender` | DOM rendering for lists, cards, tables; delegated event binding; per-container refresh scheduling | Domain logic, field resolution, icon policy for chrome icons |
-| `ReligionUIState` | UI-only state (selected religion, filters, view mode, expanded cards) | Canonical data, queries, commands |
-| `ReligionBootstrap` | Load-time verification, index hydration, `window.Religion` namespace | Mutation, persistence, UI wiring |
-| `modals-religion.js` | Modal forms for religion CRUD + leadership + gods + laws + places; save ownership via `ReligionCommands.persist()` | Validation, defaults, field resolution, mutation |
+PATHS NOTE:
+  All religion files are under js/religion/. There is no
+  js/core/religion/ directory (see religion-docs.txt §0 file
+  inventory note).
 
-### The cross-cutting rules
+Anything not provable from the supplied files is marked [UNVERIFIED].
 
-**Commands own mutation.** Nothing outside `ReligionCommands` may call
-`ReligionState._addReligion`, `_updateReligion`, or `_removeReligion`.
-If another subsystem needs to write religion data, it must go through
-a command.
 
-**Commands own persistence.** `ReligionCommands.persist()` is the only
-call site for `window.saveMasterData` in the religion subsystem.
-Nothing else saves. The modal (or the caller) calls `persist()` once
-per successful command batch. `persist()` inspects the boolean return
-of `saveMasterData()` and reports failure via `getLastSaveError()`
-(Pattern A in `storage.js`'s DOMAIN PERSIST CONTRACT). A failed save
-is a returned `{ success: false, reason }`, never a silent success.
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
 
-**Queries own reads.** Every read goes through `ReligionQueries`. No
-module reads `masterData.data.religions` directly except `ReligionState`
-(for indexing) and `ReligionQueries` (for enumeration).
-`ReligionViewModels` and `ReligionRender` never read canonical data at
-all.
+The religion subsystem follows the same layer chain as the reference
+subsystems (Rank / Role / Education / Relationship / Settlement /
+Government):
 
-**Rules and validation are pure.** `ReligionRules` and
-`ReligionValidation` have no side effects, no persistence, no
-randomness. Given the same facts and candidate, they return the same
-verdict.
-
-**Live records are for commands only.** `ReligionState._getReligionCanonical(id)`,
-`_getGodCanonical(id)`, and `_getLawCanonical(id)` return live objects.
-Only `ReligionCommands` may call them. Everything else uses
-`ReligionQueries.getReligion(id)`, which returns a clone.
-
-**One exception to the clone rule: character records.**
-`ReligionQueries.getFollowers*` returns **character-domain
-projections** — the same defensive copy that
-`window.getCharacterById` returns under the documented load order
-(character-queries.js's projection-returning override). They are
-NOT the live canonical records. Callers can:
-
-  - read any projection field safely
-  - mutate the returned object without affecting canonical state
-    (the projection is a copy)
-
-Callers MUST NOT:
-
-  - expect mutations to the returned object to persist (they do not)
-  - expect the projection to reflect mutations made by other code
-    after the query returned (it does not; re-call the query)
-
-Callers that genuinely need a live reference (authorized mutation
-code) must use `CharacterState.getLiveCharacterForMutation(id)`
-directly. The religion domain never does; it does not own character
-state and must not reach into the canonical record. Character
-mutations belong to `CharacterCommands.setReligion`, which the
-religion commands route through.
-
-**No fallbacks.** Missing dependencies throw at load time (bootstrap)
-or at call time (individual module `_require*` helpers). No module
-silently substitutes a default for a missing capability. A missing
-enum source is reported as an error naming the source, not coerced
-into `{}` (which would make every value look invalid).
-
-**One exception to the "no fallbacks" rule: UI fallbacks for
-optional chrome.** `selector-base.js::getGenderSymbol` (used by the
-character selector modal) falls back to a plain-text label when
-`icons.js` is not loaded. The fallback produces a functional UI, not
-a domain decision. Documented where it exists; no other module uses
-this pattern.
-
-### Core-compatibility rules
-
-The religion subsystem relies on the canonical core helpers. The
-following patterns are prohibited. Each was present in a pre-3.1
-revision and was removed by a compatibility pass.
-
-**Time:**
-
-    PROHIBITED:  window.getCurrentYearSafe()
-    CANONICAL:   window.getCurrentYear()
-
-Files affected by prior passes:
-    religion-bootstrap.js   (REQUIRED_GLOBALS verification)
-    religion-queries.js     (_getCurrentYear helper)
-    religion-commands.js    (_getCurrentYear helper)
-    modals-religion.js      (_getCurrentYear helper)
-
-**UI helpers:**
-
-    PROHIBITED:  window._escapeHtml(), window._showToast(), window._getIcon()
-    CANONICAL:   window.escapeHtml(), window.showToast(), window.getIcon()
-
-Files affected:
-    religion-render.js      (helper fallback removed)
-    modals-religion.js      (helper guards + inline calls)
-
-**Modal infrastructure:**
-
-`js/core/modals-core.js` exposes `window.openModal`,
-`window.closeTopModal`, and reads the option keys `titleHtml` /
-`contentHtml`. It calls `onMount(root)` after DOM insertion and
-`onConfirm(root)` on confirm. `window.openModal` returns
-`{ element, close }`.
-
-    PROHIBITED:  passing `title:` or `content:` to openModal
-    PROHIBITED:  reading `result.content` from openModal
-    PROHIBITED:  using `onOpen:` as the mount hook
-    PROHIBITED:  inspecting `document.querySelector('.modal-body')`
-                 to find the modal's own content
-    PROHIBITED:  calling closeTopModal() from within onConfirm and
-                 also returning truthy (double close)
-    CANONICAL:   titleHtml:, contentHtml:, onMount:, onConfirm:
-    CANONICAL:   result.element
-    CANONICAL:   onMount(root) — root is the modal element
-    CANONICAL:   return true/false from onConfirm; let modals-core
-                 handle the close
-
-The keys `title` and `content` are silently ignored by the core. A
-modal that passes those renders with the default title ("Modal") and
-an empty body.
-
-Files affected:
-    modals-religion.js      (all 11 modal call sites; onConfirm
-                             return values)
-
-**Law enum source:**
-
-    PROHIBITED:  reading window.LAW_TYPES / window.LAW_CATEGORIES /
-                 window.LAW_DOMAINS / window.LAW_SEVERITY /
-                 window.CRIME_TYPES (flat globals — do not exist)
-    CANONICAL:   window.SettlementLawDefinitions.LAW_TYPES /
-                 .LAW_CATEGORIES / .LAW_DOMAINS / .LAW_SEVERITIES
-    CANONICAL:   window.CrimeConstants.CRIME_TYPES
-
-Files affected:
-    religion-commands.js    (_readLawEnums helper)
-    religion-validation.js  (validateLawInput; accepts options.enums)
-    modals-religion.js      (openAddLawModal; reads via
-                             ReligionCommands.getLawEnums)
-
-**Canonical array ownership:**
-
-    PROHIBITED:  masterData.data.religions.push(...) / .splice(...)
-                 (mutating the live array in place)
-    CANONICAL:   assign masterData.data.religions to a new array
-                 (slice of the current array, then mutate the copy)
-
-Files affected:
-    religion-state.js       (_addReligion / _updateReligion /
-                             _removeReligion build a working copy,
-                             then reassign)
-
-**File location:**
-
-    PROHIBITED:  js/core/religion/<file>
-    CANONICAL:   js/religion/<file>
-
-### File inventory
-
+  CONSTANTS (no deps)
     js/religion/religion-constants.js
+
+  FORMAT (display-name lookups; depends on Constants)
     js/religion/religion-format.js
+
+  VALIDATION (pure structural validation; depends on Constants +
+              canonical law enums at CALL time)
     js/religion/religion-validation.js
+
+  STATE (owns canonical store reference + derived indexes)
     js/religion/religion-state.js
+
+  QUERIES (read-only; composes State + cross-domain accessors)
     js/religion/religion-queries.js
+
+  RULES (pure policy; depends on Constants + Queries at CALL time)
     js/religion/religion-rules.js
+
+  COMMANDS (writes via State primitives; the only persist site)
     js/religion/religion-commands.js
+
+  LAWS (query-only surface for law records; commands moved to
+        Commands)
     js/religion/religion-laws.js
+
+  INHERITANCE (thin adapter: rules → commands)
     js/religion/religion-inheritance.js
+
+  VIEW MODELS (presentation shaping; consumes queries + format)
     js/religion/religion-view-models.js
+
+  RENDER (pure DOM rendering; consumes view models)
     js/religion/religion-render.js
+
+  UI STATE (session-only selection/filter state)
     js/religion/religion-ui-state.js
+
+  BOOTSTRAP (load-time verification + namespace)
     js/religion/religion-bootstrap.js
+
+  MODALS (DOM + commands; save ownership per success)
     js/religion/modals-religion.js
 
-There is no `js/core/religion/` directory. Nothing under that path
-should be referenced by an HTML script tag.
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws or refuses if the
+                          dependency is missing at call time.
+  OPTIONAL              — module checks and falls back.
+
+Cross-domain references are labeled:
+  [core]        js/core/...
+  [character]   js/character/...
+  [location]    js/location/...
+  [selectors]   js/selectors/...
+  [settlement]  js/settlement/...
+  [crime]       js/crime/...       (only for law enums)
+  [government]  js/systems/government/...
+  [UNVERIFIED]  referenced but not in the supplied batch
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-constants.js
+    Owns window.ReligionConstants.
+    Load-time dependencies: NONE.
+    Call-time dependencies:  NONE.
+    Consumed by:
+      [load] religion-format.js        (RELIGIOUS_TRAIT_NAMES,
+                                        WORSHIP_TYPE_NAMES,
+                                        INHERITANCE_RULE_NAMES,
+                                        CONVERSION_REASON_NAMES)
+      [load] religion-validation.js    (RELIGIOUS_TRAITS,
+                                        INHERITANCE_RULES)
+      [load] religion-rules.js         (INHERITANCE_RULES)
+      [load] religion-commands.js      (INHERITANCE_RULES indirectly
+                                        via ReligionRules; also reads
+                                        inheritance defaults via
+                                        validation)
+      [load] religion-bootstrap.js     (verified in _REQUIRED_MODULES)
+      [load] modals-religion.js        (RELIGIOUS_TRAITS,
+                                        INHERITANCE_RULES,
+                                        CONVERSION_REASONS,
+                                        WORSHIP_TYPES)
+    Notes:
+      - Pure constants, no dependencies.
+      - ReligionConstants has NO display-name helpers. Display
+        strings live in ReligionFormat. See religion-docs.txt §0.
+
+--------------------------------------------------------------------------------
+2.2 FORMAT
+--------------------------------------------------------------------------------
+
+  js/religion/religion-format.js
+    Owns window.ReligionFormat.
+    Load-time dependencies: NONE (the module guard fires at first
+                                   call, via _getConstants()).
+    Call-time dependencies:
+      window.ReligionConstants
+    Consumed by:
+      [load] religion-queries.js         (getInheritanceRuleName)
+      [load] religion-view-models.js     (getReligiousTraitName,
+                                          getLawTypeName,
+                                          getLawCategoryName,
+                                          getLawDomainName,
+                                          getLawSeverityName,
+                                          getInheritanceRuleName)
+      [load] religion-bootstrap.js       (verified in
+                                          _REQUIRED_MODULES)
+      [load] modals-religion.js          (getReligiousTraitName,
+                                          getInheritanceRuleName,
+                                          getConversionReasonName,
+                                          getWorshipTypeName,
+                                          getLawTypeName,
+                                          getLawCategoryName,
+                                          getLawDomainName,
+                                          getLawSeverityName)
+    Notes:
+      - All accessors are pure. Enum in, string out.
+      - Trait/inheritance/worship/conversion label tables come from
+        ReligionConstants. Law label tables (LAW_TYPE_NAMES etc.)
+        are local copies inside this module, not sourced from
+        SettlementLawDefinitions. See HAZARDS §15.
+
+--------------------------------------------------------------------------------
+2.3 VALIDATION
+--------------------------------------------------------------------------------
+
+  js/religion/religion-validation.js
+    Owns window.ReligionValidation.
+    Load-time dependencies: NONE.
+    Call-time dependencies:
+      window.ReligionConstants                       (via
+                                                      _getConstants)
+      window.SettlementLawDefinitions                (OPTIONAL — for
+                                                      law enum resolution;
+                                                      missing → enum
+                                                      reported as
+                                                      "not loaded")
+      window.CrimeConstants                          (OPTIONAL — for
+                                                      crime-type enum;
+                                                      missing → enum
+                                                      reported as
+                                                      "not loaded")
+    Consumed by:
+      [load] religion-commands.js        (validateReligionCreate,
+                                          validateReligionUpdate,
+                                          validateLawInput)
+      [load] religion-bootstrap.js       (verified in
+                                          _REQUIRED_MODULES)
+    Notes:
+      - _isValidEnumAgainst permits missing enum (null) — the value
+        is not rejected for absence from a nonexistent enum. Missing
+        enum source is reported separately by the caller.
+      - _readLawEnums resolves law enums from
+        SettlementLawDefinitions.* (types / categories / domains /
+        severities) and CrimeConstants.CRIME_TYPES. Prior revisions
+        read flat window.LAW_* globals, which do not exist in the
+        current tree, and rejected every value. See religion-docs.txt
+        §0 LAW ENUM SOURCE.
+
+--------------------------------------------------------------------------------
+2.4 STATE
+--------------------------------------------------------------------------------
+
+  js/religion/religion-state.js
+    Owns window.ReligionState.
+    Load-time dependencies:
+      window.getCharacters                     ([core] accessors.js)
+    Call-time dependencies:
+      window.masterData.data.religions         ([core] storage.js)
+      window.markDataDirty                     ([core] storage.js —
+                                                typeof-guarded;
+                                                non-fatal)
+      window.reportError                       (OPTIONAL — used by
+                                                _reportSubscriberError)
+    Consumed by:
+      [load] religion-queries.js             (all public reads +
+                                              _getReligionCanonical /
+                                              _getGodCanonical /
+                                              _getLawCanonical /
+                                              getPlaceOfWorshipById)
+      [load] religion-laws.js                (getLawById)
+      [load] religion-commands.js            (_getReligionCanonical /
+                                              _getGodCanonical /
+                                              _getLawCanonical /
+                                              mutation primitives)
+      [load] religion-bootstrap.js           (hydrateFromMasterData,
+                                              validateIntegrity,
+                                              _REQUIRED_MODULES)
+    Notes:
+      - Does NOT hold a permanent reference to
+        masterData.data.religions. Every mutation primitive builds a
+        working copy and reassigns. See CANONICAL ARRAY OWNERSHIP in
+        the module header.
+      - Public reads return clones.
+      - Canonical reads (_getXCanonical) return live records; only
+        Commands may call them.
+      - Duplicate religion ids throw at hydrate. Missing canonical
+        array → hydrate returns false (not a throw).
+
+--------------------------------------------------------------------------------
+2.5 QUERIES
+--------------------------------------------------------------------------------
+
+  js/religion/religion-queries.js
+    Owns window.ReligionQueries.
+    Load-time dependencies:
+      window.ReligionState                     (indexes, clones)
+      window.ReligionFormat                    (display labels)
+      window.getCharacterById                  ([character] OR
+                                                [core] — whichever
+                                                wins the documented
+                                                load order)
+      window.getCharacters                     ([core] accessors.js)
+      window.getCurrentYear                    ([core] time.js)
+    Call-time dependencies:
+      window.LocationQueries.getCurrentLocationId          (OPTIONAL;
+                                                            prefers this
+                                                            resolver)
+      window.CharacterQueries.getCurrentLocationId         (fallback)
+    Consumed by:
+      [load] religion-rules.js               (getReligion,
+                                              getFollowerCount,
+                                              getDominantReligion,
+                                              getReligionsByReligion)
+      [load] religion-commands.js            (getReligion,
+                                              getFollowerCount,
+                                              getDominantReligion —
+                                              indirectly via Rules)
+      [load] religion-laws.js                (getAllReligions,
+                                              getReligion)
+      [load] religion-view-models.js         (getFollowerCount,
+                                              getGodCount,
+                                              getLawsByReligion,
+                                              getPlaceOfWorshipCount,
+                                              getReligion,
+                                              getGodsByReligion,
+                                              getPlacesOfWorshipByReligion)
+      [load] modals-religion.js              (getAllReligions,
+                                              getReligion,
+                                              getFollowerCount,
+                                              getGodsByReligion,
+                                              getLawsByReligion,
+                                              getPlacesOfWorshipByReligion)
+      [load] religion-bootstrap.js           (verified in
+                                              _REQUIRED_MODULES)
+    Notes:
+      - Returns character-domain PROJECTIONS from
+        window.getCharacterById, NOT the live records from
+        ReligionState.getFollowersByReligion. See CHARACTER
+        PROJECTIONS in the module header.
+      - getFollowers / getCharactersByReligion return [] for unknown
+        religion id, not null. Only getReligion(id) returns null.
+      - _resolveCurrentLocationId prefers
+        LocationQueries.getCurrentLocationId (semantic); falls back to
+        CharacterQueries.getCurrentLocationId (raw field).
+      - isCulturallyCompatible and isReligiouslyPermitted are STUBS
+        that fail closed (compatible: false / permitted: false with a
+        reason). Do not read the boolean as definitive.
+
+--------------------------------------------------------------------------------
+2.6 RULES
+--------------------------------------------------------------------------------
+
+  js/religion/religion-rules.js
+    Owns window.ReligionRules.
+    Load-time dependencies: NONE.
+    Call-time dependencies:
+      window.ReligionQueries                 (getReligion,
+                                              getFollowerCount)
+      window.ReligionConstants               (INHERITANCE_RULES)
+      window.getCharacterById                ([character] OR
+                                              [core])
+    Consumed by:
+      [load] religion-commands.js            (canConvert,
+                                              canAssignReligion,
+                                              canRemoveReligion,
+                                              canSetLeader,
+                                              canEndLeaderTerm,
+                                              canDeprecate,
+                                              canReactivate,
+                                              canDelete,
+                                              resolveInheritance,
+                                              resolveInheritanceForChild)
+      [load] religion-inheritance.js         (resolveInheritanceForChild)
+      [load] religion-bootstrap.js           (verified in
+                                              _REQUIRED_MODULES)
+    Notes:
+      - can* functions return { allowed, reason }.
+      - resolveInheritance is PURE: facts in, verdict out.
+      - resolveInheritanceForChild is a convenience wrapper that reads
+        from Queries + accessors before delegating.
+      - Inheritance engine: deprecated religions are treated as null
+        (cannot be inherited). See religion-rules.js §5.
+
+--------------------------------------------------------------------------------
+2.7 COMMANDS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-commands.js
+    Owns window.ReligionCommands.
+    Load-time dependencies:
+      window.ReligionState                     (all primitives + clones)
+      window.ReligionQueries
+      window.ReligionValidation
+      window.ReligionRules
+      window.CharacterCommands                 (setReligion — HARD
+                                                method guard at load)
+      window.generateId                        ([core] ids.js)
+      window.getCharacterById                  ([core] accessors.js)
+      window.getPlaceById                      ([core] accessors.js)
+      window.getCurrentYear                    ([core] time.js)
+    Method-level load-time checks:
+      CharacterCommands.setReligion
+    Call-time dependencies:
+      window.SettlementLawDefinitions          (OPTIONAL — law enums;
+                                                missing → enum
+                                                reported as null;
+                                                see _readLawEnums)
+      window.CrimeConstants                    (OPTIONAL — crime
+                                                type enum)
+      window.saveMasterData                    ([core] storage.js —
+                                                called by persist())
+      window.getLastSaveError                  ([core] storage.js —
+                                                called by persist()
+                                                on failure)
+      window.markDataDirty                     ([core] storage.js —
+                                                called by _commit;
+                                                typeof-guarded)
+    Consumed by:
+      [load] religion-inheritance.js         (assignReligionToCharacter)
+      [load] religion-bootstrap.js           (verified in
+                                              _REQUIRED_MODULES;
+                                              persist required — the
+                                              bootstrap's own method
+                                              guard)
+      [load] modals-religion.js              (all command methods;
+                                              persist)
+    Notes:
+      - The ONLY saveMasterData site in the religion subsystem is
+        persist(). See PERSISTENCE TRUTH in the module header.
+      - persist() inspects the boolean return (Pattern A from
+        storage.js). No Pattern C.
+      - Every success path returns a DETACHED CLONE as `data`.
+      - Character-religion writes route through
+        CharacterCommands.setReligion. This module does NOT write
+        character.religionId / religionHistory directly.
+
+--------------------------------------------------------------------------------
+2.8 LAWS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-laws.js
+    Owns window.ReligionLaws.
+    Load-time dependencies:
+      window.ReligionState                     (getLawById)
+      window.ReligionQueries                   (getAllReligions,
+                                                getReligion,
+                                                getLawsByReligion)
+    Call-time dependencies: NONE beyond the load guards.
+    Consumed by: any caller that wants law-focused queries. Not
+    required by religion-bootstrap.js at load; it is verified
+    indirectly through the religion module chain.
+    Notes:
+      - Queries only. Law mutations (addLaw / updateLaw / removeLaw)
+        live in ReligionCommands, not here.
+      - getLawsByCrimeType and getEnforcedLawsByCrimeType iterate all
+        religions; each law returned is a clone.
+
+--------------------------------------------------------------------------------
+2.9 INHERITANCE
+--------------------------------------------------------------------------------
+
+  js/religion/religion-inheritance.js
+    Owns window.ReligionInheritance.
+    Load-time dependencies: NONE.
+    Call-time dependencies:
+      window.ReligionRules                     (resolveInheritanceForChild)
+      window.ReligionQueries                   (getReligion)
+      window.ReligionCommands                  (assignReligionToCharacter)
+      window.getCharacterById                  ([character] OR [core];
+                                                also used for provenance
+                                                lookup)
+    Consumed by: any caller that needs to assign religion at
+    birth/adoption time. children-commands.js's religion-inheritance
+    step is the canonical consumer.
+    Notes:
+      - Thin adapter. Does NOT own the inheritance algorithm (Rules)
+        or the assignment mutation (Commands).
+      - inheritReligionForChild does NOT save. Caller is responsible
+        for calling ReligionCommands.persist() once at end of batch.
+
+--------------------------------------------------------------------------------
+2.10 VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-view-models.js
+    Owns window.ReligionViewModels.
+    Load-time dependencies: NONE (guard fires at first call via
+                                    _getQueries / _getFormat).
+    Call-time dependencies:
+      window.ReligionQueries                   (getFollowerCount,
+                                                getGodCount,
+                                                getLawsByReligion,
+                                                getPlaceOfWorshipCount,
+                                                getReligion,
+                                                getGodsByReligion,
+                                                getPlacesOfWorshipByReligion)
+      window.ReligionFormat                    (getReligiousTraitName,
+                                                getInheritanceRuleName,
+                                                getLaw*Name)
+      window.getCharacterFullNameById OR
+      window.getCharacterById + .name/.surname ([character] / [core]
+                                                display)
+      window.getPlaceName OR
+      window.getPlaceById + .displayName       ([location] display)
+    Consumed by:
+      [load] religion-bootstrap.js           (verified in
+                                              _REQUIRED_MODULES)
+      [load] modals-religion.js              (indirectly — the
+                                              modals do not call
+                                              view models in the
+                                              supplied code; they
+                                              build their own
+                                              layout; but view
+                                              models is exposed
+                                              for other consumers)
+    Notes:
+      - Returns row shapes with semantic labels. No HTML, no
+        colors, no glyphs, no CSS classes. Renderer translates
+        labels to classes.
+      - SORT_NAME / SORT_FOLLOWERS / SORT_NONE constants live here.
+
+--------------------------------------------------------------------------------
+2.11 RENDER
+--------------------------------------------------------------------------------
+
+  js/religion/religion-render.js
+    Owns window.ReligionRender (and window.ReligionUI alias).
+    Load-time dependencies:
+      window.escapeHtml                        ([core] formatting.js)
+    Call-time dependencies: NONE beyond the load guard.
+    Consumed by:
+      [load] religion-bootstrap.js           (verified in
+                                              _REQUIRED_MODULES)
+      Any list rendering page that calls
+        renderReligionList / renderReligionCard /
+        renderReligionTable.
+    Notes:
+      - Pure renderer. Takes view-model rows, escapes strings,
+        writes HTML. Does not call Queries / State / Commands /
+        accessors.
+      - Delegated event binding via bindReligionListEvents; guarded
+        by a WeakSet so a container is bound once.
+      - refreshReligionList uses a per-container WeakMap timer
+        (fallback keyed per-container via a non-enumerable
+        property).
+
+--------------------------------------------------------------------------------
+2.12 UI STATE
+--------------------------------------------------------------------------------
+
+  js/religion/religion-ui-state.js
+    Owns window.ReligionUIState.
+    Load-time dependencies: NONE.
+    Call-time dependencies: NONE.
+    Consumed by:
+      [load] religion-bootstrap.js           (verified in
+                                              _REQUIRED_MODULES)
+      Any UI page that needs selection/filter/view-mode state.
+    Notes:
+      - Session-only state. Not persisted. Not read by Queries or
+        Commands.
+
+--------------------------------------------------------------------------------
+2.13 BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/religion/religion-bootstrap.js
+    Owns window.ReligionBootstrap and installs window.Religion.
+    Load-time dependencies (verified inside init()):
+      window.generateId                        ([core] ids.js)
+      window.markDataDirty                     ([core] storage.js)
+      window.saveMasterData                    ([core] storage.js)
+      window.getCurrentYear                    ([core] time.js —
+                                                NOT getCurrentYearSafe)
+      window.getCharacterById                  ([character] / [core])
+      window.getCharacters                     ([core] accessors.js)
+      window.getPlaceById                      ([core] accessors.js)
+      window.ReligionConstants                 (_REQUIRED_MODULES)
+      window.ReligionFormat
+      window.ReligionValidation
+      window.ReligionState
+      window.ReligionQueries
+      window.ReligionRules
+      window.ReligionCommands
+      window.ReligionLaws
+      window.ReligionInheritance
+      window.ReligionViewModels
+      window.ReligionRender
+      window.ReligionUIState
+    Optional (warn-only):
+      window.ReligionModals                    (missing → warn, not
+                                                throw)
+      window.CharacterQueries                  (warn-only; commands
+                                                use accessors, not
+                                                this namespace)
+      window.PlaceQueries                      (warn-only; same
+                                                reasoning)
+    Auto-init: if masterData.data is present at load, init() runs
+      immediately.
+    Notes:
+      - Three-tier policy: required modules, required globals,
+        optional modules. See VERIFICATION TIERS in the module
+        header.
+      - Warns (does not throw) if CharacterQueries / PlaceQueries
+        are missing.
+      - Uses getCurrentYear, NOT getCurrentYearSafe. The deprecated
+        alias is not verified. See religion-docs.txt §0.
+
+--------------------------------------------------------------------------------
+2.14 MODALS
+--------------------------------------------------------------------------------
+
+  js/religion/modals-religion.js
+    Owns window.ReligionModals and the 11 open*Religion* functions
+    as flat window.* exports.
+    Load-time dependencies (via _verifyLoadTimeDependencies IIFE):
+      window.openModal                         ([core] modals-core.js)
+      window.closeTopModal                     ([core] modals-core.js)
+      window.escapeHtml                        ([core] formatting.js)
+      window.showToast                         ([core] ui.js)
+      window.getIcon                           ([core] icons.js)
+      window.openCharacterSelector             ([selectors]
+                                                modals-char-selector.js
+                                                — OR its alias
+                                                openUnifiedCharacterSelector)
+      window.ReligionCommands                  (module + persist
+                                                method)
+      window.ReligionQueries
+      window.ReligionFormat
+      window.ReligionConstants
+      window.getCharacterById                  ([core] accessors.js)
+      window.getPlaceById                      ([core] accessors.js)
+      window.getFilteredLocationOptions        ([selectors]
+                                                locationDropdown.js)
+      window.getCurrentYear                    ([core] time.js —
+                                                NOT getCurrentYearSafe)
+    Call-time dependencies (typeof-guarded, per-call):
+      window.getCharacters                     ([core])
+      window.getPlaces                         ([core])
+      window.getCharacterFullNameById OR
+        window.getCharacterById + name fallback ([character])
+      window.getPlaceName OR
+        window.getPlaceById + displayName      ([location])
+    Consumed by: any UI page that needs the religion modals.
+    Notes:
+      - The modal is the SAVE OWNER. Every successful command path
+        calls ReligionCommands.persist() exactly once via
+        _handleCommandResult.
+      - onConfirm handlers RETURN the boolean from
+        _handleCommandResult. Do NOT call closeTopModal() from
+        within the success path. See ONCONFIRM / ONCANCEL CONTRACT
+        in the module header.
+      - onSuccess fires BEFORE the modal closes. See CALLBACK
+        ORDERING in the module header.
+      - The details modal uses setTimeout(100) between close and
+        open for its navigation buttons (edit, set leader, add god,
+        add law, create place, deprecate, delete). This is a
+        documented deferral.
+      - Inline styles remain. Documented as deferral.
+
+
+================================================================================
+PART 3 — CORE / CHARACTER / LOCATION / SETTLEMENT / SELECTOR /
+          CRIME DEPENDENCIES
+================================================================================
+
+Legend:
+  core        — js/core/... files
+  char        — js/character/... files
+  loc         — js/location/... files
+  sel         — js/selectors/... files
+  settle      — js/settlement/... files
+  crime       — js/crime/... files
+  govt        — js/systems/government/... files
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+    Used by:
+      [load] religion-render.js              (escapeHtml)
+      [load] modals-religion.js              (escapeHtml via
+                                              _verifyLoadTimeDependencies)
+    Notes:
+      Religion render and modals require escapeHtml at load. Do not
+      route through window._escapeHtml; that alias is not guaranteed.
+
+  js/core/icons.js
+    Used by:
+      [load] modals-religion.js              (getIcon via
+                                              _verifyLoadTimeDependencies)
+    Notes:
+      Religion render does NOT use icons. The chrome-icon policy
+      routes any future chrome icons through window.getIcon. The
+      record icon (row.icon) is data and is rendered verbatim.
+
+  js/core/ids.js
+    Used by:
+      [load] religion-state.js               (not directly — via
+                                              ReligionCommands's
+                                              generateId)
+      [load] religion-commands.js            (generateId — all
+                                              entity ids)
+      [call] religion-bootstrap.js           (_REQUIRED_GLOBALS
+                                              verify)
+
+  js/core/time.js
+    Used by:
+      [load] religion-queries.js             (getCurrentYear)
+      [load] religion-commands.js            (getCurrentYear via
+                                              _getCurrentYear)
+      [call] religion-bootstrap.js           (_REQUIRED_GLOBALS
+                                              verify)
+      [load] modals-religion.js              (getCurrentYear via
+                                              _verifyLoadTimeDependencies)
+    Notes:
+      Government's use of getCurrentYearSafe is the deprecated
+      accessor; religion uses getCurrentYear. Do not substitute.
+
+  js/core/storage.js
+    Used by:
+      [load] religion-state.js               (markDataDirty —
+                                              typeof-guarded)
+      [load] religion-commands.js            (saveMasterData,
+                                              getLastSaveError —
+                                              called by persist();
+                                              markDataDirty — via
+                                              _commit)
+      [call] religion-bootstrap.js           (saveMasterData,
+                                              markDataDirty
+                                              verified)
+
+  js/core/accessors.js
+    Used by:
+      [load] religion-state.js               (getCharacters)
+      [load] religion-queries.js             (getCharacterById,
+                                              getCharacters)
+      [load] religion-rules.js               (getCharacterById)
+      [load] religion-commands.js            (getCharacterById,
+                                              getPlaceById)
+      [load] modals-religion.js              (getCharacterById,
+                                              getPlaceById,
+                                              getCharacters,
+                                              getPlaces)
+
+  js/core/modals-core.js
+    Used by:
+      [load] modals-religion.js              (openModal,
+                                              closeTopModal via
+                                              _verifyLoadTimeDependencies)
+    Notes:
+      Religion modals use the CORE modal shell directly, not a
+      ModalsCore namespace. Do not introduce one.
+
+  js/core/ui.js
+    Used by:
+      [load] modals-religion.js              (showToast via
+                                              _verifyLoadTimeDependencies)
+    Notes:
+      Do not route through window._showToast; that alias is not
+      guaranteed.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  getCharacterById
+    Used by:
+      [load] religion-queries.js             (all follower projection
+                                              reads — via
+                                              _projectCharacter)
+      [load] religion-rules.js               (canConvert,
+                                              canAssignReligion,
+                                              canRemoveReligion,
+                                              canSetLeader,
+                                              canEndLeaderTerm,
+                                              resolveInheritanceForChild)
+      [load] religion-commands.js            (assignReligionToCharacter,
+                                              convertCharacter,
+                                              removeReligionFromCharacter,
+                                              setReligionLeader,
+                                              addGod — character
+                                              existence only,
+                                              updateGod — character
+                                              display name)
+      [load] religion-inheritance.js         (inheritReligionForChild,
+                                              getInheritanceSource —
+                                              provenance)
+      [load] modals-religion.js              (openSetLeaderModal,
+                                              openEndLeaderTermModal,
+                                              openAssignCharacterReligionModal,
+                                              openAddGodModal —
+                                              character display)
+      [call] religion-bootstrap.js           (_REQUIRED_GLOBALS
+                                              verify)
+    Notes:
+      Under the documented load order, window.getCharacterById is
+      character-queries.js's projection-returning version, NOT
+      accessors.js's live-entity cache. Religion queries and rules
+      therefore operate on projections — never mutate them.
+
+  getCharacters
+    Used by:
+      [load] religion-state.js               (_buildFollowersIndex)
+      [load] religion-queries.js             (_getProjectedCharacters)
+      [load] modals-religion.js              (not called directly
+                                              in supplied code, but
+                                              part of the required
+                                              surface)
+      [call] religion-bootstrap.js           (_REQUIRED_GLOBALS
+                                              verify)
+
+  getCharacterFullNameById
+    Used by:
+      [load] religion-view-models.js         (_getCharacterName
+                                              helper — preferred;
+                                              falls back to
+                                              getCharacterById +
+                                              name/surname)
+      [load] modals-religion.js              (_getCharacterName
+                                              helper — preferred;
+                                              falls back)
+    Notes:
+      OPTIONAL. Both the view model and the modals fall back to
+      building the name from getCharacterById.
+
+  CharacterCommands.setReligion
+    Used by:
+      [load] religion-commands.js            (method check at load;
+                                              called by
+                                              assignReligionToCharacter,
+                                              convertCharacter,
+                                              removeReligionFromCharacter;
+                                              routes through
+                                              CharacterState.updateCharacter
+                                              so canonical writes go
+                                              through the sanctioned
+                                              path)
+    Notes:
+      Character.religionId and character.religionHistory are owned
+      by the character domain. ReligionCommands does NOT write them
+      directly. Do not "simplify" by writing these fields — that was
+      the silent-data-loss bug fixed in the previous revision (see
+      character-commands.js::setReligion).
+
+  CharacterQueries.getCurrentLocationId
+    Used by:
+      [call] religion-queries.js             (_resolveCurrentLocationId
+                                              fallback when
+                                              LocationQueries is
+                                              missing)
+    Notes:
+      CALL-TIME, soft. Preferred resolver is
+      LocationQueries.getCurrentLocationId; this is a raw-field
+      fallback for bare harnesses. The semantic resolver handles
+      move-based placements correctly.
+
+  CharacterQueries namespace
+    Used by:
+      [call] religion-bootstrap.js           (warn-only; absence
+                                              logs a note)
+    Notes:
+      religion-commands.js does NOT use CharacterQueries; it uses
+      accessors.getCharacterById. The warn-only treatment is correct
+      — a reduced harness with only accessors can still run the
+      commands. See CROSS-DOMAIN VERIFICATION in
+      religion-bootstrap.js header.
+
+--------------------------------------------------------------------------------
+3.3 LOCATION DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  getPlaceById
+    Used by:
+      [load] religion-commands.js            (createPlaceOfWorship,
+                                              updatePlaceOfWorship,
+                                              deletePlaceOfWorship,
+                                              addReligionLocation)
+      [load] modals-religion.js              (openCreatePlaceOfWorshipModal
+                                              and others)
+      [call] religion-bootstrap.js           (_REQUIRED_GLOBALS
+                                              verify)
+
+  getPlaces
+    Used by:
+      [load] modals-religion.js              (part of the required
+                                              surface)
+
+  getPlaceName
+    Used by:
+      [load] religion-view-models.js         (_getPlaceName helper
+                                              — preferred; falls
+                                              back to
+                                              getPlaceById +
+                                              displayName)
+      [load] modals-religion.js              (_getPlaceName helper
+                                              — preferred; falls
+                                              back)
+    Notes:
+      OPTIONAL. Falls back to getPlaceById.
+
+  LocationQueries.getCurrentLocationId
+    Used by:
+      [call] religion-queries.js             (_resolveCurrentLocationId
+                                              preferred resolver)
+    Notes:
+      CALL-TIME, soft. Absence falls back to
+      CharacterQueries.getCurrentLocationId. The semantic resolver
+      correctly handles move-based placements — getFollowersByLocation
+      and getDominantReligion depend on this.
+
+  getFilteredLocationOptions
+    Used by:
+      [load] modals-religion.js              (openCreatePlaceOfWorshipModal
+                                              via _verifyLoadTimeDependencies)
+    Notes:
+      Provided by js/selectors/locationDropdown.js. The
+      locationDropdown module installs this function (delegates to
+      buildLocationDropdown in the same file).
+
+--------------------------------------------------------------------------------
+3.4 SETTLEMENT DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  SettlementLawDefinitions.LAW_TYPES / LAW_CATEGORIES /
+  LAW_DOMAINS / LAW_SEVERITIES
+    Used by:
+      [call] religion-commands.js            (_readLawEnums — the
+                                              canonical source for
+                                              law validation and
+                                              default selection)
+      [call] religion-validation.js          (_readLawEnums — same)
+    Notes:
+      CALL-TIME, optional. Missing source → enum reported as null
+      by _readLawEnums; validation reports "enum not loaded"
+      instead of rejecting every value. See LAW ENUM SOURCE in
+      religion-docs.txt §0.
+
+  CrimeConstants.CRIME_TYPES
+    Used by:
+      [call] religion-commands.js            (_readLawEnums)
+      [call] religion-validation.js          (_readLawEnums)
+    Notes:
+      CALL-TIME, optional. Same handling as above.
+
+--------------------------------------------------------------------------------
+3.5 SELECTOR DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  window.openCharacterSelector OR openUnifiedCharacterSelector
+    Used by:
+      [load] modals-religion.js              (_verifyLoadTimeDependencies
+                                              requires the function
+                                              to exist at load;
+                                              called by
+                                              openSetLeaderModal)
+    Notes:
+      The load guard checks both names. It throws if neither is
+      available. Provide via js/selectors/modals-char-selector.js.
+
+  window.getFilteredLocationOptions
+    See §3.3.
+
+--------------------------------------------------------------------------------
+3.6 CRIME DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  CrimeConstants.CRIME_TYPES
+    Used by:
+      [call] religion-commands.js / religion-validation.js via
+             _readLawEnums
+    Notes:
+      Same as §3.4. Missing source is reported as "enum not loaded"
+      by validation, not as "invalid value."
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) religion-docs.txt §0 file inventory and §0 CORE-COMPATIBILITY
+      rules,
+  (b) religion-bootstrap.js's three-tier verification (required
+      modules, required globals, optional modules),
+  (c) individual module-level load-time guards,
+  (d) cross-domain dependencies documented in PART 3,
+  (e) stillwaters-load-order.txt for the shared prerequisites.
+
+Group labels:
+
+  R0..R4 — core / character / location / settlement / selector
+           prerequisites.
+  RS1..RS13 — religion subsystem.
+  RB1   — bootstrap.
+  RM1   — modals.
+
+--------------------------------------------------------------------------------
+GROUP R0 — CORE PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  js/core/time.js
+
+  js/core/storage-schema.js
+    ← AFTER: js/core/time.js
+  js/core/storage.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/storage-schema.js
+
+  initializeStorage()                        (function call)
+    ← AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: initializeStorage()
+
+  js/core/validation.js
+    ← AFTER: js/core/time.js
+
+  js/core/world.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: js/core/time.js
+
+  js/core/names.js
+    ← AFTER: js/core/randomness.js
+    ← AFTER: js/core/accessors.js
+    ← after: a getCharacterById provider
+
+  js/core/ui.js
+    ← AFTER: js/core/formatting.js
+    ← AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    ← AFTER: js/core/formatting.js
+    ← AFTER: js/core/icons.js
+
+  Notes:
+    - Religion only needs a subset of these: formatting, icons, ids,
+      time, storage, accessors, ui, modals-core. The rest are loaded
+      as part of the standard core bootstrap; do not skip them or
+      downstream modules (character, location, settlement) will fail
+      their own load-time guards.
+    - initializeStorage() must run before any religion module. Every
+      religion module that touches masterData.data.religions (State,
+      Commands, Queries) will throw on first call if
+      initializeStorage() has not run.
+
+--------------------------------------------------------------------------------
+GROUP R1 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: initializeStorage()
+
+  js/character/character-commands.js
+    ← AFTER: js/character/character-state.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/ids.js
+
+  js/character/character-queries.js
+    ← AFTER: js/character/character-state.js
+    ← AFTER: js/core/time.js
+
+  Notes:
+    - CharacterCommands.setReligion is a LOAD-TIME method guard of
+      religion-commands.js. CharacterCommands must load BEFORE
+      religion-commands.js.
+    - Under the documented load order, window.getCharacterById is
+      character-queries.js's projection-returning override after
+      character-queries.js loads. Religion queries and rules
+      operate on projections — never mutate them.
+    - character-queries.js is a SOFT dependency of
+      religion-bootstrap.js (warn-only if missing).
+
+--------------------------------------------------------------------------------
+GROUP R2 — LOCATION PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/location/location-state.js
+    ← AFTER: js/core/storage.js
+    ← AFTER: js/core/collections.js
+    ← AFTER: initializeStorage()
+
+  js/location/location-hierarchy.js
+    ← AFTER: js/location/location-state.js
+
+  js/location/location-queries.js
+    ← AFTER: js/location/location-state.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/core/world.js
+
+  js/location/location-commands.js
+    ← AFTER: js/location/location-state.js
+    ← AFTER: js/location/location-hierarchy.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/core/ids.js
+    ← AFTER: js/core/storage.js
+
+  Notes:
+    - Religion queries prefer LocationQueries.getCurrentLocationId
+      for semantic current-location resolution. Missing module →
+      falls back to CharacterQueries.getCurrentLocationId (raw
+      field), which produces wrong counts for characters placed
+      only by move records. Load LocationQueries first.
+
+--------------------------------------------------------------------------------
+GROUP R3 — SETTLEMENT PREREQUISITES (LAW ENUM SOURCE)
+--------------------------------------------------------------------------------
+
+  js/settlement/settlement-law-definitions.js
+  js/settlement/settlement-government-definitions.js
+  js/settlement/settlement-fiscal-definitions.js
+  js/settlement/settlement-finance-definitions.js
+  js/settlement/settlement-prosperity-definitions.js
+  js/settlement/settlement-rank-definitions.js
+  js/settlement/settlement-feature-definitions.js
+  js/settlement/settlement-education-definitions.js
+
+  js/settlement/settlement-rank-rules.js
+  js/settlement/settlement-queries.js
+  js/settlement/settlement-command-commit.js
+  js/settlement/settlement-government-rules.js
+  js/settlement/settlement-government-commands.js
+  js/settlement/settlement-prosperity-queries.js
+
+  Notes:
+    - Only settlement-law-definitions.js is REQUIRED at CALL time
+      by religion-commands.js / religion-validation.js (via
+      _readLawEnums). Missing → the enum is null and law validation
+      reports "enum not loaded."
+    - The rest of the settlement block is loaded because settlement
+      depends on religion (SettlementReligionQueries composes
+      ReligionQueries). That is settlement → religion, not
+      religion → settlement. Religion does not require the
+      settlement query surface at load time.
+    - CrimeConstants.CRIME_TYPES is also required for law enums. It
+      comes from js/crime/crime-constants.js. See R4.
+
+--------------------------------------------------------------------------------
+GROUP R4 — CRIME AND SELECTOR PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/crime/crime-constants.js                  [UNVERIFIED]
+    Notes:
+      Provides window.CrimeConstants.CRIME_TYPES. Load BEFORE
+      religion-commands.js / religion-validation.js are used for
+      law mutations. Missing → _readLawEnums returns null for the
+      crime-type enum, and validation reports "enum not loaded"
+      (not "invalid value").
+
+  js/selectors/selector-base.js
+  js/selectors/locationDropdown.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/formatting.js
+    ← AFTER: js/core/world.js (soft)
+
+  js/selectors/modals-char-selector.js
+    ← AFTER: js/selectors/selector-base.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/character/character-queries.js
+    ← AFTER: js/character/character-commands.js
+    ← AFTER: js/character/family-queries.js
+
+  Notes:
+    - locationDropdown.js installs window.getFilteredLocationOptions,
+      which modals-religion.js requires at load.
+    - modals-char-selector.js installs window.openCharacterSelector,
+      which modals-religion.js requires at load.
+
+--------------------------------------------------------------------------------
+GROUP RS1 — RELIGION CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-constants.js
+    (no dependencies)
+
+  Notes:
+    - Loads first. Required by ReligionFormat, ReligionValidation,
+      ReligionRules, ReligionBootstrap, and modals-religion.js.
+
+--------------------------------------------------------------------------------
+GROUP RS2 — RELIGION FORMAT
+--------------------------------------------------------------------------------
+
+  js/religion/religion-format.js
+    ← AFTER: js/religion/religion-constants.js (call-time; guard
+                                                 fires at first call)
+
+  Notes:
+    - Load BEFORE religion-queries.js, religion-view-models.js,
+      and modals-religion.js.
+
+--------------------------------------------------------------------------------
+GROUP RS3 — RELIGION VALIDATION
+--------------------------------------------------------------------------------
+
+  js/religion/religion-validation.js
+    ← AFTER: js/religion/religion-constants.js (call-time)
+    ← AFTER: js/settlement/settlement-law-definitions.js (call-time,
+                                                          optional)
+    ← AFTER: js/crime/crime-constants.js                 (call-time,
+                                                          optional)
+
+  Notes:
+    - Load BEFORE religion-commands.js (which calls validators at
+      call time).
+    - The settlement-law and crime-constants dependencies are
+      CALL-TIME and optional. Missing → enum reported as "not
+      loaded."
+
+--------------------------------------------------------------------------------
+GROUP RS4 — RELIGION STATE
+--------------------------------------------------------------------------------
+
+  js/religion/religion-state.js
+    ← AFTER: js/core/accessors.js             (HARD load-time guard —
+                                                getCharacters)
+    ← AFTER: initializeStorage()
+
+  Notes:
+    - Load BEFORE religion-queries.js, religion-laws.js,
+      religion-commands.js, religion-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP RS5 — RELIGION QUERIES
+--------------------------------------------------------------------------------
+
+  js/religion/religion-queries.js
+    ← AFTER: js/religion/religion-state.js    (HARD load-time guard)
+    ← AFTER: js/religion/religion-format.js   (HARD load-time guard)
+    ← AFTER: js/core/accessors.js             (HARD load-time guard —
+                                                getCharacterById,
+                                                getCharacters)
+    ← AFTER: js/core/time.js                  (HARD load-time guard —
+                                                getCurrentYear)
+    ← after: js/location/location-queries.js  (call-time, optional;
+                                                preferred resolver)
+    ← after: js/character/character-queries.js(call-time, optional;
+                                                fallback)
+
+  Notes:
+    - Load BEFORE religion-rules.js, religion-laws.js,
+      religion-commands.js, religion-view-models.js,
+      modals-religion.js, religion-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP RS6 — RELIGION RULES
+--------------------------------------------------------------------------------
+
+  js/religion/religion-rules.js
+    ← AFTER: js/religion/religion-constants.js (call-time)
+    ← AFTER: js/religion/religion-queries.js   (call-time)
+    ← AFTER: js/core/accessors.js              (call-time —
+                                                 getCharacterById)
+
+  Notes:
+    - Load BEFORE religion-commands.js, religion-inheritance.js,
+      religion-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP RS7 — RELIGION COMMANDS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-commands.js
+    ← AFTER: js/religion/religion-state.js             (HARD load-time guard)
+    ← AFTER: js/religion/religion-queries.js           (HARD load-time guard)
+    ← AFTER: js/religion/religion-validation.js        (HARD load-time guard)
+    ← AFTER: js/religion/religion-rules.js             (HARD load-time guard)
+    ← AFTER: js/character/character-commands.js        (HARD load-time guard —
+                                                         setReligion method)
+    ← AFTER: js/core/ids.js                            (HARD load-time guard)
+    ← AFTER: js/core/accessors.js                      (HARD load-time guard —
+                                                         getCharacterById,
+                                                         getPlaceById)
+    ← AFTER: js/core/time.js                           (HARD load-time guard)
+
+  Method-level load-time check:
+    CharacterCommands.setReligion
+
+  Notes:
+    - The ONLY save site in the religion subsystem is
+      ReligionCommands.persist().
+    - Load BEFORE religion-inheritance.js, modals-religion.js,
+      religion-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP RS8 — RELIGION LAWS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-laws.js
+    ← AFTER: js/religion/religion-state.js    (HARD load-time guard)
+    ← AFTER: js/religion/religion-queries.js  (HARD load-time guard)
+
+  Notes:
+    - Load BEFORE religion-bootstrap.js.
+    - Query-only. No mutation. Law mutations live in
+      religion-commands.js.
+
+--------------------------------------------------------------------------------
+GROUP RS9 — RELIGION INHERITANCE
+--------------------------------------------------------------------------------
+
+  js/religion/religion-inheritance.js
+    ← AFTER: js/religion/religion-rules.js     (call-time; guard
+                                                 fires at first call)
+    ← AFTER: js/religion/religion-queries.js   (call-time; guard
+                                                 fires at first call)
+    ← AFTER: js/religion/religion-commands.js  (call-time; guard
+                                                 fires at first call)
+    ← AFTER: js/core/accessors.js              (call-time —
+                                                 getCharacterById)
+
+  Notes:
+    - Load BEFORE religion-bootstrap.js.
+    - Also called by children-commands.js's inheritance step — load
+      order is caller-driven (children-commands loads before
+      religion-inheritance only if the caller wires it that way; the
+      call is typeof-guarded in children-commands).
+
+--------------------------------------------------------------------------------
+GROUP RS10 — RELIGION VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/religion/religion-view-models.js
+    ← AFTER: js/religion/religion-queries.js   (call-time; guard
+                                                 fires at first call)
+    ← AFTER: js/religion/religion-format.js    (call-time)
+
+  Notes:
+    - Load BEFORE religion-bootstrap.js.
+    - Any UI that renders religion rows via ReligionRender should
+      call ReligionViewModels.buildReligionRows first.
+
+--------------------------------------------------------------------------------
+GROUP RS11 — RELIGION RENDER
+--------------------------------------------------------------------------------
+
+  js/religion/religion-render.js
+    ← AFTER: js/core/formatting.js             (HARD load-time guard —
+                                                 escapeHtml)
+
+  Notes:
+    - Load BEFORE religion-bootstrap.js.
+    - No other load-time dependencies. Renders view-model rows.
+
+--------------------------------------------------------------------------------
+GROUP RS12 — RELIGION UI STATE
+--------------------------------------------------------------------------------
+
+  js/religion/religion-ui-state.js
+    (no dependencies)
+
+  Notes:
+    - Loads anywhere after formatting.js (for its own
+      console.error path, which is optional). No constraint.
+
+--------------------------------------------------------------------------------
+GROUP RB1 — RELIGION BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/religion/religion-bootstrap.js
+    ← AFTER: js/religion/religion-constants.js
+    ← AFTER: js/religion/religion-format.js
+    ← AFTER: js/religion/religion-validation.js
+    ← AFTER: js/religion/religion-state.js
+    ← AFTER: js/religion/religion-queries.js
+    ← AFTER: js/religion/religion-rules.js
+    ← AFTER: js/religion/religion-commands.js
+    ← AFTER: js/religion/religion-laws.js
+    ← AFTER: js/religion/religion-inheritance.js
+    ← AFTER: js/religion/religion-view-models.js
+    ← AFTER: js/religion/religion-render.js
+    ← AFTER: js/religion/religion-ui-state.js
+    ← AFTER: js/core/ids.js, storage.js, time.js, accessors.js
+    ← AFTER: initializeStorage()
+
+  Auto-init: if masterData.data exists at load, init() runs
+    immediately. Otherwise the loader calls
+    window.ReligionBootstrap.init().
+
+  Optional:
+    js/religion/modals-religion.js     (warn-only if missing; load
+                                        BEFORE the bootstrap to
+                                        include modals in the
+                                        namespace, or AFTER — the
+                                        namespace is created once
+                                        with `modals: null` in the
+                                        latter case; callers should
+                                        either (a) load modals before
+                                        bootstrap, or (b) reach into
+                                        window.ReligionModals
+                                        directly)
+
+  Notes:
+    - Load LAST in the religion script group, before any caller
+      that uses window.Religion.
+
+--------------------------------------------------------------------------------
+GROUP RM1 — RELIGION MODALS
+--------------------------------------------------------------------------------
+
+  js/religion/modals-religion.js
+    ← AFTER: js/core/modals-core.js
+    ← AFTER: js/core/ui.js
+    ← AFTER: js/core/formatting.js
+    ← AFTER: js/core/icons.js
+    ← AFTER: js/core/accessors.js
+    ← AFTER: js/core/time.js
+    ← AFTER: js/selectors/modals-char-selector.js   (openCharacterSelector)
+    ← AFTER: js/selectors/locationDropdown.js       (getFilteredLocationOptions)
+    ← AFTER: js/religion/religion-state.js          (indirect via
+                                                     ReligionCommands)
+    ← AFTER: js/religion/religion-commands.js
+    ← AFTER: js/religion/religion-queries.js
+    ← AFTER: js/religion/religion-format.js
+    ← AFTER: js/religion/religion-constants.js
+
+  Notes:
+    - Can load before or after religion-bootstrap.js. See RB1 note.
+    - Load BEFORE any page that calls window.openCreateReligionModal
+      and friends.
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+  — Group R0: core prerequisites —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+  js/core/time.js
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                        (function call)
+  js/core/accessors.js
+  js/core/validation.js
+  js/core/world.js
+  js/core/names.js
+  js/core/ui.js
+  js/core/modals-core.js
+
+  — Group R1: character prerequisites —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  — Group R2: location prerequisites —
+  js/location/location-state.js
+  js/location/location-hierarchy.js
+  js/location/location-queries.js
+  js/location/location-commands.js
+
+  — Group R3: settlement definitions (law enum source) —
+  js/settlement/settlement-law-definitions.js
+  js/settlement/settlement-government-definitions.js
+  js/settlement/settlement-fiscal-definitions.js
+  js/settlement/settlement-finance-definitions.js
+  js/settlement/settlement-prosperity-definitions.js
+  js/settlement/settlement-rank-definitions.js
+  js/settlement/settlement-feature-definitions.js
+  js/settlement/settlement-education-definitions.js
+
+  — Group R3b: settlement state/commit/queries (needed by
+     settlement itself; load before any settlement module that
+     will be loaded for other reasons) —
+  js/settlement/settlement-rank-rules.js
+  js/settlement/settlement-queries.js
+  js/settlement/settlement-command-commit.js
+  js/settlement/settlement-government-rules.js
+  js/settlement/settlement-government-commands.js
+  js/settlement/settlement-prosperity-queries.js
+
+  — Group R4: crime and selectors —
+  js/crime/crime-constants.js                [UNVERIFIED]
+  js/selectors/selector-base.js
+  js/selectors/locationDropdown.js
+  js/selectors/modals-char-selector.js
+
+  — Group RS1: religion constants —
+  js/religion/religion-constants.js
+
+  — Group RS2: religion format —
+  js/religion/religion-format.js
+
+  — Group RS3: religion validation —
+  js/religion/religion-validation.js
+
+  — Group RS4: religion state —
+  js/religion/religion-state.js
+
+  — Group RS5: religion queries —
+  js/religion/religion-queries.js
+
+  — Group RS6: religion rules —
+  js/religion/religion-rules.js
+
+  — Group RS7: religion commands —
+  js/religion/religion-commands.js
+
+  — Group RS8: religion laws —
+  js/religion/religion-laws.js
+
+  — Group RS9: religion inheritance —
+  js/religion/religion-inheritance.js
+
+  — Group RS10: religion view models —
+  js/religion/religion-view-models.js
+
+  — Group RS11: religion render —
+  js/religion/religion-render.js
+
+  — Group RS12: religion UI state —
+  js/religion/religion-ui-state.js
+
+  — Group RM1: religion modals —
+  js/religion/modals-religion.js
+
+  — Group RB1: religion bootstrap —
+  js/religion/religion-bootstrap.js
+
+  — Application bootstrap —
+  window.ReligionBootstrap.init()            (function call, if
+                                              auto-init did not
+                                              run)
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+  1.  time.js before storage-schema.js, storage.js, validation.js,
+      world.js, and every module that guards on getCurrentYear /
+      isValidYear / calculateAge.
+
+  2.  storage-schema.js before storage.js.
+
+  3.  initializeStorage() before character-state.js,
+      family-state.js, children-state.js, location-state.js,
+      religion-state.js (indirectly — first hydrate call).
+
+  4.  collections.js before location-state.js.
+
+  5.  formatting.js and icons.js before ui.js, modals-core.js,
+      selector-base.js, and every religion module that guards on
+      escapeHtml / getIcon:
+        religion-render.js      (escapeHtml)
+        modals-religion.js      (escapeHtml, getIcon, showToast)
+
+  6.  ui.js before responsive.js and collapsible.js.
+
+  7.  accessors.js before religion-state.js (getCharacters),
+      religion-queries.js (getCharacterById, getCharacters),
+      religion-rules.js (getCharacterById),
+      religion-commands.js (getCharacterById, getPlaceById),
+      modals-religion.js (getCharacterById, getPlaceById,
+      getCharacters, getPlaces).
+
+  8.  ids.js before religion-commands.js (generateId).
+
+  9.  time.js before religion-queries.js, religion-commands.js,
+      modals-religion.js (getCurrentYear).
+
+  10. storage.js before religion-state.js (markDataDirty),
+      religion-commands.js (saveMasterData, getLastSaveError,
+      markDataDirty).
+
+  11. character-state.js before character-commands.js,
+      character-queries.js.
+
+  12. character-commands.js before religion-commands.js
+      (CharacterCommands.setReligion method guard).
+
+  13. character-queries.js before religion-state.js is used at
+      call time (indirect: getCharacterById resolves to the
+      projection override once character-queries.js has loaded).
+
+  14. location-state.js before location-hierarchy.js,
+      location-queries.js, location-commands.js.
+
+  15. location-queries.js before religion-queries.js is used at
+      call time (preferred resolver).
+
+  16. settlement-law-definitions.js before religion-commands.js
+      is used for law mutations (call-time; missing → "enum not
+      loaded").
+
+  17. crime-constants.js before religion-commands.js is used for
+      law mutations with a crime type (call-time; missing → "enum
+      not loaded").
+
+  18. selector-base.js and modals-char-selector.js before
+      modals-religion.js (openCharacterSelector guard at load).
+
+  19. locationDropdown.js before modals-religion.js
+      (getFilteredLocationOptions guard at load).
+
+  20. religion-constants.js before religion-format.js,
+      religion-validation.js, religion-rules.js,
+      modals-religion.js, religion-bootstrap.js.
+
+  21. religion-format.js before religion-queries.js,
+      religion-view-models.js, modals-religion.js,
+      religion-bootstrap.js.
+
+  22. religion-validation.js before religion-commands.js,
+      religion-bootstrap.js.
+
+  23. religion-state.js before religion-queries.js,
+      religion-laws.js, religion-commands.js,
+      religion-bootstrap.js.
+
+  24. religion-queries.js before religion-rules.js,
+      religion-laws.js, religion-commands.js,
+      religion-view-models.js, modals-religion.js,
+      religion-bootstrap.js.
+
+  25. religion-rules.js before religion-commands.js,
+      religion-inheritance.js, religion-bootstrap.js.
+
+  26. religion-commands.js before religion-inheritance.js,
+      modals-religion.js, religion-bootstrap.js.
+
+  27. religion-view-models.js before religion-bootstrap.js.
+
+  28. religion-render.js before religion-bootstrap.js.
+
+  29. religion-ui-state.js before religion-bootstrap.js.
+
+  30. religion-bootstrap.js after every other religion module
+      except modals-religion.js (which can be before or after —
+      see RB1 in PART 4).
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+  1. getCurrentYear vs getCurrentYearSafe.
+     Religion uses getCurrentYear throughout. Government uses
+     getCurrentYearSafe (deprecated). Do not substitute. Religion
+     bootstrap verifies getCurrentYear explicitly and does NOT
+     verify the deprecated alias. See religion-docs.txt §0.
+
+  2. LAW ENUM SOURCE.
+     religion-commands.js::_readLawEnums and
+     religion-validation.js::_readLawEnums read the canonical
+     namespaced source (SettlementLawDefinitions.*,
+     CrimeConstants.CRIME_TYPES). They do NOT read flat window.LAW_*
+     globals, which do not exist in the current tree. Prior
+     revisions did, and validation silently rejected every value
+     because the enum was {}. Do not reintroduce flat globals. See
+     religion-docs.txt §0 LAW ENUM SOURCE.
+
+  3. PERSIST PATTERN.
+     religion-commands.js::persist() inspects the boolean return
+     from saveMasterData() and reports failure via
+     getLastSaveError(). No Pattern C (discard boolean, report
+     success). See PERSISTENCE TRUTH in the module header.
+
+  4. MODAL CLOSE CONTRACT.
+     modals-religion.js's onConfirm handlers RETURN the boolean
+     from _handleCommandResult. Do not call closeTopModal() inside
+     the success path — that caused a double-close (and a latent
+     spurious onCancel fire) in prior revisions. See
+     ONCONFIRM / ONCANCEL CONTRACT.
+
+  5. CALLBACK ORDERING.
+     onSuccess fires BEFORE the modal closes. This lets chained
+     navigation (details → edit) reopen without the modal stack
+     flashing empty. Do not reorder.
+
+  6. CHARACTER PROJECTIONS.
+     religion-queries.js returns character-domain projections, not
+     live records. Mutating the returned object does NOT affect
+     canonical state. For live records (authorized mutation only),
+     use CharacterState.getLiveCharacterForMutation — religion
+     queries never do.
+
+  7. getFollowers returns [] for unknown religion id, not null.
+     Only getReligion(id) returns null for unknown id. Do not
+     conflate "unknown religion" with "religion with zero
+     followers."
+
+  8. _resolveCurrentLocationId.
+     religion-queries.js prefers LocationQueries.getCurrentLocationId
+     (semantic, move-aware). Falls back to
+     CharacterQueries.getCurrentLocationId (raw field) for bare
+     harnesses. Do not call window.getCurrentLocationId directly
+     from religion code — the name is overloaded.
+
+  9. isCulturallyCompatible / isReligiouslyPermitted stubs.
+     Both fail closed (false with a reason). Do not treat the
+     boolean as definitive.
+
+  10. Bootstrap warn-only.
+     CharacterQueries and PlaceQueries are WARN-ONLY for
+     religion-bootstrap.js. religion-commands.js uses accessors,
+     not the namespace. religion-queries.js and modals-religion.js
+     DO require CharacterQueries — they enforce it at their own
+     load. Do not add a hard guard in the bootstrap for these
+     modules; the current warn-only posture preserves the reduced-
+     harness case.
+
+  11. Government-law formatter duplication.
+     js/systems/government/settlement-law-formatters.js has its own
+     law label tables (LAW_TYPE_NAMES, LAW_DOMAIN_NAMES,
+     LAW_SEVERITY_NAMES). ReligionFormat has its own copies
+     (LAW_TYPE_NAMES, LAW_CATEGORY_NAMES, LAW_DOMAIN_NAMES,
+     LAW_SEVERITY_NAMES). The canonical source for the enums is
+     SettlementLawDefinitions. A future cleanup should derive both
+     label tables from there.
+
+  12. Modal navigation setTimeout(100).
+     modals-religion.js uses setTimeout(100) between close and
+     open for details-modal navigation buttons (edit, set leader,
+     add god, add law, create place, deprecate, delete). This is a
+     documented deferral for a z-index/transition race. Do not
+     remove without testing the modal stack under the target
+     browsers.
+
+  13. Character religion writes.
+     All religion writes to character.religionId /
+     character.religionHistory route through
+     CharacterCommands.setReligion. Do not write those fields
+     directly from religion code. That was the silent-data-loss
+     bug fixed in the previous revision (see
+     character-commands.js::setReligion).
+
+  14. Children-commands + religion-inheritance integration.
+     children-commands.js calls religion inheritance via
+     CharacterCommands.assignCharacterReligion, which routes
+     through ReligionCommands. That chain is CALL-TIME and
+     typeof-guarded. religion-inheritance.js is the sanctioned
+     entry for inheritReligionForChild; children-commands may
+     call it directly or via ReligionCommands, but it must NOT
+     write character.religionId itself.
+
+  15. Set religion on a deceased character.
+     ReligionCommands.assignReligionToCharacter does not check
+     isDeceased. ReligionRules.canAssignReligion does not check
+     isDeceased either. The caller is responsible for the
+     deceased check. The modals do check
+     (openAssignCharacterReligionModal fetches the character
+     first; if the caller wants a hard check, add it to Rules).
+
+  16. ReligionBootstrap idempotence.
+     init() is idempotent. Repeat invocation re-hydrates indexes
+     but skips verification (verification is load-time only).
+     Do not add runtime verification to init() without also
+     documenting the cost.
+
+  17. window.Religion.modals may be null.
+     religion-bootstrap.js captures window.ReligionModals at
+     init time. If modals-religion.js loads AFTER
+     religion-bootstrap.js, window.Religion.modals will be null.
+     Either load modals BEFORE bootstrap, or reach into
+     window.ReligionModals directly (it is a separate global).
+
+  18. renderReligionList WeakSet-bound containers.
+     religion-render.js::bindReligionListEvents guards against
+     double-binding with a WeakSet. Re-rendering a container does
+     not require re-binding. A caller that wants to rebind must
+     create a new container.
+
+  19. refreshReligionList per-container timer.
+     Uses a WeakMap of timers, with a fallback keyed by a non-
+     enumerable property per container. A container that is not
+     extensible falls back to a non-unique 'default' key —
+     refresh will still work, just with possible collision. This
+     is a pathological case (frozen DOM node) and preferable to
+     throwing.
+
+  20. lawCategory is NOT a field on the law record the religion
+      module writes. The current religion-commands.js writes
+      `lawCategory` on the law (openAddLawModal passes
+      `lawCategory: ...`). If a downstream consumer expects a
+      different field name (e.g. category), coordinate the
+      change. The religion-side canonical field is
+      lawCategory — religion-view-models.js and religion-laws.js
+      both read `law.lawCategory`.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
