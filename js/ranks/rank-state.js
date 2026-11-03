@@ -3,7 +3,7 @@
  * STILL WATERS - RANK STATE (rank-state.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-state.js
+ * LOCATION: js/ranks/rank-state.js
  *
  * The authoritative in-memory store for rank records and inheritance rules.
  *
