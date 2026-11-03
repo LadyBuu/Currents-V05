@@ -17,216 +17,137 @@
 
     <style>
         /* ============================================================
-           GOVERNMENT MANAGER — INLINE STYLES
-           (replaces css/gov-manager.css; no external link)
+           GOVERNMENT MANAGER — FULL INLINE CSS
+           (replaces css/gov-manager.css)
            ============================================================ */
 
         /* ---- App shell ---- */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; }
-
         .topbar { position: relative; z-index: 100; flex-shrink: 0; }
 
-        .world-app {
-            display: flex;
-            flex-direction: row;
-            flex: 1;
-            min-height: 0;
-            overflow: hidden;
-        }
+        .world-app { display: flex; flex-direction: row; flex: 1; min-height: 0; overflow: hidden; }
 
         .locations-sidebar {
-            flex-shrink: 0;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            background: var(--bg2);
-            border-right: 1px solid var(--border);
+            flex-shrink: 0; display: flex; flex-direction: column;
+            overflow: hidden; background: var(--bg2); border-right: 1px solid var(--border);
         }
 
-        .sidebar-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            background: var(--bg3);
-        }
-
+        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg3); }
         .sidebar-header h3 {
-            margin: 0;
-            font-family: var(--f-display);
-            font-size: 0.65rem;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--accent);
+            margin: 0; font-family: var(--f-display); font-size: 0.65rem;
+            letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
         }
 
-        .place-list {
-            flex: 1;
-            overflow-y: auto;
-            padding: 8px;
-            min-height: 0;
-        }
+        .place-list { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
 
         .main-panel {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-width: 0;
-            min-height: 0;
-            overflow: hidden;
+            display: flex; flex-direction: column; flex: 1;
+            min-width: 0; min-height: 0; overflow: hidden;
         }
 
         .tab-content-wrapper {
-            flex: 1;
-            min-height: 0;
-            overflow-y: auto;
-            overflow-x: hidden;
-            padding: 16px;
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 16px;
         }
 
         /* ---- Topbar buttons ---- */
         .tb-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 5px 12px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.65rem;
-            font-weight: 500;
-            cursor: pointer;
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 5px 12px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-family: var(--f-body); font-size: 0.65rem;
+            font-weight: 500; cursor: pointer;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
         .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
         .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
         .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
-        /* ---- Theme toggle dropdown ---- */
+        /* ---- Theme toggle ---- */
         .theme-toggle { position: relative; display: inline-flex; }
         .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
-            position: absolute;
-            top: calc(100% + 4px);
-            right: 0;
-            z-index: 9999;
-            min-width: 160px;
-            max-height: 60vh;
-            padding: 4px;
-            margin: 0;
-            list-style: none;
-            background: var(--surface);
-            border: 1px solid var(--line);
-            border-radius: var(--radius);
-            box-shadow: var(--shadow);
-            overflow-y: auto;
+            position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
+            min-width: 160px; max-height: 60vh; padding: 4px; margin: 0;
+            list-style: none; background: var(--surface);
+            border: 1px solid var(--line); border-radius: var(--radius);
+            box-shadow: var(--shadow); overflow-y: auto;
         }
         .theme-toggle__menu[hidden] { display: none; }
         .theme-toggle__menu button {
-            display: block;
-            width: 100%;
-            padding: 6px 12px;
-            text-align: left;
-            background: transparent;
-            border: none;
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            border-radius: calc(var(--radius) - 2px);
-            cursor: pointer;
+            display: block; width: 100%; padding: 6px 12px; text-align: left;
+            background: transparent; border: none; color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px); cursor: pointer;
             transition: background-color 0.15s ease;
         }
         .theme-toggle__menu button:hover,
         .theme-toggle__menu button:focus-visible {
-            background: var(--accent-dim);
-            color: var(--accent-light);
-            outline: none;
+            background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
 
-        /* ---- Panel-tabs hidden (sub-tabs are the real nav) ---- */
+        /* ---- Panel-tabs hidden ---- */
         .panel-tabs { display: none !important; }
 
-        /* ---- Government sub-tab strip ---- */
+        /* ---- Sub-tab strip ---- */
         .gov-subtabs {
-            position: sticky;
-            top: 0;
-            background: var(--bg);
-            z-index: 10;
-            display: flex;
-            gap: 2px;
-            padding: 0 4px;
-            margin-bottom: 14px;
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
+            position: sticky; top: 0; background: var(--bg); z-index: 10;
+            display: flex; gap: 2px; padding: 0 4px; margin-bottom: 14px;
+            border-bottom: 1px solid var(--border); flex-wrap: wrap;
         }
         .gov-subtab {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 14px;
-            background: transparent;
-            border: 1px solid transparent;
-            border-bottom: 2px solid transparent;
-            border-radius: 4px 4px 0 0;
-            font-family: var(--f-display);
-            font-size: 0.68rem;
-            letter-spacing: 0.05em;
-            color: var(--dim);
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 14px; background: transparent;
+            border: 1px solid transparent; border-bottom: 2px solid transparent;
+            border-radius: 4px 4px 0 0; font-family: var(--f-display);
+            font-size: 0.68rem; letter-spacing: 0.05em; color: var(--dim);
             cursor: pointer;
             transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
         }
         .gov-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
         .gov-subtab.active {
-            color: var(--accent);
-            border-bottom-color: var(--accent);
-            background: var(--accent-dim);
-            font-weight: 600;
+            color: var(--accent); border-bottom-color: var(--accent);
+            background: var(--accent-dim); font-weight: 600;
         }
         .gov-subtab-icon { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; color: currentColor; }
         .gov-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
         .gov-subpanel { min-height: 200px; }
 
-        /* ---- Inside sub-panel: details / departments / etc ---- */
-        .gov-details-container, .dept-tab-container, .law-tab-container, .eco-details-container { padding: 4px; }
+        /* ---- Detail containers ---- */
+        .gov-details-container, .dept-tab-container, .law-tab-container,
+        .eco-details-container, .gh-tab-container { padding: 4px; }
 
-        .gov-details-header, .dept-tab-header, .law-tab-header, .eco-details-header {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 14px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--border);
-        }
-        .gov-details-header h3, .dept-tab-header h3, .law-tab-header h3, .eco-details-header h3 {
-            margin: 0;
-            font-size: 0.85rem;
-            color: var(--accent);
-            font-family: var(--f-display);
+        .gov-details-empty, .dept-details-empty, .eco-details-empty, .gh-details-empty {
+            padding: 30px 20px; text-align: center; color: var(--dim); font-size: 0.8rem;
         }
 
-        /* Buttons inside sub-panels */
+        .gov-details-header, .dept-tab-header, .law-tab-header,
+        .eco-details-header, .gh-tab-header {
+            display: flex; flex-wrap: wrap; justify-content: space-between;
+            align-items: center; gap: 12px; margin-bottom: 14px;
+            padding-bottom: 10px; border-bottom: 1px solid var(--border);
+        }
+        .gov-details-header h3, .dept-tab-header h3, .law-tab-header h3,
+        .eco-details-header h3, .gh-tab-header h3 {
+            margin: 0; font-size: 0.85rem; color: var(--accent); font-family: var(--f-display);
+        }
+
+        .gov-details-actions, .dept-tab-actions, .law-tab-actions,
+        .eco-details-actions, .gh-tab-actions {
+            display: flex; gap: 6px; flex-wrap: wrap;
+        }
+
+        /* ---- Buttons inside sub-panels ---- */
         .gov-btn, .dept-btn, .law-btn, .eco-btn, .gh-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 5px 12px;
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.65rem;
-            font-weight: 500;
-            cursor: pointer;
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 5px 12px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text); font-family: var(--f-body); font-size: 0.65rem;
+            font-weight: 500; cursor: pointer;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
         .gov-btn:hover, .dept-btn:hover, .law-btn:hover, .eco-btn:hover, .gh-btn:hover {
-            border-color: var(--accent);
-            background: var(--accent-dim);
-            color: var(--accent-light);
+            border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light);
         }
         .gov-btn.primary, .dept-btn-add, .law-btn-add, .gh-btn-add {
             background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
@@ -235,128 +156,242 @@
             background: var(--accent-dark); border-color: var(--accent-dark);
         }
         .dept-btn-delete, .law-btn-delete, .gh-btn-end {
-            color: var(--danger-lt);
-            border-color: var(--danger-lt);
+            color: var(--danger-lt); border-color: var(--danger-lt);
         }
         .dept-btn-delete:hover, .law-btn-delete:hover, .gh-btn-end:hover {
-            background: var(--danger-soft); border-color: var(--danger);
-            color: var(--danger-lt);
+            background: var(--danger-soft); border-color: var(--danger); color: var(--danger-lt);
         }
         .dept-btn-small { padding: 2px 8px; font-size: 0.55rem; }
 
-        /* Form primitives inside sub-panels */
+        /* ---- Form primitives ---- */
         .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
         .form-group label {
-            font-size: 0.7rem;
-            color: var(--accent);
-            font-family: var(--f-display);
-            letter-spacing: 0.04em;
+            font-size: 0.7rem; color: var(--accent);
+            font-family: var(--f-display); letter-spacing: 0.04em;
         }
         .form-control {
-            width: 100%;
-            padding: 6px 10px;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            color: var(--text);
-            font-family: var(--f-body);
-            font-size: 0.7rem;
-            box-sizing: border-box;
+            width: 100%; padding: 6px 10px;
+            background: var(--bg); border: 1px solid var(--border);
+            border-radius: var(--radius); color: var(--text);
+            font-family: var(--f-body); font-size: 0.7rem; box-sizing: border-box;
         }
-        .form-control:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 2px var(--accent-soft);
+        .form-control:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+        .form-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        .form-row .form-group { flex: 1; min-width: 120px; }
+
+        /* ---- Cards ---- */
+        .dept-card, .eco-stat-card, .gh-leader-card, .gh-official-card, .eco-settlement-details,
+        .eco-breakdown-item, .dept-position, .dept-budget-summary, .dept-empty {
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;
         }
 
-        /* Card primitives used by departments / details / history */
-        .dept-card, .eco-stat-card, .gh-leader-card, .gh-official-card {
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 14px;
-            margin-bottom: 8px;
+        .dept-header {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 8px; padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-light); margin-bottom: 8px;
         }
-        .dept-header, .eco-details-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 8px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--border-light);
-            margin-bottom: 8px;
+
+        .dept-title, .dept-actions, .dept-name {
+            display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
         }
         .dept-name, .eco-stat-value, .gh-leader-name, .gh-official-name {
-            font-weight: 600;
-            color: var(--accent);
-            font-family: var(--f-display);
+            font-weight: 600; color: var(--accent); font-family: var(--f-display);
         }
 
         /* Stats blocks */
-        .dept-stats, .law-stats-summary, .gh-stats-summary {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            padding: 8px 0;
+        .dept-stats, .law-stats-summary, .gh-stats-summary, .dept-budget-summary {
+            display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 0;
         }
-        .dept-stat, .law-stat, .gh-stat {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            min-width: 90px;
+        .dept-stat, .law-stat, .gh-stat, .dept-budget-item {
+            display: flex; flex-direction: column; gap: 2px; min-width: 90px;
         }
-        .dept-stat-label, .law-stat-label, .gh-stat-label {
-            font-size: 0.55rem;
-            color: var(--dim);
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
+        .dept-stat-label, .law-stat-label, .gh-stat-label, .dept-budget-label {
+            font-size: 0.55rem; color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.06em;
             font-family: var(--f-display);
         }
-        .dept-stat-value, .law-stat-value, .gh-stat-value {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--text);
-            font-family: var(--f-mono);
+        .dept-stat-value, .law-stat-value, .gh-stat-value, .dept-budget-value {
+            font-size: 0.95rem; font-weight: 600; color: var(--text); font-family: var(--f-mono);
         }
+        .dept-budget-shortfall .dept-budget-value { color: var(--danger-lt); }
+        .dept-budget-surplus .dept-budget-value { color: var(--ok); }
 
-        /* Empty states */
-        .dept-empty, .law-empty, .gh-empty, .gov-details-empty, .eco-details-empty, .gh-details-empty {
-            padding: 30px 20px;
-            text-align: center;
-            color: var(--dim);
-            font-size: 0.75rem;
-            background: var(--bg2);
-            border: 1px dashed var(--border);
+        /* Positions */
+        .dept-positions { padding: 10px 14px; }
+        .dept-positions-header {
+            font-size: 0.62rem; font-weight: 600; color: var(--accent);
+            font-family: var(--f-display); letter-spacing: 0.05em;
+            text-transform: uppercase; margin-bottom: 6px; padding-bottom: 4px;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .dept-positions-list { display: flex; flex-direction: column; gap: 6px; }
+        .dept-position {
+            padding: 6px 10px; background: var(--bg3); border-radius: var(--radius);
+            border-left: 3px solid var(--border); margin-bottom: 0;
+        }
+        .dept-position-header {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 4px 8px;
+        }
+        .dept-position-name { font-size: 0.7rem; font-weight: 500; color: var(--text); }
+        .dept-position-status {
+            font-size: 0.5rem; padding: 2px 8px; border-radius: 10px;
+            font-family: var(--f-display); letter-spacing: 0.04em;
+            text-transform: uppercase; font-weight: 600;
+        }
+        .dept-position-status.filled { background: var(--accent-dim); color: var(--accent); }
+        .dept-position-status.vacant { background: var(--bg2); color: var(--dim); border: 1px solid var(--border); }
+
+        /* ---- Details tab fields ---- */
+        .gov-details-body { display: flex; flex-direction: column; gap: 14px; }
+        .gov-details-field {
+            display: flex; flex-direction: column; gap: 6px;
+            padding: 10px 12px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: var(--radius);
+        }
+        .gov-details-field > label {
+            font-size: 0.6rem; color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.06em;
+            font-family: var(--f-display); font-weight: 600;
+        }
+        .gov-details-value { font-size: 0.75rem; color: var(--text); line-height: 1.5; }
+        .gov-details-none { color: var(--tmut); font-style: italic; font-size: 0.65rem; }
+
+        .gov-leadership-section {
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 10px 12px;
+        }
+        .gov-leadership-header {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 8px; margin-bottom: 8px; padding-bottom: 6px;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .gov-leadership-header > label {
+            font-size: 0.6rem; color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.06em;
+            font-family: var(--f-display); font-weight: 600;
+        }
+        .gov-leadership-value { display: flex; flex-direction: column; gap: 6px; }
+        .gov-leadership-empty { color: var(--tmut); font-style: italic; font-size: 0.65rem; padding: 6px 0; }
+
+        .gov-leader-item {
+            display: flex; justify-content: space-between; align-items: center;
+            flex-wrap: wrap; gap: 6px 12px; padding: 6px 10px;
+            background: var(--bg3); border-left: 3px solid var(--accent);
             border-radius: var(--radius);
         }
+        .gov-leader-info { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; flex: 1; min-width: 0; }
+        .gov-leader-name { font-size: 0.75rem; font-weight: 600; color: var(--text); }
+        .gov-leader-title { font-size: 0.6rem; color: var(--accent-light); font-style: italic; }
+        .gov-leader-status {
+            font-size: 0.5rem; padding: 2px 8px; border-radius: 10px;
+            font-family: var(--f-display); letter-spacing: 0.04em;
+            text-transform: uppercase; font-weight: 600;
+        }
+        .gov-leader-status.active { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+        .gov-leader-status.ended { background: var(--bg2); color: var(--dim); border: 1px solid var(--border); }
+        .gov-leader-since, .gov-leader-period { font-size: 0.55rem; color: var(--dim); font-family: var(--f-mono); }
 
-        /* ---- Toast / icons fix ---- */
+        /* ---- Laws tab ---- */
+        .law-list { display: flex; flex-direction: column; gap: 8px; }
+        .law-item {
+            background: var(--bg2); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 14px;
+        }
+        .law-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+        .law-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .law-name { font-size: 0.8rem; font-weight: 600; color: var(--accent); font-family: var(--f-display); }
+        .law-status { font-size: 0.55rem; font-weight: 600; letter-spacing: 0.04em; font-family: var(--f-display); text-transform: uppercase; }
+        .law-status.is-active { color: var(--ok); }
+        .law-status.is-inactive { color: var(--danger-lt); }
+        .law-actions, .law-section-body { display: flex; gap: 4px; }
+        .law-description { font-size: 0.65rem; color: var(--text); line-height: 1.5; }
+        .law-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.6rem; }
+        .law-category {
+            display: inline-flex; align-items: center; gap: 4px;
+            color: var(--accent); font-size: 0.55rem; padding: 2px 8px;
+            background: var(--accent-dim); border-radius: 12px;
+            font-family: var(--f-display); letter-spacing: 0.03em;
+        }
+        .law-severity { font-weight: 600; font-size: 0.55rem; text-transform: uppercase; font-family: var(--f-display); }
+        .law-severity.is-minor { color: var(--ok); }
+        .law-severity.is-medium { color: var(--warning); }
+        .law-severity.is-major { color: var(--danger-lt); }
+        .law-severity.is-severe, .law-severity.is-capital { color: var(--danger); }
+        .law-punishment {
+            display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+            padding: 6px 10px; background: var(--bg3);
+            border-left: 3px solid var(--warning); border-radius: var(--radius);
+            font-size: 0.6rem;
+        }
+
+        /* ---- History tab ---- */
+        .gh-leaders-list { display: flex; flex-direction: column; gap: 8px; }
+        .gh-leader-card {
+            display: flex; gap: 12px; padding: 10px 12px;
+            background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+        }
+        .gh-leader-number {
+            font-size: 1rem; font-weight: 700; color: var(--accent);
+            font-family: var(--f-display); min-width: 30px; text-align: center;
+            border-right: 1px solid var(--border-light); padding-right: 10px;
+        }
+        .gh-leader-info { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .gh-leader-period { font-size: 0.6rem; color: var(--dim); font-family: var(--f-mono); }
+        .gh-officials-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px;
+        }
+
+        /* ---- Economy tab ---- */
+        .eco-stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-bottom: 16px;
+        }
+        .eco-stat-card {
+            display: flex; align-items: center; gap: 12px;
+            padding: 12px 14px; background: var(--bg2);
+            border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0;
+        }
+        .eco-stat-icon {
+            display: flex; align-items: center; justify-content: center;
+            width: 36px; height: 36px; background: var(--accent-dim);
+            border-radius: 8px; color: var(--accent); flex-shrink: 0;
+        }
+        .eco-stat-content { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .eco-stat-label { font-size: 0.6rem; color: var(--text); font-family: var(--f-display); letter-spacing: 0.03em; }
+        .eco-stat-sub { font-size: 0.5rem; color: var(--dim); font-family: var(--f-mono); }
+
+        /* ---- Empty states ---- */
+        .dept-empty, .law-empty, .gh-empty, .gov-details-empty, .eco-details-empty, .gh-details-empty {
+            padding: 30px 20px; text-align: center; color: var(--dim); font-size: 0.75rem;
+            background: var(--bg2); border: 1px dashed var(--border); border-radius: var(--radius);
+        }
+
+        /* ---- Toast icons fix ---- */
         .toast-message { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .toast-message svg { flex-shrink: 0; }
         .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
 
-        /* ---- No shadows/blurs anywhere for mobile ---- */
+        /* ---- No shadows/blurs (mobile) ---- */
         .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .btn:hover { box-shadow: none !important; }
 
         /* ---- Sidebar overlay ---- */
         .sidebar-overlay { display: none; }
-        .sidebar-overlay.active { display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 999; }
+        .sidebar-overlay.active {
+            display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8); z-index: 999;
+        }
 
-        /* ---- Mobile layout ---- */
+        /* ---- Mobile ---- */
         @media (max-width: 768px) {
             .world-app { flex-direction: column; }
             .locations-sidebar {
-                position: fixed;
-                top: 0; bottom: 0; left: 0;
-                height: 100vh;
-                width: 85%; max-width: 280px;
-                z-index: 1000;
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-                box-shadow: none;
+                position: fixed; top: 0; bottom: 0; left: 0;
+                height: 100vh; width: 85%; max-width: 280px;
+                z-index: 1000; transform: translateX(-100%);
+                transition: transform 0.3s ease; box-shadow: none;
             }
             .locations-sidebar.visible { transform: translateX(0); }
             .gov-subtabs { flex-wrap: wrap; }
@@ -374,7 +409,6 @@
     </button>
     <div class="title" id="govManagerTitle"></div>
     <div class="spacer"></div>
-    <button id="addGovBtn" class="tb-btn primary" type="button"></button>
     <button id="importBtn" class="tb-btn" type="button"></button>
     <button id="exportBtn" class="tb-btn primary" type="button"></button>
     <button id="refreshBtn" class="tb-btn" type="button"></button>
@@ -401,10 +435,6 @@
         </div>
     </div>
 </div>
-
-<!-- ============================================================
-     LOAD ORDER
-     ============================================================ -->
 
 <!-- 1. Core Constants -->
 <script src="js/core/constants/constants.js"></script>
@@ -446,14 +476,14 @@
 <!-- 6. Skill Taxonomy -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- 7. Role Constants (before role-state) -->
+<!-- 7. Role Constants -->
 <script src="js/roles/role-constants.js"></script>
 
-<!-- 8. Rank Dependencies (before rank-state) -->
+<!-- 8. Rank Dependencies -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 
-<!-- 9. Name Dependencies (before names-state) -->
+<!-- 9. Name Dependencies -->
 <script src="js/names/name-queries.js"></script>
 <script src="js/names/name-rules.js"></script>
 
@@ -564,7 +594,7 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
-<!-- 18a. Selectors (before industry — industry modals require openCharacterSelector) -->
+<!-- 18a. Selectors -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -577,7 +607,7 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 <script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- 18b. Industry Chain (required by government-queries.js) -->
+<!-- 18b. Industry Chain -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
 <script src="js/industry/industry-type-defaults.js"></script>
@@ -618,9 +648,7 @@
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
-<!-- ============================================================
-     SUB-TAB HOST
-     ============================================================ -->
+<!-- SUB-TAB HOST -->
 <script>
     (function () {
         'use strict';
@@ -686,8 +714,6 @@
         if (title) title.innerHTML = iconWithText(getIcon('CROWN'), ' GOVERNMENT MANAGER');
         var sidebarTitle = document.getElementById('sidebarTitle');
         if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' GOVERNMENTS');
-        var addBtn = document.getElementById('addGovBtn');
-        if (addBtn) addBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Government');
         var importBtn = document.getElementById('importBtn');
         if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
         var exportBtn = document.getElementById('exportBtn');
@@ -708,8 +734,6 @@
                 window.LocationUI.renderLocationList('placeList', {
                     selectedId: currentPlaceId,
                     onSelect: function(placeOrId) {
-                        // Accept both a place object and a raw id — different
-                        // LocationUI versions pass different shapes.
                         var id = (typeof placeOrId === 'string') ? placeOrId
                                : (placeOrId && placeOrId.id ? placeOrId.id : null);
                         if (!id) return;
@@ -721,7 +745,6 @@
                 return;
             } catch (e) { console.error(e); }
         }
-        // Fallback: read places and build a flat list.
         var places = getPlaces();
         if (places && places.length > 0) {
             var html = '<div class="place-tree">';
@@ -765,20 +788,10 @@
     }
 
     function setupTopBarActions() {
-        document.getElementById('addGovBtn').onclick = function() {
-            var lid = currentPlaceId || (getPlaces()[0] || {}).id;
-            if (!lid) { showToast('No government selected', 'warning'); return; }
-            if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
-                window.openCreateGovernmentDepartmentModal(lid, renderGovernmentTab);
-            } else {
-                showToast('Create Department modal not loaded', 'error');
-            }
-        };
         document.getElementById('importBtn').onclick = function() {
             if (typeof window.importData !== 'function') { showToast('Import not available', 'error'); return; }
             window.importData()
                 .then(function() {
-                    // Resolve only after FileReader + save complete.
                     if (window.GovernmentBootstrap && window.GovernmentBootstrap.reinit) {
                         try { window.GovernmentBootstrap.reinit(); } catch (e) { /* ignore */ }
                     }
