@@ -3,7 +3,7 @@
  * STILL WATERS - RANK CONSTANTS (rank-constants.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-constants.js
+ * LOCATION: js/ranks/rank-constants.js
  *
  * Pure vocabulary and default shape for the rank domain.
  *
