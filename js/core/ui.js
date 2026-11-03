@@ -119,19 +119,24 @@
     /**
      * Creates a toast element. Only sets classes and dynamic content;
      * presentation lives in the stylesheet.
+     * 
+     * FIX: We explicitly strip any HTML tags from the message string
+     * before escaping. This prevents callers that pass in pre-built
+     * strings containing SVGs from breaking the icon layout.
      * @private
      */
     function _createToastElement(message, type) {
         var icon = _getIcon(_TOAST_ICON_FOR_TYPE[type] || _TOAST_ICON_FOR_TYPE.info);
 
-        // message is a plain string; escape it. Icons from icons.js are
-        // the only trusted HTML the toast contains.
-        var safeContent = window.escapeHtml(message);
+        // Ensure message is a string and strip any existing HTML (like SVGs)
+        var plainText = String(message).replace(/<[^>]*>/g, '');
+        var safeContent = window.escapeHtml(plainText);
 
         var toast = document.createElement('div');
         toast.className = 'toast toast-' + type;
         // error toasts warrant assertive announcement; others are polite.
         toast.setAttribute('role', type === TOAST_TYPES.ERROR ? 'alert' : 'status');
+        
         toast.innerHTML =
             '<span class="toast-icon" aria-hidden="true">' + icon + '</span>' +
             '<span class="toast-message">' + safeContent + '</span>' +
