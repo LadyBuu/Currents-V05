@@ -40,8 +40,36 @@
  *   _calculateTotalSalary delegates to
  *   GovernmentEconomy.calculateDepartmentSalaryRequirements(deptId),
  *   which returns { totalSalaryRequirement, filledPositions,
- *   totalPositions, ... }. The previous revision used a hardcoded
+ *   totalPositions, ... }. The prior revision used a hardcoded
  *   "total += 50" placeholder.
+ *
+ *   The call is guarded at call time. The load-time check only
+ *   verifies that window.GovernmentEconomy exists — not that it
+ *   exposes calculateDepartmentSalaryRequirements. A version
+ *   mismatch, a partial module in a test harness, or a future
+ *   rename in government-economy.js would make the unguarded call
+ *   throw a TypeError inside the department-card render loop and
+ *   take down the whole tab. The guard returns 0 on missing,
+ *   matching the tab's original "salary is not computable" intent.
+ *
+ *   Note that department.assignments and the salary requirement
+ *   figure come from different domains. The department record's
+ *   assignments array is GovernmentState's projection of all
+ *   assignments on the department. The salary requirement figure
+ *   may filter to paid assignments only. The two are not guaranteed
+ *   to agree; do not "harmonize" them by reading one into the other.
+ *   The card shows the assignments count (from the department
+ *   record) and the salary total (from GovernmentEconomy) as
+ *   distinct facts.
+ *
+ * ROLE ADDITION:
+ *   _openAssignStaffModal passes addRoleIfMissing: true to
+ *   GovernmentCommands.assignCharacterToPosition. That command may
+ *   add a profession via CharacterCommands.addProfession before
+ *   recording the assignment; if the profession grant fails mid-
+ *   command, the command surfaces a warning field on its result.
+ *   The tab reads that warning and shows it as a distinct info
+ *   toast, so a partial success is visible rather than silent.
  * =============================================================================
  */
 
@@ -221,12 +249,27 @@
      * GovernmentEconomy.calculateDepartmentSalaryRequirements(deptId),
      * which returns the canonical total for the department.
      *
-     * Returns 0 when the department cannot be resolved or the economy
-     * layer returns null for it.
+     * Returns 0 when:
+     *   - the department cannot be resolved (no id)
+     *   - GovernmentEconomy does not expose the method (version
+     *     mismatch, partial module)
+     *   - the method returns null for the department
+     *   - the returned shape lacks a numeric totalSalaryRequirement
+     *
+     * The typeof guard is the fix for the crash-on-render bug. See
+     * SALARY CALCULATION in the header for the full rationale.
      */
     function _calculateTotalSalary(department) {
         if (!department || !department.id) return 0;
-        var req = GE.calculateDepartmentSalaryRequirements(department.id);
+        if (!GE || typeof GE.calculateDepartmentSalaryRequirements !== 'function') {
+            return 0;
+        }
+        var req;
+        try {
+            req = GE.calculateDepartmentSalaryRequirements(department.id);
+        } catch (e) {
+            return 0;
+        }
         if (!req || typeof req.totalSalaryRequirement !== 'number') return 0;
         return req.totalSalaryRequirement;
     }
@@ -955,6 +998,19 @@
                         'error'
                     );
                     return;
+                }
+
+                // The assignment command may add a profession via
+                // CharacterCommands.addProfession before recording the
+                // assignment. If the profession grant fails mid-command,
+                // the command surfaces a warning on its result. Show it
+                // as a distinct info toast so a partial success is
+                // visible rather than silent.
+                if (result.roleWarning) {
+                    var warningMsg = typeof result.roleWarning === 'string'
+                        ? result.roleWarning
+                        : (result.roleWarning.message || 'Role grant may have failed');
+                    _showToast(warningMsg, 'info');
                 }
 
                 var persistResult = GC.persist();
