@@ -106,6 +106,7 @@ BLOCK 2 — CORE UTILITIES (leaf, no dependencies)
   js/core/icons.js
   js/core/collections.js
   js/core/ids.js
+  js/core/theme-boot.js
   js/core/randomness.js
 
   Notes:
