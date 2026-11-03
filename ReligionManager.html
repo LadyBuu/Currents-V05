@@ -15,7 +15,7 @@
 </head>
 <body>
 
-<div class="data-manager-app">
+<div class="data-manager-app" data-religion-editor>
 
     <!-- TOP BAR -->
     <div class="topbar">
@@ -113,6 +113,7 @@
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/responsive.js"></script>
 <script src="js/core/exportUtils.js"></script>
+<script src="js/core/tab-manager.js"></script>
 <script src="js/modules/simulation/simulation-generators.js"></script>
 
 <!-- Feature-state modules required by state.js (all must load before state.js) -->
@@ -395,6 +396,67 @@
 <script src="js/tabs/household-members-tab.js"></script>
 <script src="js/tabs/household-departments-tab.js"></script>
 <script src="js/tabs/household-economy-tab.js"></script>
+
+<!-- ============================================================ -->
+<!-- RELIGION TABS + TabManager scope configuration               -->
+<!-- ============================================================ -->
+<!--
+    TabManager scope setup (must run BEFORE the tab files register).
+
+    - containerRoot: the [data-religion-editor] wrapper. TabManager
+      uses this to route [data-tab] clicks to the religion scope and
+      to keep other scopes' clicks out.
+    - buildContext(): returns { religion } for the currently-selected
+      religion. TabManager passes this object to every registered
+      renderer, which reads context.religion.
+    - resolveContainer / buildEmptyState: use TabManager defaults.
+      The default resolver looks up document.getElementById('tab-' +
+      tabId), which matches the pane ids in this file.
+
+    The orchestrator below drives setReligion / activateTab / refresh
+    after this block.
+-->
+<script>
+(function () {
+    'use strict';
+
+    if (typeof window.TabManager === 'undefined' || !window.TabManager) {
+        // TabManager missing — the tab files will log their own
+        // warnings and not register. The orchestrator's fallback path
+        // will render "This tab is not available." for every tab.
+        return;
+    }
+
+    // The current religion is held on a stable object so the closure
+    // can read it without depending on external state.
+    var context = { religion: null };
+
+    window.ReligionTabContext = context;
+
+    window.TabManager.configure('religion', {
+        containerRoot: function () {
+            return document.querySelector('[data-religion-editor]');
+        },
+        buildContext: function () {
+            if (!context.religion) return null;
+            return { religion: context.religion };
+        },
+        buildEmptyState: function (tabId, reason) {
+            if (reason === 'no-renderer') {
+                return 'This tab is not available.';
+            }
+            if (reason === 'no-context') {
+                return 'Select a religion to view this tab.';
+            }
+            if (reason === 'no-container') {
+                return '';
+            }
+            return '';
+        }
+    });
+})();
+</script>
+
 <script src="js/tabs/religion-details-tab.js"></script>
 <script src="js/tabs/religion-gods-tab.js"></script>
 <script src="js/tabs/religion-laws-tab.js"></script>
@@ -522,6 +584,9 @@
 (function () {
     'use strict';
 
+    // -----------------------------------------------------------------
+    // DOM references
+    // -----------------------------------------------------------------
     var religionContainer = document.getElementById('religionListContainer');
     var sidebar           = document.getElementById('sidebar');
     var burgerBtn         = document.getElementById('burgerBtn');
@@ -536,17 +601,17 @@
         document.querySelectorAll('.panel-tabs .tab-btn')
     );
 
-    var tabPanes = {
-        details:   document.getElementById('tab-details'),
-        gods:      document.getElementById('tab-gods'),
-        laws:      document.getElementById('tab-laws'),
-        places:    document.getElementById('tab-places'),
-        followers: document.getElementById('tab-followers')
-    };
-
+    // -----------------------------------------------------------------
+    // Local state
+    // -----------------------------------------------------------------
     var selectedReligionId = null;
     var activeTabId        = 'details';
     var isInitialized      = false;
+
+    // TabManager is optional at the orchestrator level: if it did not
+    // load, we degrade to a single-tab experience (details only, using
+    // the generic renderer). Everything else keeps working.
+    var hasTabManager = !!(window.TabManager && window.TabManager.render);
 
     // -----------------------------------------------------------------
     // Bootstrapping
@@ -555,7 +620,8 @@
         if (isInitialized) return;
         isInitialized = true;
 
-        // Storage init — schema + load.
+        // Storage init — schema + load. MUST happen before any state
+        // module first hydrates. Matches Block 4 of the load order.
         if (typeof window.initializeStorage === 'function') {
             try { window.initializeStorage(); } catch (e) {
                 console.error('[religion-manager] storage init failed:', e);
@@ -579,11 +645,20 @@
             }
         }
 
+        // TabManager: install the document-level click handler exactly
+        // once. Idempotent; safe to call even if the module already
+        // auto-installed it.
+        if (hasTabManager && typeof window.TabManager.init === 'function') {
+            try { window.TabManager.init(); } catch (e) {
+                console.error('[religion-manager] TabManager.init failed:', e);
+            }
+        }
+
         injectIcons();
         syncYearInput();
         renderReligionList();
         pickInitialSelection();
-        activateTab(activeTabId);
+        syncTabButtons(activeTabId);
     }
 
     // -----------------------------------------------------------------
@@ -602,35 +677,6 @@
             var svg = window.Icons[name] || window.Icons.CIRCLE || '';
             node.innerHTML = svg;
         }
-
-        // Also fill the empty-state icons in each pane on first render.
-        fillEmptyStateIcons();
-    }
-
-    function fillEmptyStateIcons() {
-        if (typeof window.Icons === 'undefined') return;
-        var map = {
-            details:   'CIRCLE_DOT',
-            gods:      'STAR_4',
-            laws:      'SHIELD',
-            places:    'LOCATION',
-            followers: 'PERSON'
-        };
-        for (var key in map) {
-            if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
-            var pane = tabPanes[key];
-            if (!pane) continue;
-            if (pane.querySelector('.empty-state .icon')) continue;
-            // Only fill an empty pane; do not overwrite rendered content.
-            if (pane.children.length !== 0) continue;
-            var iconName = map[key];
-            var svg = window.Icons[iconName] || window.Icons.CIRCLE || '';
-            pane.innerHTML =
-                '<div class="empty-state">' +
-                '<div class="icon">' + svg + '</div>' +
-                '<div class="message">Select a religion from the sidebar</div>' +
-                '</div>';
-        }
     }
 
     // -----------------------------------------------------------------
@@ -639,9 +685,9 @@
     function renderReligionList() {
         if (!religionContainer) return;
 
-        var Queries  = window.ReligionQueries;
-        var VM       = window.ReligionViewModels;
-        var Render   = window.ReligionRender;
+        var Queries = window.ReligionQueries;
+        var VM      = window.ReligionViewModels;
+        var Render  = window.ReligionRender;
 
         if (!Queries || !VM || !Render) {
             religionContainer.innerHTML =
@@ -724,6 +770,22 @@
             window.ReligionUIState.setSelectedReligionId(id);
         }
 
+        // Push the new selection into the shared context the
+        // TabManager scope reads via buildContext(). This is the
+        // single hand-off point between the orchestrator and the
+        // renderers.
+        if (window.ReligionTabContext) {
+            var fresh = null;
+            try {
+                fresh = window.ReligionQueries
+                    ? window.ReligionQueries.getReligion(id)
+                    : null;
+            } catch (e) {
+                console.error('[religion-manager] getReligion failed:', e);
+            }
+            window.ReligionTabContext.religion = fresh || null;
+        }
+
         // Mark selected item visually.
         var items = religionContainer.querySelectorAll('.religion-item');
         for (var i = 0; i < items.length; i++) {
@@ -737,11 +799,15 @@
     }
 
     // -----------------------------------------------------------------
-    // Tab dispatch
+    // Tab dispatch (TabManager-backed with a graceful fallback)
     // -----------------------------------------------------------------
     function activateTab(tabId) {
         activeTabId = tabId;
+        syncTabButtons(tabId);
+        renderActiveTab();
+    }
 
+    function syncTabButtons(tabId) {
         for (var i = 0; i < tabButtons.length; i++) {
             var btn = tabButtons[i];
             var isActive = btn.dataset.tab === tabId;
@@ -750,16 +816,22 @@
             btn.setAttribute('tabindex', isActive ? '0' : '-1');
         }
 
-        for (var key in tabPanes) {
-            if (!Object.prototype.hasOwnProperty.call(tabPanes, key)) continue;
-            if (tabPanes[key]) {
-                tabPanes[key].classList.toggle('active', key === tabId);
-            }
+        // Toggle .active on the pane containers as well, so the
+        // CSS-visible state matches TabManager's internal active tab
+        // even during the fallback path.
+        var panes = document.querySelectorAll('#tabContent .tab-pane');
+        for (var j = 0; j < panes.length; j++) {
+            panes[j].classList.toggle(
+                'active',
+                panes[j].getAttribute('data-tab-content') === tabId
+            );
         }
-
-        renderActiveTab();
     }
 
+    // Tab bar wiring. TabManager's document-level handler also fires on
+    // these clicks, but we ALSO wire per-button listeners here so the
+    // fallback path (TabManager absent) still works. Both paths are
+    // idempotent: activateTab() is safe to call twice.
     for (var i = 0; i < tabButtons.length; i++) {
         (function (btn) {
             btn.addEventListener('click', function () {
@@ -769,7 +841,32 @@
     }
 
     function renderActiveTab() {
-        var container = tabPanes[activeTabId];
+        // TabManager path: delegate to the registered renderer for
+        // (religion, activeTabId). The renderer receives the context
+        // built by buildContext() and writes into the resolved pane.
+        if (hasTabManager) {
+            try {
+                if (window.TabManager.has('religion', activeTabId)) {
+                    window.TabManager.activate('religion', activeTabId);
+                    return;
+                }
+                // No renderer for this tab — let TabManager produce the
+                // 'no-renderer' empty state.
+                window.TabManager.render('religion', activeTabId);
+                return;
+            } catch (e) {
+                console.error(
+                    '[religion-manager] TabManager.activate failed for tab "' +
+                    activeTabId + '":', e
+                );
+                // Fall through to the fallback renderer.
+            }
+        }
+
+        // Fallback path — TabManager absent, or the active tab has no
+        // registered renderer. Uses the generic view-model renderer so
+        // the tab still shows something coherent.
+        var container = document.getElementById('tab-' + activeTabId);
         if (!container) return;
 
         if (!selectedReligionId) {
@@ -797,51 +894,11 @@
             return;
         }
 
-        // Delegate to the per-tab renderer if one is registered. Each
-        // tab file exposes a render(container, model) function. Fall
-        // back to a plain placeholder if the tab module is missing.
-        var renderer = getTabRenderer(activeTabId);
-        if (!renderer) {
-            setEmptyState(container, 'This tab is not available');
-            return;
-        }
-
-        try {
-            renderer(container, model);
-        } catch (e) {
-            console.error('[religion-manager] tab "' + activeTabId + '" failed:', e);
-            setEmptyState(container, 'Error rendering this tab');
-        }
+        renderGenericTab(container, model, activeTabId);
     }
 
-    function getTabRenderer(tabId) {
-        var map = {
-            details:   'ReligionDetailsTab',
-            gods:      'ReligionGodsTab',
-            laws:      'ReligionLawsTab',
-            places:    'ReligionPlacesTab',
-            followers: 'ReligionFollowersTab'
-        };
-        var global = map[tabId];
-        if (!global) return null;
-        var mod = window[global];
-        if (!mod) {
-            // Fall through to the generic renderer below so the tab
-            // shows data even if the tab file is missing.
-            return function (container, model) {
-                renderGenericTab(container, model, tabId);
-            };
-        }
-        if (typeof mod.render === 'function') {
-            return function (container, model) { return mod.render(container, model); };
-        }
-        return function (container, model) {
-            renderGenericTab(container, model, tabId);
-        };
-    }
-
-    // Generic renderer — used only if the tab file is missing. Uses the
-    // view model directly. Not pretty; correct.
+    // Generic renderer — used only if TabManager (or the tab file) is
+    // missing. Uses the view model directly. Not pretty; correct.
     function renderGenericTab(container, model, tabId) {
         var row = model.row;
         var html = '';
@@ -1038,10 +1095,12 @@
                     }
 
                     selectedReligionId = null;
+                    if (window.ReligionTabContext) {
+                        window.ReligionTabContext.religion = null;
+                    }
                     syncYearInput();
                     renderReligionList();
                     pickInitialSelection();
-                    renderActiveTab();
 
                     window.alert('Import complete.');
                 } catch (err) {
@@ -1067,8 +1126,8 @@
         window.openCreateReligionModal({
             onSuccess: function () {
                 renderReligionList();
-                // Select the newest religion (list is sorted by storage order;
-                // the new one is last).
+                // Select the newest religion (list is sorted by storage
+                // order; the new one is last).
                 var Queries = window.ReligionQueries;
                 if (Queries) {
                     var religions = Queries.getAllReligions({ includeDeprecated: true });
@@ -1086,9 +1145,22 @@
             return;
         }
         window.openEditReligionModal(id, {
-            onSuccess: function () {
+            onSuccess: function (updated) {
                 renderReligionList();
-                renderActiveTab();
+                // If the currently-selected religion was the one edited,
+                // push the new record into the shared context so the
+                // active tab re-renders from fresh data.
+                if (id === selectedReligionId && window.ReligionTabContext) {
+                    var fresh = updated;
+                    if (!fresh && window.ReligionQueries) {
+                        try { fresh = window.ReligionQueries.getReligion(id); }
+                        catch (e) { /* non-fatal */ }
+                    }
+                    if (fresh) {
+                        window.ReligionTabContext.religion = fresh;
+                        renderActiveTab();
+                    }
+                }
             }
         });
     }
@@ -1103,7 +1175,19 @@
     if (typeof window.addEventListener === 'function') {
         window.addEventListener('masterDataUpdated', function () {
             renderReligionList();
-            renderActiveTab();
+            // The selected religion may have changed on another tab.
+            // Re-fetch and re-render the active tab.
+            if (selectedReligionId && window.ReligionQueries) {
+                var fresh = null;
+                try { fresh = window.ReligionQueries.getReligion(selectedReligionId); }
+                catch (e) { /* ignore */ }
+                if (fresh && window.ReligionTabContext) {
+                    window.ReligionTabContext.religion = fresh;
+                } else if (window.ReligionTabContext) {
+                    window.ReligionTabContext.religion = null;
+                }
+                renderActiveTab();
+            }
         });
     }
 
