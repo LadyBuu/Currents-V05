@@ -1,5 +1,5 @@
 /* ============================================================================
-   STILL WATERS — COMMON CSS v4.0
+   STILL WATERS — COMMON CSS v4.1
    ============================================================================
    Structural styles for all tools. NO color, radius, shadow, or font
    values live here. Every visual value is a token from themes.css.
@@ -23,6 +23,20 @@
      --ok, --bad, --success, --warn, --danger, --danger-lt, --deceased,
      --modal-overlay, --modal-bg, --radius, --shadow,
      --f-display, --f-body, --f-mono
+
+   CHANGES FROM v4.0:
+     - .location-tree-children now indents by 16px and has a left
+       border. Nested levels nest visually, so type-2 sites appear
+       under type-1 sites, type-3 under type-2, and so on.
+     - .location-tree-children is hidden by default and shown via
+       .is-expanded. The expand/collapse toggle in location-ui-list.js
+       toggles the class; the CSS makes the change visible.
+     - Sub-tab strip: taller tabs, clearer active underline, generous
+       padding, display font, better hit area.
+     - Tab content typography: bumped line-heights, font sizes, and
+       spacing so text inside tabs is not tight or cramped.
+     - Year input styling for the topbar.
+     - Modal / form / card padding bumped for legibility.
    ============================================================================ */
 
 /* ============================================================================
@@ -54,7 +68,8 @@ h1, h2, h3, h4, h5, h6 {
     font-family: var(--f-display);
     color: var(--fg);
     font-weight: 500;
-    line-height: 1.25;
+    line-height: 1.3;
+    letter-spacing: 0.02em;
 }
 
 button,
@@ -193,21 +208,78 @@ svg {
     color: var(--accent-light);
 }
 
-.topbar .year-input {
+/* ---- Year input (topbar) ---- */
+.topbar .year-input,
+.year-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
     background: var(--bg);
     border: 1px solid var(--border);
-    color: var(--text);
-    padding: 4px 6px;
     border-radius: var(--radius);
+    font-family: var(--f-body);
     font-size: 0.7rem;
-    width: 70px;
-    font-family: var(--f-mono);
+    line-height: 1.2;
 }
 
-.topbar .year-input:focus {
+.year-input label {
+    font-family: var(--f-display);
+    font-size: 0.55rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dim);
+    white-space: nowrap;
+}
+
+.year-input input,
+.topbar .year-input input {
+    width: 64px;
+    padding: 3px 6px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 1px);
+    color: var(--text);
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    text-align: right;
+}
+
+.year-input input:focus,
+.topbar .year-input input:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.year-input input::-webkit-outer-spin-button,
+.year-input input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.year-input input[type=number] {
+    -moz-appearance: textfield;
+}
+
+.topbar .year-input .set-btn,
+.year-input .set-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 1px);
+    padding: 3px 10px;
+    font-size: 0.65rem;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.topbar .year-input .set-btn:hover,
+.year-input .set-btn:hover {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent-light);
 }
 
 .topbar label {
@@ -219,18 +291,7 @@ svg {
 
 /* ============================================================================
    3b. MODALS
-   ============================================================================
-   Structural styles for modals created by modals-core.js. Every colour
-   and radius comes from themes.css. Class names match the DOM emitted by
-   openModal():
-     .modal .modal--small|medium|large
-       .modal-overlay
-       .modal-container
-         .modal-header > .modal-title, .modal-close-btn
-         .modal-body
-         .modal-footer > .cancel-btn, .confirm-btn
    ============================================================================ */
-
 .modal {
     position: fixed;
     inset: 0;
@@ -277,7 +338,7 @@ svg {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 12px 18px;
+    padding: 14px 20px;
     border-bottom: 1px solid var(--border);
     background: var(--bg2);
     flex-shrink: 0;
@@ -285,7 +346,7 @@ svg {
 
 .modal-title {
     font-family: var(--f-display);
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     font-weight: 600;
     color: var(--accent);
     letter-spacing: 0.04em;
@@ -296,8 +357,8 @@ svg {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 26px;
+    height: 26px;
     padding: 0;
     background: transparent;
     border: 1px solid var(--border);
@@ -320,10 +381,10 @@ svg {
 }
 
 .modal-body {
-    padding: 16px 18px;
+    padding: 18px 20px;
     overflow-y: auto;
-    font-size: 0.75rem;
-    line-height: 1.5;
+    font-size: 0.78rem;
+    line-height: 1.6;
     color: var(--text);
     min-height: 60px;
 }
@@ -332,7 +393,7 @@ svg {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    padding: 10px 18px;
+    padding: 12px 20px;
     border-top: 1px solid var(--border);
     background: var(--bg2);
     flex-shrink: 0;
@@ -342,9 +403,9 @@ svg {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 16px;
+    padding: 7px 18px;
     font-family: var(--f-body);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     font-weight: 500;
     background: var(--bg3);
     color: var(--text);
@@ -383,17 +444,17 @@ svg {
 .modal-body .modal-form {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
 }
 
 .modal-body label {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 0.65rem;
+    gap: 6px;
+    font-size: 0.72rem;
     color: var(--dim);
     font-family: var(--f-display);
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
 }
 
 .modal-body input[type="text"],
@@ -403,13 +464,14 @@ svg {
 .modal-body input[type="password"],
 .modal-body select,
 .modal-body textarea {
-    padding: 6px 10px;
+    padding: 8px 12px;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     color: var(--text);
     font-family: var(--f-body);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
     width: 100%;
     box-sizing: border-box;
 }
@@ -424,7 +486,8 @@ svg {
 
 .modal-body textarea {
     resize: vertical;
-    min-height: 60px;
+    min-height: 72px;
+    line-height: 1.55;
 }
 
 .modal-body input[type="checkbox"] {
@@ -435,8 +498,8 @@ svg {
 }
 
 .modal-body p {
-    margin: 0 0 8px 0;
-    line-height: 1.5;
+    margin: 0 0 10px 0;
+    line-height: 1.6;
 }
 
 .modal-body strong {
@@ -445,17 +508,18 @@ svg {
 }
 
 .modal-warning {
-    padding: 10px 12px;
+    padding: 12px 14px;
     background: var(--warning-soft);
     border: 1px solid var(--warning);
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 0.65rem;
-    margin: 8px 0;
+    font-size: 0.7rem;
+    line-height: 1.55;
+    margin: 10px 0;
 }
 
 .modal-warning p {
-    margin: 0 0 6px 0;
+    margin: 0 0 8px 0;
 }
 
 .modal-warning label {
@@ -464,17 +528,18 @@ svg {
     gap: 6px;
     display: flex;
     font-family: var(--f-body);
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     color: var(--text);
     letter-spacing: 0;
     margin-top: 4px;
 }
 
 .modal-note {
-    font-size: 0.6rem;
+    font-size: 0.65rem;
     color: var(--tmut);
     font-style: italic;
-    margin: 6px 0 0 0;
+    margin: 8px 0 0 0;
+    line-height: 1.55;
 }
 
 /* Preview-modal consequence blocks (used by openPreviewModal) */
@@ -487,7 +552,7 @@ svg {
 
 .preview-consequences-title {
     font-family: var(--f-display);
-    font-size: 0.65rem;
+    font-size: 0.68rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--dim);
@@ -496,14 +561,15 @@ svg {
 
 .preview-consequence {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: flex-start;
-    padding: 6px 10px;
+    padding: 8px 12px;
     background: var(--bg2);
     border-left: 3px solid var(--border);
     border-radius: var(--radius);
-    margin-bottom: 4px;
-    font-size: 0.65rem;
+    margin-bottom: 6px;
+    font-size: 0.7rem;
+    line-height: 1.55;
 }
 
 .preview-consequence--warning { border-left-color: var(--warning); }
@@ -524,23 +590,25 @@ svg {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.65rem;
+    font-size: 0.72rem;
     color: var(--text);
     cursor: pointer;
 }
 
 .preview-undo-note {
-    font-size: 0.6rem;
+    font-size: 0.65rem;
     color: var(--dim);
-    padding-top: 6px;
+    padding-top: 8px;
     border-top: 1px solid var(--border-light);
+    line-height: 1.5;
 }
 
 .modal-message {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 0.75rem;
+    gap: 10px;
+    font-size: 0.8rem;
+    line-height: 1.55;
 }
 
 .modal-message svg {
@@ -572,14 +640,15 @@ svg {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 14px;
+    padding: 12px 16px;
     background: var(--surface);
     color: var(--text);
     border: 1px solid var(--border2);
     border-left: 3px solid var(--accent);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
     pointer-events: auto;
     animation: toastIn 0.2s ease;
 }
@@ -660,21 +729,21 @@ svg {
     width: var(--sidebar-width);
     flex-shrink: 0;
     overflow-y: auto;
-    padding: 8px;
+    padding: 10px;
     position: relative;
     z-index: 10;
 }
 
 .sidebar h3 {
-    font-size: 0.65rem;
+    font-size: 0.68rem;
     color: var(--accent-light);
-    margin: 0 0 8px 4px;
+    margin: 0 0 10px 4px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     font-family: var(--f-display);
     border-bottom: 1px solid var(--border);
-    padding-bottom: 6px;
+    padding-bottom: 8px;
 }
 
 /* ============================================================================
@@ -697,7 +766,7 @@ svg {
 }
 
 /* ============================================================================
-   7. PANEL TABS
+   7. PANEL TABS (legacy)
    ============================================================================ */
 .panel-tabs {
     display: flex;
@@ -738,7 +807,7 @@ svg {
     background: none;
     border: none;
     font-family: var(--f-display);
-    font-size: 0.65rem;
+    font-size: 0.68rem;
     cursor: pointer;
     color: var(--dim);
     border-bottom: 2px solid transparent;
@@ -766,7 +835,7 @@ svg {
 }
 
 .panel-tabs .tab-btn .tab-icon {
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -774,13 +843,19 @@ svg {
 
 /* ============================================================================
    8. TAB CONTENT
+   ============================================================================
+   Content inside panels. Typography is bumped here so that
+   descriptions, labels, values, and empty states are not tight or
+   cramped. Every manager page inherits these rules.
    ============================================================================ */
+
 .tab-content {
     flex: 1;
     overflow-y: auto;
-    padding: 16px 20px;
+    padding: 20px 24px;
     background: var(--bg);
     min-height: 0;
+    line-height: 1.6;
 }
 
 .tab-pane {
@@ -793,41 +868,202 @@ svg {
     display: block;
 }
 
+/* ---- Tab content typography polish ---- */
+
+.tab-content p,
+.tab-pane p {
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: var(--text);
+    margin: 0 0 12px 0;
+}
+
+.tab-content h2,
+.tab-pane h2 {
+    font-size: 1.1rem;
+    line-height: 1.35;
+    letter-spacing: 0.03em;
+    margin: 0 0 14px 0;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.tab-content h3,
+.tab-pane h3 {
+    font-size: 0.95rem;
+    line-height: 1.4;
+    letter-spacing: 0.03em;
+    margin: 0 0 12px 0;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.tab-content h4,
+.tab-pane h4 {
+    font-size: 0.82rem;
+    line-height: 1.4;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin: 0 0 10px 0;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* ---- Sub-tab strip (used by manager pages) ---- */
+
+.manager-subtabs {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    padding: 8px 4px 0;
+    margin: -20px -24px 20px;
+    padding-left: 24px;
+    padding-right: 24px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    z-index: 10;
+}
+
+.manager-subtab {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px 11px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    color: var(--dim);
+    font-family: var(--f-display);
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    line-height: 1.15;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.manager-subtab::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: transparent;
+    border-radius: 2px 2px 0 0;
+    transition: background-color 0.15s ease;
+}
+
+.manager-subtab:hover {
+    color: var(--accent-light);
+    background: var(--accent-dim);
+}
+
+.manager-subtab:hover::after {
+    background: var(--accent);
+    opacity: 0.35;
+}
+
+.manager-subtab.active {
+    color: var(--accent);
+    background: var(--bg2);
+    border-color: var(--border);
+    border-bottom-color: transparent;
+    font-weight: 600;
+}
+
+.manager-subtab.active::after {
+    background: var(--accent);
+    opacity: 1;
+}
+
+.manager-subtab-icon {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    align-items: center;
+    justify-content: center;
+    color: currentColor;
+    flex-shrink: 0;
+    opacity: 0.9;
+}
+
+.manager-subtab-icon svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.manager-subpanel {
+    min-height: 200px;
+    padding-top: 4px;
+}
+
 /* ============================================================================
    9. LOADING & EMPTY STATES
    ============================================================================ */
 .loading-placeholder {
-    padding: 20px;
+    padding: 24px;
     text-align: center;
     color: var(--tmut);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     animation: pulse 1.5s ease-in-out infinite;
 }
 
 .empty-state {
-    padding: 40px 20px;
+    padding: 48px 24px;
     text-align: center;
     color: var(--dim);
-    font-size: 0.85rem;
+    font-size: 0.88rem;
+    line-height: 1.6;
 }
 
 .empty-state .icon {
     font-size: 2.5rem;
     display: block;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
     opacity: 0.4;
 }
 
 .error-state {
-    padding: 20px;
+    padding: 24px;
     text-align: center;
     color: var(--danger-lt);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
+    line-height: 1.55;
 }
 
 /* ============================================================================
    10. LOCATION TREE
+   ============================================================================
+   Tree nodes are rendered by location-ui-list.js as:
+
+     <div class="location-tree-node">
+       <div class="location-tree-item">  ← one row (toggle, name, badges)
+       <div class="location-tree-children">  ← nested children
+         <div class="location-tree-node">...
+       </div>
+     </div>
+
+   The indent rule below is the fix for "hierarchy not indented".
+   Without it, .location-tree-children had padding-left: 0 and
+   border-left: none, so children rendered at the same left margin
+   as their parents. With it, each nesting level adds 16px of
+   indent and a subtle left border, so type-2 sites appear under
+   type-1 sites, type-3 under type-2, and so on.
+
+   The expand/collapse toggle in location-ui-list.js toggles the
+   .is-expanded class on .location-tree-children. The
+   display: none / display: block pair below is what makes the
+   collapse actually hide descendants.
    ============================================================================ */
+
 .location-tree-node {
     position: relative;
     animation: locationFadeIn 0.15s ease;
@@ -840,34 +1076,38 @@ svg {
 .location-tree-item {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 5px 8px;
-    margin: 1px 0;
+    gap: 6px;
+    padding: 6px 10px;
+    margin: 2px 0;
     border-radius: var(--radius);
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     background: transparent;
     border-left: 3px solid transparent;
     transition: all 0.15s ease;
-    min-height: 30px;
+    min-height: 32px;
     color: var(--text);
+    line-height: 1.35;
 }
 
 .location-tree-item:hover {
     background: var(--bg4);
 }
 
-.location-tree-item.selected {
+.location-tree-item.selected,
+.location-tree-item.is-selected {
     background: var(--accent-dim);
     border-left-color: var(--accent);
 }
 
-.location-tree-item.disputed {
+.location-tree-item.disputed,
+.location-tree-item.is-disputed {
     border-left-color: var(--warn);
     opacity: 0.85;
 }
 
-.location-tree-item.abandoned {
+.location-tree-item.abandoned,
+.location-tree-item.is-abandoned {
     opacity: 0.6;
     text-decoration: line-through;
     color: var(--tmut);
@@ -877,35 +1117,58 @@ svg {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
+    width: 20px;
+    height: 20px;
     text-align: center;
     cursor: pointer;
-    font-size: 0.55rem;
+    font-size: 0.6rem;
     color: var(--accent);
     user-select: none;
     flex-shrink: 0;
     font-family: var(--f-mono);
     transition: color 0.15s ease;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius);
+    padding: 0;
 }
 
 .location-tree-toggle:hover {
     color: var(--accent-light);
+    background: var(--accent-dim);
 }
 
-.location-tree-toggle.leaf {
+.location-tree-toggle.leaf,
+.location-tree-toggle.is-leaf {
     color: var(--tmut);
     cursor: default;
     opacity: 0.3;
 }
 
-.location-tree-toggle.leaf:hover {
+.location-tree-toggle.leaf:hover,
+.location-tree-toggle.is-leaf:hover {
     color: var(--tmut);
+    background: transparent;
+}
+
+.location-tree-toggle-icon {
+    display: inline-flex;
+    width: 12px;
+    height: 12px;
+    align-items: center;
+    justify-content: center;
+}
+
+.location-tree-toggle-icon svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
 }
 
 .location-tree-icon {
     margin: 0 2px;
     flex-shrink: 0;
-    font-size: 0.6rem;
+    font-size: 0.65rem;
     color: var(--dim);
     width: 16px;
     text-align: center;
@@ -913,18 +1176,25 @@ svg {
 
 .location-tree-name {
     flex: 1;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
     font-family: var(--f-body);
+    line-height: 1.35;
 }
 
+/* ---- The hierarchy fix ---- */
 .location-tree-children {
     margin-left: 0;
-    padding-left: 0;
-    border-left: none;
+    padding-left: 16px;
+    border-left: 1px solid var(--border-light);
+    display: none;
+}
+
+.location-tree-children.is-expanded {
+    display: block;
 }
 
 /* ============================================================================
@@ -934,71 +1204,85 @@ svg {
     display: inline-flex;
     align-items: center;
     flex-shrink: 0;
-    font-size: 0.45rem;
-    padding: 1px 6px;
+    font-size: 0.5rem;
+    padding: 2px 7px;
     border-radius: 10px;
     background: var(--bg3);
     border: 1px solid var(--border-light);
     color: var(--dim);
     line-height: 1.4;
     font-family: var(--f-display);
-    letter-spacing: 0.02em;
-    gap: 2px;
+    letter-spacing: 0.03em;
+    gap: 3px;
 }
 
-.location-tree-badge.type {
+.location-tree-badge.type,
+.location-tree-badge.badge-type {
     background: var(--bg3);
     border-color: var(--border);
     color: var(--text);
-    font-size: 0.4rem;
+    font-size: 0.5rem;
     text-transform: uppercase;
 }
 
-.location-tree-badge.culture {
+.location-tree-badge.culture,
+.location-tree-badge.badge-culture {
     background: var(--accent-dim);
     border-color: var(--accent-soft);
     color: var(--accent-light);
-    font-size: 0.4rem;
+    font-size: 0.5rem;
 }
 
-.location-tree-badge.population {
+.location-tree-badge.population,
+.location-tree-badge.badge-population {
     background: color-mix(in srgb, var(--ok) 12%, transparent);
     border-color: color-mix(in srgb, var(--ok) 20%, transparent);
     color: var(--ok);
-    font-size: 0.4rem;
+    font-size: 0.5rem;
     font-weight: 500;
 }
 
-.location-tree-badge.capital {
+.location-tree-badge.capital,
+.location-tree-badge.badge-capital {
     background: color-mix(in srgb, var(--st-draft) 12%, transparent);
     border-color: color-mix(in srgb, var(--st-draft) 20%, transparent);
     color: var(--st-draft);
-    font-size: 0.45rem;
-    padding: 1px 4px;
+    font-size: 0.5rem;
+    padding: 2px 6px;
 }
 
-.location-tree-badge.disputed {
+.location-tree-badge.disputed,
+.location-tree-badge.badge-disputed {
     background: color-mix(in srgb, var(--warn) 12%, transparent);
     border-color: color-mix(in srgb, var(--warn) 20%, transparent);
     color: var(--warn);
-    font-size: 0.45rem;
-    padding: 1px 4px;
+    font-size: 0.5rem;
+    padding: 2px 6px;
 }
 
-.location-tree-badge.abandoned {
+.location-tree-badge.abandoned,
+.location-tree-badge.badge-abandoned {
     background: color-mix(in srgb, var(--danger) 12%, transparent);
     border-color: color-mix(in srgb, var(--danger) 20%, transparent);
     color: var(--danger-lt);
-    font-size: 0.45rem;
-    padding: 1px 4px;
+    font-size: 0.5rem;
+    padding: 2px 6px;
 }
 
-.location-tree-badge.ruined {
+.location-tree-badge.ruined,
+.location-tree-badge.badge-ruined {
     background: color-mix(in srgb, var(--tmut) 15%, transparent);
     border-color: color-mix(in srgb, var(--tmut) 20%, transparent);
     color: var(--tmut);
-    font-size: 0.45rem;
-    padding: 1px 4px;
+    font-size: 0.5rem;
+    padding: 2px 6px;
+}
+
+.location-tree-badge.badge-birth {
+    background: var(--accent-dim);
+    border-color: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.5rem;
 }
 
 /* ============================================================================
@@ -1013,28 +1297,32 @@ svg {
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: calc(var(--radius) * 2);
-    padding: 20px 24px;
-    margin-bottom: 16px;
+    padding: 22px 26px;
+    margin-bottom: 18px;
 }
 
 .detail-title {
-    font-size: 1.1rem;
+    font-size: 1.2rem;
     color: var(--accent-light);
-    margin-bottom: 4px;
+    margin-bottom: 6px;
     font-family: var(--f-display);
+    line-height: 1.3;
+    letter-spacing: 0.02em;
 }
 
 .detail-subtitle {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--dim);
-    margin-bottom: 12px;
+    margin-bottom: 14px;
+    line-height: 1.55;
 }
 
 .detail-grid {
     display: grid;
     grid-template-columns: 140px 1fr;
-    gap: 8px 24px;
-    font-size: 0.75rem;
+    gap: 10px 24px;
+    font-size: 0.78rem;
+    line-height: 1.55;
 }
 
 .detail-label {
@@ -1046,28 +1334,30 @@ svg {
 }
 
 .detail-breadcrumb {
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     color: var(--dim);
     border-top: 1px solid var(--border);
-    padding-top: 12px;
-    margin-top: 12px;
+    padding-top: 14px;
+    margin-top: 14px;
+    line-height: 1.55;
 }
 
 .detail-notes {
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: calc(var(--radius) * 2);
-    padding: 16px 20px;
+    padding: 18px 22px;
 }
 
 .notes-label {
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     color: var(--dim);
-    margin-bottom: 4px;
+    margin-bottom: 6px;
 }
 
 .detail-notes p {
-    font-size: 0.75rem;
+    font-size: 0.78rem;
+    line-height: 1.6;
 }
 
 /* ============================================================================
@@ -1134,22 +1424,34 @@ svg {
     }
 
     .topbar .title {
-        font-size: 0.7rem;
+        font-size: 0.75rem;
     }
 
     .topbar .btn {
-        padding: 3px 8px;
-        font-size: 0.6rem;
+        padding: 3px 10px;
+        font-size: 0.65rem;
     }
 
-    .topbar .year-input {
-        width: 50px;
+    .year-input {
+        padding: 2px 6px;
+    }
+
+    .year-input label {
+        display: none;
+    }
+
+    .year-input input {
+        width: 52px;
+        font-size: 0.65rem;
+    }
+
+    .year-input .set-btn {
+        padding: 2px 8px;
         font-size: 0.6rem;
-        padding: 3px 4px;
     }
 
     .topbar label {
-        font-size: 0.6rem;
+        font-size: 0.65rem;
     }
 
     .sidebar {
@@ -1178,42 +1480,59 @@ svg {
 
     .panel-tabs .tab-btn {
         padding: 10px 12px;
-        font-size: 0.6rem;
+        font-size: 0.65rem;
         min-height: 42px;
     }
 
     .tab-content {
-        padding: 12px 14px;
+        padding: 16px;
+    }
+
+    .manager-subtabs {
+        margin: -16px -16px 16px;
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    .manager-subtab {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 10px 14px;
+        font-size: 0.72rem;
     }
 
     .location-tree-item {
-        font-size: 0.7rem;
+        font-size: 0.72rem;
         min-height: 34px;
-        padding: 5px 6px;
+        padding: 6px 8px;
     }
 
     .location-tree-name {
-        font-size: 0.7rem;
+        font-size: 0.72rem;
     }
 
     .location-tree-badge {
-        font-size: 0.4rem;
-        padding: 1px 4px;
+        font-size: 0.45rem;
+        padding: 1px 5px;
     }
 
     .location-tree-toggle {
-        width: 20px;
-        height: 20px;
-        font-size: 0.55rem;
+        width: 22px;
+        height: 22px;
+        font-size: 0.6rem;
+    }
+
+    .location-tree-children {
+        padding-left: 12px;
     }
 
     .detail-grid {
         grid-template-columns: 1fr;
-        gap: 6px;
+        gap: 8px;
     }
 
     .detail-card {
-        padding: 14px 16px;
+        padding: 16px 18px;
     }
 
     /* Modals */
@@ -1225,9 +1544,9 @@ svg {
         max-height: calc(100vh - 32px);
     }
 
-    .modal-header { padding: 10px 12px; }
-    .modal-body { padding: 12px; }
-    .modal-footer { padding: 8px 12px; flex-wrap: wrap; }
+    .modal-header { padding: 12px 16px; }
+    .modal-body { padding: 14px 16px; }
+    .modal-footer { padding: 10px 16px; flex-wrap: wrap; }
 
     /* Toasts */
 
@@ -1252,22 +1571,21 @@ svg {
     }
 
     .topbar .title {
-        font-size: 0.6rem;
+        font-size: 0.65rem;
     }
 
     .topbar .btn {
-        padding: 2px 6px;
-        font-size: 0.55rem;
-    }
-
-    .topbar .year-input {
-        width: 40px;
-        font-size: 0.55rem;
-        padding: 2px 3px;
+        padding: 2px 8px;
+        font-size: 0.6rem;
     }
 
     .topbar label {
-        font-size: 0.55rem;
+        font-size: 0.6rem;
+    }
+
+    .year-input input {
+        width: 44px;
+        font-size: 0.6rem;
     }
 
     .sidebar {
@@ -1283,43 +1601,52 @@ svg {
 
     .panel-tabs .tab-btn {
         padding: 8px 10px;
-        font-size: 0.55rem;
+        font-size: 0.6rem;
         min-height: 36px;
     }
 
     .tab-content {
-        padding: 8px 10px;
+        padding: 10px 12px;
+    }
+
+    .manager-subtab {
+        padding: 9px 12px;
+        font-size: 0.68rem;
     }
 
     .location-tree-item {
-        font-size: 0.65rem;
-        min-height: 30px;
-        padding: 3px 4px;
+        font-size: 0.68rem;
+        min-height: 32px;
+        padding: 5px 6px;
     }
 
     .location-tree-name {
-        font-size: 0.65rem;
+        font-size: 0.68rem;
     }
 
     .location-tree-badge {
-        font-size: 0.35rem;
-        padding: 0 4px;
+        font-size: 0.4rem;
+        padding: 1px 4px;
     }
 
     .location-tree-toggle {
-        width: 18px;
-        height: 18px;
-        font-size: 0.5rem;
+        width: 20px;
+        height: 20px;
+        font-size: 0.55rem;
+    }
+
+    .location-tree-children {
+        padding-left: 10px;
     }
 
     .detail-grid {
         grid-template-columns: 1fr;
-        gap: 4px;
-        font-size: 0.7rem;
+        gap: 6px;
+        font-size: 0.72rem;
     }
 
     .detail-card {
-        padding: 10px 12px;
+        padding: 12px 14px;
     }
 }
 
@@ -1345,6 +1672,7 @@ svg {
     .btn,
     .burger-btn,
     .panel-tabs,
+    .manager-subtabs,
     .modal,
     .toast-container {
         display: none !important;
