@@ -15,14 +15,17 @@
  *   - reads through IndustryQueries and IndustryViewModels
  *   - opens the industry modals via IndustryModals (modals-industry.js)
  *   - opens the industry list via IndustryModals.openEnterpriseListModal
+ *   - processes per-enterprise via IndustryProcessor.processAnnualEnterprise
+ *     and persists once per batch
  *   - does not read canonical settlement data directly
  *   - does not read canonical industry data directly (IndustryQueries only)
  *   - does not compute domain values
  *   - does not create settlement records
  *   - does not create enterprise records
  *   - does not mutate canonical settlement data
- *   - does not mutate canonical industry data
- *   - does not persist
+ *   - does not mutate canonical industry data directly (only through the
+ *     processor and the modals)
+ *   - does not persist ad hoc — one persist at the end of a batch
  *   - does not fabricate missing domain values
  *   - does not render raw null/undefined as "null" or "undefined"
  *   - does not use a recursion guard
@@ -77,9 +80,8 @@
  *     Public    ownershipType === 'public'
  *     Private   ownershipType === 'private'
  *
- *   This is the same split the old tab attempted; the difference is that
- *   the old tab read `enterprise.isPublic` (a derived field that Phase 3
- *   removed from the canonical record), and the value was always
+ *   The old tab read `enterprise.isPublic` (a derived field that Phase 3
+ *   removed from the canonical record), so the value was always
  *   `undefined` on new records. The new tab reads `ownershipType`, which
  *   is the canonical stored field.
  *
@@ -89,52 +91,54 @@
  *
  *     Details   openEnterpriseDetailsModal(enterpriseId, onSuccess)
  *     Edit      openEditEnterpriseModal(enterpriseId, onSuccess)
- *     Process   openEnterpriseDetailsModal → the modal hosts Process Year
- *               (so the tab does not need a "Process" button on the row)
  *     Create    openCreateEnterpriseModal(onSuccess, { locationId,
  *                                               ownerType, ownerId })
  *
  *   The tab does not call IndustryCommands directly. The modals own
  *   persistence (IndustryCommands.persist() once per successful batch).
  *
- * WHY THE TAB DELEGATES PROCESSING TO THE MODAL
- * ---------------------------------------------
- *   Process Year is a mutating action that touches the enterprise's
- *   wealth, debt, status, history, and (for household-owned enterprises)
- *   the owning household's wealth. It is not a simple toggle.
- *   IndustryProcessor.processAnnualEnterprise is the correct entry
- *   point, but the user should see a confirmation and understand what is
- *   about to happen — which is exactly what the details modal's Process
- *   Year button provides. Adding a second "Process" button on the tab
- *   row would duplicate the confirmation flow, or worse, skip it.
+ * AGGREGATE PROCESSING (SETTLEMENT-SCOPED)
+ * ----------------------------------------
+ *   The old tab's "Process All Enterprises" button called
+ *   IndustryProcessor.processAllEnterprises(), which walks EVERY
+ *   enterprise in the catalogue — not just this settlement's. The
+ *   button's label and confirm dialog said "this settlement"; the
+ *   actual scope was the world. This tab now processes only the
+ *   enterprises at context.locationId.
  *
- *   If the user wants to process a single enterprise, the row's
- *   "Details" button opens the details modal, and Process Year is one
- *   click from there.
+ *   Because IndustryProcessor does not yet expose a location-scoped
+ *   batch method, the tab composes one from the primitives:
  *
- * AGGREGATE PROCESSING
- * --------------------
- *   The tab offers a top-level "Process All Enterprises" button that
- *   calls IndustryProcessor.processAllEnterprises() directly. Unlike
- *   per-enterprise processing, batch processing has no confirmation in
- *   the modals either — it is the caller's job to decide when to run it.
- *   The tab confirms once with window.confirmDialog, then calls the
- *   processor, which persists once at the end.
+ *     for each eligible enterprise at the settlement:
+ *       IndustryProcessor.processAnnualEnterprise(id, { persist: false })
+ *     then a single IndustryCommands.persist() at the end
  *
- *   The result is reported back to the user in a toast that includes
- *   processed / skipped / failed counts. On partial failure, the failures
- *   are summarised; the full list is available in the returned result,
- *   which the tab discards (a toast is the right level of detail for
- *   a batch action the user did not ask to inspect individually).
+ *   If IndustryProcessor.processEnterprisesForLocation(locationId,
+ *   options) exists (a future addition), the tab prefers it — that
+ *   method would have the same contract but live in the processor
+ *   module where it belongs.
  *
- * LOCATION SCOPING
- * ----------------
- *   The tab only shows enterprises whose `locationId` equals the
- *   settlement's locationId. IndustryQueries.getEnterprisesByLocation
- *   returns exactly that set. Enterprises whose owner is the settlement
- *   but whose location is elsewhere (rare: an out-of-settlement
- *   headquarters) are not shown. That matches "the settlement's
- *   enterprises" as the user expects.
+ *   The per-enterprise call inside the loop is what the details
+ *   modal's "Process Year" button uses; the tab reuses the same
+ *   public entry point rather than re-deriving the calculation. The
+ *   only difference from calling `processAnnualEnterprise(id)` is
+ *   that the tab passes `persist: false` and persists once at the
+ *   end.
+ *
+ * INDUSTRY HYDRATION GUARD
+ * ------------------------
+ *   IndustryState must be hydrated before any IndustryQueries call.
+ *   IndustryBootstrap.init() runs hydrateFromMasterData once, but the
+ *   settlement page can render (and this tab can run) before that
+ *   bootstrap has completed — e.g. the user selects a settlement
+ *   immediately after the page loads. The tab calls
+ *   IndustryState.hydrateFromMasterData(enterprises, types) defensively
+ *   when IndustryState.isHydrated() is false. That call is idempotent;
+ *   when the bootstrap has already hydrated, this is a no-op check.
+ *
+ *   The pattern matches government-type-manager-tab.js's defensive
+ *   hydrate. It is not a substitute for the bootstrap; it makes the
+ *   tab render reliably regardless of page timing.
  *
  * ICON POLICY
  * -----------
@@ -145,50 +149,42 @@
  * =============================================================================
  * REFACTOR HISTORY:
  *   Current revision:
- *     - Rewritten against the industry module set and the settlement
- *       module set.
- *     - Signature changed from (containerId, locationId, summary) to
- *       (container, context), matching settlement-tabs.js.
- *     - Recursion guard (_rendering) and modal-open flag removed (§20
- *       prohibits recursion guards).
- *     - The tab no longer re-implements create / edit / details / worker
- *       management. Every mutating flow is delegated to the
- *       modals-industry.js export for that flow. The old tab
- *       re-implemented all four inline, roughly doubling the industry
- *       domain's modal code, and the copies drifted from the canonical
- *       versions (different field allowlists, different default-value
- *       resolution, different owner-selector wiring).
- *     - The tab reads through IndustryQueries only. The old tab read
- *       `enterprise.isPublic`, `enterprise.workerCount`, `enterprise.type`,
- *       `enterprise.typeName`, and `enterprise.ownerName` directly off
- *       the enterprise record. Those fields are derived (removed from
- *       the canonical shape in Phase 3 by industry-migration.js) and
- *       were silently undefined on new records. The new tab reads the
- *       summary projection from IndustryQueries.getEnterpriseSummary,
- *       which resolves each derived field on read.
- *     - The tab no longer calls IndustryState.getAllEnterprises()
- *       directly. It goes through IndustryQueries.getEnterprisesByLocation
- *       / getLocationEnterprisesSummary, which use the IndustryState
- *       location index.
- *     - The tab no longer calls IndustryCommands.createEnterprise,
- *       updateEnterprise, addWorkerToEnterprise, removeWorkerFromEnterprise,
- *       or setWorkerWage directly. Those go through modals-industry.js,
- *       which owns the confirmation, validation, and persist calls.
- *     - The "Process All" button calls
- *       IndustryProcessor.processAllEnterprises() after a single
- *       confirmation. The tab does not call IndustryCommands.persist()
- *       directly — the processor calls it once at the end of the batch.
- *     - All numeric values route through _fmtNumber. All text values
- *       route through _fmtText. No raw null/undefined reaches the DOM.
- *     - window.getCurrentYearSafe is not referenced. window.getCurrentYear
- *       is not called by the tab — the per-enterprise year display comes
- *       from the summary projection via the details modal, not from
- *       this tab.
+ *     - "Process All" is now settlement-scoped. The prior
+ *       implementation called IndustryProcessor.processAllEnterprises(),
+ *       which processes every enterprise in the catalogue. The
+ *       confirmation dialog said "this settlement" while the actual
+ *       scope was the world. The tab now calls
+ *       _processSettlementEnterprises(locationId), which filters
+ *       IQ.getEnterprisesByLocation to eligible enterprises, calls
+ *       processAnnualEnterprise(id, { persist: false }) per enterprise,
+ *       and persists once at the end. If
+ *       IndustryProcessor.processEnterprisesForLocation exists, it is
+ *       used directly.
+ *     - The per-enterprise row template now renders row.workersLabel
+ *       directly. The prior implementation called
+ *       _fmtNumber(row.workersLabel ? null : null), which always
+ *       produced '—'. row.workersLabel is a string like '3 / 10', not
+ *       a number, so _fmtNumber was the wrong formatter; the value is
+ *       now escaped and rendered as-is.
+ *     - Defensive IndustryState hydration. The tab calls
+ *       _ensureIndustryStateHydrated() before any IndustryQueries
+ *       read. If IndustryState.isHydrated() is false, it calls
+ *       hydrateFromMasterData(enterprises, types) from masterData.
+ *       This matches government-type-manager-tab.js and makes the tab
+ *       render reliably when the settlement page loads before
+ *       IndustryBootstrap.init() has run.
+ *     - Removed the unused `stats = IQ.getEnterpriseStatistics()`
+ *       assignment and its misleading comment ("For the stats row,
+ *       compute a location-scoped subset"). The tab builds
+ *       locationStats from the location-scoped summaries it already
+ *       has; the world-wide aggregate was never used.
+ *     - No behavioural change to details, edit, or create paths.
  *   Previous revisions:
- *     - Pre-refactor implementation against SettlementState /
- *       SettlementCrud / IndustryState / IndustryQueries / IndustryCommands,
- *       roughly 1,100 lines, most of which duplicated the industry
- *       domain's modals or re-derived canonical record fields.
+ *     - Rewritten against the industry module set and the settlement
+ *       module set. Signature changed from (containerId, locationId,
+ *       summary) to (container, context). Recursion guard and
+ *       modal-open flag removed. All per-enterprise actions delegate
+ *       to modals-industry.js. Reads go through IndustryQueries only.
  * =============================================================================
  */
 
@@ -223,13 +219,28 @@
 
     function _getIndustryProcessor() {
         var P = window.IndustryProcessor;
-        if (!P || typeof P.processAllEnterprises !== 'function') {
+        if (!P || typeof P.processAnnualEnterprise !== 'function') {
             throw new Error(
                 'settlement-industry-tab: IndustryProcessor is missing. ' +
                 'Load industry-processor.js before this tab.'
             );
         }
         return P;
+    }
+
+    function _getIndustryCommands() {
+        var C = window.IndustryCommands;
+        if (!C || typeof C.persist !== 'function') {
+            throw new Error(
+                'settlement-industry-tab: IndustryCommands is missing. ' +
+                'Load industry-commands.js before this tab.'
+            );
+        }
+        return C;
+    }
+
+    function _getIndustryState() {
+        return window.IndustryState || null;
     }
 
     function _getIndustryModals() {
@@ -277,12 +288,6 @@
     function _fmtGold(value) {
         if (typeof value !== 'number' || !isFinite(value)) return _unknown();
         return _escapeHtml(value.toLocaleString()) + 'g';
-    }
-
-    function _fmtSignedGold(value) {
-        if (typeof value !== 'number' || !isFinite(value)) return _unknown();
-        var sign = value >= 0 ? '+' : '';
-        return _escapeHtml(sign + value.toLocaleString()) + 'g';
     }
 
     function _fmtText(value) {
@@ -339,7 +344,55 @@
     }
 
     // =========================================================================
-    // 3. ACTION HANDLERS
+    // 3. INDUSTRY STATE HYDRATION GUARD
+    // =========================================================================
+    //
+    // IndustryState must be hydrated before any IndustryQueries read.
+    // IndustryBootstrap.init() hydrates it once, but the settlement
+    // page can render (and this tab can run) before that bootstrap has
+    // completed — e.g. the user selects a settlement immediately after
+    // the page loads. This guard makes the tab render reliably
+    // regardless of page timing.
+    //
+    // The hydrate call is idempotent. When the bootstrap has already
+    // hydrated, this is a no-op check.
+    //
+    // The guard does not replace the bootstrap. If IndustryState is
+    // missing entirely (not loaded), the query will throw anyway, and
+    // the caller's try/catch turns that into a visible error.
+
+    function _ensureIndustryStateHydrated() {
+        var IS = _getIndustryState();
+        if (!IS) return;
+
+        if (typeof IS.isHydrated === 'function' && IS.isHydrated()) return;
+
+        if (typeof IS.hydrateFromMasterData !== 'function') return;
+
+        var master = window.masterData && window.masterData.data;
+        if (!master) return;
+
+        var enterprises = Array.isArray(master.enterprises) ? master.enterprises : [];
+        var types = Array.isArray(master.enterpriseTypes) ? master.enterpriseTypes : [];
+
+        try {
+            IS.hydrateFromMasterData(enterprises, types);
+        } catch (err) {
+            // Hydration can fail on duplicate ids (corrupted save).
+            // Report it once so the failure is not silent; the
+            // query below will re-throw and the caller's try/catch
+            // will render an error state.
+            if (typeof console !== 'undefined' && console.error) {
+                console.error(
+                    'settlement-industry-tab: industry state hydrate failed:',
+                    err
+                );
+            }
+        }
+    }
+
+    // =========================================================================
+    // 4. ACTION HANDLERS
     // =========================================================================
 
     function _handleCreate(locationId) {
@@ -352,10 +405,10 @@
             return;
         }
 
-        // Pre-fill the settlement as the location. Leave ownerType unset —
-        // the user picks whether this is a public (settlement-owned) or
-        // private enterprise. The create modal's owner selector is the
-        // place that decides.
+        // Pre-fill the settlement as the location. Leave ownerType
+        // unset — the user picks whether this is a public
+        // (settlement-owned) or private enterprise. The create
+        // modal's owner selector is the place that decides.
         modals.openCreateEnterpriseModal(function () {
             _requestRefresh();
         }, {
@@ -370,10 +423,11 @@
             return;
         }
 
-        // Pre-fill owner as the settlement. The modal will set
-        // ownershipType to 'public' from the ownerType because the
-        // industry rules reject a public enterprise owned by a
-        // character/household.
+        // Pre-fill owner as the settlement. The modal's owner-type
+        // select now exposes 'settlement' (see modals-industry.js
+        // OWNER TYPE VOCABULARY), so the pre-fill maps to the right
+        // option and the industry rules will set ownershipType to
+        // 'public' from the ownerType.
         modals.openCreateEnterpriseModal(function () {
             _requestRefresh();
         }, {
@@ -405,29 +459,144 @@
         });
     }
 
-    function _handleProcessAll(locationId) {
-        var processor = _getIndustryProcessor();
+    function _handleOpenList() {
+        var modals = _getIndustryModals();
+        if (typeof modals.openEnterpriseListModal !== 'function') {
+            _toast('Enterprise list modal is not available.', 'error');
+            return;
+        }
+        modals.openEnterpriseListModal();
+    }
 
+    /**
+     * Settlement-scoped batch processing.
+     *
+     * See AGGREGATE PROCESSING in the header. Prefers
+     * IndustryProcessor.processEnterprisesForLocation when present;
+     * otherwise composes the same semantics from the per-enterprise
+     * primitive.
+     *
+     * @param {string} locationId
+     * @returns {Object} structured result
+     *   { success, attempted, processed, skipped, failed, results, failures,
+     *     persist }
+     */
+    function _processSettlementEnterprises(locationId) {
+        var processor = _getIndustryProcessor();
+        var IC = _getIndustryCommands();
+
+        // Preferred path: a processor method with the same contract.
+        if (typeof processor.processEnterprisesForLocation === 'function') {
+            try {
+                return processor.processEnterprisesForLocation(locationId);
+            } catch (err) {
+                return {
+                    success: false,
+                    attempted: 0,
+                    processed: 0,
+                    skipped: 0,
+                    failed: 0,
+                    results: [],
+                    failures: [{
+                        reason: err && err.message ? err.message : 'unknown error'
+                    }],
+                    persist: null
+                };
+            }
+        }
+
+        // Composed path.
+        var summaries;
+        try {
+            summaries = _getIndustryQueries().getLocationEnterprisesSummary(locationId);
+        } catch (err) {
+            return {
+                success: false,
+                attempted: 0,
+                processed: 0,
+                skipped: 0,
+                failed: 0,
+                results: [],
+                failures: [{
+                    reason: err && err.message ? err.message : 'unknown error'
+                }],
+                persist: null
+            };
+        }
+
+        var results = [];
+        var failures = [];
+        var skipped = 0;
+        var attempted = 0;
+
+        for (var i = 0; i < summaries.length; i++) {
+            var s = summaries[i];
+            if (!s || !s.id) continue;
+            // Only 'active' enterprises process. Matches the
+            // processor's own eligibility gate.
+            if (s.status !== 'active') continue;
+
+            attempted++;
+
+            var result;
+            try {
+                result = processor.processAnnualEnterprise(s.id, { persist: false });
+            } catch (err) {
+                failures.push({
+                    enterpriseId: s.id,
+                    enterpriseName: s.name || null,
+                    reason: err && err.message ? err.message : 'process threw'
+                });
+                continue;
+            }
+
+            if (result && result.success === true) {
+                if (result.skipped === true) {
+                    skipped++;
+                } else {
+                    results.push(result);
+                }
+            } else {
+                failures.push({
+                    enterpriseId: s.id,
+                    enterpriseName: s.name || null,
+                    reason: (result && result.reason) || 'process failed'
+                });
+            }
+        }
+
+        // Persist once at the end. If nothing was actually mutated
+        // (results.length === 0), skip the save — a batch that
+        // produced no state changes has nothing to write.
+        var persistResult = null;
+        if (results.length > 0) {
+            persistResult = IC.persist();
+        }
+
+        return {
+            success: failures.length === 0 &&
+                (!persistResult || persistResult.success === true),
+            attempted: attempted,
+            processed: results.length,
+            skipped: skipped,
+            failed: failures.length,
+            results: results,
+            failures: failures,
+            persist: persistResult
+        };
+    }
+
+    function _handleProcessAll(locationId) {
         _confirm(
-            'Process all enterprises in this settlement for the current ' +
-            'year?\n\n' +
+            'Process all active enterprises in this settlement for the ' +
+            'current year?\n\n' +
             'Each active enterprise will run its annual economics: income, ' +
             'expenses, wages, interest, and (for household-owned ' +
             'enterprises) the transfer to the owning household.\n\n' +
             'This action cannot be undone.',
-            'Process All Enterprises',
+            'Process Settlement Enterprises',
             function () {
-                var result;
-                try {
-                    result = processor.processAllEnterprises();
-                } catch (err) {
-                    _toast(
-                        'Processing failed: ' +
-                        (err && err.message ? err.message : 'unknown error'),
-                        'error'
-                    );
-                    return;
-                }
+                var result = _processSettlementEnterprises(locationId);
 
                 if (result.success === true) {
                     var parts = [];
@@ -450,17 +619,8 @@
         );
     }
 
-    function _handleOpenList() {
-        var modals = _getIndustryModals();
-        if (typeof modals.openEnterpriseListModal !== 'function') {
-            _toast('Enterprise list modal is not available.', 'error');
-            return;
-        }
-        modals.openEnterpriseListModal();
-    }
-
     // =========================================================================
-    // 4. SECTION BUILDERS
+    // 5. SECTION BUILDERS
     // =========================================================================
 
     function _buildHeader(context, summaryStats) {
@@ -567,6 +727,14 @@
         else if (row.statusClass === 'status-closed') statusColor = 'var(--dim)';
         else if (row.statusClass === 'status-inactive') statusColor = 'var(--warn)';
 
+        // row.workersLabel is a string from IndustryViewModels.buildListRow
+        // ('3 / 10'); _fmtNumber requires a number. The prior
+        // implementation passed null and always rendered '—'. Render the
+        // label directly.
+        var workersText = row.workersLabel
+            ? _escapeHtml(row.workersLabel)
+            : _unknown();
+
         return '<div class="industry-enterprise-row" ' +
             'data-enterprise-id="' + _escapeHtml(row.id) + '" ' +
             'style="background:var(--bg);border:1px solid var(--border);' +
@@ -589,9 +757,7 @@
             '</div>' +
             '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
             'Owner: ' + _fmtText(row.ownerLabel) +
-            ' · Workers: ' + _fmtNumber(
-                row.workersLabel ? null : null
-            ) +
+            ' · Workers: ' + workersText +
             '</div>' +
             '<div style="font-size:0.55rem;color:var(--dim);margin-top:2px;">' +
             'Wealth: ' + _escapeHtml(row.wealthLabel) +
@@ -662,7 +828,7 @@
     }
 
     // =========================================================================
-    // 5. WIRING
+    // 6. WIRING
     // =========================================================================
 
     function _wireActions(container, locationId) {
@@ -713,7 +879,7 @@
     }
 
     // =========================================================================
-    // 6. RENDER
+    // 7. RENDER
     // =========================================================================
 
     /**
@@ -737,14 +903,17 @@
         var locationId = context.locationId;
         var IQ = _getIndustryQueries();
 
+        // Ensure IndustryState is hydrated before any query.
+        // See INDUSTRY HYDRATION GUARD in the header.
+        _ensureIndustryStateHydrated();
+
         // Read the location-scoped enterprise summaries. If the query
-        // throws (load-order regression, corrupted state), render an
+        // throws (load-order regression, corrupted state, or an
+        // unhydrated state that could not be repaired), render an
         // error state rather than crashing the tab stack.
         var summaries;
-        var stats;
         try {
             summaries = IQ.getLocationEnterprisesSummary(locationId);
-            stats = IQ.getEnterpriseStatistics();
         } catch (err) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error(
@@ -760,20 +929,17 @@
         }
 
         // Split into public and private by ownershipType. The summary
-        // projection includes ownershipType even though it is derived —
-        // IndustryViewModels.buildListRow preserves it.
+        // projection includes ownershipType, so grouping is exact.
         //
-        // Enterprises with ownershipType not in ('public', 'private') are
-        // an integrity failure (industry-rules enforces this on write).
-        // They are grouped with private rather than dropped, so the user
-        // can see them and open details to inspect the anomaly.
+        // Enterprises with ownershipType not in ('public', 'private')
+        // are an integrity failure (industry-rules enforces this on
+        // write). They are grouped with private rather than dropped,
+        // so the user can see them and open details to inspect the
+        // anomaly.
         var publicEnterprises = [];
         var privateEnterprises = [];
         var summaryMap = {};
 
-        // stats here is the aggregate across ALL enterprises, not just
-        // this settlement's. For the stats row, compute a location-scoped
-        // subset.
         var locationStats = {
             total: summaries.length,
             totalWealth: 0,
@@ -789,8 +955,6 @@
             if (!s || !s.id) continue;
             summaryMap[s.id] = s;
 
-            // The summary carries ownershipType but not the full enterprise
-            // record. Enterprises are grouped by ownershipType.
             if (s.ownershipType === 'public') {
                 publicEnterprises.push({ id: s.id });
                 locationStats.publicCount++;
@@ -821,7 +985,7 @@
     }
 
     // =========================================================================
-    // 7. REGISTRATION
+    // 8. REGISTRATION
     // =========================================================================
 
     function _register() {
@@ -838,7 +1002,7 @@
     _register();
 
     // =========================================================================
-    // 8. EXPORTS
+    // 9. EXPORTS
     // =========================================================================
 
     window.renderSettlementIndustry = renderSettlementIndustry;
