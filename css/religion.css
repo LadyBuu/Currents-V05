@@ -6,20 +6,57 @@
                  css/data-manager.css (layout shell)
 
    SCOPE
-     Only styles emitted by religion-render.js and the religion tabs.
-     Every color/radius/shadow value is a token. No hardcoded values.
+     Styles emitted by:
+       - religion-render.js          (.religion-* list / card / table / empty)
+       - the five religion tabs      (.rt-* — see sections 12-19)
+       - the religion shell header   (.religion-tab-content, .religion-stats)
+       - the topbar theme toggle     (.theme-toggle)
 
-   CLASSES COVERED
-     .religion-list, .religion-item, .religion-item--selected,
-     .religion-item--deprecated, .religion-item__*,
-     .religion-trait, .religion-trait--*,
-     .religion-status, .religion-status--active, .religion-status--deprecated,
-     .religion-card, .religion-card__*, .religion-card--compact,
-     .religion-table, .religion-table__*, .religion-table--empty,
-     .religion-empty,
-     .religion-stat, .religion-stat--*,
-     .religion-tab-content, .religion-stats, .religion-simple-list,
-     .btn.view-religion-btn, .btn.edit-religion-btn
+   CLASS NAMESPACE
+     .religion-*  — sidebar/list/card/table styles (religion-render.js and
+                    the editor shell's surrounding chrome)
+     .rt-*        — everything the five tabs render. Scoped by prefix so
+                    future tab files do not collide with the sidebar's
+                    .religion-* classes and so a `.rt-tab` subtree can be
+                    themed independently of the sidebar.
+
+   CONVENTIONS
+     - Every colour/radius/shadow is a token from themes.css.
+     - No inline-style-like single-purpose classes; group by concern.
+     - No emojis in content; icons come from icons.js.
+     - Buttons use the shared `.rt-btn` family, not `.btn`, because
+       `.btn` is owned by common.css and mixing the two leads to
+       specificity fights.
+
+   TAB CLASS GROUPS (added in this revision)
+     .rt-tab, .rt-tab__header, .rt-tab__filters, .rt-tab__body,
+     .rt-tab__footer, .rt-search
+     .rt-btn, .rt-btn--primary, .rt-btn--danger, .rt-btn--icon
+     .rt-empty, .rt-empty__sub, .rt-unavailable
+     .rt-badge, .rt-badge--accent, .rt-status, .rt-status--{active,
+     deprecated, warn}
+     .rt-stat, .rt-stat__label, .rt-stat__value, .rt-stat__value--small
+     .rt-kv, .rt-kv__key, .rt-kv__val
+     .rt-panel, .rt-panel__header, .rt-panel__title
+     .rt-chipset, .rt-chip, .rt-chip__remove
+     .rt-details__{hero, identity, glyph, name, slug, badges, stats, grid,
+     note}
+     .rt-follower-row, .rt-follower-row__{body, top, name, gender, age,
+     deceased, conversion-count, meta, actions}
+     .rt-history-row, .rt-history-row--current, .rt-history-row__{arrow,
+     year, reason}
+     .rt-bulk-list, .rt-bulk-item, .rt-bulk-item__{name, meta}
+     .rt-god-card, .rt-god-card__{header, identity, glyph, name, slug,
+     meta, desc, parent, actions}
+     .rt-law-card, .rt-law-card--{minor, major, mortal},
+     .rt-law-card__{header, title-row, name, meta, meta--severity-*,
+     desc, crime, actions}
+     .rt-enforced-badge, .rt-enforced-badge--{on, off}
+     .rt-place-card, .rt-place-card--inactive,
+     .rt-place-card__{header, title-row, name, meta, sub, notes, actions}
+     .rt-place-partial-note
+     .rt-form, .rt-form__{group, label, hint, checkbox, grid-2, grid-3,
+     partial-note}
    ============================================================================ */
 
 
@@ -178,7 +215,7 @@
 
 
 /* ============================================================================
-   2. TRAIT + STATUS BADGES
+   2. TRAIT + STATUS BADGES (sidebar list)
    ============================================================================ */
 
 .religion-trait {
@@ -194,7 +231,6 @@
     letter-spacing: 0.04em;
 }
 
-/* Per-trait colors — token-derived, not hardcoded. */
 .religion-trait--monotheistic {
     border-color: var(--accent);
     color: var(--accent-light);
@@ -246,7 +282,7 @@
 
 
 /* ============================================================================
-   3. STAT CHIPS
+   3. STAT CHIPS (sidebar list)
    ============================================================================ */
 
 .religion-stat {
@@ -484,7 +520,7 @@
 
 
 /* ============================================================================
-   6. EMPTY STATE
+   6. EMPTY STATE (sidebar)
    ============================================================================ */
 
 .religion-empty {
@@ -499,7 +535,7 @@
 
 
 /* ============================================================================
-   7. TAB CONTENT
+   7. EDITOR SHELL
    ============================================================================ */
 
 .religion-tab-content {
@@ -562,7 +598,11 @@
 
 
 /* ============================================================================
-   8. RELIGION DETAILS MODAL (in case any modals-religion modal is opened)
+   8. MODAL FORM (used by modals-religion.js and by the tab modals)
+   ============================================================================
+   The tab modals reuse the .rt-form class family defined in section 19 so
+   there is ONE form style in the religion editor. modals-religion.js uses
+   .religion-form (its own), preserved here for compatibility.
    ============================================================================ */
 
 .religion-form {
@@ -601,66 +641,7 @@
 
 
 /* ============================================================================
-   9. RESPONSIVE
-   ============================================================================ */
-
-@media (max-width: 768px) {
-    .religion-item {
-        padding: 6px 8px;
-    }
-
-    .religion-item__stats {
-        display: none;
-    }
-
-    .religion-item__actions .btn {
-        padding: 1px 6px;
-        font-size: 0.45rem;
-    }
-
-    .religion-card {
-        padding: 12px 14px;
-    }
-
-    .religion-table {
-        font-size: 0.6rem;
-    }
-
-    .religion-table thead th,
-    .religion-table tbody td {
-        padding: 4px 6px;
-    }
-}
-
-@media (max-width: 480px) {
-    .religion-item__actions {
-        display: none;
-    }
-
-    .religion-item__meta {
-        font-size: 0.5rem;
-    }
-
-    .religion-card__icon {
-        width: 26px;
-        height: 26px;
-        font-size: 1rem;
-    }
-
-    .religion-card__name {
-        font-size: 0.95rem;
-    }
-
-    .religion-stat {
-        font-size: 0.45rem;
-        min-width: 16px;
-        height: 16px;
-    }
-}
-
-
-/* ============================================================================
-   10. THEME TOGGLE (topbar)
+   9. THEME TOGGLE (topbar)
    ============================================================================ */
 
 .theme-toggle {
@@ -715,7 +696,1126 @@
 
 
 /* ============================================================================
-   11. REDUCED MOTION
+   10. TAB SHELL (.rt-*)
+   ============================================================================
+   Every class prefixed .rt- is emitted by one of the five religion tabs.
+   See the tab files' headers for the class → element mapping.
+   ============================================================================ */
+
+.rt-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 4px 0;
+    color: var(--text);
+    font-size: 0.7rem;
+}
+
+.rt-tab__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.rt-tab__header-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--f-display);
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+}
+
+.rt-tab__header-count {
+    font-size: 0.55rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+    letter-spacing: 0;
+}
+
+.rt-tab__header-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.rt-tab__filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 4px 0 8px 0;
+}
+
+.rt-search {
+    flex: 1;
+    min-width: 120px;
+}
+
+.rt-search input {
+    width: 100%;
+}
+
+.rt-tab__filters select,
+.rt-tab__filters input[type="text"] {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.6rem;
+    font-family: var(--f-body);
+}
+
+.rt-tab__filters select:focus,
+.rt-tab__filters input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.rt-tab__body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 520px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.rt-tab__body--grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.rt-tab__footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+}
+
+
+/* ============================================================================
+   11. BUTTONS (.rt-btn)
+   ============================================================================
+   Family scoped to tabs, deliberately separate from common.css's .btn so
+   specificities do not fight. Every tab button uses one of these.
+   ============================================================================ */
+
+.rt-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.55rem;
+    font-family: var(--f-body);
+    line-height: 1.2;
+    cursor: pointer;
+    transition: border-color var(--transition-fast, 0.15s) ease,
+                background-color var(--transition-fast, 0.15s) ease,
+                color var(--transition-fast, 0.15s) ease;
+}
+
+.rt-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+.rt-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.rt-btn--primary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+.rt-btn--primary:hover {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+.rt-btn--danger {
+    border-color: var(--danger-lt);
+    color: var(--danger-lt);
+    background: transparent;
+}
+
+.rt-btn--danger:hover {
+    background: var(--danger-soft);
+    border-color: var(--danger);
+}
+
+.rt-btn--icon {
+    padding: 2px 6px;
+    background: transparent;
+    border-color: transparent;
+    color: var(--dim);
+}
+
+.rt-btn--icon:hover {
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-color: var(--accent-soft);
+}
+
+.rt-btn--icon.rt-btn--danger {
+    color: var(--danger-lt);
+    border-color: transparent;
+}
+
+.rt-btn--icon.rt-btn--danger:hover {
+    background: var(--danger-soft);
+    border-color: var(--danger-soft);
+}
+
+.rt-btn[disabled],
+.rt-btn--disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.rt-clear {
+    padding: 4px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--dim);
+    font-size: 0.55rem;
+    font-family: var(--f-body);
+    cursor: pointer;
+    transition: border-color var(--transition-fast, 0.15s) ease,
+                color var(--transition-fast, 0.15s) ease;
+}
+
+.rt-clear:hover {
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+
+/* ============================================================================
+   12. EMPTY / UNAVAILABLE
+   ============================================================================ */
+
+.rt-empty {
+    padding: 28px 16px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.7rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+}
+
+.rt-empty__sub {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.55rem;
+    color: var(--tmut);
+    font-style: italic;
+}
+
+.rt-unavailable {
+    padding: 20px;
+    text-align: center;
+    color: var(--danger-lt);
+    font-size: 0.7rem;
+}
+
+
+/* ============================================================================
+   13. BADGES / STATUS / STATS
+   ============================================================================ */
+
+.rt-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.55rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--dim);
+    letter-spacing: 0.02em;
+}
+
+.rt-badge--accent {
+    color: var(--accent-light);
+    border-color: var(--accent-soft);
+    background: var(--accent-dim);
+}
+
+.rt-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+}
+
+.rt-status--active {
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+    background: color-mix(in srgb, var(--ok) 15%, transparent);
+}
+
+.rt-status--deprecated {
+    color: var(--bad);
+    border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+    background: color-mix(in srgb, var(--bad) 15%, transparent);
+}
+
+.rt-status--warn {
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+    background: color-mix(in srgb, var(--warning) 15%, transparent);
+}
+
+.rt-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    text-align: center;
+}
+
+.rt-stat__label {
+    font-size: 0.5rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.rt-stat__value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--fg);
+    font-family: var(--f-mono);
+}
+
+.rt-stat__value--small {
+    font-size: 0.7rem;
+    font-family: var(--f-body);
+}
+
+
+/* ============================================================================
+   14. KEY-VALUE / PANEL / CHIPS
+   ============================================================================ */
+
+.rt-kv {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    gap: 4px 8px;
+    font-size: 0.65rem;
+}
+
+.rt-kv__key {
+    color: var(--dim);
+}
+
+.rt-kv__val {
+    color: var(--text);
+}
+
+.rt-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.rt-panel__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.rt-panel__title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--f-display);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.rt-chipset {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.rt-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    font-size: 0.55rem;
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.rt-chip__remove {
+    padding: 0 0 0 2px;
+    background: none;
+    border: none;
+    color: var(--danger-lt);
+    font-size: 0.55rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.rt-chip__remove:hover {
+    color: var(--danger);
+}
+
+
+/* ============================================================================
+   15. DETAILS TAB
+   ============================================================================ */
+
+.rt-details__hero {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 2);
+}
+
+.rt-details__identity {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.rt-details__glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent-light);
+    font-size: 1.4rem;
+    flex: none;
+}
+
+.rt-details__name {
+    font-family: var(--f-display);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--fg);
+    line-height: 1.2;
+}
+
+.rt-details__slug {
+    font-size: 0.6rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+}
+
+.rt-details__badges {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.rt-details__stats {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.rt-details__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.rt-details__note {
+    padding: 8px 12px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    color: var(--dim);
+    font-size: 0.7rem;
+    line-height: 1.5;
+}
+
+
+/* ============================================================================
+   16. FOLLOWERS TAB
+   ============================================================================ */
+
+.rt-follower-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-left: 3px solid var(--ok);
+    border-radius: var(--radius);
+    transition: border-color var(--transition-fast, 0.15s) ease;
+}
+
+.rt-follower-row:hover {
+    border-color: var(--accent);
+}
+
+.rt-follower-row--deceased {
+    border-left-color: var(--dim);
+    opacity: 0.75;
+}
+
+.rt-follower-row__body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.rt-follower-row__top {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.7rem;
+}
+
+.rt-follower-row__name {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.rt-follower-row__gender {
+    font-size: 0.6rem;
+    color: var(--dim);
+}
+
+.rt-follower-row__age {
+    font-size: 0.55rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+}
+
+.rt-follower-row__deceased {
+    font-size: 0.5rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.rt-follower-row__conversion-count {
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-soft);
+    color: var(--accent-light);
+    font-size: 0.5rem;
+}
+
+.rt-follower-row__meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+.rt-follower-row__meta > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.rt-follower-row__actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+.rt-history-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    font-size: 0.6rem;
+}
+
+.rt-history-row--current {
+    border-left: 3px solid var(--accent);
+}
+
+.rt-history-row__arrow {
+    color: var(--dim);
+    margin: 0 4px;
+}
+
+.rt-history-row__year {
+    color: var(--dim);
+    font-family: var(--f-mono);
+    margin-left: 6px;
+}
+
+.rt-history-row__reason {
+    color: var(--tmut);
+    font-size: 0.55rem;
+}
+
+.rt-bulk-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.rt-bulk-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    font-size: 0.65rem;
+    cursor: pointer;
+}
+
+.rt-bulk-item:hover {
+    border-color: var(--accent);
+}
+
+.rt-bulk-item input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+    flex: none;
+}
+
+.rt-bulk-item__name {
+    font-weight: 500;
+}
+
+.rt-bulk-item__meta {
+    color: var(--dim);
+    font-size: 0.55rem;
+}
+
+
+/* ============================================================================
+   17. GODS TAB
+   ============================================================================ */
+
+.rt-god-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    transition: border-color var(--transition-fast, 0.15s) ease;
+}
+
+.rt-god-card:hover {
+    border-color: var(--accent);
+}
+
+.rt-god-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rt-god-card__identity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.rt-god-card__glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent-light);
+    font-size: 0.9rem;
+    font-family: var(--f-display);
+    flex: none;
+}
+
+.rt-god-card__name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.2;
+}
+
+.rt-god-card__slug {
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+.rt-god-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.5rem;
+    color: var(--dim);
+}
+
+.rt-god-card__desc {
+    font-size: 0.55rem;
+    color: var(--dim);
+    line-height: 1.4;
+}
+
+.rt-god-card__parent {
+    font-size: 0.5rem;
+    color: var(--tmut);
+    font-family: var(--f-mono);
+}
+
+.rt-god-card__actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+
+/* ============================================================================
+   18. LAWS TAB
+   ============================================================================ */
+
+.rt-law-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-left: 3px solid var(--dim);
+    border-radius: var(--radius);
+    transition: border-color var(--transition-fast, 0.15s) ease;
+}
+
+.rt-law-card:hover {
+    border-color: var(--accent);
+}
+
+.rt-law-card--minor  { border-left-color: var(--dim); }
+.rt-law-card--major  { border-left-color: var(--warning); }
+.rt-law-card--mortal { border-left-color: var(--danger-lt); }
+
+.rt-law-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rt-law-card__title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.rt-law-card__name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.rt-law-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.5rem;
+    color: var(--dim);
+}
+
+.rt-law-card__meta--severity-minor  { color: var(--dim); }
+.rt-law-card__meta--severity-major  { color: var(--warning); }
+.rt-law-card__meta--severity-mortal { color: var(--danger-lt); }
+
+.rt-law-card__desc {
+    font-size: 0.55rem;
+    color: var(--dim);
+    line-height: 1.4;
+}
+
+.rt-law-card__crime {
+    font-size: 0.5rem;
+    color: var(--tmut);
+    font-family: var(--f-mono);
+}
+
+.rt-law-card__actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+.rt-enforced-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 0.5rem;
+}
+
+.rt-enforced-badge--on {
+    color: var(--ok);
+    border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+    background: color-mix(in srgb, var(--ok) 15%, transparent);
+}
+
+.rt-enforced-badge--off {
+    color: var(--dim);
+    border: 1px solid var(--border);
+    background: var(--bg3);
+}
+
+
+/* ============================================================================
+   19. PLACES TAB
+   ============================================================================ */
+
+.rt-place-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-left: 3px solid var(--success);
+    border-radius: var(--radius);
+    transition: border-color var(--transition-fast, 0.15s) ease;
+}
+
+.rt-place-card--inactive {
+    border-left-color: var(--dim);
+    opacity: 0.75;
+}
+
+.rt-place-card:hover {
+    border-color: var(--accent);
+}
+
+.rt-place-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rt-place-card__title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.rt-place-card__name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.rt-place-card__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.5rem;
+    color: var(--dim);
+}
+
+.rt-place-card__meta > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.rt-place-card__sub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.45rem;
+    color: var(--tmut);
+}
+
+.rt-place-card__notes {
+    font-size: 0.45rem;
+    color: var(--dim);
+}
+
+.rt-place-card__actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+.rt-place-partial-note {
+    padding: 4px 8px;
+    background: var(--warning-soft);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius);
+    color: var(--warning);
+    font-size: 0.5rem;
+    font-style: italic;
+}
+
+
+/* ============================================================================
+   20. MODAL FORM (.rt-form)
+   ============================================================================
+   The .rt-form family is the ONE form style used by every tab modal (add
+   god, edit god, add law, edit law, add place, edit place, bulk assign,
+   conversion history). It is scoped by class, not by DOM location, so
+   modal-body + rt-form produce a single consistent look.
+   ============================================================================ */
+
+.rt-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.rt-form__group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.rt-form__label {
+    font-family: var(--f-display);
+    font-size: 0.65rem;
+    color: var(--dim);
+    letter-spacing: 0.04em;
+}
+
+.rt-form__hint {
+    font-size: 0.55rem;
+    color: var(--tmut);
+    font-style: italic;
+}
+
+.rt-form__checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.65rem;
+    color: var(--dim);
+    cursor: pointer;
+}
+
+.rt-form__checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.rt-form__grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.rt-form__grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.rt-form__partial-note {
+    padding: 6px 10px;
+    background: var(--warning-soft);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius);
+    color: var(--warning);
+    font-size: 0.55rem;
+}
+
+.rt-form input[type="text"],
+.rt-form input[type="number"],
+.rt-form select,
+.rt-form textarea {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.7rem;
+    box-sizing: border-box;
+}
+
+.rt-form input:focus,
+.rt-form select:focus,
+.rt-form textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.rt-form textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+
+/* ============================================================================
+   21. RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .religion-item {
+        padding: 6px 8px;
+    }
+
+    .religion-item__stats {
+        display: none;
+    }
+
+    .religion-item__actions .btn {
+        padding: 1px 6px;
+        font-size: 0.45rem;
+    }
+
+    .religion-card {
+        padding: 12px 14px;
+    }
+
+    .religion-table {
+        font-size: 0.6rem;
+    }
+
+    .religion-table thead th,
+    .religion-table tbody td {
+        padding: 4px 6px;
+    }
+
+    .rt-tab__body--grid,
+    .rt-details__grid {
+        grid-template-columns: 1fr;
+    }
+
+    .rt-details__stats {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .rt-form__grid-2,
+    .rt-form__grid-3 {
+        grid-template-columns: 1fr;
+    }
+
+    .rt-tab__header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}
+
+@media (max-width: 480px) {
+    .religion-item__actions {
+        display: none;
+    }
+
+    .religion-item__meta {
+        font-size: 0.5rem;
+    }
+
+    .religion-card__icon {
+        width: 26px;
+        height: 26px;
+        font-size: 1rem;
+    }
+
+    .religion-card__name {
+        font-size: 0.95rem;
+    }
+
+    .religion-stat {
+        font-size: 0.45rem;
+        min-width: 16px;
+        height: 16px;
+    }
+
+    .rt-details__stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .rt-follower-row__actions {
+        flex-direction: column;
+    }
+}
+
+
+/* ============================================================================
+   22. REDUCED MOTION
    ============================================================================ */
 
 @media (prefers-reduced-motion: reduce) {
@@ -723,7 +1823,14 @@
     .religion-card,
     .religion-table tbody tr,
     .religion-simple-list li,
-    .theme-toggle__menu button {
+    .theme-toggle__menu button,
+    .rt-btn,
+    .rt-clear,
+    .rt-follower-row,
+    .rt-god-card,
+    .rt-law-card,
+    .rt-place-card,
+    .rt-bulk-item {
         transition: none;
     }
 }
