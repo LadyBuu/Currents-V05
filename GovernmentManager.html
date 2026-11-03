@@ -1,16 +1,19 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Government Manager</title>
     
-    <!-- Fonts -->
+    <!-- 1. Theme Bootstrapper (MUST LOAD FIRST) -->
+    <script src="js/core/theme-boot.js"></script>
+
+    <!-- 2. Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
     
-    <!-- Stylesheets -->
+    <!-- 3. Stylesheets -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/worldManager.css">
@@ -29,11 +32,20 @@
     <div class="title" id="govManagerTitle"></div>
     <div class="spacer"></div>
     
-    <!-- Removed #addGovTypeBtn as requested -->
+    <!-- Topbar Actions -->
     <button id="addDeptBtn" class="tb-btn primary"></button>
     <button id="importBtn" class="tb-btn"></button>
     <button id="exportBtn" class="tb-btn primary"></button>
     <button id="refreshBtn" class="tb-btn"></button>
+
+    <!-- Theme Toggle -->
+    <div class="theme-toggle" role="group" aria-label="Theme">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span aria-hidden="true">◐</span>
+            <span id="themeName">Dark</span>
+        </button>
+        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    </div>
 </div>
 
 <div class="world-app">
@@ -346,9 +358,6 @@
 (function() {
     'use strict';
 
-    // =============================================================================
-    // ICON HELPERS
-    // =============================================================================
     function getIcon(name) {
         return (window.Icons && window.Icons[name]) ? window.Icons[name] : '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
     }
@@ -364,18 +373,12 @@
         MENU: getIcon('CIRCLE_DOT'), OVERVIEW: getIcon('PERSON'), STRUCTURE: getIcon('CROWN')
     };
 
-    // =============================================================================
-    // STATE
-    // =============================================================================
     var currentPlaceId = null;
     var currentTab = 'government';
     var isInitialized = false;
     var currentAbortController = null;
     var isSidebarOpen = false;
 
-    // =============================================================================
-    // HELPER FUNCTIONS
-    // =============================================================================
     function showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
         else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
@@ -398,9 +401,6 @@
         } catch (e) { console.error('Government bootstrap reinit failed:', e); }
     }
 
-    // =============================================================================
-    // SETUP UI TEXT
-    // =============================================================================
     function setupUIText() {
         var title = document.getElementById('govManagerTitle');
         if (title) title.innerHTML = iconWithText(ICONS.CROWN, ' GOVERNMENT MANAGER');
@@ -431,9 +431,6 @@
         if (tabStructure) tabStructure.innerHTML = iconWithText(ICONS.STRUCTURE, ' Structure');
     }
 
-    // =============================================================================
-    // LOCATION TREE
-    // =============================================================================
     function setupLocationTree() {
         var container = document.getElementById('placeList');
         if (!container) return;
@@ -505,9 +502,6 @@
         }
     }
 
-    // =============================================================================
-    // SIDEBAR TOGGLE (Mobile)
-    // =============================================================================
     function closeSidebar() {
         var sidebar = document.getElementById('locationsSidebar');
         var overlay = document.getElementById('sidebarOverlay');
@@ -545,9 +539,6 @@
         });
     }
 
-    // =============================================================================
-    // TAB RENDERERS
-    // =============================================================================
     function renderGovernmentTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
@@ -649,9 +640,6 @@
         }
     }
 
-    // =============================================================================
-    // MAIN RENDER FUNCTION
-    // =============================================================================
     function renderCurrentTab() {
         var panel = document.getElementById('panelContent');
         if (!panel) return;
@@ -698,7 +686,6 @@
             }
         }
 
-        // Target horizontal tabs
         document.querySelectorAll('.panel-tabs .tab-btn').forEach(function(btn) {
             if (btn.dataset.tab === tabName) btn.classList.add('active');
             else btn.classList.remove('active');
@@ -707,9 +694,6 @@
         renderCurrentTab();
     }
 
-    // =============================================================================
-    // SETUP TABS
-    // =============================================================================
     function setupTabs() {
         var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
         for (var i = 0; i < tabButtons.length; i++) {
@@ -722,9 +706,6 @@
         }
     }
 
-    // =============================================================================
-    // TOP BAR ACTIONS
-    // =============================================================================
     function setupTopBarActions() {
         var addDeptBtn = document.getElementById('addDeptBtn');
         var importBtn = document.getElementById('importBtn');
@@ -795,9 +776,6 @@
         }
     }
 
-    // =============================================================================
-    // INITIALIZATION
-    // =============================================================================
     function init() {
         if (isInitialized) return;
         isInitialized = true;
@@ -832,9 +810,6 @@
         console.log('✅ Government Manager initialized');
     }
 
-    // =============================================================================
-    // EXPORTS
-    // =============================================================================
     window.switchGovTab = switchTab;
     window.renderCurrentGovTab = renderCurrentTab;
     window.refreshGovTree = refreshLocationTree;
@@ -851,6 +826,86 @@
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
+})();
+</script>
+
+<!-- ============================================================ -->
+<!-- THEME SWITCHER (Shared Dropdown Logic)                       -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+
+    var switcher = window.ThemeSwitcher;
+    if (!switcher) return;
+
+    function updateLabel(id) {
+        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        if (themeName) themeName.textContent = label;
+    }
+
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                id + '">' + label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
+
+    function openMenu() {
+        if (!themeMenu) return;
+        themeMenu.hidden = false;
+        themeBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeMenu() {
+        if (!themeMenu) return;
+        themeMenu.hidden = true;
+        themeBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (themeMenu.hidden) openMenu(); else closeMenu();
+        });
+    }
+
+    if (themeMenu) {
+        themeMenu.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-theme-id]');
+            if (!btn) return;
+            var id = btn.getAttribute('data-theme-id');
+            switcher.apply(id);
+            updateLabel(id);
+            closeMenu();
+        });
+    }
+
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) {
+            closeMenu();
+        }
+    });
+
+    buildMenu();
+    var saved = switcher.getSaved();
+    if (saved) updateLabel(saved);
+
 })();
 </script>
 
