@@ -79,29 +79,42 @@
             border: 1px solid var(--border); border-radius: var(--radius);
             color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
             font-weight: 500; cursor: pointer; line-height: 1.2;
+            flex-shrink: 0;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
         .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
         .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
         .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
-        /* ---- Year input (topbar) ---- */
+        /* ---- Year input (topbar) ----
+           flex-shrink: 0 on the group and every child ensures the
+           control keeps its width. Without this, on a tight topbar the
+           group collapsed to zero width and its children visually
+           overlapped the Import button. */
         .year-input {
             display: inline-flex; align-items: center; gap: 5px;
             padding: 3px 10px; background: var(--bg);
             border: 1px solid var(--border); border-radius: var(--radius);
             font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
+            flex-shrink: 0;
+            flex-grow: 0;
+            min-width: max-content;
+            max-width: 260px;
+            margin-right: 6px;
         }
         .year-input label {
             font-family: var(--f-display); font-size: 0.55rem;
             letter-spacing: 0.06em; text-transform: uppercase;
             color: var(--dim); white-space: nowrap;
+            flex-shrink: 0;
         }
         .year-input input {
-            width: 64px; padding: 3px 6px;
+            width: 64px; min-width: 52px;
+            padding: 3px 6px;
             background: transparent; border: 1px solid var(--border);
             border-radius: calc(var(--radius) - 1px); color: var(--text);
             font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
+            flex-shrink: 0;
         }
         .year-input input:focus {
             outline: none; border-color: var(--accent);
@@ -112,9 +125,26 @@
             -webkit-appearance: none; margin: 0;
         }
         .year-input input[type=number] { -moz-appearance: textfield; }
+        .year-input .set-btn {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px);
+            padding: 3px 10px;
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: var(--text);
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+        .year-input .set-btn:hover {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
 
         /* ---- Theme toggle ---- */
-        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle { position: relative; display: inline-flex; flex-shrink: 0; }
         .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
             position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
@@ -137,22 +167,14 @@
         }
 
         /* ============================================================
-           SUB-TAB STRIP — redesigned for readability
-           ============================================================
-           Goals:
-             - Labels have room to breathe (no cramped padding).
-             - Taller hit area so tabs are easy to click.
-             - Clear active state with a bottom accent bar + tinted bg.
-             - Type set in the display face, not the body face, so
-               tab labels read as navigation, not as content.
-             - Icon and label vertically centered, icon at fixed size.
-           ------------------------------------------------------------ */
+           SUB-TAB STRIP
+           ============================================================ */
         .manager-subtabs {
             position: sticky; top: 0;
             display: flex; align-items: stretch;
             gap: 4px;
             padding: 8px 4px 0;
-            margin: -20px -24px 20px;    /* bleed to wrapper edge */
+            margin: -20px -24px 20px;
             padding-left: 24px;
             padding-right: 24px;
             background: var(--bg);
@@ -164,7 +186,7 @@
         .manager-subtab {
             position: relative;
             display: inline-flex; align-items: center; gap: 8px;
-            padding: 12px 18px 11px;    /* generous */
+            padding: 12px 18px 11px;
             background: transparent;
             border: 1px solid transparent;
             border-bottom: none;
@@ -180,7 +202,6 @@
             transition: color 0.15s ease, background-color 0.15s ease;
         }
         .manager-subtab::after {
-            /* The active underline sits on the strip's bottom border. */
             content: '';
             position: absolute; left: 0; right: 0; bottom: -1px;
             height: 2px;
@@ -611,7 +632,7 @@
                 font-size: 0.72rem;
             }
             .year-input label { display: none; }
-            .year-input input { width: 52px; }
+            .year-input input { width: 52px; min-width: 44px; }
         }
     </style>
 </head>
@@ -629,7 +650,7 @@
     <div class="year-input">
         <label for="yearInput">Year</label>
         <input type="number" id="yearInput" min="1" step="1">
-        <button id="setYearBtn" class="tb-btn" type="button">Set</button>
+        <button id="setYearBtn" class="set-btn" type="button">Set</button>
     </div>
 
     <button id="importBtn" class="tb-btn" type="button"></button>
@@ -1127,7 +1148,6 @@
             if (applied) {
                 showToast('Year set to ' + y, 'success');
                 syncFromCanonical();
-                // Re-render whatever the page shows so year-derived values refresh.
                 if (typeof window.renderManagerTab === 'function' && currentPlaceId) {
                     try { window.renderManagerTab('panelContent', currentPlaceId); }
                     catch (e) { /* ignore */ }
