@@ -2,31 +2,73 @@
  * =============================================================================
  * STILL WATERS - CULTURE CHARACTERS TAB (js/tabs/culture-characters-tab.js)
  * =============================================================================
- * 
- * A modular tab for managing characters belonging to a culture.
- * 
- * FEATURES:
- *   - View all characters in a culture
- *   - Filter characters by gender, age, status, location
- *   - Assign characters to culture
- *   - Remove characters from culture
- *   - Apply culture appearance to characters
- *   - Bulk assign appearance to all characters in culture
- *   - Show character appearance preview
- *   - Generate appearance for unassigned characters
- * 
- * DEPENDENCIES:
- *   - CultureState, CultureQueries, CultureGeneration
- *   - CharacterState, CharacterQueries, CharacterCommands
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - openCharacterSelector (from modals-char-selector.js)
- * 
- * ICON POLICY: Uses icons.js via _getIcon() - NO EMOJIS
- * 
+ *
+ * LOCATION: js/tabs/culture-characters-tab.js
+ *
+ * A CultureEditorTabs tab for managing the characters assigned to a culture:
+ * list, filter, sort, assign, remove, and apply culture-generated appearance.
+ *
+ * REGISTRATION (CultureEditorTabs, composite form):
+ *   CultureEditorTabs.registerTab('characters', CharactersTab);
+ *
+ *   render(container, culture)     — paints the tab's DOM into `container`
+ *   save(culture)                  — returns a partial culture object; this
+ *                                    tab never modifies the culture record
+ *                                    itself (all character changes are
+ *                                    committed immediately via
+ *                                    CharacterCommands, outside the composite
+ *                                    form). Returns { }.
+ *   validate(culture)              — { valid: true } — this tab has no
+ *                                    culture-shape validation.
+ *
+ * IMPORTANT: THIS TAB DOES NOT PARTICIPATE IN THE COMPOSITE SAVE
+ * --------------------------------------------------------------
+ * Unlike appearance/mythology/names, character assignment is not a field
+ * on the culture record. Assigning a character to a culture writes
+ * `character.cultureId` on the CHARACTER domain, not on the culture.
+ * Removing an appearance writes `character.appearance`. These writes go
+ * through CharacterCommands.updateCharacter / updateCharacterFields and
+ * persist via CharacterCommands.persist (or the character-state batch
+ * path the character domain already uses), which is where the character
+ * domain's save contract lives.
+ *
+ * Consequence: assign/remove/apply actions are IMMEDIATE (not deferred to
+ * the editor's Save button), and the editor's Cancel does not undo them.
+ * This is documented in the tab's UI as "changes are immediate" so the
+ * user is not surprised.
+ *
+ * CONTRACTS
+ * ---------
+ *   - Reads are scoped to `container.querySelector(...)`. Never `document`.
+ *   - No inline `style=""`. Classes live in css/culture-tabs.css.
+ *   - No emojis. Icons via _getIcon(name); returns '' for unknown names.
+ *     Gender is rendered as text ("Male" / "Female" / "Unknown"), not
+ *     as a glyph.
+ *   - Uses window.getCurrentYear (canonical). No 1250 fallback, no
+ *     getCurrentYearSafe.
+ *   - The tab is stateless across renders except for the local filter
+ *     state below, which is reset on every render (matching the religion
+ *     tabs' behavior — filters are session UI, not persisted).
+ *
+ * DEPENDENCIES (resolved at call time — no load-time guards):
+ *   - CultureEditorTabs (this must load after culture-editor-tab.js)
+ *   - CultureQueries
+ *   - CultureGeneration
+ *   - CharacterCommands
+ *   - CharacterQueries (via window.CharacterQueries)
+ *   - accessors (via window.getCharacters / window.getCharacterById)
+ *   - time.js (getCurrentYear, calculateAge)
+ *   - formatting.js (escapeHtml)
+ *   - icons.js (Icons[name] via _getIcon)
+ *   - ui.js (showToast)
+ *   - modals-core.js (openModal, closeTopModal, confirmDialog)
+ *   - modals-char-selector.js (openCharacterSelector — OPTIONAL; the
+ *     "Assign" flow falls back to a simple list if absent)
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
@@ -34,44 +76,41 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _getIcon(name) {
         if (window.Icons && window.Icons[name]) return window.Icons[name];
-        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
         return '';
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') window._showToast(msg, type);
-        else if (typeof window.showToast === 'function') window.showToast(msg, type);
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        return null;
+        return typeof window.openModal === 'function'
+            ? window.openModal(options)
+            : null;
     }
 
     function _closeTopModal() {
         if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
 
-    function _confirmDialog(message, title, onConfirm) {
+    function _confirm(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             window.confirmDialog(message, title, onConfirm);
-        } else if (typeof window._confirmDialog === 'function') {
-            window._confirmDialog(message, title, onConfirm);
-        } else if (confirm(message)) {
+        } else if (typeof confirm === 'function' && confirm(message)) {
             onConfirm();
         }
-    }
-
-    function _getCultureState() {
-        return typeof window.CultureState !== 'undefined' ? window.CultureState : null;
     }
 
     function _getCultureQueries() {
@@ -82,787 +121,330 @@
         return typeof window.CultureGeneration !== 'undefined' ? window.CultureGeneration : null;
     }
 
-    function _getCharacterState() {
-        return typeof window.CharacterState !== 'undefined' ? window.CharacterState : null;
-    }
-
-    function _getCharacterQueries() {
-        return typeof window.CharacterQueries !== 'undefined' ? window.CharacterQueries : null;
-    }
-
     function _getCharacterCommands() {
         return typeof window.CharacterCommands !== 'undefined' ? window.CharacterCommands : null;
     }
 
     function _getCharacters() {
         if (typeof window.getCharacters === 'function') return window.getCharacters();
-        if (window.masterData && window.masterData.data && window.masterData.data.characters) {
-            return window.masterData.data.characters;
-        }
         return [];
     }
 
     function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
-        return null;
+        return typeof window.getCharacterById === 'function'
+            ? window.getCharacterById(id)
+            : null;
     }
 
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') window.saveMasterData(true);
-        else if (window.masterData) {
-            try { localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData)); } catch(e) {}
+    function _getPlaceName(id) {
+        if (typeof window.getPlaceName === 'function') return window.getPlaceName(id);
+        if (typeof window.getPlaceById === 'function') {
+            var p = window.getPlaceById(id);
+            if (p) return p.displayName || p.name || id;
         }
-    }
-
-    function _getPlaceById(id) {
-        if (typeof window.getPlaceById === 'function') return window.getPlaceById(id);
-        return null;
+        return '—';
     }
 
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'culture-characters-tab.js requires time.js (getCurrentYear).'
+            );
+        }
+        return window.getCurrentYear();
+    }
+
+    function _ageOf(character) {
+        if (!character) return null;
+        if (typeof window.calculateAge !== 'function') {
+            // Fallback with the same scalar contract.
+            if (typeof character.birthYear !== 'number') return null;
+            if (character.isDeceased === true && typeof character.deathYear === 'number') {
+                var dAge = character.deathYear - character.birthYear;
+                return dAge >= 0 ? dAge : null;
+            }
+            var y = _getCurrentYear();
+            var age = y - character.birthYear;
+            return age >= 0 ? age : null;
+        }
+        return window.calculateAge(
+            character.birthYear,
+            character.isDeceased === true,
+            character.deathYear
+        );
+    }
+
+    function _genderLabel(gender) {
+        switch (gender) {
+            case 'male': return 'Male';
+            case 'female': return 'Female';
+            default: return 'Unknown';
+        }
+    }
+
+    function _currentLocationIdOf(character) {
+        if (!character) return null;
+        if (typeof window.getCurrentLocationId === 'function') {
+            try {
+                var resolved = window.getCurrentLocationId(character);
+                if (typeof resolved === 'string' && resolved.length > 0) return resolved;
+            } catch (e) { /* fall through */ }
+        }
+        if (typeof character.currentLocationId === 'string'
+            && character.currentLocationId.length > 0) {
+            return character.currentLocationId;
+        }
+        if (typeof character.birthplaceId === 'string'
+            && character.birthplaceId.length > 0) {
+            return character.birthplaceId;
+        }
+        return null;
+    }
 
     // =========================================================================
-    // 2. STATE
+    // 2. LOCAL FILTER STATE
     // =========================================================================
+    //
+    // Filters reset on every render. They are session UI, not persisted.
+    // This matches the religion tab files' behavior.
 
-    var charactersTabState = {
-        searchTerm: '',
-        genderFilter: 'all',
-        statusFilter: 'all',
-        locationFilter: 'all',
-        sortBy: 'name',
-        _isRendering: false,
-        _containerId: null
+    var _localState = {
+        search: '',
+        gender: 'all',
+        status: 'all',
+        sortBy: 'name'
     };
 
-    // =========================================================================
-    // 3. HELPER FUNCTIONS
-    // =========================================================================
-
-    function getCultureCharacters(cultureId) {
-        var characters = _getCharacters();
-        var result = [];
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (char.cultureId === cultureId) {
-                result.push(char);
-            }
-        }
-        return result;
-    }
-
-    function getCharactersWithoutCulture() {
-        var characters = _getCharacters();
-        var result = [];
-        for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            if (!char.cultureId || char.cultureId === '') {
-                result.push(char);
-            }
-        }
-        return result;
-    }
-
-    function calculateAge(char) {
-        if (!char) return 0;
-        var currentYear = _getCurrentYear();
-        if (!char.birthYear) return 0;
-        if (char.isDeceased && char.deathYear) {
-            return Math.max(0, char.deathYear - char.birthYear);
-        }
-        return Math.max(0, currentYear - char.birthYear);
-    }
-
-    function getGenderSymbol(gender) {
-        if (gender === 'male') return '♂';
-        if (gender === 'female') return '♀';
-        return '⚥';
-    }
-
-    function getStatusLabel(char) {
-        if (!char) return '';
-        if (char.isDeceased) return 'Deceased';
-        return 'Living';
-    }
-
-    function getLocationName(char) {
-        if (!char) return 'Unknown';
-        var locId = char.currentLocationId || char.birthplaceId;
-        if (locId) {
-            var place = _getPlaceById(locId);
-            if (place) return place.displayName;
-        }
-        return 'Unknown';
-    }
-
-    function formatAppearance(appearance) {
-        if (!appearance) return 'None';
-        var parts = [];
-        if (appearance.skinTone) parts.push('Skin: ' + appearance.skinTone);
-        if (appearance.eyeColor) parts.push('Eyes: ' + appearance.eyeColor);
-        if (appearance.hairColor) parts.push('Hair: ' + appearance.hairColor);
-        if (appearance.hairType) parts.push('Type: ' + appearance.hairType);
-        if (appearance.build) parts.push('Build: ' + appearance.build);
-        if (appearance.height) parts.push('Height: ' + appearance.height + 'cm');
-        return parts.join(' · ') || 'None';
+    function _resetState() {
+        _localState.search = '';
+        _localState.gender = 'all';
+        _localState.status = 'all';
+        _localState.sortBy = 'name';
     }
 
     // =========================================================================
-    // 4. MAIN RENDER FUNCTION
+    // 3. RENDER
     // =========================================================================
 
     function renderCharactersTab(container, culture) {
-        if (charactersTabState._isRendering) return;
-        charactersTabState._isRendering = true;
+        if (!container) return;
 
-        if (!culture) {
-            container.innerHTML = '<div style="padding:20px;color:var(--dim);">No culture loaded</div>';
-            charactersTabState._isRendering = false;
+        if (!culture || !culture.id) {
+            container.innerHTML =
+                '<div class="rt-empty">No culture loaded.</div>';
             return;
         }
 
-        var CS = _getCultureState();
-        var CQ = _getCultureQueries();
-        var CG = _getCultureGeneration();
+        _resetState();
 
-        if (!CS || !CQ) {
-            container.innerHTML = '<div style="padding:20px;color:var(--danger);">Culture system not available</div>';
-            charactersTabState._isRendering = false;
-            return;
+        var all = _getCharacters();
+        var inCulture = [];
+        for (var i = 0; i < all.length; i++) {
+            if (all[i] && all[i].cultureId === culture.id) {
+                inCulture.push(all[i]);
+            }
         }
 
-        var cultureCharacters = getCultureCharacters(culture.id);
-        var allCharacters = _getCharacters();
-        var totalCharacters = allCharacters.length;
+        var filtered = _applyFilters(inCulture, all);
 
-        // Apply filters
-        var filtered = filterCharacters(cultureCharacters);
+        var html =
+            '<div class="ct-characters">' +
 
-        var personIcon = _getIcon('PERSON');
-        var locationIcon = _getIcon('LOCATION');
-        var searchIcon = _getIcon('SEARCH');
-        var refreshIcon = _getIcon('REFRESH');
-        var plusIcon = _getIcon('PLUS');
-        var checkIcon = _getIcon('CHECK_SIMPLE');
-
-        var html = 
-            '<div class="culture-characters-tab" style="padding:4px;">' +
-            // Header with stats
-            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:12px;">' +
-            '<div style="display:flex;gap:16px;font-size:0.6rem;color:var(--dim);">' +
-            '<span>' + personIcon + ' ' + cultureCharacters.length + ' characters in this culture</span>' +
-            '<span>' + locationIcon + ' ' + totalCharacters + ' total characters</span>' +
-            '</div>' +
-            '<div style="display:flex;gap:6px;">' +
-            '<button class="btn small" id="assignCharacterBtn" style="padding:4px 10px;font-size:0.55rem;display:inline-flex;align-items:center;gap:4px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + plusIcon + ' Assign Character</button>' +
-            '<button class="btn small" id="applyAppearanceToAllBtn" style="padding:4px 10px;font-size:0.55rem;display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + refreshIcon + ' Apply Appearance to All</button>' +
-            '</div>' +
+            // ---- Hint ----
+            '<div class="ct-hint">' +
+              'Assign characters to this culture and apply its generated ' +
+              'appearance. Character changes commit immediately; closing ' +
+              'the editor does not undo them.' +
             '</div>' +
 
-            // Filters
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0 8px 0;">' +
-            '<div style="flex:1;min-width:120px;">' +
-            '<input type="text" id="charactersSearchInput" placeholder="Search characters..." value="' + _escapeHtml(charactersTabState.searchTerm) + '" style="width:100%;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '</div>' +
-            '<select id="charactersGenderFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '<option value="all" ' + (charactersTabState.genderFilter === 'all' ? 'selected' : '') + '>All Genders</option>' +
-            '<option value="male" ' + (charactersTabState.genderFilter === 'male' ? 'selected' : '') + '>Male</option>' +
-            '<option value="female" ' + (charactersTabState.genderFilter === 'female' ? 'selected' : '') + '>Female</option>' +
-            '</select>' +
-            '<select id="charactersStatusFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '<option value="all" ' + (charactersTabState.statusFilter === 'all' ? 'selected' : '') + '>All Statuses</option>' +
-            '<option value="living" ' + (charactersTabState.statusFilter === 'living' ? 'selected' : '') + '>Living</option>' +
-            '<option value="deceased" ' + (charactersTabState.statusFilter === 'deceased' ? 'selected' : '') + '>Deceased</option>' +
-            '</select>' +
-            '<select id="charactersSortBy" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '<option value="name" ' + (charactersTabState.sortBy === 'name' ? 'selected' : '') + '>Sort: Name</option>' +
-            '<option value="age_desc" ' + (charactersTabState.sortBy === 'age_desc' ? 'selected' : '') + '>Sort: Age ↓</option>' +
-            '<option value="age_asc" ' + (charactersTabState.sortBy === 'age_asc' ? 'selected' : '') + '>Sort: Age ↑</option>' +
-            '</select>' +
-            '<button id="clearCharactersFilters" class="btn small" style="padding:4px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Clear</button>' +
+            // ---- Header ----
+            '<div class="ct-characters__header">' +
+              '<div class="ct-characters__stats">' +
+                '<span class="ct-badge">' + inCulture.length + ' in this culture</span>' +
+                '<span class="ct-badge ct-badge--muted">' + all.length + ' total</span>' +
+              '</div>' +
+              '<div class="ct-characters__actions">' +
+                '<button type="button" class="rt-btn rt-btn--primary ct-characters-assign">Assign Character</button>' +
+                '<button type="button" class="rt-btn ct-characters-apply-all">Apply Appearance to All</button>' +
+              '</div>' +
             '</div>' +
 
-            // Character list
-            (filtered.length > 0 ?
-                renderCharacterList(filtered, culture) :
-                '<div style="padding:20px;text-align:center;color:var(--dim);font-size:0.6rem;">' + personIcon + ' No characters in this culture</div>'
-            ) +
+            // ---- Filters ----
+            '<div class="ct-characters__filters">' +
+              '<div class="ct-search">' +
+                '<input type="text" class="ct-characters-search"' +
+                  ' placeholder="Search characters..."' +
+                  ' value="' + _escapeHtml(_localState.search) + '">' +
+              '</div>' +
+              '<select class="ct-characters-gender-filter">' +
+                '<option value="all">All Genders</option>' +
+                '<option value="male">Male</option>' +
+                '<option value="female">Female</option>' +
+              '</select>' +
+              '<select class="ct-characters-status-filter">' +
+                '<option value="all">All Statuses</option>' +
+                '<option value="living">Living</option>' +
+                '<option value="deceased">Deceased</option>' +
+              '</select>' +
+              '<select class="ct-characters-sort-by">' +
+                '<option value="name">Sort: Name</option>' +
+                '<option value="age_desc">Sort: Age ↓</option>' +
+                '<option value="age_asc">Sort: Age ↑</option>' +
+              '</select>' +
+              '<button type="button" class="rt-clear ct-characters-clear">Clear</button>' +
+            '</div>' +
+
+            // ---- List / empty ----
+            (filtered.length > 0
+              ? _renderList(filtered, culture)
+              : _renderEmpty(inCulture.length > 0)) +
 
             '</div>';
 
         container.innerHTML = html;
 
-        attachCharactersTabHandlers(container, culture);
+        _syncFilterSelects(container);
+        _attachEvents(container, culture);
+    }
 
-        charactersTabState._isRendering = false;
+    function _syncFilterSelects(container) {
+        var g = container.querySelector('.ct-characters-gender-filter');
+        if (g) g.value = _localState.gender;
+        var s = container.querySelector('.ct-characters-status-filter');
+        if (s) s.value = _localState.status;
+        var sort = container.querySelector('.ct-characters-sort-by');
+        if (sort) sort.value = _localState.sortBy;
+    }
+
+    function _renderEmpty(hadCharacters) {
+        var msg = hadCharacters
+            ? 'No characters match your filters.'
+            : 'No characters are assigned to this culture yet.';
+        var hint = hadCharacters
+            ? '<span class="rt-empty__sub">Adjust the filters above.</span>'
+            : '<span class="rt-empty__sub">Use "Assign Character" to add one.</span>';
+        return '<div class="rt-empty">' + msg + hint + '</div>';
     }
 
     // =========================================================================
-    // 5. FILTER CHARACTERS
+    // 4. FILTER / SORT
     // =========================================================================
 
-    function filterCharacters(characters) {
-        var search = charactersTabState.searchTerm.toLowerCase();
-        var gender = charactersTabState.genderFilter;
-        var status = charactersTabState.statusFilter;
-        var sortBy = charactersTabState.sortBy;
+    function _applyFilters(characters, allCharacters) {
+        var search = _localState.search ? _localState.search.toLowerCase() : '';
+        var gender = _localState.gender;
+        var status = _localState.status;
+        var sortBy = _localState.sortBy;
 
-        var result = characters.slice();
+        var out = [];
+        for (var i = 0; i < characters.length; i++) {
+            var c = characters[i];
+            if (!c) continue;
 
-        // Search filter
-        if (search) {
-            result = result.filter(function(c) {
-                var name = (c.name + ' ' + (c.surname || '')).toLowerCase();
-                return name.indexOf(search) !== -1;
-            });
+            if (search) {
+                var full = String((c.name || '') + ' ' + (c.surname || '')).toLowerCase();
+                if (full.indexOf(search) === -1) continue;
+            }
+
+            if (gender !== 'all' && c.gender !== gender) continue;
+
+            if (status === 'living' && c.isDeceased === true) continue;
+            if (status === 'deceased' && c.isDeceased !== true) continue;
+
+            out.push(c);
         }
 
-        // Gender filter
-        if (gender !== 'all') {
-            result = result.filter(function(c) { return c.gender === gender; });
-        }
-
-        // Status filter
-        if (status === 'living') {
-            result = result.filter(function(c) { return !c.isDeceased; });
-        } else if (status === 'deceased') {
-            result = result.filter(function(c) { return c.isDeceased; });
-        }
-
-        // Sort
         if (sortBy === 'name') {
-            result.sort(function(a, b) {
-                return (a.name || '').localeCompare(b.name || '');
+            out.sort(function (a, b) {
+                return String(a.name || '').localeCompare(String(b.name || ''));
             });
         } else if (sortBy === 'age_desc') {
-            result.sort(function(a, b) {
-                return calculateAge(b) - calculateAge(a);
+            out.sort(function (a, b) {
+                var aa = _ageOf(a);
+                var ba = _ageOf(b);
+                var av = (aa === null) ? -1 : aa;
+                var bv = (ba === null) ? -1 : ba;
+                return bv - av;
             });
         } else if (sortBy === 'age_asc') {
-            result.sort(function(a, b) {
-                return calculateAge(a) - calculateAge(b);
+            out.sort(function (a, b) {
+                var aa = _ageOf(a);
+                var ba = _ageOf(b);
+                var av = (aa === null) ? Infinity : aa;
+                var bv = (ba === null) ? Infinity : ba;
+                return av - bv;
+            });
+        } else {
+            out.sort(function (a, b) {
+                return String(a.name || '').localeCompare(String(b.name || ''));
             });
         }
 
-        return result;
+        return out;
     }
 
     // =========================================================================
-    // 6. RENDER CHARACTER LIST
+    // 5. LIST
     // =========================================================================
 
-    function renderCharacterList(characters, culture) {
-        var personIcon = _getIcon('PERSON');
-        var locationIcon = _getIcon('LOCATION');
-        var editIcon = _getIcon('EDIT');
-        var trashIcon = _getIcon('TRASH');
-        var refreshIcon = _getIcon('REFRESH');
-
-        var html = '<div style="display:flex;flex-direction:column;gap:4px;max-height:400px;overflow-y:auto;padding-right:4px;">';
+    function _renderList(characters, culture) {
+        var html = '<div class="ct-characters__list">';
 
         for (var i = 0; i < characters.length; i++) {
-            var char = characters[i];
-            var age = calculateAge(char);
-            var genderSymbol = getGenderSymbol(char.gender);
-            var status = getStatusLabel(char);
-            var location = getLocationName(char);
-            var appearance = char.appearance || null;
-            var appearancePreview = appearance ? formatAppearance(appearance) : 'No appearance set';
-
-            // Check if character has culture appearance
-            var hasCultureAppearance = appearance && appearance._fromCulture === true;
-
-            html +=
-                '<div class="character-row" data-character-id="' + char.id + '" style="' +
-                'display:flex;justify-content:space-between;align-items:center;' +
-                'padding:6px 10px;background:var(--bg3);border-radius:4px;' +
-                'border-left:3px solid ' + (char.isDeceased ? 'var(--dim)' : 'var(--success)') + ';' +
-                '">' +
-                '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;">' +
-                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-                '<span style="font-size:0.6rem;">' + genderSymbol + '</span>' +
-                '<span style="font-size:0.7rem;font-weight:bold;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</span>' +
-                '<span style="font-size:0.5rem;color:var(--dim);">(' + age + 'y)</span>' +
-                (char.isDeceased ? '<span style="font-size:0.45rem;color:var(--dim);">†</span>' : '') +
-                (hasCultureAppearance ? '<span style="font-size:0.45rem;color:var(--accent);background:var(--accent-dim);padding:1px 6px;border-radius:8px;">Culture</span>' : '') +
-                '</div>' +
-                '<div style="display:flex;gap:12px;font-size:0.5rem;color:var(--dim);flex-wrap:wrap;">' +
-                '<span>' + locationIcon + ' ' + _escapeHtml(location) + '</span>' +
-                '<span>' + personIcon + ' ' + _escapeHtml(appearancePreview) + '</span>' +
-                '</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-                '<button class="apply-appearance-btn" data-char-id="' + char.id + '" style="background:transparent;border:none;color:var(--accent);cursor:pointer;font-size:0.6rem;padding:2px 6px;" title="Apply culture appearance">' + refreshIcon + '</button>' +
-                '<button class="remove-from-culture-btn" data-char-id="' + char.id + '" style="background:transparent;border:none;color:var(--danger);cursor:pointer;font-size:0.6rem;padding:2px 6px;" title="Remove from culture">' + trashIcon + '</button>' +
-                '</div>' +
-                '</div>';
+            html += _renderRow(characters[i]);
         }
 
         html += '</div>';
-
         return html;
     }
 
-    // =========================================================================
-    // 7. EVENT HANDLERS
-    // =========================================================================
-
-    function attachCharactersTabHandlers(container, culture) {
-        // Search
-        var searchInput = document.getElementById('charactersSearchInput');
-        if (searchInput) {
-            searchInput._searchTimeout = null;
-            searchInput.oninput = function() {
-                if (searchInput._searchTimeout) {
-                    clearTimeout(searchInput._searchTimeout);
-                }
-                searchInput._searchTimeout = setTimeout(function() {
-                    charactersTabState.searchTerm = searchInput.value;
-                    renderCharactersTab(container, culture);
-                }, 300);
-            };
-        }
-
-        // Gender filter
-        var genderFilter = document.getElementById('charactersGenderFilter');
-        if (genderFilter) {
-            genderFilter.onchange = function() {
-                charactersTabState.genderFilter = this.value;
-                renderCharactersTab(container, culture);
-            };
-        }
-
-        // Status filter
-        var statusFilter = document.getElementById('charactersStatusFilter');
-        if (statusFilter) {
-            statusFilter.onchange = function() {
-                charactersTabState.statusFilter = this.value;
-                renderCharactersTab(container, culture);
-            };
-        }
-
-        // Sort by
-        var sortBy = document.getElementById('charactersSortBy');
-        if (sortBy) {
-            sortBy.onchange = function() {
-                charactersTabState.sortBy = this.value;
-                renderCharactersTab(container, culture);
-            };
-        }
-
-        // Clear filters
-        var clearBtn = document.getElementById('clearCharactersFilters');
-        if (clearBtn) {
-            clearBtn.onclick = function() {
-                charactersTabState.searchTerm = '';
-                charactersTabState.genderFilter = 'all';
-                charactersTabState.statusFilter = 'all';
-                charactersTabState.sortBy = 'name';
-                renderCharactersTab(container, culture);
-            };
-        }
-
-        // Apply appearance to individual character
-        var applyBtns = container.querySelectorAll('.apply-appearance-btn');
-        for (var i = 0; i < applyBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var charId = this.dataset.charId;
-                    applyAppearanceToCharacter(charId, culture);
-                };
-            })(applyBtns[i]);
-        }
-
-        // Remove character from culture
-        var removeBtns = container.querySelectorAll('.remove-from-culture-btn');
-        for (var i = 0; i < removeBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var charId = this.dataset.charId;
-                    removeCharacterFromCulture(charId, culture, function() {
-                        renderCharactersTab(container, culture);
-                    });
-                };
-            })(removeBtns[i]);
-        }
-
-        // Assign character button
-        var assignBtn = document.getElementById('assignCharacterBtn');
-        if (assignBtn) {
-            assignBtn.onclick = function() {
-                openAssignCharacterModal(culture, function() {
-                    renderCharactersTab(container, culture);
-                });
-            };
-        }
-
-        // Apply appearance to all
-        var applyAllBtn = document.getElementById('applyAppearanceToAllBtn');
-        if (applyAllBtn) {
-            applyAllBtn.onclick = function() {
-                applyAppearanceToAll(culture, function() {
-                    renderCharactersTab(container, culture);
-                });
-            };
-        }
-    }
-
-    // =========================================================================
-    // 8. APPLY APPEARANCE TO CHARACTER
-    // =========================================================================
-
-    function applyAppearanceToCharacter(charId, culture) {
-        var CG = _getCultureGeneration();
-        var CC = _getCharacterCommands();
-
-        if (!CG) {
-            _showToast('Culture generation not available', 'error');
-            return;
-        }
-
-        var character = _getCharacterById(charId);
-        if (!character) {
-            _showToast('Character not found', 'error');
-            return;
-        }
-
-        // Check if character has a culture already
-        if (character.cultureId && character.cultureId !== culture.id) {
-            _confirmDialog(
-                'This character belongs to a different culture. Replace their appearance?',
-                'Confirm',
-                function() {
-                    doApplyAppearance(charId, character, culture);
-                }
-            );
-        } else {
-            doApplyAppearance(charId, character, culture);
-        }
-    }
-
-    function doApplyAppearance(charId, character, culture) {
-        var CG = _getCultureGeneration();
-        var gender = character.gender || 'male';
-
-        try {
-            var appearance = CG.generateAppearanceFromCulture(culture, gender);
-
-            if (!appearance) {
-                _showToast('Failed to generate appearance for this culture', 'error');
-                return;
-            }
-
-            // Mark as from culture
-            appearance._fromCulture = true;
-            appearance._cultureId = culture.id;
-            appearance._generatedAt = Date.now();
-
-            // Update character
-            character.appearance = appearance;
-
-            // If character doesn't have a culture set, set it
-            if (!character.cultureId) {
-                character.cultureId = culture.id;
-            }
-
-            _saveMasterData();
-
-            if (typeof window.CharacterState !== 'undefined' && CharacterState.invalidateCache) {
-                CharacterState.invalidateCache();
-            }
-
-            _showToast('Applied culture appearance to ' + character.name, 'success');
-            return true;
-
-        } catch(e) {
-            _showToast('Error applying appearance: ' + e.message, 'error');
-            return false;
-        }
-    }
-
-    // =========================================================================
-    // 9. REMOVE CHARACTER FROM CULTURE
-    // =========================================================================
-
-    function removeCharacterFromCulture(charId, culture, callback) {
-        var character = _getCharacterById(charId);
-        if (!character) {
-            _showToast('Character not found', 'error');
-            return;
-        }
-
-        _confirmDialog(
-            'Remove "' + character.name + '" from ' + culture.displayName + '?',
-            'Remove from Culture',
-            function() {
-                // Remove culture ID
-                character.cultureId = null;
-
-                // Optionally remove appearance
-                if (character.appearance && character.appearance._fromCulture === true) {
-                    if (confirm('Also remove the culture-generated appearance?')) {
-                        character.appearance = null;
-                    }
-                }
-
-                _saveMasterData();
-
-                if (typeof window.CharacterState !== 'undefined' && CharacterState.invalidateCache) {
-                    CharacterState.invalidateCache();
-                }
-
-                _showToast('Removed ' + character.name + ' from culture', 'info');
-                if (callback) callback();
-            }
-        );
-    }
-
-    // =========================================================================
-    // 10. APPLY APPEARANCE TO ALL
-    // =========================================================================
-
-    function applyAppearanceToAll(culture, callback) {
-        var CG = _getCultureGeneration();
-        if (!CG) {
-            _showToast('Culture generation not available', 'error');
-            return;
-        }
-
-        var characters = getCultureCharacters(culture.id);
-        var livingCharacters = characters.filter(function(c) { return !c.isDeceased; });
-
-        if (livingCharacters.length === 0) {
-            _showToast('No living characters in this culture', 'warning');
-            return;
-        }
-
-        _confirmDialog(
-            'Apply culture appearance to all ' + livingCharacters.length + ' living characters?',
-            'Apply to All',
-            function() {
-                var successCount = 0;
-                for (var i = 0; i < livingCharacters.length; i++) {
-                    var char = livingCharacters[i];
-                    var gender = char.gender || 'male';
-                    var appearance = CG.generateAppearanceFromCulture(culture, gender);
-
-                    if (appearance) {
-                        appearance._fromCulture = true;
-                        appearance._cultureId = culture.id;
-                        appearance._generatedAt = Date.now();
-                        char.appearance = appearance;
-
-                        // Set culture if not set
-                        if (!char.cultureId) {
-                            char.cultureId = culture.id;
-                        }
-                        successCount++;
-                    }
-                }
-
-                if (successCount > 0) {
-                    _saveMasterData();
-
-                    if (typeof window.CharacterState !== 'undefined' && CharacterState.invalidateCache) {
-                        CharacterState.invalidateCache();
-                    }
-
-                    _showToast('Applied appearance to ' + successCount + ' characters', 'success');
-                    if (callback) callback();
-                } else {
-                    _showToast('Failed to apply appearances', 'error');
-                }
-            }
-        );
-    }
-
-    // =========================================================================
-    // 11. ASSIGN CHARACTER MODAL
-    // =========================================================================
-
-    function openAssignCharacterModal(culture, onSuccess) {
-        var CS = _getCultureState();
-        var CQ = _getCultureQueries();
-
-        if (!CS || !CQ) {
-            _showToast('Culture system not available', 'error');
-            return;
-        }
-
-        // Get characters without culture
-        var unassigned = getCharactersWithoutCulture();
-        var allCharacters = _getCharacters();
-
-        // Also get characters with different culture (optional reassign)
-        var differentCulture = [];
-        for (var i = 0; i < allCharacters.length; i++) {
-            var char = allCharacters[i];
-            if (char.cultureId && char.cultureId !== culture.id) {
-                differentCulture.push(char);
-            }
-        }
-
-        var personIcon = _getIcon('PERSON');
-        var checkIcon = _getIcon('CHECK_SIMPLE');
-        var crossIcon = _getIcon('X_HEAVY');
-        var warningIcon = _getIcon('WARNING');
-
-        var modalContent =
-            '<div style="max-height:500px;overflow-y:auto;padding:4px;">' +
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;font-size:0.6rem;">' +
-            'Assign characters to <strong>' + _escapeHtml(culture.displayName || culture.name) + '</strong>' +
-            '</div>' +
-
-            // Unassigned characters
-            (unassigned.length > 0 ?
-                '<div style="margin-bottom:12px;">' +
-                '<div style="font-size:0.55rem;font-weight:bold;color:var(--accent);margin-bottom:4px;">' + personIcon + ' Unassigned Characters (' + unassigned.length + ')</div>' +
-                '<div style="max-height:200px;overflow-y:auto;">' +
-                unassigned.map(function(char) {
-                    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;">' +
-                        '<span style="font-size:0.6rem;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + '</span>' +
-                        '<button class="assign-char-btn" data-char-id="' + char.id + '" style="padding:2px 10px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + checkIcon + ' Assign</button>' +
-                        '</div>';
-                }).join('') +
-                '</div></div>' :
-                '<div style="padding:8px;text-align:center;color:var(--dim);font-size:0.55rem;">' + personIcon + ' No unassigned characters</div>'
-            ) +
-
-            // Different culture characters
-            (differentCulture.length > 0 ?
-                '<div style="margin-top:12px;">' +
-                '<div style="font-size:0.55rem;font-weight:bold;color:var(--warn);margin-bottom:4px;">' + warningIcon + ' Characters in other cultures (' + differentCulture.length + ')</div>' +
-                '<div style="max-height:200px;overflow-y:auto;">' +
-                differentCulture.map(function(char) {
-                    var otherCulture = char.cultureId ? CS.getCulture(char.cultureId) : null;
-                    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:var(--bg3);border-radius:4px;margin-bottom:2px;">' +
-                        '<span style="font-size:0.6rem;">' + _escapeHtml(char.name) + ' ' + _escapeHtml(char.surname || '') + 
-                        (otherCulture ? ' <span style="color:var(--dim);font-size:0.5rem;">(' + _escapeHtml(otherCulture.displayName || otherCulture.name) + ')</span>' : '') +
-                        '</span>' +
-                        '<button class="reassign-char-btn" data-char-id="' + char.id + '" style="padding:2px 10px;font-size:0.5rem;background:var(--warn-dim);border:1px solid var(--warn);border-radius:4px;cursor:pointer;">' + refreshIcon + ' Reassign</button>' +
-                        '</div>';
-                }).join('') +
-                '</div></div>' :
-                ''
-            ) +
-
-            '</div>';
-
-        _openModal({
-            title: 'Assign Characters',
-            content: modalContent,
-            confirmText: 'Close',
-            cancelText: '',
-            onConfirm: function() {}
-        });
-
-        // Attach assign handlers
-        setTimeout(function() {
-            var assignBtns = document.querySelectorAll('.assign-char-btn');
-            for (var i = 0; i < assignBtns.length; i++) {
-                (function(btn) {
-                    btn.addEventListener('click', function() {
-                        var charId = this.dataset.charId;
-                        var char = _getCharacterById(charId);
-                        if (char) {
-                            char.cultureId = culture.id;
-                            _saveMasterData();
-                            if (typeof window.CharacterState !== 'undefined' && CharacterState.invalidateCache) {
-                                CharacterState.invalidateCache();
-                            }
-                            _showToast('Assigned ' + char.name + ' to ' + culture.displayName, 'success');
-                            _closeTopModal();
-                            if (onSuccess) onSuccess();
-                        }
-                    });
-                })(assignBtns[i]);
-            }
-
-            var reassignBtns = document.querySelectorAll('.reassign-char-btn');
-            for (var i = 0; i < reassignBtns.length; i++) {
-                (function(btn) {
-                    btn.addEventListener('click', function() {
-                        var charId = this.dataset.charId;
-                        var char = _getCharacterById(charId);
-                        if (char) {
-                            _confirmDialog(
-                                'Reassign "' + char.name + '" from their current culture to ' + culture.displayName + '?',
-                                'Reassign',
-                                function() {
-                                    char.cultureId = culture.id;
-                                    _saveMasterData();
-                                    if (typeof window.CharacterState !== 'undefined' && CharacterState.invalidateCache) {
-                                        CharacterState.invalidateCache();
-                                    }
-                                    _showToast('Reassigned ' + char.name + ' to ' + culture.displayName, 'success');
-                                    _closeTopModal();
-                                    if (onSuccess) onSuccess();
-                                }
-                            );
-                        }
-                    });
-                })(reassignBtns[i]);
-            }
-        }, 100);
-    }
-
-    // =========================================================================
-    // 12. TAB DEFINITION
-    // =========================================================================
-
-    var CharactersTab = {
-        label: 'Characters',
-        icon: 'PERSON',
-        render: renderCharactersTab,
-        save: function(culture) {
-            // Characters tab doesn't modify the culture object directly
-            return culture;
-        },
-        validate: function(culture) {
-            return { valid: true };
-        }
-    };
-
-    // =========================================================================
-    // 13. REGISTER FUNCTION
-    // =========================================================================
-
-    function registerCharactersTab() {
-        if (typeof window.CultureEditorTabs === 'undefined') {
-            console.warn('[CharactersTab] CultureEditorTabs not available, tab not registered');
-            return false;
-        }
-
-        var result = window.CultureEditorTabs.registerTab('characters', CharactersTab);
-        if (result) {
-            console.log('[CharactersTab] Registered characters tab successfully');
-        }
-        return result;
-    }
-
-    // =========================================================================
-    // 14. EXPORTS
-    // =========================================================================
-
-    window.CharactersTab = CharactersTab;
-    window.registerCharactersTab = registerCharactersTab;
-
-    // Auto-register if CultureEditorTabs is available
-    if (typeof window.CultureEditorTabs !== 'undefined') {
-        registerCharactersTab();
-    }
-
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            CharactersTab: CharactersTab,
-            registerCharactersTab: registerCharactersTab
-        };
-    }
-
-
-})();
+    function _renderRow(c) {
+        var age = _ageOf(c);
+        var ageText = (age === null) ? 'age ?' : (age + 'y');
+        var gender = _genderLabel(c.gender);
+        var locationId = _currentLocationIdOf(c);
+        var locationName = locationId ? _getPlaceName(locationId) : '—';
+        var isDeceased = c.isDeceased === true;
+
+        var hasCultureAppearance = !!(c.appearance
+            && c.appearance._fromCulture === true
+            && c.appearance._cultureId);
+
+        var appearancePreview = hasCultureAppearance
+            ? _appearancePreview(c.appearance)
+            : null;
+
+        var rowClass = 'ct-character-row';
+        if (isDeceased) rowClass += ' ct-character-row--deceased';
+
+        var html =
+            '<div class="' + rowClass + '" data-character-id="' + _escapeHtml(c.id) + '">' +
+              '<div class="ct-character-row__body">' +
+                '<div class="ct-character-row__top">' +
+                  '<span class="ct-character-row__name">' +
+                    _escapeHtml(c.name || '') + ' ' + _escapeHtml(c.surname || '') +
+                  '</span>' +
+                  '<span class="ct-character-row__meta">' +
+                    _escapeHtml(gender) + ' · ' + _escapeHtml(ageText) +
+                  '</span>' +
+                  (isDeceased
+                    ? '<span class="ct-badge ct-badge--muted">Deceased</span>'
+                    : '') +
+                  (hasCultureAppearance
+                    ? '<span class="ct-badge ct-badge--accent">Culture</span>'
+                    : '') +
+                '</div>' +
+                '<div class="ct-character-row__sub">' +
+                  '<span>' + _escapeHtml(locationName) + '</span>' +
+                  (appearancePreview
+                    ? '<span class="ct-character-row__appearance">' +
+                      _escapeHtml(appearancePreview) +
+                      '</span>'
+                    : '<span class="ct-character-row__appearance ct-character-row__appearance--none">' +
+                      'No culture appearance' +
+                      '</span>') +
+                '</div>' +
+              '</div>' +
+              '<div class="ct-character-row__actions">' +
+                '<button type="button" class="rt-btn rt-btn--icon ct-character-apply" data-character-id="' +
+                  _escapeHtml(c.id
