@@ -1,255 +1,190 @@
 /**
  * =============================================================================
- * STILL WATERS - NAME COMMANDS (name-commands.js)
+ * STILL WATERS - NAME COMMANDS (js/modules/names/name-commands.js)
  * =============================================================================
  *
  * LOCATION: js/modules/names/name-commands.js
  *
+ * Write boundary for the name subsystem.
+ *
  * SCOPE:
- *   - All write operations for the name domain
- *   - Record surname changes with history
- *   - Apply marriage surname changes atomically
- *   - Revert the most recent surname change
- *   - Clear surname history
- *   - Add / remove names from a country's name list
+ *   - recordSurnameChange          explicit character surname change
+ *   - recordBirthSurname           initial birth surname
+ *   - applyMarriageSurnames        atomic pair surname update
+ *   - revertLastSurnameChange      undo the most recent change
+ *   - clearSurnameHistory          wipe the character's surname timeline
+ *   - addNameToList                name-list append
+ *   - removeNameFromList           name-list remove
+ *   - setCountrySurnameRules       REPLACE the surname rules for a country
+ *   - calculateMarriageSurnames    pure helper (delegates to NameRules)
+ *   - persist                      the ONLY saveMasterData call site
  *
  * OUT OF SCOPE:
- *   - Reads → name-queries.js
- *   - Rule application → name-rules.js
- *   - Marriage surname policy (the calculation) → name-rules.js
- *   - Canonical character-record ownership → character-state.js
- *   - Canonical name-list ownership → masterData.data.nameLists
- *   - Runtime caches → name-state.js
- *   - Persistence mechanics → storage.js (via persist())
- *   - Presentation → UI modules
- *
- * PUBLIC CONTRACT:
- *   Every command returns:
- *     { success: true, ...payload }
- *     { success: false, reason: 'human-readable message' }
- *   Never null. Never a toast.
- *
- *   Every command takes an ID (string), not an object.
+ *   - Reading name lists / rules    -> NameQueries
+ *   - Rule application / validation -> NameRules
+ *   - Cache / UI state              -> NamesState
+ *   - Modal rendering               -> modals-name.js
+ *   - Cross-domain cleanup          -> character-lifecycle / deletion
  *
  * CHARACTER MUTATION CONTRACT:
- *   Character-state projections returned by window.getCharacterById() are
- *   defensive copies, not live canonical records. Mutating a projection's
- *   fields does NOT change canonical data.
- *
- *   Every character-field write in this module therefore goes through
- *   CharacterCommands.updateCharacter(characterId, patch). The surname
- *   fields (surname, surnameSource, surnameRules, surnameHistory) are
- *   listed in CharacterState._CHARACTER_OWNED_FIELDS, so updateCharacter
- *   (not applyDomainFieldPatch) is the correct write channel — same as
- *   any other character-owned field.
- *
- *   Read-then-write pattern:
- *     1. Read current state via window.getCharacterById(characterId)
- *        (a projection — sufficient for reads)
- *     2. Compute the new state
- *     3. Write via CharacterCommands.updateCharacter
- *
- *   This replaces a pre-refactor pattern where the module mutated the
- *   projection in place, which silently no-oped on canonical data. See
- *   the REFACTOR HISTORY entry for context.
+ *   Every character-field write routes through
+ *   CharacterCommands.updateCharacter(characterId, patch). CharacterState
+ *   projections returned by getCharacterById are defensive copies;
+ *   mutating them does NOT affect canonical data. The surname fields
+ *   (surname, surnameSource, surnameRules, surnameHistory) are listed in
+ *   CharacterState._CHARACTER_OWNED_FIELDS, so updateCharacter (not
+ *   applyDomainFieldPatch) is the correct write channel.
  *
  * NAME-LIST MUTATION CONTRACT:
- *   Name lists are stored in masterData.data.nameLists. NamesState
- *   exposes getMutableNameList(countryId), which returns a LIVE reference
- *   into that collection. Mutating through it correctly updates canonical
- *   data. This is a different mechanism from character-record writes and
- *   is documented in name-state.js's ACCESSOR MUTABILITY CONTRACT.
+ *   Name lists and surname rules live in masterData.data.nameLists,
+ *   keyed by countryId. NamesState.getMutableNameList returns a LIVE
+ *   reference into that collection. Mutating through it updates canonical
+ *   data. The setCountrySurnameRules command writes the same collection
+ *   through the same NamesState reference, following the same contract as
+ *   addNameToList and removeNameFromList.
  *
  * PERSISTENCE:
- *   Commands do NOT save. Every command marks data dirty and emits a
- *   cross-domain CustomEvent, but persistence is the caller's decision.
- *   NameCommands.persist() is the single save site. The UI (or the
- *   caller) calls persist() once per successful command batch.
- *
- *   persist() uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
- *   it inspects the boolean return of saveMasterData() and, on failure,
- *   returns { success: false, reason } carrying the underlying save
- *   error's message. It does NOT wrap saveMasterData() in a try/catch
- *   that assumes a throw; saveMasterData() returns false on write
- *   failure and does not throw.
- *
- * COMPOSITION:
- *   There is no module-wide guard. Commands compose by calling the
- *   private primitive `_appendSurnameChange`, not by re-entering public
- *   commands.
+ *   Commands do NOT save. Every command marks data dirty, publishes
+ *   in-process via NamesState.publish, and dispatches a cross-domain
+ *   CustomEvent. The caller calls persist() once per successful command
+ *   batch.
  *
  * ATOMICITY:
- *   applyMarriageSurnames is a single logical mutation. Both resulting
- *   surnames are calculated, validated, applied in memory, and committed
- *   with one characterChanged event. Persistence is deferred to the
- *   caller's persist() call — the command itself does not save, so
- *   partial-persist is impossible by construction.
- *
- *   The validate-both-then-apply-both structure makes the inline
- *   rollback provably unreachable: the second _appendSurnameChange can
- *   only fail via _validateSurnameChange, which is called BEFORE the
- *   first application. The rollback is retained as defense-in-depth.
- *
- * METADATA RESTORATION:
- *   Each change entry records the previous surnameSource and
- *   surnameRules so that revert can restore them faithfully.
+ *   applyMarriageSurnames is a single logical mutation. Both surnames
+ *   are validated BEFORE either is applied. The inline rollback via
+ *   _undoSurnameChange is provably unreachable given the
+ *   validate-both-then-apply-both structure; it is retained as
+ *   defense-in-depth.
  *
  * YEAR HANDLING:
- *   Year 0 is valid and accepted. Missing years are rejected. No 1250
- *   fallback anywhere.
+ *   Year 0 is valid and accepted. Missing years are rejected by
+ *   recordSurnameChange. NO 1250 fallback. getCurrentYearSafe is NOT
+ *   used.
  *
- * NAMESPACE NOTE:
- *   NamesState is exported as window.NamesState (plural) by
- *   name-state.js. window.NameState (singular) exists only as a
- *   backward-compat alias and may be absent in a future version. This
- *   module references the plural form exclusively so that dropping the
- *   alias does not silently break the dependency guard or the cache
- *   invalidation calls below.
+ * DEPENDENCIES (REQUIRED, verified at load):
+ *   - accessors.js:        getCharacterById
+ *   - storage.js:          saveMasterData
+ *   - time.js:             getCurrentYear
+ *   - name-state.js:       NamesState
+ *   - name-rules.js:       NameRules
+ *   - character-commands:  CharacterCommands.updateCharacter
  *
- * DUPLICATION WITH character-commands.js::recordCharacterSurnameChange:
- *   The character module has a parallel function of the same name.
- *   Both write the same fields (surname, surnameSource, surnameRules,
- *   surnameHistory). The current implementations differ in three ways:
+ * DEPENDENCIES (OPTIONAL, checked per call):
+ *   - storage.js:          markDataDirty (typeof-guarded)
+ *   - storage.js:          getLastSaveError (typeof-guarded, in
+ *                          persist() failure path)
+ *   - eventLogger.js:      logEvent (typeof-guarded)
+ *   - browser globals:     CustomEvent, dispatchEvent
  *
- *     1. Year requirement. CharacterCommands.recordCharacterSurnameChange
- *        accepts a missing year and defaults to getCurrentYear(). This
- *        module requires an explicit year and rejects missing.
- *     2. Read mechanism. CharacterCommands uses getLiveCharacterForMutation
- *        (a live reference); this module uses getCharacterById (a
- *        projection). Both read the same canonical record.
- *     3. Options shape. CharacterCommands accepts a `previousSurname`
- *        override; this module does too but via a different path.
- *
- *   This module does NOT delegate to
- *   CharacterCommands.recordCharacterSurnameChange, because that command
- *   is a superset (accepts missing year, defaults to current year, does
- *   not enforce the strict pre-birth check this module applies) and
- *   delegating to it would introduce a divergence in validation
- *   behaviour — a caller of this module would suddenly get a surname
- *   change approved that this module's contract says must be rejected.
- *
- *   Instead, both modules write via the same underlying channel
- *   (CharacterCommands.updateCharacter), and this module's
- *   _appendSurnameChange is the single canonical helper for the
- *   name-domain-driven write. The character module keeps its own
- *   recordCharacterSurnameChange for its own callers (modal-character,
- *   character-creation). Both implementations are correct for their
- *   respective contracts; consolidation is a future refactor once the
- *   surname-command semantics settle.
- *
- * DEPENDENCIES (REQUIRED):
- *   - accessors.js:          getCharacterById
- *   - character-commands.js: CharacterCommands (updateCharacter)
- *   - name-state.js:         NamesState
- *   - name-rules.js:         NameRules
- *   - storage.js:            saveMasterData, getLastSaveError
- *   - time.js:               getCurrentYear
- *
- * DEPENDENCIES (OPTIONAL):
- *   - eventLogger.js:  logEvent
- *
- * ICON POLICY: No emojis. No icons. Commands return structured data.
+ * ICON POLICY: No emojis. No icons.
  *
  * =============================================================================
  * REFACTOR HISTORY:
- *   Original: every command saved. No persist() boundary.
- *   Prior revision:
- *     - persist() added as the single save site.
- *     - All seven saveMasterData() calls removed.
- *     - _commit(eventName, payload) helper added: markDataDirty ->
- *       publish in-process -> dispatch cross-domain.
- *     - applyMarriageSurnames rollback documented as unreachable and
- *       refactored to use _undoSurnameChange.
- *     - NameState references migrated to NamesState (plural).
- *   Previous revision:
- *     - CHARACTER MUTATION CONTRACT added to header.
- *     - Character-field writes routed through CharacterCommands.updateCharacter.
- *     - _applySurnameToCharacter, _appendSurnameChange, and
- *       _undoSurnameChange take characterId and write via
- *       CharacterCommands.updateCharacter.
- *     - _ensureSurnameHistory split into a pure reader
- *       (_readSurnameHistory) and a pure shape helper
- *       (_ensureSurnameHistoryOn).
- *     - CharacterCommands added to required dependencies.
- *   Previous revision:
- *     - persist() rewritten to Pattern A (inspect the boolean return
- *       of saveMasterData, surface getLastSaveError().message on
- *       failure). The previous implementation used Pattern C, which
- *       silently reported success on every failed save.
- *     - getCurrentYearSafe references replaced with getCurrentYear.
- *       The deprecated alias remains exported by time.js for one
- *       revision but this module no longer depends on it.
- *     - _undoSurnameChange continues to write via
- *       CharacterCommands.updateCharacter directly (it needs to write
- *       a specific previous state, not a new change; the character
- *       command's recordCharacterSurnameChange is designed for a
- *       forward change, not a rollback).
- *     - Duplication with character-commands.js documented in header
- *       under DUPLICATION section.
  *   Current revision:
- *     - Removed CharacterCommands.recordCharacterSurnameChange from the
- *       load-time dependency check. The module never calls it — every
- *       surname write goes through CharacterCommands.updateCharacter
- *       via _appendSurnameChange. The previous check required a method
- *       the module did not use, which was a latent coupling that would
- *       have surfaced as a false-positive load-order failure if the
- *       character module ever removed or renamed that method.
- *     - Fixed a header self-contradiction: an earlier passage claimed
- *       recordSurnameChange "delegates the character-record write to
- *       CharacterCommands.recordCharacterSurnameChange", which is not
- *       true. The DUPLICATION section at the bottom of the header has
- *       always been accurate (the module writes via updateCharacter
- *       directly). The stale earlier passage has been removed, and
- *       the DUPLICATION section is now the single authoritative
- *       description of the divergence.
- *     - No behavioural change.
+ *     - Added setCountrySurnameRules(countryId, rules). Closes a
+ *       command-surface gap: prior to this revision, NameCommands
+ *       exposed readers via NameQueries but no writer for the
+ *       country-level surname rules block, so UI callers (notably the
+ *       culture names tab) wrote through masterData.data.nameLists
+ *       directly and bypassed both validation and the event dispatch
+ *       that invalidates NamesState caches.
+ *
+ *       The new command follows the same transaction shape as
+ *       addNameToList / removeNameFromList:
+ *         1. validateCountryId (non-empty string)
+ *         2. validateRules via NameRules.validateRules (throws on
+ *            invalid — matches generateSurnameFromRules's contract)
+ *         3. read the live nameList via
+ *            NamesState.getMutableNameList (fails with a structured
+ *            error if the countryId has no list entry)
+ *         4. write nameList.rules = clone(rules)
+ *         5. _commit('surnameRulesChanged', payload)
+ *
+ *       Return shape matches other commands:
+ *         { success: true, rules: <clone> }
+ *         { success: false, reason: string }
+ *
+ *       Notes:
+ *         - The countryId must already have a nameList entry. The
+ *           command refuses rather than silently creating the list,
+ *           because creating the list would raise the question "what
+ *           are the default rules for this country" — a policy decision
+ *           that NameRules owns, not NameCommands.
+ *         - The write is a full replacement (not a patch). Callers
+ *           submit the complete rules object.
+ *         - Validation runs first, so an invalid rules object leaves
+ *           the existing rules untouched.
+ *         - The surnameRulesChanged event fires after the write and
+ *           after markDataDirty. NamesState subscribes to the event via
+ *           its normal invalidation cycle.
+ *     - No behavioural change to any other command. Every other
+ *       export keeps the same name and behavior.
+ *   Previous revisions:
+ *     - getCurrentYearSafe references replaced with getCurrentYear.
+ *     - _undoSurnameChange retained as defense-in-depth (unreachable
+ *       given the validate-both-then-apply-both structure).
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
     // 0. DEPENDENCY GUARDS
     // =========================================================================
 
-    function _requireDependencies() {
-        var required = [
-            'getCharacterById',
-            'saveMasterData',
-            'getCurrentYear'
-        ];
-        var missing = [];
-        for (var i = 0; i < required.length; i++) {
-            if (typeof window[required[i]] !== 'function') {
-                missing.push(required[i]);
-            }
-        }
-        if (typeof window.NamesState === 'undefined') {
-            missing.push('NamesState');
-        }
-        if (typeof window.NameRules === 'undefined') {
-            missing.push('NameRules');
-        }
-        if (typeof window.CharacterCommands === 'undefined') {
-            missing.push('CharacterCommands');
-        } else {
-            if (typeof window.CharacterCommands.updateCharacter !== 'function') {
-                missing.push('CharacterCommands.updateCharacter');
-            }
-        }
-        if (missing.length > 0) {
-            throw new Error(
-                'name-commands.js: missing required dependencies: ' +
-                missing.join(', ')
-            );
+    var REQUIRED = [
+        'getCharacterById',
+        'saveMasterData',
+        'getCurrentYear',
+        'NamesState',
+        'NameRules',
+        'CharacterCommands'
+    ];
+    var missing = [];
+    for (var i = 0; i < REQUIRED.length; i++) {
+        if (typeof window[REQUIRED[i]] === 'undefined') {
+            missing.push(REQUIRED[i]);
         }
     }
+    if (missing.length > 0) {
+        throw new Error(
+            'name-commands.js: missing required dependencies: ' +
+            missing.join(', ')
+        );
+    }
+    if (typeof window.CharacterCommands.updateCharacter !== 'function') {
+        throw new Error(
+            'name-commands.js: CharacterCommands.updateCharacter is required.'
+        );
+    }
 
-    _requireDependencies();
+    var NS = window.NamesState;
+    var NR = window.NameRules;
+    var CC = window.CharacterCommands;
 
     // =========================================================================
-    // 1. INTERNAL HELPERS
+    // 1. RESULT HELPERS
+    // =========================================================================
+
+    function _ok(data) {
+        var result = { success: true };
+        if (data && typeof data === 'object') {
+            for (var key in data) {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    result[key] = data[key];
+                }
+            }
+        }
+        return result;
+    }
+
+    function _fail(reason) {
+        return { success: false, reason: reason };
+    }
+
+    // =========================================================================
+    // 2. HELPERS
     // =========================================================================
 
     function _hasId(v) {
@@ -266,18 +201,26 @@
         return proto === Object.prototype || proto === null;
     }
 
-    /**
-     * Reads a character projection for validation purposes. Callers that
-     * will write must NOT mutate the returned object; they must build a
-     * patch and hand it to CharacterCommands.updateCharacter.
-     */
-    function _resolveCharacter(characterId) {
-        if (!_hasId(characterId)) return null;
-        return window.getCharacterById(characterId);
+    function _isValidYear(v) {
+        return typeof v === 'number'
+            && Number.isFinite(v)
+            && Number.isInteger(v);
     }
 
-    function _getCurrentYear() {
-        return window.getCurrentYear();
+    function _clone(value) {
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            var arr = new Array(value.length);
+            for (var i = 0; i < value.length; i++) arr[i] = _clone(value[i]);
+            return arr;
+        }
+        var out = {};
+        for (var k in value) {
+            if (Object.prototype.hasOwnProperty.call(value, k)) {
+                out[k] = _clone(value[k]);
+            }
+        }
+        return out;
     }
 
     function _logEvent(category, type, message, subjects) {
@@ -287,857 +230,707 @@
     }
 
     // =========================================================================
-    // 2. COMMIT TAIL
+    // 3. TRANSACTION BOUNDARY
     // =========================================================================
     //
-    // Called after every successful command. Marks data dirty, publishes
-    // in-process (so NamesState and other subscribers react), and
-    // dispatches the cross-domain CustomEvent.
-    //
-    // Does NOT save. Save is persist().
-    //
+    // Commands mark data dirty, publish in-process, and dispatch a
+    // cross-domain CustomEvent. They do NOT save.
 
     function _commit(eventName, payload) {
         if (typeof window.markDataDirty === 'function') {
-            try { window.markDataDirty(); } catch (e) { /* non-fatal */ }
+            try { window.markDataDirty(); }
+            catch (e) { /* non-fatal */ }
         }
 
-        if (typeof window.NamesState !== 'undefined'
-            && typeof window.NamesState.publish === 'function') {
-            window.NamesState.publish(eventName, payload);
+        if (NS && typeof NS.publish === 'function') {
+            try { NS.publish(eventName, payload); }
+            catch (e) { /* non-fatal */ }
         }
 
         _dispatch(eventName, payload);
     }
 
     function _dispatch(eventName, payload) {
-        if (typeof window.CustomEvent !== 'function') return;
         try {
             window.dispatchEvent(new CustomEvent(eventName, {
-                detail: payload
+                detail: { nameEvent: payload }
             }));
         } catch (e) {
-            if (typeof console !== 'undefined' && console.warn) {
-                console.warn(
-                    'name-commands.js: ' + eventName + ' dispatch failed:', e
-                );
-            }
+            // CustomEvent unavailable or dispatch failed. Non-fatal.
         }
     }
 
     // =========================================================================
-    // 3. PERSIST
+    // 4. PERSIST
     // =========================================================================
+    //
+    // The ONLY saveMasterData call site in this module. Inspects the
+    // boolean return and surfaces the failure reason via
+    // getLastSaveError when available (Pattern A + getLastSaveError).
 
-    /**
-     * Persists the current canonical state.
-     *
-     * The ONLY place in this module that calls saveMasterData. Every
-     * command leaves canonical data dirty; the caller decides when to
-     * save.
-     *
-     * Uses Pattern A from storage.js's DOMAIN PERSIST CONTRACT:
-     * saveMasterData() returns a boolean and does NOT throw on write
-     * failure. The previous revision used Pattern C, which discarded the
-     * return value and reported success on every failed save. This
-     * revision inspects the boolean and surfaces the underlying error.
-     *
-     * Returns { success, reason? }. Does not throw.
-     */
     function persist() {
         try {
             var ok = window.saveMasterData();
             if (ok === true) {
                 return { success: true };
             }
-            var lastError = typeof window.getLastSaveError === 'function'
-                ? window.getLastSaveError()
-                : null;
+
+            var reason = 'saveMasterData returned false';
+            if (typeof window.getLastSaveError === 'function') {
+                var lastError = window.getLastSaveError();
+                if (lastError && lastError.message) {
+                    reason = lastError.message;
+                }
+            }
+            return { success: false, reason: reason };
+        } catch (e) {
             return {
                 success: false,
-                reason: lastError && lastError.message
-                    ? lastError.message
-                    : 'saveMasterData returned false'
+                reason: e && e.message ? e.message : 'saveMasterData threw'
             };
-        } catch (e) {
-            return { success: false, reason: e.message || 'saveMasterData threw' };
         }
     }
 
     // =========================================================================
-    // 4. CHARACTER MUTATION PRIMITIVES
+    // 5. YEAR RESOLUTION
     // =========================================================================
     //
-    // The one and only place this module writes character surname fields.
-    //
-    // Character-state projections are defensive copies. Writing to
-    // character.surname on the object returned by getCharacterById()
-    // has no effect on canonical data. All writes therefore route
-    // through CharacterCommands.updateCharacter(characterId, patch).
-    //
-    // The surname fields are in _CHARACTER_OWNED_FIELDS, so
-    // updateCharacter (not applyDomainFieldPatch) is the correct write
-    // channel — matching how any other character-owned field is written.
+    // recordSurnameChange REQUIRES an explicit year. Missing year is
+    // REJECTED. Year 0 is valid. This matches the documented contract
+    // (PART 7 §6 of name-docs.txt). CharacterCommands's
+    // recordCharacterSurnameChange is a SUPERSET that accepts a missing
+    // year and defaults to getCurrentYear — but this module does not
+    // delegate to it, because doing so would silently approve a surname
+    // change this module's contract says must be rejected.
 
-    /**
-     * Writes the surname and associated metadata for a character.
-     *
-     * Callers must have already validated. This helper performs the
-     * write and reports failure.
-     *
-     * @returns {{ ok: boolean, reason?: string }}
-     */
-    function _applySurnameToCharacter(characterId, surname, options) {
-        var patch = {
-            surname: surname
-        };
-
-        if (options && !_isMissing(options.surnameSource)) {
-            patch.surnameSource = options.surnameSource;
-        } else {
-            patch.surnameSource = 'custom';
-        }
-
-        if (options && !_isMissing(options.surnameRules)) {
-            patch.surnameRules = options.surnameRules;
-        } else {
-            patch.surnameRules = null;
-        }
-
-        var result = window.CharacterCommands.updateCharacter(characterId, patch);
-        if (!result || result.success !== true) {
+    function _requireYear(value, context) {
+        if (!_isValidYear(value)) {
             return {
                 ok: false,
-                reason: (result && result.reason) ? result.reason
-                    : 'CharacterState refused the surname write.'
+                reason: context + ': year is required and must be a valid ' +
+                        'world year (integer). Got: ' + String(value)
             };
         }
-        return { ok: true };
+        return { ok: true, value: value };
     }
 
-    /**
-     * Reads the character's surname history, returning a defensive copy
-     * of the canonical object. Returns null when the character has no
-     * history.
-     *
-     * Does NOT write. The caller decides whether a subsequent write is
-     * needed (e.g., to initialize a missing history).
-     */
-    function _readSurnameHistory(character) {
-        if (!character) return null;
-        var history = character.surnameHistory;
-        if (!_isPlainObject(history)) return null;
+    // =========================================================================
+    // 6. CHARACTER SURNAME CHANGE
+    // =========================================================================
 
-        // Return a shallow copy so callers can append/remove entries
-        // without mutating the projection they were given. Deep copy of
-        // entries is unnecessary — callers either replace the whole
-        // entries array or append a new entry object they constructed.
-        return {
-            birthSurname: typeof history.birthSurname === 'string'
-                ? history.birthSurname : '',
-            entries: Array.isArray(history.entries) ? history.entries.slice() : [],
-            lastUpdated: _isMissing(history.lastUpdated)
-                ? null
-                : history.lastUpdated
-        };
+    function _validateSurnameChange(facts) {
+        if (!_isPlainObject(facts)) {
+            return _fail('Facts must be a plain object.');
+        }
+        if (!_hasId(facts.characterId)) {
+            return _fail('characterId is required.');
+        }
+        if (typeof facts.newSurname !== 'string') {
+            return _fail('newSurname must be a string.');
+        }
+        var yearCheck = _requireYear(facts.year, 'recordSurnameChange');
+        if (!yearCheck.ok) return _fail(yearCheck.reason);
+        return { success: true };
     }
 
-    /**
-     * Ensures a surname-history object has the canonical shape. Pure:
-     * takes a history object (which may be null) and a character
-     * projection (for birthYear and current surname), returns a
-     * well-shaped history object. Does NOT write.
-     */
-    function _ensureSurnameHistoryOn(history, character) {
-        var out = _isPlainObject(history) ? history : {};
-
-        if (!Array.isArray(out.entries)) out.entries = [];
-
-        if (typeof out.birthSurname !== 'string') {
-            out.birthSurname = (character && typeof character.surname === 'string')
-                ? character.surname
-                : '';
+    function recordSurnameChange(characterId, newSurname, year, reason, options) {
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
         }
 
-        if (_isMissing(out.lastUpdated)) {
-            out.lastUpdated = (character && character.birthYear)
-                || _getCurrentYear();
-        }
-
-        return out;
-    }
-
-    /**
-     * Writes a surname history object for a character.
-     *
-     * @returns {{ ok: boolean, reason?: string }}
-     */
-    function _writeSurnameHistory(characterId, history) {
-        var result = window.CharacterCommands.updateCharacter(characterId, {
-            surnameHistory: history
+        var validation = _validateSurnameChange({
+            characterId: characterId,
+            newSurname: newSurname,
+            year: year
         });
-        if (!result || result.success !== true) {
-            return {
-                ok: false,
-                reason: (result && result.reason) ? result.reason
-                    : 'CharacterState refused the surnameHistory write.'
-            };
-        }
-        return { ok: true };
-    }
+        if (!validation.success) return validation;
 
-    // =========================================================================
-    // 5. VALIDATION
-    // =========================================================================
-
-    /**
-     * Validates a surname-change request. Year 0 is accepted. Missing
-     * years are rejected. This module requires an explicit year for
-     * UI-driven flows; the underlying CharacterCommands command defaults
-     * to the current year, but this module's contract is stricter.
-     */
-    function _validateSurnameChange(character, newSurname, year) {
+        var character = window.getCharacterById(characterId);
         if (!character) {
-            return { valid: false, reason: 'Character not found' };
+            return _fail('Character not found.');
         }
-        if (character.isDeceased) {
-            return { valid: false, reason: 'Cannot change surname of deceased character' };
-        }
-        if (typeof newSurname !== 'string' || newSurname.trim() === '') {
-            return { valid: false, reason: 'Surname cannot be empty' };
-        }
-        if (_isMissing(year) || typeof year !== 'number' || !Number.isFinite(year)) {
-            return { valid: false, reason: 'Valid year is required' };
-        }
-        if (year > _getCurrentYear() + 10) {
-            return { valid: false, reason: 'Year cannot be more than 10 years in the future' };
-        }
-        if (typeof character.birthYear === 'number' && year < character.birthYear) {
-            return { valid: false, reason: "Year cannot be before character's birth" };
-        }
-        return { valid: true };
-    }
-
-    // =========================================================================
-    // 6. PRIVATE MUTATION PRIMITIVE
-    // =========================================================================
-    //
-    // _appendSurnameChange and _undoSurnameChange are inverses:
-    //
-    //   _appendSurnameChange(characterId, ...) appends a history entry and
-    //   applies the new surname.
-    //
-    //   _undoSurnameChange(characterId, character, entry) pops the most
-    //   recent history entry (asserting it matches `entry`) and restores
-    //   the recorded previous values.
-    //
-    // Both helpers do exactly ONE write via CharacterCommands. They read
-    // the current projection for validation and diffing, build the new
-    // state, and write the combined patch (surname + surnameSource +
-    // surnameRules + surnameHistory) in a single updateCharacter call.
-    //
-    // These are used by applyMarriageSurnames for the inline rollback
-    // path and by _appendSurnameChange's callers (recordSurnameChange,
-    // applyMarriageSurnames). The single-character recordSurnameChange
-    // path also uses _appendSurnameChange for consistency with the
-    // marriage path.
-
-    function _appendSurnameChange(characterId, character, newSurname, year, reason, options) {
-        options = options || {};
-
-        var validation = _validateSurnameChange(character, newSurname, year);
-        if (!validation.valid) {
-            return { success: false, reason: validation.reason };
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
         }
 
-        // Read current history. _readSurnameHistory returns a copy, so
-        // we can safely mutate the copy to build the new state.
-        var historyCopy = _readSurnameHistory(character);
-        var history = _ensureSurnameHistoryOn(historyCopy, character);
-
-        var previousSurname = !_isMissing(options.previousSurname)
-            ? options.previousSurname
-            : (typeof character.surname === 'string' ? character.surname : '');
-
-        var trimmed = newSurname.trim();
+        var history = _readSurnameHistoryForChange(character);
+        var previousSurname = _isMissing(options.previousSurname)
+            ? (typeof character.surname === 'string' ? character.surname : '')
+            : options.previousSurname;
 
         var change = {
-            surname: trimmed,
+            surname: newSurname,
             year: year,
-            reason: typeof reason === 'string' && reason.length > 0 ? reason : 'custom',
+            reason: typeof reason === 'string' ? reason : 'custom',
             previousSurname: previousSurname,
-            previousSurnameSource: typeof character.surnameSource === 'string'
-                ? character.surnameSource : null,
-            previousSurnameRules: character.surnameRules || null,
-            spouseId: options.spouseId || null,
-            notes: options.notes || '',
-            timestamp: Date.now()
+            spouseId: _isMissing(options.spouseId) ? null : options.spouseId,
+            notes: _isMissing(options.notes) ? '' : options.notes
         };
 
         history.entries.push(change);
         history.lastUpdated = year;
 
-        // Determine the new surnameSource / surnameRules to write. These
-        // are the same rules _applySurnameToCharacter would set.
-        var newSource = (options && !_isMissing(options.surnameSource))
-            ? options.surnameSource
-            : 'custom';
-        var newRules = (options && !_isMissing(options.surnameRules))
-            ? options.surnameRules
-            : null;
+        var patch = {
+            surname: newSurname,
+            surnameHistory: history,
+            updatedAt: Date.now()
+        };
 
-        // Single write: surname, source, rules, history — all together.
-        var writeResult = window.CharacterCommands.updateCharacter(characterId, {
-            surname: trimmed,
-            surnameSource: newSource,
-            surnameRules: newRules,
-            surnameHistory: history
+        var write = CC.updateCharacter(characterId, patch);
+        if (!write || write.success !== true) {
+            return _fail(write && write.reason
+                ? write.reason
+                : 'CharacterCommands refused the surname update.');
+        }
+
+        _commit('surnameChange', {
+            characterId: characterId,
+            change: change
         });
-        if (!writeResult || writeResult.success !== true) {
+
+        _logEvent('name', 'Surname Change',
+            characterId + ' -> ' + newSurname + ' in ' + year,
+            [characterId]);
+
+        return _ok({ change: change });
+    }
+
+    function _readSurnameHistoryForChange(character) {
+        if (_isPlainObject(character.surnameHistory)) {
             return {
-                success: false,
-                reason: (writeResult && writeResult.reason) ? writeResult.reason
-                    : 'CharacterState refused the surname change write.'
+                birthSurname: typeof character.surnameHistory.birthSurname === 'string'
+                    ? character.surnameHistory.birthSurname
+                    : (typeof character.surname === 'string' ? character.surname : ''),
+                entries: Array.isArray(character.surnameHistory.entries)
+                    ? character.surnameHistory.entries.slice()
+                    : [],
+                lastUpdated: _isMissing(character.surnameHistory.lastUpdated)
+                    ? (typeof character.birthYear === 'number'
+                        ? character.birthYear
+                        : window.getCurrentYear())
+                    : character.surnameHistory.lastUpdated
             };
         }
-
-        return { success: true, change: change };
-    }
-
-    /**
-     * Reverses one _appendSurnameChange. The `expectedChange` argument
-     * asserts that the entry being popped matches the caller's
-     * understanding of what was appended.
-     *
-     * Throws if the popped entry does not match — this indicates a
-     * corrupted history and must be loud, not silent.
-     *
-     * Returns the undone entry on success, or throws on corruption.
-     * The caller (_undoFromRollback) wraps this in a try/catch for the
-     * unreachable-rollback path.
-     */
-    function _undoSurnameChange(characterId, character, expectedChange) {
-        var historyCopy = _readSurnameHistory(character);
-        if (!historyCopy || !Array.isArray(historyCopy.entries)
-            || historyCopy.entries.length === 0) {
-            throw new Error(
-                '_undoSurnameChange: cannot undo; surname history is empty for "' +
-                (characterId || 'unknown') + '"'
-            );
-        }
-
-        var history = _ensureSurnameHistoryOn(historyCopy, character);
-        var last = history.entries[history.entries.length - 1];
-
-        if (expectedChange && last.timestamp !== expectedChange.timestamp) {
-            throw new Error(
-                '_undoSurnameChange: history entry mismatch for "' +
-                (characterId || 'unknown') +
-                '"; expected timestamp ' + expectedChange.timestamp +
-                ', found ' + last.timestamp
-            );
-        }
-
-        history.entries.pop();
-        history.lastUpdated = history.entries.length > 0
-            ? history.entries[history.entries.length - 1].year
-            : (character.birthYear || _getCurrentYear());
-
-        var restoredSurname = !_isMissing(last.previousSurname)
-            ? last.previousSurname
-            : (history.birthSurname || '');
-        var restoredSource = last.previousSurnameSource || 'custom';
-        var restoredRules = last.previousSurnameRules || null;
-
-        var writeResult = window.CharacterCommands.updateCharacter(characterId, {
-            surname: restoredSurname,
-            surnameSource: restoredSource,
-            surnameRules: restoredRules,
-            surnameHistory: history
-        });
-        if (!writeResult || writeResult.success !== true) {
-            throw new Error(
-                '_undoSurnameChange: CharacterState refused the restore write: ' +
-                ((writeResult && writeResult.reason) || 'unknown')
-            );
-        }
-
-        return last;
+        return {
+            birthSurname: typeof character.surname === 'string' ? character.surname : '',
+            entries: [],
+            lastUpdated: typeof character.birthYear === 'number'
+                ? character.birthYear
+                : window.getCurrentYear()
+        };
     }
 
     // =========================================================================
-    // 7. COMMAND: recordSurnameChange
+    // 7. BIRTH SURNAME
     // =========================================================================
-    //
-    // The single-character surname change. Delegates the character-record
-    // write to _appendSurnameChange (which writes via
-    // CharacterCommands.updateCharacter directly — the same channel
-    // CharacterCommands.recordCharacterSurnameChange uses).
-    //
-    // This module does NOT call CharacterCommands.recordCharacterSurnameChange
-    // directly because that command is a superset (accepts missing year,
-    // defaults to current year, does not enforce the strict pre-birth
-    // check this module applies) and would introduce a divergence in
-    // validation. Instead, both modules write via the same underlying
-    // channel (CharacterCommands.updateCharacter), and this module's
-    // _appendSurnameChange is the single canonical helper for the
-    // name-domain-driven write.
 
-    function recordSurnameChange(characterId, newSurname, year, reason, options) {
-        var character = _resolveCharacter(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+    function recordBirthSurname(characterId, birthSurname, options) {
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
         }
-
-        var result = _appendSurnameChange(
-            characterId, character, newSurname, year, reason, options
-        );
-        if (!result.success) return result;
-
-        window.NamesState.invalidateSurnameHistory(characterId);
-        _commit('characterChanged', {
-            action: 'surnameChange',
-            characterIds: [characterId]
-        });
-
-        _logEvent('name', 'surname_change',
-            character.name + ' changed surname from "' + result.change.previousSurname +
-            '" to "' + result.change.surname + '" (' + result.change.reason + ')',
-            [character]);
-
-        return result;
-    }
-
-    // =========================================================================
-    // 8. COMMAND: recordBirthSurname
-    // =========================================================================
-    //
-    // Writes the birth surname into the character's surnameHistory. Does
-    // NOT set character.surname as a side effect.
-
-    function recordBirthSurname(characterId, birthSurname) {
+        if (!_hasId(characterId)) return _fail('characterId is required.');
         if (typeof birthSurname !== 'string') {
-            return { success: false, reason: 'Birth surname must be a string' };
+            return _fail('birthSurname must be a string.');
         }
 
-        var character = _resolveCharacter(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+        var character = window.getCharacterById(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
         }
 
-        var historyCopy = _readSurnameHistory(character);
-        var history = _ensureSurnameHistoryOn(historyCopy, character);
+        var history = _readSurnameHistoryForChange(character);
         history.birthSurname = birthSurname;
 
-        var writeResult = _writeSurnameHistory(characterId, history);
-        if (!writeResult.ok) {
-            return { success: false, reason: writeResult.reason };
+        if (!Array.isArray(history.entries) || history.entries.length === 0) {
+            history.lastUpdated = typeof character.birthYear === 'number'
+                ? character.birthYear
+                : window.getCurrentYear();
         }
 
-        window.NamesState.invalidateSurnameHistory(characterId);
-        _commit('characterChanged', {
-            action: 'birthSurname',
-            characterIds: [characterId]
+        var patch = {
+            surnameHistory: history,
+            updatedAt: Date.now()
+        };
+
+        if (options.setCurrentSurname === true) {
+            patch.surname = birthSurname;
+        }
+
+        var write = CC.updateCharacter(characterId, patch);
+        if (!write || write.success !== true) {
+            return _fail(write && write.reason
+                ? write.reason
+                : 'CharacterCommands refused the birth surname update.');
+        }
+
+        _commit('birthSurname', {
+            characterId: characterId,
+            birthSurname: birthSurname
         });
 
-        return { success: true, history: history };
+        return _ok({ birthSurname: birthSurname });
     }
 
     // =========================================================================
-    // 9. COMMAND: applyMarriageSurnames
+    // 8. MARRIAGE SURNAMES
     // =========================================================================
 
-    function applyMarriageSurnames(personId, spouseId, rule, year, notes) {
-        if (!_hasId(personId) || !_hasId(spouseId)) {
-            return { success: false, reason: 'Both person and spouse IDs are required' };
+    function calculateMarriageSurnames(groom, bride, rule) {
+        if (typeof NR.calculateMarriageSurnames !== 'function') {
+            return _fail('NameRules.calculateMarriageSurnames is required.');
         }
-        if (personId === spouseId) {
-            return { success: false, reason: 'Person and spouse must be different characters' };
+        return NR.calculateMarriageSurnames(groom, bride, rule);
+    }
+
+    /**
+     * Applies the couple's marriage surnames atomically.
+     *
+     * Both surnames are validated BEFORE either is applied. If validation
+     * fails for either, neither is touched.
+     *
+     * @param {string} characterAId
+     * @param {string} characterBId
+     * @param {string} ruleId       One of NameRules.MARRIAGE_RULES
+     * @param {number} year         Valid world year
+     * @param {Object} [options]
+     * @returns {{ success: boolean, reason?: string, updates?: Object }}
+     */
+    function applyMarriageSurnames(characterAId, characterBId, ruleId, year, options) {
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
         }
-        if (typeof rule !== 'string' || rule.length === 0) {
-            return { success: false, reason: 'Marriage surname rule is required' };
+        if (!_hasId(characterAId)) return _fail('characterAId is required.');
+        if (!_hasId(characterBId)) return _fail('characterBId is required.');
+        if (characterAId === characterBId) {
+            return _fail('A character cannot marry themselves.');
         }
 
-        var person = _resolveCharacter(personId);
-        if (!person) {
-            return { success: false, reason: 'Person not found' };
-        }
-        var spouse = _resolveCharacter(spouseId);
-        if (!spouse) {
-            return { success: false, reason: 'Spouse not found' };
-        }
+        var yearCheck = _requireYear(year, 'applyMarriageSurnames');
+        if (!yearCheck.ok) return _fail(yearCheck.reason);
 
-        if (person.isDeceased || spouse.isDeceased) {
-            return { success: false, reason: 'Cannot change surname of deceased character' };
+        if (!NR.MARRIAGE_RULES || typeof NR.MARRIAGE_RULES !== 'object') {
+            return _fail('NameRules.MARRIAGE_RULES is required.');
+        }
+        if (!Object.prototype.hasOwnProperty.call(NR.MARRIAGE_RULES, ruleId)) {
+            return _fail('Unknown marriage rule: ' + String(ruleId));
         }
 
-        var currentYear = _isMissing(year) ? _getCurrentYear() : year;
-
-        var calc = window.NameRules.calculateMarriageSurnames(person, spouse, rule);
-        if (!calc) {
-            return { success: false, reason: 'Unknown marriage surname rule "' + rule + '"' };
+        var characterA = window.getCharacterById(characterAId);
+        var characterB = window.getCharacterById(characterBId);
+        if (!characterA) return _fail('Character A not found.');
+        if (!characterB) return _fail('Character B not found.');
+        if (characterA.isDeleted === true) {
+            return _fail('Character A is soft-deleted.');
+        }
+        if (characterB.isDeleted === true) {
+            return _fail('Character B is soft-deleted.');
         }
 
-        var personNeedsChange = calc.newSurname && calc.newSurname !== person.surname;
-        var spouseNeedsChange = calc.spouseNewSurname && calc.spouseNewSurname !== spouse.surname;
+        var result;
+        try {
+            result = calculateMarriageSurnames(characterA, characterB, ruleId);
+        } catch (e) {
+            return _fail(e && e.message ? e.message : 'Marriage surname calculation threw.');
+        }
+        if (!result || result.success !== true) {
+            return _fail(result && result.reason
+                ? result.reason
+                : 'Marriage surname calculation failed.');
+        }
 
-        if (!personNeedsChange && !spouseNeedsChange) {
+        var updates = result.updates || null;
+        if (!updates) {
+            return _ok({ updates: null });
+        }
+
+        // Build the two patches BEFORE applying either. Both must be
+        // valid plans; if either would fail, neither is applied.
+        var patchA = _buildMarriageSurnamePatch(characterA, updates[characterAId], year, characterBId);
+        var patchB = _buildMarriageSurnamePatch(characterB, updates[characterBId], year, characterAId);
+
+        if (!patchA.ok) return _fail('Character A: ' + patchA.reason);
+        if (!patchB.ok) return _fail('Character B: ' + patchB.reason);
+
+        // Apply A.
+        var writeA = CC.updateCharacter(characterAId, patchA.patch);
+        if (!writeA || writeA.success !== true) {
+            return _fail(writeA && writeA.reason
+                ? 'Character A: ' + writeA.reason
+                : 'CharacterCommands refused Character A.');
+        }
+
+        // Apply B. If B fails, undo A (defense-in-depth; per the header
+        // this branch is unreachable in normal operation because
+        // validate-both-then-apply-both guarantees B was pre-validated).
+        var writeB = CC.updateCharacter(characterBId, patchB.patch);
+        if (!writeB || writeB.success !== true) {
+            _undoSurnameChange(characterAId, patchA.previousSurname, patchA.previousHistory);
+            return _fail(writeB && writeB.reason
+                ? 'Character B: ' + writeB.reason
+                : 'CharacterCommands refused Character B.');
+        }
+
+        _commit('marriageSurname', {
+            characterAId: characterAId,
+            characterBId: characterBId,
+            ruleId: ruleId,
+            updates: updates
+        });
+
+        _logEvent('name', 'Marriage Surnames',
+            'Marriage surname rule "' + ruleId + '" applied to ' +
+            characterAId + ' and ' + characterBId + ' in ' + year,
+            [characterAId, characterBId]);
+
+        return _ok({ updates: updates });
+    }
+
+    function _buildMarriageSurnamePatch(character, newSurname, year, spouseId) {
+        if (typeof newSurname !== 'string') {
+            return { ok: false, reason: 'planned surname must be a string.' };
+        }
+        var previousSurname = typeof character.surname === 'string'
+            ? character.surname
+            : '';
+        if (newSurname === previousSurname) {
+            // No-op: the rule produced the character's existing surname.
+            // Skip the write, return a patch with no fields to apply.
             return {
-                success: true,
-                personChanged: false,
-                spouseChanged: false,
-                personNewSurname: person.surname,
-                spouseNewSurname: spouse.surname
+                ok: true,
+                patch: { updatedAt: Date.now() },
+                previousSurname: previousSurname,
+                previousHistory: character.surnameHistory
             };
         }
 
-        // Validate BOTH changes before applying EITHER. This is what makes
-        // the rollback path below provably unreachable: _appendSurnameChange
-        // can only fail via _validateSurnameChange, which we've already run.
-        if (personNeedsChange) {
-            var pv = _validateSurnameChange(person, calc.newSurname, currentYear);
-            if (!pv.valid) {
-                return { success: false, reason: 'Person: ' + pv.reason };
-            }
-        }
-        if (spouseNeedsChange) {
-            var sv = _validateSurnameChange(spouse, calc.spouseNewSurname, currentYear);
-            if (!sv.valid) {
-                return { success: false, reason: 'Spouse: ' + sv.reason };
-            }
-        }
-
-        var personResult = null;
-        var spouseResult = null;
-
-        if (personNeedsChange) {
-            personResult = _appendSurnameChange(
-                personId,
-                person,
-                calc.newSurname,
-                currentYear,
-                'marriage',
-                {
-                    spouseId: spouse.id,
-                    notes: notes || ('Married ' + spouse.name),
-                    previousSurname: person.surname
-                }
-            );
-            // Unreachable given the validate-before-apply guard above.
-            // If it ever fires, an upstream invariant has broken; roll
-            // back and return.
-            if (!personResult.success) {
-                return { success: false, reason: 'Person: ' + personResult.reason };
-            }
-        }
-
-        if (spouseNeedsChange) {
-            // Re-read the spouse projection. The person's write above
-            // did not touch the spouse, so this is safe — but it keeps
-            // the pattern consistent and ensures the projection is
-            // fresh in case another concurrent write happened.
-            var spouseFresh = _resolveCharacter(spouseId);
-            spouseResult = _appendSurnameChange(
-                spouseId,
-                spouseFresh || spouse,
-                calc.spouseNewSurname,
-                currentYear,
-                'marriage',
-                {
-                    spouseId: person.id,
-                    notes: notes || ('Married ' + person.name),
-                    previousSurname: spouse.surname
-                }
-            );
-            // Unreachable given the validate-before-apply guard above.
-            // Retained as defense-in-depth: if this ever fires, undo
-            // the person's change before returning.
-            if (!spouseResult.success) {
-                if (personResult) {
-                    try {
-                        var personFresh = _resolveCharacter(personId);
-                        _undoSurnameChange(
-                            personId,
-                            personFresh || person,
-                            personResult.change
-                        );
-                    } catch (e) {
-                        if (typeof console !== 'undefined' && console.error) {
-                            console.error(
-                                'name-commands.js: rollback of person surname failed:', e
-                            );
-                        }
-                    }
-                }
-                return { success: false, reason: 'Spouse: ' + spouseResult.reason };
-            }
-        }
-
-        window.NamesState.invalidateSurnameHistory(personId);
-        window.NamesState.invalidateSurnameHistory(spouseId);
-
-        var ids = [];
-        if (personNeedsChange) ids.push(personId);
-        if (spouseNeedsChange) ids.push(spouseId);
-
-        _commit('characterChanged', {
-            action: 'surnameChange',
-            characterIds: ids
+        var history = _readSurnameHistoryForChange(character);
+        history.entries.push({
+            surname: newSurname,
+            year: year,
+            reason: 'marriage',
+            previousSurname: previousSurname,
+            spouseId: spouseId,
+            notes: ''
         });
-
-        // Read back the final state for the return payload.
-        var personFinal = _resolveCharacter(personId);
-        var spouseFinal = _resolveCharacter(spouseId);
-
-        _logEvent('name', 'marriage_surname',
-            person.name + ' and ' + spouse.name +
-            ' changed surnames due to marriage (rule: ' + rule + ')',
-            [person, spouse]);
+        history.lastUpdated = year;
 
         return {
-            success: true,
-            personChanged: personNeedsChange,
-            spouseChanged: spouseNeedsChange,
-            personNewSurname: personFinal ? personFinal.surname : person.surname,
-            spouseNewSurname: spouseFinal ? spouseFinal.surname : spouse.surname,
-            rule: rule
+            ok: true,
+            patch: {
+                surname: newSurname,
+                surnameHistory: history,
+                updatedAt: Date.now()
+            },
+            previousSurname: previousSurname,
+            previousHistory: character.surnameHistory
         };
     }
 
-    // =========================================================================
-    // 10. MARRIAGE SURNAME CALCULATION (delegation)
-    // =========================================================================
-
-    /**
-     * Delegates to NameRules, which owns marriage surname policy.
-     * Exposed here for symmetry with the other commands and for callers
-     * that reach for NameCommands for all name operations.
-     */
-    function calculateMarriageSurnames(person, spouse, rule) {
-        return window.NameRules.calculateMarriageSurnames(person, spouse, rule);
+    function _undoSurnameChange(characterId, previousSurname, previousHistory) {
+        // Defense-in-depth. See ATOMICITY in the module header.
+        if (!_hasId(characterId)) return;
+        CC.updateCharacter(characterId, {
+            surname: previousSurname,
+            surnameHistory: previousHistory,
+            updatedAt: Date.now()
+        });
     }
 
     // =========================================================================
-    // 11. COMMAND: revertLastSurnameChange
+    // 9. REVERT
     // =========================================================================
 
-    function revertLastSurnameChange(characterId) {
-        var character = _resolveCharacter(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+    function revertLastSurnameChange(characterId, options) {
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
+        }
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+
+        var character = window.getCharacterById(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
         }
 
-        var historyCopy = _readSurnameHistory(character);
-        if (!historyCopy || !Array.isArray(historyCopy.entries)
-            || historyCopy.entries.length === 0) {
-            return { success: false, reason: 'No surname changes to revert' };
+        var history = character.surnameHistory;
+        if (!_isPlainObject(history)
+            || !Array.isArray(history.entries)
+            || history.entries.length === 0) {
+            return _fail('No surname changes to revert.');
         }
 
-        var lastChange;
-        var restored;
+        var entries = history.entries.slice();
+        var lastChange = entries.pop();
+
+        var restoredSurname = lastChange.previousSurname
+            || history.birthSurname
+            || '';
+
+        var nextHistory = {
+            birthSurname: typeof history.birthSurname === 'string'
+                ? history.birthSurname
+                : '',
+            entries: entries,
+            lastUpdated: entries.length > 0
+                ? entries[entries.length - 1].year
+                : (typeof character.birthYear === 'number'
+                    ? character.birthYear
+                    : window.getCurrentYear())
+        };
+
+        var write = CC.updateCharacter(characterId, {
+            surname: restoredSurname,
+            surnameHistory: nextHistory,
+            updatedAt: Date.now()
+        });
+        if (!write || write.success !== true) {
+            return _fail(write && write.reason
+                ? write.reason
+                : 'CharacterCommands refused the revert.');
+        }
+
+        _commit('surnameRevert', {
+            characterId: characterId,
+            reverted: lastChange
+        });
+
+        _logEvent('name', 'Surname Revert',
+            characterId + ' reverted to ' + restoredSurname,
+            [characterId]);
+
+        return _ok({ reverted: lastChange });
+    }
+
+    // =========================================================================
+    // 10. CLEAR HISTORY
+    // =========================================================================
+
+    function clearSurnameHistory(characterId, options) {
+        if (_isMissing(options)) options = {};
+        if (!_isPlainObject(options)) {
+            return _fail('options must be a plain object.');
+        }
+        if (!_hasId(characterId)) return _fail('characterId is required.');
+
+        var character = window.getCharacterById(characterId);
+        if (!character) return _fail('Character not found.');
+        if (character.isDeleted === true) {
+            return _fail('Character is soft-deleted. Restore first to modify.');
+        }
+
+        var currentSurname = typeof character.surname === 'string'
+            ? character.surname
+            : '';
+
+        var nextHistory = {
+            birthSurname: currentSurname,
+            entries: [],
+            lastUpdated: typeof character.birthYear === 'number'
+                ? character.birthYear
+                : window.getCurrentYear()
+        };
+
+        var write = CC.updateCharacter(characterId, {
+            surnameHistory: nextHistory,
+            updatedAt: Date.now()
+        });
+        if (!write || write.success !== true) {
+            return _fail(write && write.reason
+                ? write.reason
+                : 'CharacterCommands refused the clear.');
+        }
+
+        _commit('surnameHistoryCleared', { characterId: characterId });
+
+        _logEvent('name', 'Surname History Cleared',
+            'Surname history cleared for ' + characterId,
+            [characterId]);
+
+        return _ok();
+    }
+
+    // =========================================================================
+    // 11. NAME-LIST MUTATIONS
+    // =========================================================================
+    //
+    // Name lists live in masterData.data.nameLists keyed by countryId.
+    // NamesState.getMutableNameList returns a LIVE reference into that
+    // collection; mutating through it updates canonical data.
+
+    var VALID_NAME_TYPES = { male: true, female: true, surnames: true };
+
+    function _requireCountryId(countryId, context) {
+        if (!_hasId(countryId)) {
+            return { ok: false, reason: context + ': countryId is required.' };
+        }
+        return { ok: true };
+    }
+
+    function _requireNameType(type, context) {
+        if (!VALID_NAME_TYPES[type]) {
+            return {
+                ok: false,
+                reason: context + ': type must be one of male, female, surnames.'
+            };
+        }
+        return { ok: true };
+    }
+
+    function _requireNameValue(name, context) {
+        if (typeof name !== 'string' || name.trim().length === 0) {
+            return {
+                ok: false,
+                reason: context + ': name must be a non-empty string.'
+            };
+        }
+        return { ok: true, value: name.trim() };
+    }
+
+    function addNameToList(countryId, type, name) {
+        var countryCheck = _requireCountryId(countryId, 'addNameToList');
+        if (!countryCheck.ok) return _fail(countryCheck.reason);
+        var typeCheck = _requireNameType(type, 'addNameToList');
+        if (!typeCheck.ok) return _fail(typeCheck.reason);
+        var nameCheck = _requireNameValue(name, 'addNameToList');
+        if (!nameCheck.ok) return _fail(nameCheck.reason);
+        var trimmed = nameCheck.value;
+
+        var list = NS.getMutableNameList(countryId);
+        if (!list) {
+            return _fail('No name list for country: ' + countryId);
+        }
+        if (!Array.isArray(list[type])) {
+            list[type] = [];
+        }
+        if (list[type].indexOf(trimmed) !== -1) {
+            return _ok({ unchanged: true, name: trimmed, type: type });
+        }
+        list[type].push(trimmed);
+        list[type].sort();
+
+        _commit('nameListChanged', {
+            countryId: countryId,
+            type: type,
+            action: 'added',
+            name: trimmed
+        });
+
+        return _ok({ unchanged: false, name: trimmed, type: type });
+    }
+
+    function removeNameFromList(countryId, type, name) {
+        var countryCheck = _requireCountryId(countryId, 'removeNameFromList');
+        if (!countryCheck.ok) return _fail(countryCheck.reason);
+        var typeCheck = _requireNameType(type, 'removeNameFromList');
+        if (!typeCheck.ok) return _fail(typeCheck.reason);
+        var nameCheck = _requireNameValue(name, 'removeNameFromList');
+        if (!nameCheck.ok) return _fail(nameCheck.reason);
+        var trimmed = nameCheck.value;
+
+        var list = NS.getMutableNameList(countryId);
+        if (!list) {
+            return _fail('No name list for country: ' + countryId);
+        }
+        if (!Array.isArray(list[type])) {
+            return _ok({ unchanged: true, name: trimmed, type: type });
+        }
+        var idx = list[type].indexOf(trimmed);
+        if (idx === -1) {
+            return _ok({ unchanged: true, name: trimmed, type: type });
+        }
+        list[type].splice(idx, 1);
+
+        _commit('nameListChanged', {
+            countryId: countryId,
+            type: type,
+            action: 'removed',
+            name: trimmed
+        });
+
+        return _ok({ unchanged: false, name: trimmed, type: type });
+    }
+
+    // =========================================================================
+    // 12. COUNTRY SURNAME RULES
+    // =========================================================================
+    //
+    // Replaces the entire rules block for a country. See the module
+    // header's REFACTOR HISTORY for why this command exists and what
+    // gap it closes.
+    //
+    // The countryId must already have a nameList entry. The command
+    // refuses rather than silently creating the list — creating a
+    // nameList entry would raise the question "what are the default
+    // rules for this country," a policy decision owned by NameRules,
+    // not NameCommands.
+    //
+    // Validation runs first (via NameRules.validateRules), so an
+    // invalid rules object leaves the existing rules untouched.
+
+    function setCountrySurnameRules(countryId, rules) {
+        var countryCheck = _requireCountryId(countryId, 'setCountrySurnameRules');
+        if (!countryCheck.ok) return _fail(countryCheck.reason);
+
+        if (!_isPlainObject(rules)) {
+            return _fail('setCountrySurnameRules: rules must be a plain object.');
+        }
+
+        // NameRules.validateRules is the canonical validator. It returns
+        // { valid, errors } — the older contract used by the culture
+        // names tab. Modern NameRules also exports a throwing variant,
+        // but validateRules is the stable, non-throwing shape that UI
+        // callers expect. Use it here so the tab can surface errors
+        // without a try/catch.
+        if (typeof NR.validateRules !== 'function') {
+            return _fail('NameRules.validateRules is required.');
+        }
+
+        var validation;
         try {
-            lastChange = _undoSurnameChange(characterId, character, null);
-            restored = lastChange.previousSurname !== undefined
-                ? lastChange.previousSurname
-                : (lastChange.previousSurname === null ? '' : lastChange.previousSurname);
+            validation = NR.validateRules(rules);
         } catch (e) {
-            return { success: false, reason: e.message || 'Revert failed' };
+            return _fail(
+                'Rules validation threw: ' +
+                (e && e.message ? e.message : String(e))
+            );
         }
 
-        window.NamesState.invalidateSurnameHistory(characterId);
-        _commit('characterChanged', {
-            action: 'surnameRevert',
-            characterIds: [characterId]
-        });
-
-        // Read back the final surname from the fresh projection.
-        var final = _resolveCharacter(characterId);
-        var finalSurname = final ? final.surname : restored;
-
-        _logEvent('name', 'surname_reverted',
-            character.name + ' reverted surname change from "' +
-            lastChange.surname + '" to "' + finalSurname + '"',
-            [character]);
-
-        return {
-            success: true,
-            revertedChange: lastChange,
-            restoredSurname: finalSurname
-        };
-    }
-
-    // =========================================================================
-    // 12. COMMAND: clearSurnameHistory
-    // =========================================================================
-    //
-    // Removes all change entries. Preserves birthSurname. Does not change
-    // the character's current surname.
-
-    function clearSurnameHistory(characterId) {
-        var character = _resolveCharacter(characterId);
-        if (!character) {
-            return { success: false, reason: 'Character not found' };
+        if (!validation || validation.valid !== true) {
+            var errors = (validation && Array.isArray(validation.errors))
+                ? validation.errors
+                : ['Unknown validation failure.'];
+            return {
+                success: false,
+                reason: 'Rules failed validation: ' + errors.join('; '),
+                errors: errors
+            };
         }
 
-        var historyCopy = _readSurnameHistory(character);
-        var history = _ensureSurnameHistoryOn(historyCopy, character);
-        history.entries = [];
-        history.lastUpdated = character.birthYear || _getCurrentYear();
-
-        var writeResult = _writeSurnameHistory(characterId, history);
-        if (!writeResult.ok) {
-            return { success: false, reason: writeResult.reason };
+        var list = NS.getMutableNameList(countryId);
+        if (!list) {
+            return _fail(
+                'No name list for country: ' + countryId +
+                '. Create a name list for the country before setting rules.'
+            );
         }
 
-        window.NamesState.invalidateSurnameHistory(characterId);
-        _commit('characterChanged', {
-            action: 'surnameHistoryCleared',
-            characterIds: [characterId]
-        });
+        list.rules = _clone(rules);
 
-        _logEvent('name', 'surname_history_cleared',
-            character.name + "'s surname history was cleared",
-            [character]);
-
-        return { success: true };
-    }
-
-    // =========================================================================
-    // 13. COMMAND: addNameToList
-    // =========================================================================
-    //
-    // Name lists live in masterData.data.nameLists. NamesState.
-    // getMutableNameList returns a LIVE reference into that collection,
-    // so mutating through it correctly updates canonical data. This is
-    // a different mechanism from character-record writes.
-
-    function addNameToList(countryId, name, gender, category) {
-        if (!_hasId(countryId)) {
-            return { success: false, reason: 'Country is required' };
-        }
-        if (typeof name !== 'string' || name.trim() === '') {
-            return { success: false, reason: 'Name is required' };
-        }
-        if (gender !== 'male' && gender !== 'female' && gender !== 'both') {
-            return { success: false, reason: "Gender must be 'male', 'female', or 'both'" };
-        }
-        if (!_isMissing(category) && category !== 'given' && category !== 'surname') {
-            return { success: false, reason: "Category must be 'given' or 'surname'" };
-        }
-
-        var nameList = window.NamesState.getMutableNameList(countryId);
-        if (!nameList) {
-            return { success: false, reason: 'Name list not found for country' };
-        }
-
-        var trimmed = name.trim();
-        var added = false;
-        var isSurname = category === 'surname';
-
-        if (isSurname) {
-            if (!Array.isArray(nameList.surnames)) nameList.surnames = [];
-            if (nameList.surnames.indexOf(trimmed) === -1) {
-                nameList.surnames.push(trimmed);
-                added = true;
-            }
-        } else {
-            if (!Array.isArray(nameList.male)) nameList.male = [];
-            if (!Array.isArray(nameList.female)) nameList.female = [];
-            if (gender === 'male') {
-                if (nameList.male.indexOf(trimmed) === -1) {
-                    nameList.male.push(trimmed);
-                    added = true;
-                }
-            } else if (gender === 'female') {
-                if (nameList.female.indexOf(trimmed) === -1) {
-                    nameList.female.push(trimmed);
-                    added = true;
-                }
-            } else {
-                if (nameList.male.indexOf(trimmed) === -1) {
-                    nameList.male.push(trimmed);
-                    added = true;
-                }
-                if (nameList.female.indexOf(trimmed) === -1) {
-                    nameList.female.push(trimmed);
-                    added = true;
-                }
-            }
-        }
-
-        if (!added) {
-            return { success: false, reason: 'Name already exists in this list' };
-        }
-
-        window.NamesState.invalidateNameList(countryId);
-        _commit('nameListChanged', {
+        _commit('surnameRulesChanged', {
             countryId: countryId,
-            name: trimmed
+            rules: _clone(rules)
         });
 
-        return { success: true };
+        return _ok({ rules: _clone(rules) });
     }
 
     // =========================================================================
-    // 14. COMMAND: removeNameFromList
-    // =========================================================================
-
-    function removeNameFromList(countryId, name, gender, category) {
-        if (!_hasId(countryId)) {
-            return { success: false, reason: 'Country is required' };
-        }
-        if (typeof name !== 'string' || name.trim() === '') {
-            return { success: false, reason: 'Name is required' };
-        }
-        if (gender !== 'male' && gender !== 'female' && gender !== 'both' && gender !== 'any') {
-            return { success: false, reason: "Gender must be 'male', 'female', 'both', or 'any'" };
-        }
-        if (!_isMissing(category) && category !== 'given' && category !== 'surname') {
-            return { success: false, reason: "Category must be 'given' or 'surname'" };
-        }
-
-        var nameList = window.NamesState.getMutableNameList(countryId);
-        if (!nameList) {
-            return { success: false, reason: 'Name list not found for country' };
-        }
-
-        var trimmed = name.trim();
-        var removed = false;
-
-        function _removeFrom(arr) {
-            if (!Array.isArray(arr)) return false;
-            var idx = arr.indexOf(trimmed);
-            if (idx === -1) return false;
-            arr.splice(idx, 1);
-            return true;
-        }
-
-        if (category === 'surname') {
-            if (_removeFrom(nameList.surnames)) removed = true;
-        } else {
-            if (gender === 'male' || gender === 'any' || gender === 'both') {
-                if (_removeFrom(nameList.male)) removed = true;
-            }
-            if (gender === 'female' || gender === 'any' || gender === 'both') {
-                if (_removeFrom(nameList.female)) removed = true;
-            }
-        }
-
-        if (!removed) {
-            return { success: false, reason: 'Name not found in this list' };
-        }
-
-        window.NamesState.invalidateNameList(countryId);
-        _commit('nameListChanged', {
-            countryId: countryId,
-            name: trimmed
-        });
-
-        return { success: true };
-    }
-
-    // =========================================================================
-    // 15. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.NameCommands = {
@@ -1149,13 +942,16 @@
 
         addNameToList: addNameToList,
         removeNameFromList: removeNameFromList,
+        setCountrySurnameRules: setCountrySurnameRules,
 
         calculateMarriageSurnames: calculateMarriageSurnames,
 
         _validateSurnameChange: _validateSurnameChange,
 
-        // Persistence
         persist: persist
     };
 
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.NameCommands;
+    }
 })();
