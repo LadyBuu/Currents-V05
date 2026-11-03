@@ -1,16 +1,1740 @@
-# Still Waters — Apprenticeship System
+================================================================================
+STILL WATERS — APPRENTICESHIP SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
 
-**Location:** `js/apprenticeship/`
-**Last regenerated from:** the code in this folder after the ownership
-refactor (Role → Apprenticeship → Professional Relationship → Character).
+Scope of this document:
+  - Every apprenticeship file provided in this batch (7 files):
+      js/apprenticeship/apprenticeship-constants.js
+      js/apprenticeship/apprenticeship-rules.js
+      js/apprenticeship/apprenticeship-queries.js
+      js/apprenticeship/apprenticeship-commands.js
+      js/apprenticeship/modals-apprenticeship.js
+      js/apprenticeship/professional-knowledge-commands.js
+      (plus apprenticeship-doc.txt — the narrative doc, which is
+       truncated in the supplied batch at §1 "Ownership chain:")
+  - Every core, character, role, relationship, and cross-domain file
+    the apprenticeship subsystem depends on, at LOAD time (module-level
+    guards) or at CALL time (typeof-guarded lookups), and how each is
+    used.
+  - The dependency graph across apprenticeship layers (constants ->
+    rules -> queries -> commands -> modals; and knowledge-commands as
+    a parallel write path).
+  - Cross-references to the apprenticeship subsystem's own narrative
+    doc (apprenticeship-doc.txt).
 
----
+PATHS NOTE:
+  All apprenticeship files are at js/apprenticeship/. The narrative doc
+  uses js/apprenticeship/. The professional-knowledge-commands.js file
+  lives in the apprenticeship folder even though it operates across
+  all professions (this is documented in its own header).
 
-## 1. Overview
+Anything not provable from the supplied files is marked [UNVERIFIED].
+apprenticeship-doc.txt is truncated at §1 in the supplied batch; the
+remaining narrative sections are not available and are marked
+[NARRATIVE DOC TRUNCATED].
 
-The apprenticeship system owns the **process** by which one character
-teaches another toward a role. It does not own the role catalogue, the
-relationship edge, or the character's profession record. It orchestrates
-those three domains.
 
-Ownership chain:
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
+
+The apprenticeship subsystem sits ABOVE the relationship, role, and
+character domains. It orchestrates their commands and queries; it does
+not own them.
+
+  CONSTANTS (leaf; depends on SkillUtils)
+    js/apprenticeship/apprenticeship-constants.js
+
+  RULES (pure policy; depends on constants + SkillUtils at load)
+    js/apprenticeship/apprenticeship-rules.js
+
+  QUERIES (read-only; composes RelationshipQueries + CharacterCommands
+           + RoleState + accessors + time + rules)
+    js/apprenticeship/apprenticeship-queries.js
+
+  COMMANDS (writes; composes ProfessionalCommands + CharacterCommands
+            + RoleCommands + queries + rules)
+    js/apprenticeship/apprenticeship-commands.js
+
+  KNOWLEDGE COMMANDS (parallel write path; composes CharacterCommands
+                      + RoleCommands + queries + rules; no
+                      ProfessionalCommands)
+    js/apprenticeship/professional-knowledge-commands.js
+
+  MODALS (DOM + commands; batch persist per successful action)
+    js/apprenticeship/modals-apprenticeship.js
+
+Note the layer ordering:
+  constants -> rules -> queries -> commands -> modals
+  knowledge-commands depends on CharacterCommands and RoleCommands
+  directly (not on ApprenticeshipCommands).
+
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws/refuses if the dependency
+                          is missing when invoked; the module loads
+                          without it.
+  OPTIONAL              — the module checks and falls back.
+
+Cross-domain references are labeled with their subsystem:
+  [core]        js/core/...
+  [character]   js/character/...
+  [role]        js/systems/roles/...
+  [relationship] js/relationships/...
+  [professional] js/relationships/professional-*.js
+  [settlement]  js/settlement/...
+  [world]       js/core/world.js
+  [skill]       js/skill/skill-utils.js
+  [random]      js/core/randomness.js (window.Random)
+  [formatting]  js/core/formatting.js
+  [ui]          js/core/ui.js
+  [icons]       js/core/icons.js
+  [modals]      js/core/modals-core.js
+  [accessors]   js/core/accessors.js
+  [time]        js/core/time.js
+  [storage]     js/core/storage.js
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS — apprenticeship-constants.js
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-constants.js
+    Owns: window.APPRENTICESHIP_STAGES,
+          window.APPRENTICESHIP_STATUS,
+          window.APPRENTICESHIP_ROLES,
+          window.TEACHING_CONSTANTS.
+    Load-time dependencies (HARD — throw at load if missing):
+      window.SkillUtils                 [skill] via skill-utils.js;
+        SkillUtils.getThresholds is a LOAD-TIME METHOD CHECK.
+    Call-time dependencies:  NONE.
+    Consumed by:
+      [load] apprenticeship-rules.js     (APPRENTICESHIP_STAGES,
+                                          APPRENTICESHIP_STATUS,
+                                          TEACHING_CONSTANTS — HARD)
+      [load] apprenticeship-commands.js  (TEACHING_CONSTANTS,
+                                          via A.APPRENTICESHIP;
+                                          reads window.TEACHING_
+                                          CONSTANTS indirectly)
+      [load] apprenticeship-queries.js   (TEACHING_CONSTANTS —
+                                          call-time via
+                                          getTeachableSkills /
+                                          findPotentialMasters)
+      [load] modals-apprenticeship.js    (TEACHING_CONSTANTS,
+                                          APPRENTICESHIP_STAGES,
+                                          APPRENTICESHIP_STATUS —
+                                          HARD)
+    Notes:
+      - APPRENTICESHIP_STAGES is DERIVED from SkillUtils.TIERS.
+        Each stage mirrors a SkillUtils tier by id, name, and
+        minLevel/maxLevel. requiredYears is local to apprenticeship.
+      - TEACHING_CONSTANTS.MIN_MASTER_SKILL = THRESHOLDS.JOURNEYMAN
+        (51). COMPLETION_SKILL = THRESHOLDS.EXPERT (76). Both
+        derived from SkillUtils so moving a tier boundary moves them.
+      - The module validates its own derivation at load: every
+        SkillUtils tier must have a matching stage, stage boundaries
+        must equal tier boundaries, MIN_MASTER_SKILL < COMPLETION_SKILL,
+        MIN_SKILL < MAX_SKILL. Violations throw.
+      - SKILL_LEVELS and SKILL_TRANSFER_METHODS do NOT live here.
+        They live in js/professional/skill-constants.js and
+        js/professional/skill-transfer-constants.js per the module
+        header.
+
+--------------------------------------------------------------------------------
+2.2 RULES — apprenticeship-rules.js
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-rules.js
+    Owns: window.ApprenticeshipRules
+      ({ getStageForSkill, clampSkill, isSkillInRange,
+         validateCreation, validateStatusTransition,
+         calculateTeachingOutcome, calculateAnnualProgress,
+         canComplete, canTeach, getRequiredYearsForStage }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.APPRENTICESHIP_STAGES       [core] via
+                                          apprenticeship-constants.js
+      window.APPRENTICESHIP_STATUS       [core] via
+                                          apprenticeship-constants.js
+      window.TEACHING_CONSTANTS          [core] via
+                                          apprenticeship-constants.js
+      window.SkillUtils                  [skill];
+        SkillUtils.getThresholds is a LOAD-TIME METHOD CHECK.
+    Call-time dependencies:  NONE. Pure functions.
+    Consumed by:
+      [load] apprenticeship-queries.js   (LOAD-TIME GUARD;
+                                          getStageForSkill)
+      [load] apprenticeship-commands.js  (LOAD-TIME GUARD;
+                                          getStageForSkill,
+                                          validateCreation,
+                                          validateStatusTransition,
+                                          calculateTeachingOutcome,
+                                          calculateAnnualProgress,
+                                          canComplete,
+                                          canTeach,
+                                          isSkillInRange,
+                                          clampSkill)
+      [load] modals-apprenticeship.js    (LOAD-TIME GUARD;
+                                          canComplete,
+                                          isSkillInRange)
+    Notes:
+      - PURE. No state. No I/O. No randomness (roll is supplied by
+        the caller; see calculateTeachingOutcome).
+      - getStageForSkill delegates to SkillUtils.getTierId for the
+        tier boundary, then maps the tier id onto APPRENTICESHIP_
+        STAGES. There is ONE skill taxonomy in the application.
+      - validateSpecialization is NOT exported. It lives inline in
+        apprenticeship-commands.js as _validateSpecialization. See
+        SPECIALIZATION VALIDATION in the module header.
+      - canComplete requires status === ONGOING AND
+        skillLevel >= TEACHING_CONSTANTS.COMPLETION_SKILL.
+      - calculateTeachingOutcome's roll MUST be in [0,1]; a
+        non-finite or out-of-range roll is coerced to 0 (success).
+        This is a documented defensive coercion, not a general
+        pattern.
+
+--------------------------------------------------------------------------------
+2.3 QUERIES — apprenticeship-queries.js
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-queries.js
+    Owns: window.ApprenticeshipQueries
+      ({ getSkillLevel, getProfessionRecord, hasRole, getRole,
+         getApprenticeship, getOngoingApprenticeship,
+         getOngoingApprenticeships, getApprenticeshipById,
+         getApprenticeshipRelationships,
+         getApprenticeshipDetails, getApprenticeshipDetailsById,
+         projectApprenticeship, getApprentices, getMasters,
+         getMaster, isApprentice, isMaster,
+         getApprenticeshipRole, getAllApprenticeships,
+         getActiveApprenticeships, getApprenticeshipsByMaster,
+         getApprenticeshipsByApprentice, getApprenticeshipBetween,
+         getApprenticeshipsByRole, getTeachableSkills,
+         findPotentialMasters }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.RELATIONSHIP_ARCHETYPES     [relationship] via
+                                          relationship-types.js
+      window.RELATIONSHIP_STATUS         [relationship] via
+                                          relationship-types.js
+      window.RelationshipQueries         [relationship]
+      window.CharacterCommands           [character];
+        CharacterCommands.getProfession is a LOAD-TIME METHOD
+        CHECK.
+      window.RoleState                   [role];
+        RoleState.getRole is a LOAD-TIME METHOD CHECK.
+      window.ApprenticeshipRules         [core] via
+                                          apprenticeship-rules.js;
+        getStageForSkill is a LOAD-TIME METHOD CHECK.
+      window.getCharacterById            [accessors]
+      window.getCurrentYear              [time]
+    Call-time dependencies:
+      window.TEACHING_CONSTANTS          [core] — via
+                                          getTeachableSkills /
+                                          findPotentialMasters;
+                                          missing -> throw inside
+                                          those functions.
+      window.SettlementQueries.getSettlementMastersByRole
+                                         [settlement] — REQUIRED for
+                                          findPotentialMasters; missing
+                                          -> throw.
+    Consumed by:
+      [load] apprenticeship-commands.js  (LOAD-TIME GUARD on the
+                                          namespace)
+      [load] modals-apprenticeship.js    (LOAD-TIME GUARD on the
+                                          namespace)
+    Notes:
+      - ROLE READS: RoleState.getRole is the canonical reader and
+        is required at load. There is NO accessor fallback. After
+        role-system.js loads, window.getRoleById is aliased to
+        RoleState.getRole (clones), so even the shim returns
+        clones.
+      - CHARACTER PROJECTION CONTRACT: reads only `id`, `name`,
+        `surname` off window.getCharacterById results. Those fields
+        are present on both the projection and the live entity.
+      - SKILL AUTHORITY: skill is read through
+        CharacterCommands.getProfession. NEVER through
+        character.professions and NEVER through metadata caches.
+      - ROLEID CONTRACT: getApprenticeship requires roleId.
+        getOngoingApprenticeship throws when the pair has more
+        than one ongoing apprenticeship.
+      - DETAILS INCLUDING ENDED RECORDS: getApprenticeshipDetails
+        accepts { includeEnded: true } to return ended records;
+        getApprenticeshipDetailsById returns any status.
+      - EDGE SOURCE: reads route through RelationshipQueries
+        (NOT ProfessionalQueries). The raw records from
+        RelationshipQueries are what projectApprenticeship needs.
+      - COMPLEXITY: getApprenticeshipsByRole is O(apprenticeships)
+        per call. Called from _handleRoleDeleted on every
+        roleDeleted event. Documented deferral.
+      - getTeachableSkills reads professions through
+        CharacterCommands.getProfessions. Never off the projection.
+      - findPotentialMasters requires
+        SettlementQueries.getSettlementMastersByRole. Silent empty
+        results are not permitted.
+
+--------------------------------------------------------------------------------
+2.4 COMMANDS — apprenticeship-commands.js
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-commands.js
+    Owns: window.ApprenticeshipCommands
+      ({ persist, createApprenticeship, updateApprenticeship,
+         progressApprenticeship, teachSkill, teachSpecialization,
+         completeApprenticeship, terminateApprenticeship,
+         cancelApprenticeship, removeAllReferencesTo,
+         advanceApprenticeshipSkills }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.ApprenticeshipRules         [core]; getStageForSkill is
+                                          a LOAD-TIME METHOD CHECK.
+      window.ApprenticeshipQueries       [core]
+      window.ProfessionalCommands        [professional];
+        createEdge, updateEdgeMetadata, updateEdgeFields, endEdge,
+        removeEdge are LOAD-TIME METHOD CHECKS.
+      window.CharacterCommands           [character];
+        getProfession, updateProfession, addProfession,
+        addProfessionSpecialization, removeProfession are LOAD-TIME
+        METHOD CHECKS.
+      window.RoleCommands                [role];
+        recordCharacterSkillProgress is a LOAD-TIME METHOD CHECK.
+      window.RELATIONSHIP_ARCHETYPES     [relationship] via
+                                          relationship-types.js
+      window.RELATIONSHIP_STATUS         [relationship] via
+                                          relationship-types.js
+    Call-time dependencies:
+      window.getCharacterById            [accessors] — via
+                                          _getCharacterById
+      window.RoleState.getRole / window.getRoleById
+                                         [role] — via _getRoleById
+                                          (LENIENT); throws on write
+                                          path missing via
+                                          _requireRoleForWrite
+      window.getCurrentYear              [time]
+      window.Random.next / window.randomNext
+                                         [random] — via _roll;
+                                          throws if neither is
+                                          available
+      window.SKILL_TRANSFER_METHODS      [UNVERIFIED] via
+                                          js/professional/skill-
+                                          transfer-constants.js;
+                                          used by teachSkill;
+                                          missing -> UNKNOWN_METHOD
+                                          for every methodId
+      window.saveMasterData              [storage] — via persist();
+                                          missing -> { success:
+                                          false }
+      window.getLastSaveError            [storage] — via persist()
+                                          failure path
+                                          (typeof-guarded)
+      window.dispatchEvent / CustomEvent browser — via _notify;
+                                          wrapped in typeof guards
+    Consumed by:
+      [load] modals-apprenticeship.js    (LOAD-TIME GUARD on the
+                                          namespace)
+      [call] CharacterLifecycle          (via the death cascade —
+                                          indirect through
+                                          ProfessionalKnowledge
+                                          Commands; not a direct
+                                          dependency of this module)
+    Notes:
+      - PERSISTENCE: commands do NOT save. persist() is the only
+        saveMasterData site. Returns { success, reason? } (Pattern
+        A + getLastSaveError).
+      - ROLE READS: _getRoleById is LENIENT (display only); _require
+        RoleForWrite is STRICT. See the module header.
+      - SKILL PROGRESSION: routes through RoleCommands.record
+        CharacterSkillProgress (not CharacterCommands.update
+        Profession). Role creation (addProfession) is unchanged.
+      - MULTI-ROLE DISAMBIGUATION: progressApprenticeship,
+        teachSkill, teachSpecialization accept an OPTIONAL roleId.
+        When omitted and the pair has multiple ongoing
+        apprenticeships, they return { code: 'MULTIPLE_ROLES' }
+        instead of letting the query throw.
+      - SPECIALIZATION VALIDATION: inline _validateSpecialization.
+        Validates membership in role.specializations. Does NOT
+        validate that the role exists (that is checked before the
+        call).
+      - PARTIAL-TRANSACTION ROLLBACK: createApprenticeship captures
+        pre-state (existedBefore, previousSkillLevel) and reverts on
+        edge creation failure via _revertEnsureProfession.
+      - _handleRoleDeleted wraps each cancelApprenticeship in a
+        try/catch and calls persist() ONCE after the loop.
+      - updateApprenticeship gates updateEdgeMetadata on metaChanged
+        and endEdge on statusChanged.
+      - ROLL: goes through window.Random.next (canonical RNG
+        stream) with a legacy window.randomNext fallback. No
+        Math.random, no window.RNG.
+
+--------------------------------------------------------------------------------
+2.5 KNOWLEDGE COMMANDS — professional-knowledge-commands.js
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/professional-knowledge-commands.js
+    Owns: window.ProfessionalKnowledgeCommands
+      ({ preserveKnowledgeOnDeath, assessKnowledgeLoss }).
+    Load-time dependencies: NONE at parse. The module has no
+      module-level guard block; every dependency is checked at
+      call time via _dep / _characterCommandsMethod /
+      _recordCharacterSkillProgress.
+    Call-time dependencies:
+      window.getCharacterById            [accessors]
+      window.getRoleById / window.RoleState.getRole
+                                         [role] — via _getRoleById;
+                                          if NEITHER is available,
+                                          throws (see HARD GUARD in
+                                          _getRoleById)
+      window.getCurrentYear              [time]
+      window.CharacterCommands.addProfession /
+        updateProfession / getProfession / getProfessions
+                                         [character] — via
+                                          _characterCommandsMethod
+                                          (throws if missing)
+      window.RoleCommands.recordCharacterSkillProgress
+                                         [role] — via
+                                          _recordCharacterSkillProgress
+                                          (throws if missing)
+      window.calculateAge                [time] — soft
+                                          (typeof-guarded; missing
+                                          -> null)
+      window.dispatchEvent / CustomEvent browser — via _notify;
+                                          wrapped in typeof guards
+    Consumed by:
+      [call] character-lifecycle.js (or its death cascade
+             orchestrator) — this is the intended caller for
+             preserveKnowledgeOnDeath; the module does not depend on
+             CharacterLifecycle.
+    Notes:
+      - PERSISTENCE: preserveKnowledgeOnDeath does NOT save. The
+        caller's death cascade is the atomic boundary. See
+        PERSISTENCE and HALF-TRANSACTION RISK in the header.
+      - SKILL PROGRESSION: routes through RoleCommands.record
+        CharacterSkillProgress (not CharacterCommands.update
+        Profession). Role creation (addProfession) is unchanged.
+        Pre-write guard `existingLevel < inheritedLevel` kept as a
+        fast path.
+      - ROLE READS: _getRoleById THROWS when NEITHER
+        RoleState.getRole NOR window.getRoleById is available. Prior
+        revisions returned null, violating the module's own NO
+        FALLBACKS contract. _requireRoleForWrite is present but
+        unused today (both write paths operate on professions, not
+        roles).
+      - CHARACTER PROJECTION CONTRACT: reads only `name`,
+        `birthYear`, `isDeceased`, `deathYear` off
+        window.getCharacterById results.
+      - READ THROUGH CharacterCommands: professions are read via
+        getProfessions, NEVER off the character projection. This
+        matches the pattern used by apprenticeship-queries.js.
+      - NO FALLBACKS: CharacterCommands / RoleCommands methods that
+        are missing throw on first use. No silent empty-list
+        fallback.
+
+--------------------------------------------------------------------------------
+2.6 MODALS — modals-apprenticeship.js
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/modals-apprenticeship.js
+    Owns: five flat window.open* functions
+      (openCreateApprenticeshipModal, openEditApprenticeshipModal,
+       openApprenticeshipDetailsModal, openViewMasterTreeModal,
+       openFindMasterByLocationModal).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.openModal                   [modals] via
+                                          modals-core.js
+      window.closeTopModal               [modals] via
+                                          modals-core.js
+      window.confirmDialog               [modals] via
+                                          modals-core.js
+      window._escapeHtml                 [formatting] via
+                                          formatting.js
+      window._showToast                  [ui] via ui.js
+      window.Icons                       [icons] via icons.js
+      window.getCharacterById            [accessors] via
+                                          accessors.js
+      window.getPlaceById                [accessors] via
+                                          accessors.js
+      window.getCurrentYear              [time]
+      window.calculateAge                [time]
+      window.ApprenticeshipQueries       [core]
+      window.ApprenticeshipCommands      [core]
+      window.ApprenticeshipRules         [core]
+      window.TEACHING_CONSTANTS          [core]
+      window.APPRENTICESHIP_STAGES       [core]
+      window.APPRENTICESHIP_STATUS       [core]
+    Call-time dependencies:
+      window.getCurrentPlace             [world] via world.js —
+                                          used by _getCurrentLocation
+                                          (soft; typeof-guarded)
+      window.getCurrentLocationId        [world] via world.js —
+                                          used by _getCurrentLocation
+                                          (soft; typeof-guarded)
+      window.showToast                   [ui] via ui.js — via
+                                          _showToast fallback
+                                          chain (typeof-guarded;
+                                          one-shot warn if neither
+                                          provider is available)
+      window._showToast                  [ui] via ui.js — primary;
+                                          falls back to showToast
+      window.confirmDialog               [modals] — primary;
+                                          falls back to window.confirm
+                                          if missing? NO — the
+                                          REQUIRED array hard-guards
+                                          it; the wrapper calls
+                                          window.confirmDialog
+                                          directly
+    Consumed by: any dashboard or page that opens apprenticeship
+      modals.
+    Notes:
+      - LOCATION RESOLUTION: _getCurrentLocation uses world.js's
+        getCurrentPlace / getCurrentLocationId. Prior revisions
+        required window.getCurrentLocation (which accessors.js does
+        NOT export); the module threw at load because the REQUIRED
+        array listed it. The dependency has been removed.
+      - ICON LOOKUP: _getIcon self-defines using window.Icons[name]
+        with CIRCLE fallback. Does NOT depend on window._getIcon
+        (which does not exist — icons.js exports window.getIcon,
+        not window._getIcon).
+      - CONFIRM WRAPPER: _confirm enforces the THREE-argument
+        confirmDialog(message, title, onConfirm) form. The
+        two-argument form silently sent the callback into the
+        title slot and left the confirm callback undefined.
+      - MODAL LIFECYCLE: every modal uses onMount to bind
+        post-open handlers. Element lookups are scoped to the
+        modal element.
+      - PERSISTENCE: every successful mutating command path calls
+        _persistAndWarn, which calls ApprenticeshipCommands.persist
+        once and shows a warning toast on failure.
+      - _showToast's fallback chain tries _showToast (primary),
+        then showToast, then a one-shot console.warn.
+
+
+================================================================================
+PART 3 — CORE / CHARACTER / ROLE / RELATIONSHIP / SETTLEMENT DEPENDENCIES
+================================================================================
+
+Legend:
+  core        — js/core/... files
+  char        — js/character/... files
+  role        — js/systems/roles/... files
+  rel         — js/relationships/... files
+  prof        — js/relationships/professional-*.js
+  settle      — js/settlement/... files
+  skill       — js/skill/skill-utils.js
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/skill/skill-utils.js
+    Used by:
+      [load] apprenticeship-constants.js   (HARD — getThresholds
+                                            method check)
+      [load] apprenticeship-rules.js       (HARD — getThresholds
+                                            method check)
+    Notes:
+      - The single source of truth for tier boundaries. Apprentice
+        stages are DERIVED from SkillUtils.TIERS, not re-declared.
+      - TIERS, getThresholds, getTier, getTierId, clampLevel,
+        isValidLevel are the functions read here.
+
+  js/core/accessors.js
+    Used by:
+      [load] apprenticeship-queries.js    (HARD —
+                                            getCharacterById)
+      [call] apprenticeship-commands.js    (via _getCharacterById —
+                                            getCharacterById)
+      [call] modals-apprenticeship.js      (via
+                                            getCharacterById,
+                                            getPlaceById)
+      [call] professional-knowledge-commands.js
+                                           (getCharacterById)
+
+  js/core/time.js
+    Used by:
+      [load] apprenticeship-queries.js    (HARD —
+                                            getCurrentYear)
+      [load] modals-apprenticeship.js      (HARD —
+                                            getCurrentYear,
+                                            calculateAge)
+      [call] apprenticeship-commands.js    (via _getCurrentYear)
+      [call] professional-knowledge-commands.js
+                                           (getCurrentYear,
+                                            calculateAge)
+
+  js/core/storage.js
+    Used by:
+      [call] apprenticeship-commands.js    (saveMasterData,
+                                            getLastSaveError — via
+                                            persist(); missing ->
+                                            { success: false })
+    Notes:
+      - getLastSaveError is typeof-guarded (persist() failure path).
+      - No other apprenticeship file reads storage.js directly.
+
+  js/core/world.js
+    Used by:
+      [call] modals-apprenticeship.js      (getCurrentPlace,
+                                            getCurrentLocationId —
+                                            via _getCurrentLocation;
+                                            soft; typeof-guarded)
+    Notes:
+      - Prior revisions required window.getCurrentLocation, which
+        accessors.js does NOT export. That dependency has been
+        removed.
+
+  js/core/randomness.js
+    Used by:
+      [call] apprenticeship-commands.js    (window.Random.next —
+                                            via _roll;
+                                            window.randomNext is a
+                                            legacy fallback; missing
+                                            both -> throw)
+
+  js/core/formatting.js
+    Used by:
+      [load] modals-apprenticeship.js      (HARD — _escapeHtml)
+
+  js/core/ui.js
+    Used by:
+      [load] modals-apprenticeship.js      (HARD — _showToast)
+      [call] modals-apprenticeship.js      (showToast fallback)
+
+  js/core/icons.js
+    Used by:
+      [load] modals-apprenticeship.js      (HARD — Icons)
+
+  js/core/modals-core.js
+    Used by:
+      [load] modals-apprenticeship.js      (HARD — openModal,
+                                            closeTopModal,
+                                            confirmDialog)
+
+  js/core/collections.js
+  js/core/ids.js
+  js/core/validation.js
+  js/core/integrity.js
+  js/core/maintenance.js
+  js/core/ui-state.js
+  js/core/responsive.js
+  js/core/collapsible.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+  js/core/simulation-generators.js
+  js/core/names.js
+    Used by: none of the apprenticeship files provided in this
+      batch.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  CharacterCommands.getProfession
+    Used by:
+      [load] apprenticeship-queries.js    (LOAD-TIME METHOD CHECK)
+      [call] apprenticeship-queries.js    (getSkillLevel,
+                                            getProfessionRecord,
+                                            hasRole)
+      [call] apprenticeship-commands.js    (via _getProfession
+                                            inside
+                                            _ensureProfession)
+      [call] professional-knowledge-commands.js
+                                            (via _getProfession)
+
+  CharacterCommands.getProfessions
+    Used by:
+      [call] apprenticeship-queries.js    (getTeachableSkills)
+      [call] professional-knowledge-commands.js
+                                            (preserveKnowledgeOnDeath,
+                                            assessKnowledgeLoss)
+    Notes:
+      - Reads professions through the command layer, NOT off the
+        character projection. Some character projections strip
+        professions.
+
+  CharacterCommands.updateProfession
+    Used by:
+      [call] apprenticeship-commands.js    (via
+                                            _revertEnsureProfession;
+                                            administrative override
+                                            path — used ONLY for
+                                            rollback of profession
+                                            writes, not for forward
+                                            progression)
+      [call] professional-knowledge-commands.js
+                                            (via _updateProfession —
+                                            declared but currently
+                                            unused; progression goes
+                                            through RoleCommands)
+
+  CharacterCommands.addProfession
+    Used by:
+      [call] apprenticeship-commands.js    (via _ensureProfession —
+                                            when apprentice does not
+                                            hold the role yet)
+      [call] professional-knowledge-commands.js
+                                            (preserveKnowledgeOnDeath —
+                                            when heir does not hold
+                                            the role yet)
+
+  CharacterCommands.addProfessionSpecialization
+    Used by:
+      [call] apprenticeship-commands.js    (teachSpecialization)
+
+  CharacterCommands.removeProfession
+    Used by:
+      [call] apprenticeship-commands.js    (via
+                                            _revertEnsureProfession
+                                            rollback path when
+                                            existedBefore was false)
+
+  CharacterState
+    Used by: NOT directly by any apprenticeship module. The
+      CharacterCommands API is the character-side write path.
+
+  CharacterQueries
+    Used by: NOT directly by any apprenticeship module.
+      window.getCharacterById resolves to the projection override
+      under the documented load order; queries and modals read
+      fields (id, name, surname, birthYear, isDeceased, deathYear)
+      that are contract-guaranteed on the projection.
+
+--------------------------------------------------------------------------------
+3.3 ROLE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  RoleState.getRole
+    Used by:
+      [load] apprenticeship-queries.js    (LOAD-TIME METHOD CHECK)
+      [call] apprenticeship-queries.js    (getRole,
+                                            projectApprenticeship,
+                                            getApprenticeshipRole)
+      [call] apprenticeship-commands.js    (via _getRoleById —
+                                            LENIENT)
+      [call] professional-knowledge-commands.js
+                                           (via _getRoleById;
+                                            throws if NEITHER
+                                            RoleState nor
+                                            getRoleById is present)
+
+  RoleCommands.recordCharacterSkillProgress
+    Used by:
+      [load] apprenticeship-commands.js    (LOAD-TIME METHOD CHECK)
+      [call] apprenticeship-commands.js    (_ensureProfession,
+                                            updateApprenticeship,
+                                            progressApprenticeship,
+                                            teachSkill,
+                                            advanceApprenticeship
+                                            Skills)
+      [call] professional-knowledge-commands.js
+                                           (preserveKnowledgeOnDeath)
+    Notes:
+      - The non-decreasing invariant lives at the RoleCommands
+        layer. Education and Apprenticeship both route skill
+        progression through this method. Do not call
+        CharacterCommands.updateProfession from a forward-progress
+        path.
+
+  RoleState.getAllRoles / getAllRoles
+    Not used by any apprenticeship file in this batch.
+    Modals-apprenticeship.js does not enumerate the full role
+    catalogue; it uses ApprenticeshipQueries.getTeachableSkills to
+    discover roles the master can teach.
+
+--------------------------------------------------------------------------------
+3.4 RELATIONSHIP DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  relationship-types.js (window.RELATIONSHIP_ARCHETYPES,
+                         window.RELATIONSHIP_STATUS)
+    Used by:
+      [load] apprenticeship-queries.js    (HARD)
+      [load] apprenticeship-commands.js    (HARD)
+    Notes:
+      - APPRENTICESHIP is read from window.RELATIONSHIP_ARCHETYPES.
+      - STATUS.ONGOING, STATUS.COMPLETED, etc. read from
+        window.RELATIONSHIP_STATUS.
+
+  RelationshipQueries
+    Used by:
+      [load] apprenticeship-queries.js    (HARD)
+      [call] apprenticeship-queries.js    (getBetweenOfType,
+                                            getById,
+                                            getForCharacter,
+                                            getByType)
+    Notes:
+      - The canonical edge reader. Apprenticeship queries do NOT
+        go through ProfessionalQueries for edge reads;
+        ProfessionalQueries returns its own projection shape, while
+        apprenticeship queries need the raw records from
+        RelationshipQueries.
+
+  ProfessionalCommands
+    Used by:
+      [load] apprenticeship-commands.js    (HARD — createEdge,
+                                            updateEdgeMetadata,
+                                            updateEdgeFields,
+                                            endEdge,
+                                            removeEdge method
+                                            checks)
+    Notes:
+      - The write path for the apprenticeship edge. createEdge
+        returns { success, relationshipId } (or a structured
+        failure).
+      - The module-level guard requires all five methods to be
+        present.
+
+--------------------------------------------------------------------------------
+3.5 SETTLEMENT DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  SettlementQueries.getSettlementMastersByRole
+    Used by:
+      [call] apprenticeship-queries.js    (findPotentialMasters —
+                                            REQUIRED; missing ->
+                                            throw)
+    Notes:
+      - Only findPotentialMasters reads the settlement domain.
+        Absence is a load-order error, not a "no masters found"
+        state.
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks in the supplied files,
+  (b) call-time window.X lookups in code,
+  (c) the canonical core / character / role / relationship load
+      orders from the respective subsystem docs,
+  (d) apprenticeship-doc.txt §... [NARRATIVE DOC TRUNCATED — only
+      §1 header exists].
+
+Group labels:
+
+  C1..C6  — core prerequisites.
+  S1      — skill taxonomy.
+  R1..R4  — character, role, relationship, settlement prerequisites.
+  A1..A5  — apprenticeship subsystem.
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - No apprenticeship file reads these directly. relationship-
+      constants.js provides RELATIONSHIP_STATUS at the CORE level;
+      apprenticeship modules use window.RELATIONSHIP_STATUS from
+      js/relationships/relationship-types.js, not from
+      js/core/constants/relationship-constants.js.
+
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: _escapeHtml required at load by
+      modals-apprenticeship.js.
+    - icons.js: Icons required at load by modals-apprenticeship.js.
+    - randomness.js: window.Random required at CALL TIME by
+      apprenticeship-commands.js::_roll (fallback: window.randomNext).
+    - collections.js, ids.js: not read by apprenticeship.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - getCurrentYear required at load by apprenticeship-queries.js
+      and modals-apprenticeship.js.
+    - calculateAge required at load by modals-apprenticeship.js;
+      call-time soft in professional-knowledge-commands.js.
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  js/core/world.js
+
+  Notes:
+    - storage.js provides saveMasterData (call-time of
+      apprenticeship-commands.js::persist) and getLastSaveError
+      (call-time soft).
+    - accessors.js provides getCharacterById (HARD guard of
+      apprenticeship-queries.js), getPlaceById, getRoleById
+      (fallback role read; see RoleState below).
+    - world.js provides getCurrentPlace, getCurrentLocationId
+      (soft call-time of modals-apprenticeship.js).
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  Notes:
+    - ui.js provides _showToast (HARD guard of
+      modals-apprenticeship.js) and showToast (soft fallback).
+    - modals-core.js provides openModal, closeTopModal,
+      confirmDialog (all HARD guards of modals-apprenticeship.js).
+
+--------------------------------------------------------------------------------
+GROUP S1 — SKILL TAXONOMY
+--------------------------------------------------------------------------------
+
+  js/skill/skill-utils.js
+
+  Notes:
+    - HARD load-time guard of apprenticeship-constants.js
+      (getThresholds method check).
+    - HARD load-time guard of apprenticeship-rules.js
+      (getThresholds method check).
+    - No other apprenticeship file reads SkillUtils directly.
+
+--------------------------------------------------------------------------------
+GROUP R1 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: initializeStorage()
+
+  js/character/character-commands.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+    Notes:
+      Must expose the profession API methods used by
+      apprenticeship:
+        getProfession
+        getProfessions
+        updateProfession
+        addProfession
+        addProfessionSpecialization
+        removeProfession
+      All are CALL-TIME method checks of apprenticeship-queries.js,
+      apprenticeship-commands.js, and
+      professional-knowledge-commands.js.
+      (apprenticeship-queries.js and apprenticeship-commands.js
+      hard-guard the namespace at load; individual methods are
+      checked at call time or are hard-guarded by the load-time
+      guards; see §2.)
+
+  js/character/character-queries.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+
+  js/character/family-queries.js
+  js/character/family-commands.js
+    (Already loaded by the character subsystem; not a direct
+    apprenticeship dependency but present.)
+
+  Notes:
+    - Under the documented load order, window.getCharacterById
+      resolves to character-queries.js's projection override.
+      Apprenticeship modules read only id, name, surname,
+      birthYear, isDeceased, deathYear off it — all base scalar
+      fields guaranteed by the projection.
+
+--------------------------------------------------------------------------------
+GROUP R2 — ROLE PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/systems/roles/role-constants.js
+    <- AFTER: js/skill/skill-utils.js
+
+  js/systems/roles/role-state.js
+    <- AFTER: js/systems/roles/role-constants.js
+    <- after: js/core/storage.js
+    <- after: initializeStorage()
+
+  js/systems/roles/role-queries.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/systems/roles/role-state.js
+
+  js/systems/roles/role-commands.js
+    <- AFTER: js/systems/roles/role-constants.js
+    <- AFTER: js/systems/roles/role-state.js
+    <- AFTER: js/systems/roles/role-queries.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/time.js
+    <- after: js/core/storage.js
+
+  Notes:
+    - RoleCommands.recordCharacterSkillProgress is a LOAD-TIME
+      METHOD CHECK of apprenticeship-commands.js and a CALL-TIME
+      requirement of professional-knowledge-commands.js.
+    - RoleState.getRole is a LOAD-TIME METHOD CHECK of
+      apprenticeship-queries.js.
+    - After role-system.js loads, window.getRoleById is aliased
+      to RoleState.getRole (clones). The role-system.js shim is
+      OPTIONAL for apprenticeship — apprenticeship code prefers
+      RoleState.getRole and only falls back to window.getRoleById
+      when RoleState is unavailable.
+
+--------------------------------------------------------------------------------
+GROUP R3 — RELATIONSHIP PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/relationships/relationship-types.js
+  js/relationships/relationship-state.js
+  js/relationships/relationship-queries.js
+  js/relationships/relationship-commands.js
+  js/relationships/relationship-utils.js
+
+  (Professional-* files:)
+  js/relationships/professional-rules.js
+  js/relationships/professional-queries.js
+  js/relationships/professional-commands.js
+
+  Notes:
+    - relationship-types.js provides RELATIONSHIP_ARCHETYPES,
+      RELATIONSHIP_STATUS. HARD guards of apprenticeship-queries.js
+      and apprenticeship-commands.js.
+    - relationship-queries.js provides RelationshipQueries. HARD
+      guard of apprenticeship-queries.js.
+    - professional-commands.js provides ProfessionalCommands.
+      HARD guard of apprenticeship-commands.js
+      (createEdge / updateEdgeMetadata / updateEdgeFields /
+       endEdge / removeEdge method checks).
+
+--------------------------------------------------------------------------------
+GROUP R4 — SETTLEMENT PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/settlement/settlement-state.js
+  js/settlement/settlement-queries.js
+
+  Notes:
+    - SettlementQueries.getSettlementMastersByRole is a CALL-TIME
+      requirement of apprenticeship-queries.js::findPotentialMasters.
+      Missing -> throw.
+    - Only findPotentialMasters reads the settlement domain.
+      Apprenticeship loads WITHOUT settlement; only the
+      master-discovery modal breaks if settlement is missing.
+
+--------------------------------------------------------------------------------
+GROUP A1 — APPRENTICESHIP CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-constants.js
+    <- AFTER: js/skill/skill-utils.js    (HARD — getThresholds
+                                          method check)
+
+  Notes:
+    - Load BEFORE apprenticeship-rules.js (LOAD-TIME GUARD on
+      APPRENTICESHIP_STAGES / STATUS / TEACHING_CONSTANTS),
+      apprenticeship-commands.js (indirect — reads
+      window.TEACHING_CONSTANTS), modals-apprenticeship.js
+      (LOAD-TIME GUARD on TEACHING_CONSTANTS,
+      APPRENTICESHIP_STAGES, APPRENTICESHIP_STATUS).
+
+--------------------------------------------------------------------------------
+GROUP A2 — APPRENTICESHIP RULES
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-rules.js
+    <- AFTER: js/apprenticeship/apprenticeship-constants.js
+        (HARD — APPRENTICESHIP_STAGES,
+         APPRENTICESHIP_STATUS,
+         TEACHING_CONSTANTS)
+    <- AFTER: js/skill/skill-utils.js
+        (HARD — getThresholds method check)
+
+  Notes:
+    - Load BEFORE apprenticeship-queries.js,
+      apprenticeship-commands.js, modals-apprenticeship.js.
+
+--------------------------------------------------------------------------------
+GROUP A3 — APPRENTICESHIP QUERIES
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-queries.js
+    <- AFTER: js/relationships/relationship-types.js
+        (HARD — RELATIONSHIP_ARCHETYPES,
+         RELATIONSHIP_STATUS)
+    <- AFTER: js/relationships/relationship-queries.js
+        (HARD — RelationshipQueries)
+    <- AFTER: js/character/character-commands.js
+        (HARD — getProfession method check)
+    <- AFTER: js/systems/roles/role-state.js
+        (HARD — getRole method check)
+    <- AFTER: js/apprenticeship/apprenticeship-rules.js
+        (HARD — getStageForSkill method check)
+    <- AFTER: js/core/accessors.js
+        (HARD — getCharacterById)
+    <- AFTER: js/core/time.js
+        (HARD — getCurrentYear)
+    <- after: js/apprenticeship/apprenticeship-constants.js
+        (call-time — TEACHING_CONSTANTS for getTeachableSkills
+         and findPotentialMasters)
+    <- after: js/settlement/settlement-queries.js
+        (call-time — SettlementQueries.getSettlementMastersByRole
+         for findPotentialMasters)
+
+  Notes:
+    - Load BEFORE apprenticeship-commands.js (LOAD-TIME GUARD),
+      modals-apprenticeship.js (LOAD-TIME GUARD).
+
+--------------------------------------------------------------------------------
+GROUP A4 — APPRENTICESHIP COMMANDS
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/apprenticeship-commands.js
+    <- AFTER: js/apprenticeship/apprenticeship-rules.js
+        (HARD — getStageForSkill method check)
+    <- AFTER: js/apprenticeship/apprenticeship-queries.js
+        (HARD — namespace)
+    <- AFTER: js/relationships/professional-commands.js
+        (HARD — createEdge, updateEdgeMetadata,
+         updateEdgeFields, endEdge, removeEdge method checks)
+    <- AFTER: js/character/character-commands.js
+        (HARD — getProfession, updateProfession, addProfession,
+         addProfessionSpecialization, removeProfession method
+         checks)
+    <- AFTER: js/systems/roles/role-commands.js
+        (HARD — recordCharacterSkillProgress method check)
+    <- AFTER: js/relationships/relationship-types.js
+        (HARD — RELATIONSHIP_ARCHETYPES, RELATIONSHIP_STATUS)
+    <- after: js/core/accessors.js
+        (call-time — getCharacterById)
+    <- after: js/systems/roles/role-state.js
+        (call-time — RoleState.getRole, LENIENT)
+    <- after: js/core/time.js
+        (call-time — getCurrentYear)
+    <- after: js/core/randomness.js
+        (call-time — window.Random.next / window.randomNext
+         for _roll)
+    <- after: js/professional/skill-transfer-constants.js
+        [UNVERIFIED] (call-time — window.SKILL_TRANSFER_METHODS
+         for teachSkill)
+    <- after: js/core/storage.js
+        (call-time — saveMasterData, getLastSaveError via
+         persist())
+
+  Notes:
+    - Load BEFORE modals-apprenticeship.js (LOAD-TIME GUARD).
+
+--------------------------------------------------------------------------------
+GROUP A5 — KNOWLEDGE COMMANDS
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/professional-knowledge-commands.js
+    <- after: js/core/accessors.js
+        (call-time — getCharacterById)
+    <- after: js/systems/roles/role-state.js
+        OR js/core/accessors.js::getRoleById
+        (call-time — _getRoleById; throws if BOTH are missing)
+    <- after: js/core/time.js
+        (call-time — getCurrentYear, calculateAge)
+    <- after: js/character/character-commands.js
+        (call-time — addProfession, updateProfession,
+         getProfession, getProfessions via
+         _characterCommandsMethod)
+    <- after: js/systems/roles/role-commands.js
+        (call-time — recordCharacterSkillProgress via
+         _recordCharacterSkillProgress)
+    <- after: js/core/storage.js
+        (NOT called by this module; the caller's death cascade is
+         the persistence boundary)
+
+  Notes:
+    - No load-time guards. The module parses regardless.
+    - Every dependency is checked at first use inside the
+      corresponding helper. Missing -> throw.
+    - Load BEFORE the death cascade orchestrator that calls
+      preserveKnowledgeOnDeath. The typical orchestrator is
+      character-lifecycle.js (or its _notifyCrossDomainDeath
+      sequence), which is NOT a dependency of this module.
+    - Not required by modals-apprenticeship.js. The knowledge
+      preservation flow is a separate UI surface or a direct
+      death-cascade call.
+
+--------------------------------------------------------------------------------
+GROUP A6 — APPRENTICESHIP MODALS
+--------------------------------------------------------------------------------
+
+  js/apprenticeship/modals-apprenticeship.js
+    <- AFTER: js/core/modals-core.js
+        (HARD — openModal, closeTopModal, confirmDialog)
+    <- AFTER: js/core/formatting.js
+        (HARD — _escapeHtml)
+    <- AFTER: js/core/ui.js
+        (HARD — _showToast)
+    <- AFTER: js/core/icons.js
+        (HARD — Icons)
+    <- AFTER: js/core/accessors.js
+        (HARD — getCharacterById, getPlaceById)
+    <- AFTER: js/core/time.js
+        (HARD — getCurrentYear, calculateAge)
+    <- AFTER: js/apprenticeship/apprenticeship-queries.js
+        (HARD — namespace)
+    <- AFTER: js/apprenticeship/apprenticeship-commands.js
+        (HARD — namespace)
+    <- AFTER: js/apprenticeship/apprenticeship-rules.js
+        (HARD — namespace)
+    <- AFTER: js/apprenticeship/apprenticeship-constants.js
+        (HARD — TEACHING_CONSTANTS, APPRENTICESHIP_STAGES,
+         APPRENTICESHIP_STATUS)
+    <- after: js/core/world.js
+        (call-time, soft — getCurrentPlace, getCurrentLocationId
+         for _getCurrentLocation)
+    <- after: js/core/ui.js
+        (call-time, soft — showToast as fallback for _showToast)
+
+  Notes:
+    - Load BEFORE any page that calls
+      window.openCreateApprenticeshipModal and friends.
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list. Function calls are marked.
+
+  — Group C1: core constants —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  — Group C2: core utilities —
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  — Group C3: core time —
+  js/core/time.js
+
+  — Group C4: core storage —
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                          (function call)
+  js/core/accessors.js
+  js/core/world.js
+
+  — Group C5: core UI primitives —
+  js/core/ui.js
+  js/core/modals-core.js
+
+  — Group S1: skill taxonomy —
+  js/skill/skill-utils.js
+
+  — Group R1: character prerequisites —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+  js/character/family-queries.js
+  js/character/family-commands.js
+
+  — Group R2: role prerequisites —
+  js/systems/roles/role-constants.js
+  js/systems/roles/role-state.js
+  js/systems/roles/role-queries.js
+  js/systems/roles/role-commands.js
+
+  — Group R3: relationship prerequisites —
+  js/relationships/relationship-types.js
+  js/relationships/relationship-state.js
+  js/relationships/relationship-queries.js
+  js/relationships/relationship-commands.js
+  js/relationships/relationship-utils.js
+  js/relationships/professional-rules.js
+  js/relationships/professional-queries.js
+  js/relationships/professional-commands.js
+
+  — Group R4: settlement prerequisites (call-time) —
+  js/settlement/settlement-state.js
+  js/settlement/settlement-queries.js
+
+  — Group A1: apprenticeship constants —
+  js/apprenticeship/apprenticeship-constants.js
+
+  — Group A2: apprenticeship rules —
+  js/apprenticeship/apprenticeship-rules.js
+
+  — Group A3: apprenticeship queries —
+  js/apprenticeship/apprenticeship-queries.js
+
+  — Group A4: apprenticeship commands —
+  js/apprenticeship/apprenticeship-commands.js
+
+  — Group A5: professional knowledge commands —
+  js/apprenticeship/professional-knowledge-commands.js
+
+  — Group A6: apprenticeship modals —
+  js/apprenticeship/modals-apprenticeship.js
+
+  — Application bootstrap (function calls) —
+  None. Apprenticeship has no hydrate/init function. Its state
+  lives on the relationship edges (owned by RelationshipState) and
+  on the character profession records (owned by CharacterCommands).
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1.  skill-utils.js before apprenticeship-constants.js.
+     Failure without it: apprenticeship-constants.js throws at load
+     ("apprenticeship-constants.js requires skill-utils.js
+     (SkillUtils) first.").
+
+ 2.  apprenticeship-constants.js before apprenticeship-rules.js.
+     Failure without it: apprenticeship-rules.js throws at load
+     ("apprenticeship-rules.js requires apprenticeship-constants.js
+     (APPRENTICESHIP_STAGES) first.").
+
+ 3.  skill-utils.js before apprenticeship-rules.js.
+     Failure without it: apprenticeship-rules.js throws at load
+     ("apprenticeship-rules.js requires skill-utils.js
+     (SkillUtils) first.").
+
+ 4.  relationship-types.js before apprenticeship-queries.js and
+     apprenticeship-commands.js.
+     Failure without it: both throw at load
+     ("requires relationship-types.js (RELATIONSHIP_ARCHETYPES)
+     first.").
+
+ 5.  relationship-queries.js before apprenticeship-queries.js.
+     Failure without it: apprenticeship-queries.js throws at load
+     ("requires relationship-queries.js (RelationshipQueries)
+     first.").
+
+ 6.  character-commands.js's getProfession method before
+     apprenticeship-queries.js.
+     Failure without it: apprenticeship-queries.js throws at load
+     ("requires character-commands.js
+     (CharacterCommands.getProfession) first.").
+
+ 7.  role-state.js's getRole method before
+     apprenticeship-queries.js.
+     Failure without it: apprenticeship-queries.js throws at load
+     ("requires role-state.js (RoleState.getRole) first.").
+
+ 8.  apprenticeship-rules.js before apprenticeship-queries.js.
+     Failure without it: apprenticeship-queries.js throws at load
+     ("requires apprenticeship-rules.js
+     (ApprenticeshipRules.getStageForSkill) first.").
+
+ 9.  accessors.js and time.js before apprenticeship-queries.js.
+     Failure without it: apprenticeship-queries.js throws at load.
+
+ 10. apprenticeship-rules.js, apprenticeship-queries.js,
+     professional-commands.js, character-commands.js,
+     role-commands.js, relationship-types.js before
+     apprenticeship-commands.js.
+     Failure without any of them: apprenticeship-commands.js throws
+     at load naming the first missing module.
+
+ 11. CharacterCommands profession API (getProfession,
+     updateProfession, addProfession,
+     addProfessionSpecialization, removeProfession) before
+     apprenticeship-commands.js.
+     Failure without any: apprenticeship-commands.js throws at
+     load naming the missing method.
+
+ 12. ProfessionalCommands (createEdge, updateEdgeMetadata,
+     updateEdgeFields, endEdge, removeEdge) before
+     apprenticeship-commands.js.
+     Failure without any: apprenticeship-commands.js throws at
+     load naming the missing method.
+
+ 13. RoleCommands.recordCharacterSkillProgress before
+     apprenticeship-commands.js.
+     Failure without it: apprenticeship-commands.js throws at load.
+
+ 14. core/modals-core.js (openModal, closeTopModal,
+     confirmDialog), core/formatting.js (_escapeHtml),
+     core/ui.js (_showToast), core/icons.js (Icons),
+     core/accessors.js (getCharacterById, getPlaceById),
+     core/time.js (getCurrentYear, calculateAge),
+     apprenticeship-queries.js, apprenticeship-commands.js,
+     apprenticeship-rules.js, apprenticeship-constants.js
+     (TEACHING_CONSTANTS, APPRENTICESHIP_STAGES,
+     APPRENTICESHIP_STATUS) before modals-apprenticeship.js.
+     Failure without any: modals-apprenticeship.js throws at load
+     naming the missing module.
+
+ 15. core/world.js before the first call to a modal that needs
+     location resolution.
+     Failure without it: no load-time throw. _getCurrentLocation
+     returns null; location display shows "Unknown". This is a
+     soft degradation, not a hard error. Prior revisions required
+     window.getCurrentLocation which accessors.js does not export;
+     that dependency has been removed.
+
+ 16. CharacterCommands methods (addProfession, updateProfession,
+     getProfession, getProfessions) and
+     RoleCommands.recordCharacterSkillProgress before
+     professional-knowledge-commands.js's first call to
+     preserveKnowledgeOnDeath or assessKnowledgeLoss.
+     Failure without any: the module throws at call time
+     ("ProfessionalKnowledgeCommands requires
+     CharacterCommands.<name>" or "requires
+     RoleCommands.recordCharacterSkillProgress").
+
+ 17. RoleState.getRole OR window.getRoleById before
+     professional-knowledge-commands.js's first call to a
+     role-resolving function.
+     Failure without BOTH: the module throws at call time
+     ("ProfessionalKnowledgeCommands: no role reader available.
+     Load role-state.js (RoleState.getRole) or accessors.js
+     (getRoleById) before using this module.").
+
+ 18. window.SKILL_TRANSFER_METHODS [UNVERIFIED] before the first
+     call to apprenticeship-commands.js::teachSkill.
+     Failure without it: every methodId is rejected as
+     UNKNOWN_METHOD, even when the caller supplied a valid id.
+
+ 19. window.Random.next OR window.randomNext before the first
+     call to apprenticeship-commands.js::teachSkill or any other
+     command that needs a roll.
+     Failure without either: _roll throws at call time.
+
+ 20. core/storage.js before apprenticeship-commands.js::persist is
+     first called.
+     Failure without it: persist() returns
+     { success: false, reason: 'saveMasterData is not available.' }.
+     The commands themselves still mutate in-memory state; only
+     the flush fails.
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+ 1.  apprenticeship-doc.txt is truncated.
+     The supplied narrative doc ends at §1 "Ownership chain:" with
+     no further content. This dependency document is derived from
+     the code, not from the (missing) narrative sections. Update
+     the narrative doc before citing it as authoritative.
+
+ 2.  Role skill authority.
+     character.professions[].skillLevel is canonical. Education's
+     character.subjectProgress['role_<id>'].level is educational
+     progress and may legitimately differ. Apprenticeship reports
+     progression through RoleCommands.recordCharacterSkillProgress
+     (which enforces the non-decreasing invariant); it does NOT
+     write character.professions directly.
+
+ 3.  Role creation vs progression.
+     addProfession (creation) and
+     RoleCommands.recordCharacterSkillProgress (progression) are
+     distinct. The invariant does not apply to creation.
+     apprenticeship-commands.js and
+     professional-knowledge-commands.js both route creation
+     through addProfession and progression through
+     recordCharacterSkillProgress.
+
+ 4.  _getRoleById LENIENT vs STRICT in
+     apprenticeship-commands.js and
+     professional-knowledge-commands.js.
+     - apprenticeship-commands.js::_getRoleById is LENIENT
+       (display only, returns null when the role is missing).
+       _requireRoleForWrite is STRICT (throws when the role is
+       missing).
+     - professional-knowledge-commands.js::_getRoleById THROWS
+       when NEITHER RoleState.getRole NOR window.getRoleById is
+       available. It returns null when one is available but the
+       role is missing.
+     - The behavioral difference is intentional:
+       apprenticeship-commands.js is called from display paths
+       that tolerate a null; professional-knowledge-commands.js is
+       called from the death cascade where a load-order bug must
+       surface. Do not unify without auditing both.
+
+ 5.  RoleState.getRole is the canonical runtime role reader.
+     RoleState.getRole returns CLONES as of the current role
+     subsystem. Apprenticeship code does not mutate the returned
+     role. After role-system.js loads, window.getRoleById is
+     aliased to RoleState.getRole, so the fallback in
+     apprenticeship-commands.js and
+     professional-knowledge-commands.js returns clones too.
+
+ 6.  MULTI-ROLE DISAMBIGUATION.
+     A character may have concurrent apprenticeships with multiple
+     masters for different roles.
+     - getApprenticeship(masterId, apprenticeId, roleId) REQUIRES
+       roleId. Omitting it throws.
+     - getOngoingApprenticeship throws when the pair has more
+       than one ongoing apprenticeship.
+     - progressApprenticeship, teachSkill, teachSpecialization
+       accept an OPTIONAL roleId and return
+       { code: 'MULTIPLE_ROLES' } when omitted and ambiguous.
+       They do NOT throw.
+     - Modals-apprenticeship.js passes roleId whenever it is in
+       scope.
+
+ 7.  PARTIAL-TRANSACTION ROLLBACK on createApprenticeship.
+     The profession write to the apprentice is the preparatory
+     step; the edge creation is the atomic commit point. On edge
+     creation failure, the profession write is reverted via
+     _revertEnsureProfession. Revert failures are logged but do
+     not change the returned result — the edge failure is the
+     reported outcome.
+
+ 8.  HALF-TRANSACTION RISK in
+     professional-knowledge-commands.js.
+     preserveKnowledgeOnDeath writes each dying profession to the
+     heir INDEPENDENTLY. If a later step fails, earlier steps are
+     already in memory. This command does NOT revert on partial
+     failure — the caller's death cascade is the atomic boundary.
+     Callers of preserveKnowledgeOnDeath must ensure a flush
+     happens after the cascade completes successfully. Failures
+     within the loop are logged via console.warn but do not abort
+     the loop.
+
+ 9.  PERSISTENCE divergence across domains.
+     - ApprenticeshipCommands.persist returns
+       { success, reason? } (Pattern A + getLastSaveError).
+     - ProfessionalKnowledgeCommands does NOT expose a persist()
+       function; the caller's death cascade owns persistence.
+     - EducationCommands.persist returns a BOOLEAN.
+     - RankCommands.persist and ReligionCommands.persist and
+       RoleCommands.persist and NameCommands.persist return
+       { success, reason? } and read getLastSaveError
+       (typeof-guarded).
+     - CultureCommands.persist returns { success, reason? } but
+       does NOT read getLastSaveError.
+     - GovernmentCommands.persist returns { success: false } but
+       does not throw and does not read getLastSaveError.
+     - SettlementCommandCommit throws on persist failure.
+     Do not unify without updating every caller's error-handling.
+
+ 10. _handleRoleDeleted robustness.
+     Wraps each cancelApprenticeship in try/catch. Calls persist()
+     ONCE after the loop. Prior revisions let a single throw abort
+     the loop, orphaning the remaining apprenticeships.
+     Failed cancels are counted in `failed` and logged via
+     console.warn.
+
+ 11. updateApprenticeship gates its writes.
+     updateEdgeMetadata runs ONLY when metaChanged. endEdge runs
+     ONLY when statusChanged. Prior revisions called endEdge
+     unconditionally on update, even for a same-status no-op.
+
+ 12. Randomness source.
+     window.Random.next is the canonical RNG stream (also used by
+     affair-commands.js, jealousy-commands.js,
+     relationship-integrations.js). A legacy window.randomNext
+     fallback is honoured. There is NO Math.random call and NO
+     window.RNG reference (window.RNG does not exist in this
+     tree).
+
+ 13. SKILL_TRANSFER_METHODS [UNVERIFIED].
+     teachSkill reads window.SKILL_TRANSFER_METHODS, which lives
+     in js/professional/skill-transfer-constants.js. The file is
+     referenced but not in the supplied batch. Missing file ->
+     every methodId is rejected as UNKNOWN_METHOD. Confirm the
+     provider before relying on teachSkill.
+
+ 14. modals-apprenticeship.js location resolution.
+     Uses world.js's getCurrentPlace / getCurrentLocationId
+     (soft). Prior revisions required window.getCurrentLocation
+     which accessors.js does not export. The REQUIRED array has
+     been corrected; the modal loads without world.js and shows
+     "Unknown" for location display.
+
+ 15. modals-apprenticeship.js icon lookup.
+     Uses window.Icons[name] with CIRCLE fallback via the local
+     _getIcon wrapper. Does NOT depend on window._getIcon (which
+     does not exist). Do not reintroduce a _getIcon dependency.
+
+ 16. modals-apprenticeship.js confirm form.
+     _confirm enforces the THREE-argument
+     confirmDialog(message, title, onConfirm) form. The
+     two-argument form sends the callback into the title slot.
+
+ 17. modals-apprenticeship.js _showToast provider.
+     Tries _showToast (primary), then showToast (fallback), then
+     one-shot console.warn. Do not add a hard dependency on
+     window._showToast; it is a deprecated alias.
+
+ 18. modals-apprenticeship.js modal lifecycle.
+     Every modal uses onMount. Element lookups are scoped to the
+     modal element. Do not regress to a setTimeout or
+     document.getElementById pattern.
+
+ 19. professional-knowledge-commands.js is NOT called by
+     modals-apprenticeship.js.
+     Knowledge preservation runs from the death cascade
+     (character-lifecycle.js or its orchestrator). The modal file
+     does not need ProfessionalKnowledgeCommands loaded.
+
+ 20. Apprenticeship queries read professions via
+     CharacterCommands.getProfessions.
+     The character projection may or may not include professions
+     (it is not documented as guaranteed). getTeachableSkills
+     reads through the command layer, never the projection.
+     Similarly, professional-knowledge-commands.js reads the
+     dying character's professions via getProfessions, not off
+     the projection.
+
+ 21. getApprenticeshipsByRole complexity.
+     O(apprenticeships) per call. Called from
+     _handleRoleDeleted on every roleDeleted event. If the
+     apprenticeship catalogue grows large, role deletion becomes
+     visibly slow. The fix, if it ever matters, is a role-index in
+     RelationshipQueries.
+
+ 22. getApprenticeshipDetails ended-record handling.
+     By default returns the ONGOING record only. Pass
+     { includeEnded: true } to include ended records;
+     getApprenticeshipDetailsById returns any status. Prior
+     revisions always returned null for ended records, which
+     prevented the details modal from displaying them.
+
+ 23. Apprenticeship has no hydrate/init.
+     Its state lives on relationship edges (owned by
+     RelationshipState) and on character profession records
+     (owned by CharacterCommands). There is no
+     ApprenticeshipState module and no bootstrap to run.
+
+ 24. modals-apprenticeship.js includes APPRENTICESHIP_STAGES in
+     the REQUIRED load guards.
+     The modal does not read APPRENTICESHIP_STAGES directly in
+     the supplied code (it reads TEACHING_CONSTANTS and
+     APPRENTICESHIP_STATUS). The guard is present because the
+     modal contract is scoped to the apprenticeship subsystem,
+     whose constants module installs all three. Do not remove the
+     guard without verifying no future revision reads the
+     constant.
+
+ 25. getMaster throws on multiple active masters.
+     A character with multiple active masters must use getMasters().
+     The singular convenience deliberately throws — silently
+     returning the first master would silently drop the others.
+
+ 26. findPotentialMasters entries without skillLevel pass
+     through unchanged.
+     SettlementQueries.getSettlementMastersByRole is permitted to
+     omit skillLevel on entries; this module does not invent a
+     default. Callers that need the threshold enforced must use a
+     settlement query that provides skillLevel. Documented in the
+     JSDoc for findPotentialMasters.
+
+ 27. professional-knowledge-commands.js's
+     _requireRoleForWrite is present but unused.
+     Both write paths operate on professions, not roles. It is
+     present for symmetry with education-commands.js and
+     apprenticeship-commands.js so any future role write has a
+     consistent strict accessor. Do not remove it as dead code
+     without auditing the intent.
+
+ 28. apprencticeship-doc.txt reference.
+     The narrative doc is truncated in the supplied batch. Do not
+     cite its §2 (load order), §3 (data model), etc., since those
+     sections are not available. This dependency document plus the
+     code are the source of truth until the narrative doc is
+     completed.
+
+ 29. js/core/constants/relationship-constants.js vs
+     js/relationships/relationship-types.js.
+     Both may provide RELATIONSHIP_STATUS at different scopes.
+     Apprenticeship reads window.RELATIONSHIP_STATUS, which is
+     installed by js/relationships/relationship-types.js
+     (per the LOAD-TIME GUARD). js/core/constants/relationship-
+     constants.js is a CORE module; if it also exports
+     RELATIONSHIP_STATUS, the load order determines the winner.
+     Do not rely on the CORE constants' RELATIONSHIP_STATUS unless
+     you verify the alias collision.
+
+ 30. Apprenticeship and education share the role skill write
+     path.
+     Both route progression through
+     RoleCommands.recordCharacterSkillProgress. If the role
+     domain's invariant ever needs adjustment (e.g. allowing a
+     downward correction for a specific kind of training), the
+     change must happen in RoleCommands — not here. Do not
+     re-implement the invariant in apprenticeship code.
+
+ 31. Apprenticeship and professional-knowledge commands do NOT
+     touch the character projection's profession fields.
+     Every write is through CharacterCommands. Do not read
+     character.professions off the projection for any purpose;
+     use getProfession / getProfessions.
+
+ 32. Apprenticeship queries require
+     SettlementQueries.getSettlementMastersByRole for
+     findPotentialMasters.
+     Absence is not a "no masters found" state; the function
+     throws. Do not add a silent empty-result fallback.
+
+ 33. Career-stage label consistency.
+     APPRENTICESHIP_STAGES is derived from SkillUtils.TIERS, so
+     every stage name (Untrained, Novice, Apprentice, Journeyman,
+     Expert, Master) matches SkillUtils. Modals, education-annual,
+     and rank all read the SAME taxonomy. Do not add a second
+     stage vocabulary.
+
+ 34. Apprenticeship modals' _persistAndWarn is REQUIRED after
+     every mutating command.
+     Every mutating handler in modals-apprenticeship.js calls
+     _persistAndWarn(successMessage). Missing this means the
+     user's action lives only in memory until the next
+     markDataDirty-triggering action. Do not add a new mutating
+     path that skips it.
+
+ 35. modals-apprenticeship.js's openApprenticeshipDetailsModal
+     closes and re-opens the modal on progress.
+     The progress action closes the current modal, mutates,
+     persists, then re-opens the details modal fresh. Do not
+     regress to in-place refresh; the details modal has no
+     refresh contract.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
