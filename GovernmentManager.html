@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
-    
+
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/worldManager.css">
@@ -19,11 +19,10 @@
     <link rel="stylesheet" href="css/gov-manager.css">
 
     <style>
-        /* INLINE LAYOUT FIXES */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; }
         .topbar { flex-shrink: 0; }
-        
+
         .world-app {
             display: flex;
             flex-direction: row;
@@ -31,14 +30,14 @@
             min-height: 0;
             overflow: hidden;
         }
-        
+
         .locations-sidebar {
             flex-shrink: 0;
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
-        
+
         .main-panel {
             display: flex;
             flex-direction: column;
@@ -47,7 +46,7 @@
             min-height: 0;
             overflow: hidden;
         }
-        
+
         .tab-content-wrapper {
             flex: 1;
             min-height: 0;
@@ -56,10 +55,8 @@
             padding: 16px;
         }
 
-        /* Hide the redundant top-level tabs (Government, Overview, etc) */
         .panel-tabs { display: none !important; }
 
-        /* Ensure sub-tabs are always visible at the top of the content */
         .gov-subtabs {
             position: sticky;
             top: 0;
@@ -90,7 +87,7 @@
     </button>
     <div class="title" id="govManagerTitle"></div>
     <div class="spacer"></div>
-    
+
     <button id="addDeptBtn" class="tb-btn primary"></button>
     <button id="importBtn" class="tb-btn"></button>
     <button id="exportBtn" class="tb-btn primary"></button>
@@ -124,7 +121,7 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
+<!-- CORE CONSTANTS                                               -->
 <!-- ============================================================ -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
@@ -133,6 +130,9 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
+<!-- ============================================================ -->
+<!-- CORE UTILITIES                                               -->
+<!-- ============================================================ -->
 <script src="js/core/randomness.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/validation.js"></script>
@@ -140,6 +140,9 @@
 <script src="js/core/time.js"></script>
 <script src="js/core/ids.js"></script>
 
+<!-- ============================================================ -->
+<!-- CORE STORAGE (schema → storage → init)                       -->
+<!-- ============================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
@@ -149,33 +152,50 @@
         } catch (e) { console.error('[GovernmentManager] initializeStorage failed:', e); }
     })();
 </script>
+
+<!-- ============================================================ -->
+<!-- CORE ACCESSORS / WORLD / NAMES                               -->
+<!-- ============================================================ -->
 <script src="js/core/accessors.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
-<script src="js/core/state.js"></script>
 <script src="js/core/integrity.js"></script>
+
+<!-- ============================================================ -->
+<!-- CORE UI PRIMITIVES                                           -->
+<!-- ============================================================ -->
 <script src="js/core/icons.js"></script>
 <script src="js/core/ui.js"></script>
 <script src="js/core/responsive.js"></script>
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/modals-core.js"></script>
 <script src="js/core/exportUtils.js"></script>
+<script src="js/core/query-helpers.js"></script>
 
 <!-- ============================================================ -->
-<!-- SELECTORS                                                    -->
-<!-- ============================================================ -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script src="js/selectors/modals-char-selector.js"></script>
-
-<!-- ============================================================ -->
-<!-- CHARACTER                                                    -->
+<!-- FEATURE STATE MODULES (MUST load before js/core/state.js)    -->
+<!-- state.js throws at load if any of these is missing.          -->
 <!-- ============================================================ -->
 <script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/names/names-state.js"></script>
+<script src="js/core/misc-state.js"></script>
+
+<!-- ============================================================ -->
+<!-- STATE FACADE (requires all feature states above)             -->
+<!-- ============================================================ -->
+<script src="js/core/state.js"></script>
+
+<!-- ============================================================ -->
+<!-- CHARACTER COMMANDS / QUERIES                                 -->
+<!-- ============================================================ -->
+<script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
 <script src="js/character/family-rules.js"></script>
-<script src="js/character/family-state.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 <script src="js/character/mortality-rules.js"></script>
@@ -201,11 +221,23 @@
 <script src="js/location/location-bootstrap.js"></script>
 
 <!-- ============================================================ -->
-<!-- RANK & HOUSEHOLD                                             -->
+<!-- HOUSEHOLD (before rank bootstrap)                            -->
 <!-- ============================================================ -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ============================================================ -->
+<!-- RANKS (with optional deps so rank-bootstrap doesn't warn)    -->
+<!-- ============================================================ -->
+<script src="js/skill/skill-utils.js"></script>
+<script src="js/relationships/romance-queries.js"></script>
+<script src="js/education/education-commands.js"></script>
+<script src="js/education/education-queries.js"></script>
+
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
-<script src="js/ranks/rank-state.js"></script>
 <script src="js/ranks/rank-queries.js"></script>
 <script src="js/ranks/rank-assignment.js"></script>
 <script src="js/ranks/rank-commands.js"></script>
@@ -214,37 +246,66 @@
 <script src="js/ranks/modals-rank.js"></script>
 <script src="js/ranks/rank-bootstrap.js"></script>
 
-<script src="js/households/household-constants.js"></script>
-<script src="js/households/household-rules.js"></script>
-<script src="js/households/household-state.js"></script>
-<script src="js/households/household-queries.js"></script>
-<script src="js/households/household-commands.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
 <!-- ============================================================ -->
 <!-- ROLES                                                        -->
 <!-- ============================================================ -->
-<script src="js/roles/skill-utils.js"></script>
 <script src="js/roles/role-constants.js"></script>
-<script src="js/roles/role-state.js"></script>
 <script src="js/roles/role-queries.js"></script>
 <script src="js/roles/role-commands.js"></script>
 <script src="js/roles/modals-roles.js"></script>
 
 <!-- ============================================================ -->
-<!-- SETTLEMENT                                                   -->
+<!-- SELECTORS (after character-queries — selector needs it)      -->
 <!-- ============================================================ -->
-<script src="js/settlement/settlement-state.js"></script>
-<script src="js/settlement/settlement-queries.js"></script>
-<script src="js/settlement/settlement-commands-core.js"></script>
-<script src="js/settlement/settlement-prosperity.js"></script>
-<script src="js/settlement/settlement-economy-core.js"></script>
-<script src="js/settlement/settlement-government.js"></script>
-<script src="js/settlement/modals-settlement-core.js"></script>
-<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
 
 <!-- ============================================================ -->
-<!-- GOVERNMENT SYSTEM                                            -->
+<!-- SETTLEMENT (definitions → rules → state → commit → queries   -->
+<!--            → commands; this is the chain government needs)   -->
+<!-- ============================================================ -->
+<script src="js/settlement/settlement-fiscal-definitions.js"></script>
+<script src="js/settlement/settlement-government-definitions.js"></script>
+<script src="js/settlement/settlement-rank-definitions.js"></script>
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/settlement/settlement-finance-definitions.js"></script>
+<script src="js/settlement/settlement-prosperity-definitions.js"></script>
+<script src="js/settlement/settlement-feature-definitions.js"></script>
+<script src="js/settlement/settlement-education-definitions.js"></script>
+
+<script src="js/settlement/settlement-rank-rules.js"></script>
+<script src="js/settlement/settlement-fiscal-rules.js"></script>
+<script src="js/settlement/settlement-government-rules.js"></script>
+<script src="js/settlement/settlement-feature-rules.js"></script>
+<script src="js/settlement/settlement-law-rules.js"></script>
+
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-command-commit.js"></script>
+
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-rank-queries.js"></script>
+<script src="js/settlement/settlement-feature-queries.js"></script>
+<script src="js/settlement/settlement-law-queries.js"></script>
+<script src="js/settlement/settlement-education-queries.js"></script>
+<script src="js/settlement/settlement-religion-queries.js"></script>
+<script src="js/settlement/settlement-employment-queries.js"></script>
+<script src="js/settlement/settlement-economy-queries.js"></script>
+<script src="js/settlement/settlement-crime-queries.js"></script>
+<script src="js/settlement/settlement-prosperity-queries.js"></script>
+
+<script src="js/settlement/settlement-feature-commands.js"></script>
+<script src="js/settlement/settlement-government-commands.js"></script>
+<script src="js/settlement/settlement-fiscal-commands.js"></script>
+<script src="js/settlement/settlement-law-commands.js"></script>
+<script src="js/settlement/settlement-wealth-commands.js"></script>
+<script src="js/settlement/settlement-debt-commands.js"></script>
+<script src="js/settlement/settlement-rank-commands.js"></script>
+<script src="js/settlement/settlement-specialization-commands.js"></script>
+
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM (canonical load order)                     -->
 <!-- ============================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -257,8 +318,8 @@
 <script src="js/government/government-ui-list.js"></script>
 
 <script src="js/government/modals-government.js"></script>
-<script src="js/government/modals-government-departments.js"></script>
 <script src="js/government/modals-government-positions.js"></script>
+<script src="js/government/modals-government-departments.js"></script>
 <script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
 
@@ -270,8 +331,6 @@
 <script src="js/tabs/government-history-tab.js"></script>
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
-
-<script src="js/core/tree/locationsListUI.js"></script>
 
 <!-- ============================================================ -->
 <!-- GOVERNMENT SUB-TAB HOST                                      -->
@@ -303,7 +362,7 @@
                     '<span>' + _esc(t.label) + '</span></button>';
             }
             stripHtml += '</div>';
-            
+
             var panelHtml = '<div id="' + _esc(containerId) + '-subpanel" class="gov-subpanel" role="tabpanel"></div>';
 
             container.innerHTML = stripHtml + panelHtml;
@@ -350,8 +409,8 @@
     }
 
     var ICONS = {
-        CROWN: getIcon('CROWN'), LOCATION: getIcon('LOCATION'), IMPORT: getIcon('ARROW_RIGHT'), 
-        EXPORT: getIcon('ARROW_RIGHT'), REFRESH: getIcon('REFRESH'), PLUS: getIcon('PLUS'), 
+        CROWN: getIcon('CROWN'), LOCATION: getIcon('LOCATION'), IMPORT: getIcon('ARROW_RIGHT'),
+        EXPORT: getIcon('ARROW_RIGHT'), REFRESH: getIcon('REFRESH'), PLUS: getIcon('PLUS'),
         GEAR: getIcon('GEAR'), CHECK: getIcon('CHECK_SIMPLE'), WARNING: getIcon('WARNING')
     };
 
@@ -363,9 +422,9 @@
         if (typeof window.showToast === 'function') window.showToast(msg, type);
         else if (typeof window._showToast === 'function') window._showToast(msg, type);
     }
-    
+
     function getPlaces() { return typeof window.getPlaces === 'function' ? window.getPlaces() : []; }
-    
+
     function bootstrapGovernment() {
         if (!window.GovernmentBootstrap || typeof window.GovernmentBootstrap.init !== 'function') return;
         try { window.GovernmentBootstrap.init(); } catch (e) { console.error('Government bootstrap failed:', e); }
@@ -376,7 +435,7 @@
         if (title) title.innerHTML = iconWithText(ICONS.CROWN, ' GOVERNMENT MANAGER');
         var sidebarTitle = document.getElementById('sidebarTitle');
         if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(ICONS.LOCATION, ' LOCATION HIERARCHY');
-        
+
         var addDeptBtn = document.getElementById('addDeptBtn');
         if (addDeptBtn) addDeptBtn.innerHTML = iconWithText(ICONS.PLUS, ' Department');
         var importBtn = document.getElementById('importBtn');
@@ -385,7 +444,7 @@
         if (exportBtn) exportBtn.innerHTML = iconWithText(ICONS.EXPORT, ' Export');
         var refreshBtn = document.getElementById('refreshBtn');
         if (refreshBtn) refreshBtn.innerHTML = iconWithText(ICONS.REFRESH, ' Refresh');
-        
+
         var loadingText = document.getElementById('loadingText');
         if (loadingText) loadingText.textContent = 'Loading locations...';
         var emptyState = document.getElementById('emptyStateText');
@@ -396,49 +455,49 @@
         var container = document.getElementById('placeList');
         if (!container) return;
 
-        if (typeof window.renderLocationTree === 'function') {
-            window.renderLocationTree('placeList', function(placeId) {
-                if (placeId) {
-                    currentPlaceId = placeId;
-                    renderGovernmentTab();
-                    if (window.innerWidth <= 768) closeSidebar();
-                }
-            });
-        } else if (typeof window.LocationUI !== 'undefined' && typeof window.LocationUI.renderLocationTree === 'function') {
-            window.LocationUI.renderLocationTree('placeList', function(placeId) {
-                if (placeId) {
-                    currentPlaceId = placeId;
-                    renderGovernmentTab();
-                    if (window.innerWidth <= 768) closeSidebar();
-                }
-            });
-        } else {
-            var places = getPlaces();
-            if (places && places.length > 0) {
-                var html = '<div class="place-tree">';
-                for (var i = 0; i < places.length; i++) {
-                    var p = places[i];
-                    var isSelected = (p.id === currentPlaceId);
-                    html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
-                }
-                html += '</div>';
-                container.innerHTML = html;
-                var items = container.querySelectorAll('.place-item');
-                for (var j = 0; j < items.length; j++) {
-                    (function(item) {
-                        item.addEventListener('click', function() {
-                            var placeId = this.dataset.placeId;
-                            if (placeId) {
-                                currentPlaceId = placeId;
-                                renderGovernmentTab();
-                                if (window.innerWidth <= 768) closeSidebar();
-                            }
-                        });
-                    })(items[j]);
-                }
-            } else {
-                container.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' No locations found') + '</div>';
+        if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
+            try {
+                window.LocationUI.renderLocationList('placeList', {
+                    selectedId: currentPlaceId,
+                    onSelect: function(place) {
+                        if (place && place.id) {
+                            currentPlaceId = place.id;
+                            renderGovernmentTab();
+                            if (window.innerWidth <= 768) closeSidebar();
+                        }
+                    }
+                });
+                return;
+            } catch (e) {
+                console.error('[GovernmentManager] renderLocationList failed:', e);
             }
+        }
+
+        var places = getPlaces();
+        if (places && places.length > 0) {
+            var html = '<div class="place-tree">';
+            for (var i = 0; i < places.length; i++) {
+                var p = places[i];
+                var isSelected = (p.id === currentPlaceId);
+                html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
+            }
+            html += '</div>';
+            container.innerHTML = html;
+            var items = container.querySelectorAll('.place-item');
+            for (var j = 0; j < items.length; j++) {
+                (function(item) {
+                    item.addEventListener('click', function() {
+                        var placeId = this.dataset.placeId;
+                        if (placeId) {
+                            currentPlaceId = placeId;
+                            renderGovernmentTab();
+                            if (window.innerWidth <= 768) closeSidebar();
+                        }
+                    });
+                })(items[j]);
+            }
+        } else {
+            container.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' No locations found') + '</div>';
         }
     }
 
@@ -474,20 +533,20 @@
     function renderGovernmentTab() {
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-        
+
         if (!currentPlaceId) {
             var places = getPlaces();
             if (places && places.length > 0) {
                 for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') { 
-                        currentPlaceId = places[i].id; 
-                        break; 
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        currentPlaceId = places[i].id;
+                        break;
                     }
                 }
                 if (!currentPlaceId && places.length > 0) currentPlaceId = places[0].id;
             }
         }
-        
+
         if (!currentPlaceId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
@@ -519,14 +578,13 @@
                     showToast(iconWithText(ICONS.WARNING, ' No location selected'), 'warning');
                     return;
                 }
-                
-                // Canonical function from modals-government-departments.js
+
                 if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
-                    window.openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
+                    window.openCreateGovernmentDepartmentModal(locationId, function() {
                         renderGovernmentTab();
                     });
                 } else {
-                    alert('Department creation modal script failed to load.');
+                    showToast(iconWithText(ICONS.WARNING, ' Department creation not available'), 'error');
                 }
             };
         }
@@ -534,17 +592,17 @@
         if (importBtn) {
             importBtn.onclick = function() {
                 if (typeof window.importData === 'function') {
-                    window.importData().then(function() {
+                    Promise.resolve(window.importData()).then(function() {
                         setTimeout(function() {
                             setupLocationTree();
                             renderGovernmentTab();
                             showToast(iconWithText(ICONS.CHECK, ' Import successful'), 'success');
                         }, 200);
                     }).catch(function(err) {
-                        showToast(iconWithText(ICONS.WARNING, ' Import failed: ' + err.message), 'error');
+                        showToast(iconWithText(ICONS.WARNING, ' Import failed: ' + (err.message || 'unknown')), 'error');
                     });
                 } else {
-                    alert('Import utility not loaded (exportUtils.js)');
+                    showToast(iconWithText(ICONS.WARNING, ' Import function not available'), 'error');
                 }
             };
         }
@@ -559,7 +617,7 @@
                         showToast(iconWithText(ICONS.WARNING, ' Export failed'), 'error');
                     }
                 } else {
-                    alert('Export utility not loaded (exportUtils.js)');
+                    showToast(iconWithText(ICONS.WARNING, ' Export function not available'), 'error');
                 }
             };
         }
@@ -583,9 +641,9 @@
         setupUIText();
         if (typeof window.loadMasterData === 'function') window.loadMasterData();
         bootstrapGovernment();
-        
-        setTimeout(function() { 
-            setupLocationTree(); 
+
+        setTimeout(function() {
+            setupLocationTree();
             setupTopBarActions();
             initMobileSidebar();
             renderGovernmentTab();
