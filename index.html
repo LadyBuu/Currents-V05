@@ -1,16 +1,19 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Still Waters · Nexus of Tools</title>
 
-    <!-- Fonts -->
+    <!-- 1. Theme Bootstrapper (MUST LOAD FIRST) -->
+    <script src="js/core/theme-boot.js"></script>
+
+    <!-- 2. Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-    <!-- Stylesheets -->
+    <!-- 3. Stylesheets -->
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/nexus.css" />
@@ -388,108 +391,6 @@
 (function () {
     'use strict';
 
-    var STORAGE_KEY = 'stillwaters_theme';
-
-    var THEMES = [
-        { id: 'dark',            label: 'Dark' },
-        { id: 'light',           label: 'Light' },
-        { id: 'vaporwave',       label: 'Vaporwave' },
-        { id: 'pastel',          label: 'Pastel' },
-        { id: 'carnival',        label: 'Carnival' },
-        { id: 'maximal',         label: 'Maximal' },
-        { id: 'gits',            label: 'GITS' },
-        { id: 'nouveau',         label: 'Nouveau' },
-        { id: 'ukiyo-e',         label: 'Ukiyo-e' },
-        { id: 'nature',          label: 'Nature' },
-        { id: 'kmt',             label: 'KMT' },
-        { id: 'gaslight',        label: 'Gaslight' },
-        { id: 'grotesque',       label: 'Grotesque' },
-        { id: 'illuminated',     label: 'Illuminated' },
-        { id: 'discowing',       label: 'Discowing' },
-        { id: 'choc-cake',       label: 'Choc Cake' },
-        { id: 'dada',            label: 'Dada' },
-        { id: 'brutalist',       label: 'Brutalist' },
-        { id: 'orchestrion',     label: 'Orchestrion' },
-        { id: 'rococo',          label: 'Rococo' },
-        { id: 'nautical-tile',   label: 'Nautical Tile' }
-    ];
-
-    var byId = {};
-    for (var i = 0; i < THEMES.length; i++) byId[THEMES[i].id] = THEMES[i];
-
-    var themeBtn  = document.getElementById('themeBtn');
-    var themeMenu = document.getElementById('themeMenu');
-    var themeName = document.getElementById('themeName');
-
-    function apply(id) {
-        if (!byId[id]) id = 'dark';
-        document.documentElement.setAttribute('data-theme', id);
-        themeName.textContent = byId[id].label;
-        try { localStorage.setItem(STORAGE_KEY, id); } catch (e) {}
-    }
-
-    function buildMenu() {
-        var html = '';
-        for (var i = 0; i < THEMES.length; i++) {
-            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
-                THEMES[i].id + '">' + THEMES[i].label + '</button></li>';
-        }
-        themeMenu.innerHTML = html;
-    }
-
-    function openMenu() {
-        themeMenu.hidden = false;
-        themeBtn.setAttribute('aria-expanded', 'true');
-    }
-    function closeMenu() {
-        themeMenu.hidden = true;
-        themeBtn.setAttribute('aria-expanded', 'false');
-    }
-
-    themeBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        if (themeMenu.hidden) openMenu(); else closeMenu();
-    });
-    themeMenu.addEventListener('click', function (e) {
-        var btn = e.target.closest('[data-theme-id]');
-        if (!btn) return;
-        apply(btn.getAttribute('data-theme-id'));
-        closeMenu();
-    });
-    document.addEventListener('click', function (e) {
-        if (themeMenu.hidden) return;
-        if (themeMenu.contains(e.target)) return;
-        if (e.target === themeBtn) return;
-        closeMenu();
-    });
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && !themeMenu.hidden) closeMenu();
-    });
-
-    var saved = null;
-    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
-    buildMenu();
-
-    if (saved && byId[saved]) {
-        apply(saved);
-    } else {
-        var mq = window.matchMedia('(prefers-color-scheme: light)');
-        apply(mq.matches ? 'light' : 'dark');
-        mq.addEventListener('change', function (ev) {
-            var check;
-            try { check = localStorage.getItem(STORAGE_KEY); } catch (e) {}
-            if (!check) apply(ev.matches ? 'light' : 'dark');
-        });
-    }
-
-    window.ThemeSwitcher = { apply: apply, themes: THEMES.slice() };
-})();
-</script>
-
-<script>
-(function () {
-    'use strict';
-
     var KEY_RECENT_TOOLS   = 'stillwaters_recent_tools';
     var KEY_COMPACT_GRID   = 'stillwaters_nexus_compact_grid';
     var KEY_SHOW_PATHS     = 'stillwaters_nexus_show_paths';
@@ -605,8 +506,6 @@
         }
     }
 
-    // Verify every card target resolves. A typo in a manager filename
-    // shows up as a console warning instead of a silent dead click.
     function verifyCardTargets() {
         var cards = document.querySelectorAll('.tool-card[href]');
         var seen = Object.create(null);
@@ -614,7 +513,7 @@
             var href = cards[i].getAttribute('href');
             if (!href || seen[href]) continue;
             seen[href] = true;
-            if (/^(https?:)?\/\//.test(href)) continue; // external
+            if (/^(https?:)?\/\//.test(href)) continue;
             fetch(href, { method: 'HEAD' })
                 .then(function (resp) {
                     if (!resp.ok) {
@@ -754,12 +653,12 @@
                     'household_tree_state',
                     'identityTab_collapsed',
                     'heartbreak_collapsed',
-                    'adoption_agency_state'
+                    'adoption_agency_state',
+                    'stillwaters_theme'
                 ];
                 for (var i = 0; i < keysToClear.length; i++) {
                     removeLS(keysToClear[i]);
                 }
-                removeLS('stillwaters_theme');
                 try { window.location.reload(); } catch (e) {}
             });
         }
@@ -804,6 +703,88 @@
     } else {
         boot();
     }
+})();
+</script>
+
+<script>
+(function () {
+    'use strict';
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+
+    // Use the global API from theme-boot.js
+    var switcher = window.ThemeSwitcher;
+    if (!switcher) {
+        console.error('theme-boot.js not loaded.');
+        return;
+    }
+
+    function updateLabel(id) {
+        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        if (themeName) themeName.textContent = label;
+    }
+
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                id + '">' + label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
+
+    function openMenu() {
+        if (!themeMenu) return;
+        themeMenu.hidden = false;
+        themeBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeMenu() {
+        if (!themeMenu) return;
+        themeMenu.hidden = true;
+        themeBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (themeMenu.hidden) openMenu(); else closeMenu();
+        });
+    }
+
+    if (themeMenu) {
+        themeMenu.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-theme-id]');
+            if (!btn) return;
+            var id = btn.getAttribute('data-theme-id');
+            switcher.apply(id);
+            updateLabel(id);
+            closeMenu();
+        });
+    }
+
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) {
+            closeMenu();
+        }
+    });
+
+    // Initialize
+    buildMenu();
+    var saved = switcher.getSaved();
+    if (saved) updateLabel(saved);
+
 })();
 </script>
 
