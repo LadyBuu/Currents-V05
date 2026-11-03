@@ -3,7 +3,7 @@
  * STILL WATERS - RANK BOOTSTRAP (rank-bootstrap.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-bootstrap.js
+ * LOCATION: js/ranks/rank-bootstrap.js
  *
  * Load-order manifest, dependency verification, state hydration, and
  * namespace export for the rank domain.
