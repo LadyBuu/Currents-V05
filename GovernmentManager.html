@@ -5,15 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Government Manager</title>
 
-    <!-- 1. Theme Bootstrapper (MUST LOAD FIRST) -->
     <script src="js/core/theme-boot.js"></script>
 
-    <!-- 2. Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
-
-    <!-- 3. Stylesheets -->
+    
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/worldManager.css">
@@ -21,8 +18,8 @@
     <link rel="stylesheet" href="css/location-sidebar.css">
     <link rel="stylesheet" href="css/gov-manager.css">
 
-    <!-- 4. INLINE LAYOUT FIXES -->
     <style>
+        /* INLINE LAYOUT FIXES */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; }
         .topbar { flex-shrink: 0; }
@@ -72,7 +69,6 @@
             border-bottom: 1px solid var(--border);
         }
 
-        /* Sub-tabs styling fix */
         .gov-subtab {
             padding: 10px 16px;
             border-bottom: 2px solid transparent;
@@ -95,13 +91,11 @@
     <div class="title" id="govManagerTitle"></div>
     <div class="spacer"></div>
     
-    <!-- Topbar Actions -->
     <button id="addDeptBtn" class="tb-btn primary"></button>
     <button id="importBtn" class="tb-btn"></button>
     <button id="exportBtn" class="tb-btn primary"></button>
     <button id="refreshBtn" class="tb-btn"></button>
 
-    <!-- Theme Toggle -->
     <div class="theme-toggle" role="group" aria-label="Theme">
         <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
             <span aria-hidden="true">◐</span>
@@ -112,7 +106,6 @@
 </div>
 
 <div class="world-app">
-    <!-- Location Sidebar (Left) -->
     <div class="locations-sidebar" id="locationsSidebar">
         <div class="sidebar-header">
             <h3 id="sidebarTitle"></h3>
@@ -123,18 +116,12 @@
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-    <!-- Main Panel (Right) -->
     <div class="main-panel">
-        
-        <!-- We removed the top tabs, so we just have the content area -->
         <div class="tab-content-wrapper" id="panelContent">
             <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
         </div>
     </div>
 </div>
-
-<!-- Hidden file input for Import -->
-<input type="file" id="fileInput" accept=".json" style="display:none;" />
 
 <!-- ============================================================ -->
 <!-- CORE - NO SYSTEM DEPENDENCIES                                 -->
@@ -158,9 +145,7 @@
 <script>
     (function () {
         try {
-            if (typeof window.initializeStorage === 'function') {
-                window.initializeStorage();
-            }
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
         } catch (e) { console.error('[GovernmentManager] initializeStorage failed:', e); }
     })();
 </script>
@@ -177,12 +162,15 @@
 <script src="js/core/exportUtils.js"></script>
 
 <!-- ============================================================ -->
-<!-- SELECTORS & SYSTEMS                                          -->
+<!-- SELECTORS                                                    -->
 <!-- ============================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script src="js/selectors/modals-char-selector.js"></script>
 
+<!-- ============================================================ -->
+<!-- CHARACTER                                                    -->
+<!-- ============================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
@@ -195,6 +183,9 @@
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 
+<!-- ============================================================ -->
+<!-- LOCATION                                                     -->
+<!-- ============================================================ -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -209,6 +200,9 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
+<!-- ============================================================ -->
+<!-- RANK & HOUSEHOLD                                             -->
+<!-- ============================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
 <script src="js/ranks/rank-state.js"></script>
@@ -227,6 +221,9 @@
 <script src="js/households/household-commands.js"></script>
 <script src="js/selectors/modals-household-selector.js"></script>
 
+<!-- ============================================================ -->
+<!-- ROLES                                                        -->
+<!-- ============================================================ -->
 <script src="js/roles/skill-utils.js"></script>
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
@@ -234,6 +231,9 @@
 <script src="js/roles/role-commands.js"></script>
 <script src="js/roles/modals-roles.js"></script>
 
+<!-- ============================================================ -->
+<!-- SETTLEMENT                                                   -->
+<!-- ============================================================ -->
 <script src="js/settlement/settlement-state.js"></script>
 <script src="js/settlement/settlement-queries.js"></script>
 <script src="js/settlement/settlement-commands-core.js"></script>
@@ -243,6 +243,9 @@
 <script src="js/settlement/modals-settlement-core.js"></script>
 <script src="js/settlement/modals-settlement-economy.js"></script>
 
+<!-- ============================================================ -->
+<!-- GOVERNMENT SYSTEM                                            -->
+<!-- ============================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
 <script src="js/government/government-rules.js"></script>
@@ -259,6 +262,9 @@
 <script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
 
+<!-- ============================================================ -->
+<!-- GOVERNMENT TABS                                              -->
+<!-- ============================================================ -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
 <script src="js/tabs/government-history-tab.js"></script>
@@ -266,10 +272,9 @@
 <script src="js/tabs/government-economy-tab.js"></script>
 
 <script src="js/core/tree/locationsListUI.js"></script>
-<script src="js/events/annualProcessing.js"></script>
 
 <!-- ============================================================ -->
-<!-- GOVERNMENT SUB-TAB HOST (Inline)                             -->
+<!-- GOVERNMENT SUB-TAB HOST                                      -->
 <!-- ============================================================ -->
 <script>
     (function () {
@@ -326,13 +331,11 @@
         window.renderGovernmentTab = function (containerId, placeId, onRefresh) {
             renderSubtabStrip(containerId, placeId, onRefresh);
         };
-        
-        window.getActiveGovernmentSubtab = function () { return _activeSubtabId; };
     })();
 </script>
 
 <!-- ============================================================ -->
-<!-- GOVERNMENT MANAGER - MAIN CONTROLLER                         -->
+<!-- MAIN CONTROLLER                                              -->
 <!-- ============================================================ -->
 <script>
 (function() {
@@ -358,7 +361,6 @@
 
     function showToast(msg, type) {
         if (typeof window.showToast === 'function') window.showToast(msg, type);
-        else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
         else if (typeof window._showToast === 'function') window._showToast(msg, type);
     }
     
@@ -422,7 +424,7 @@
                 html += '</div>';
                 container.innerHTML = html;
                 var items = container.querySelectorAll('.place-item');
-                for (var i = 0; i < items.length; i++) {
+                for (var j = 0; j < items.length; j++) {
                     (function(item) {
                         item.addEventListener('click', function() {
                             var placeId = this.dataset.placeId;
@@ -432,7 +434,7 @@
                                 if (window.innerWidth <= 768) closeSidebar();
                             }
                         });
-                    })(items[i]);
+                    })(items[j]);
                 }
             } else {
                 container.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' No locations found') + '</div>';
@@ -500,13 +502,11 @@
         }
     }
 
-    // REPLACED: Stubs for import/export to actually work natively
     function setupTopBarActions() {
         var addDeptBtn = document.getElementById('addDeptBtn');
         var importBtn = document.getElementById('importBtn');
         var exportBtn = document.getElementById('exportBtn');
         var refreshBtn = document.getElementById('refreshBtn');
-        var fileInput = document.getElementById('fileInput');
 
         if (addDeptBtn) {
             addDeptBtn.onclick = function() {
@@ -520,79 +520,46 @@
                     return;
                 }
                 
-                // Fallback attempt for Department creation
+                // Canonical function from modals-government-departments.js
                 if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
                     window.openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
                         renderGovernmentTab();
                     });
-                } else if (typeof window._openCreateGovernmentDepartmentModal === 'function') {
-                    window._openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
-                        renderGovernmentTab();
-                    });
                 } else {
-                    // If neither exist, let's look for a generic global modal
-                    if (typeof window.openModal === 'function') {
-                        window.openModal({
-                            title: 'Create Department',
-                            body: '<div class="error-state">Department modal script is missing from this page load.</div>'
-                        });
-                    } else {
-                        alert('Department creation modal script failed to load.');
-                    }
+                    alert('Department creation modal script failed to load.');
                 }
             };
         }
 
-        if (importBtn && fileInput) {
+        if (importBtn) {
             importBtn.onclick = function() {
-                fileInput.value = '';
-                fileInput.click();
-            };
-            
-            fileInput.addEventListener('change', function() {
-                var file = this.files && this.files[0];
-                if (!file) return;
-
-                var reader = new FileReader();
-                reader.onload = function(ev) {
-                    try {
-                        var parsed = JSON.parse(ev.target.result);
-                        var dataToInstall = parsed.data || parsed; 
-                        if (!dataToInstall || !dataToInstall.places) throw new Error("Invalid JSON format");
-                        
-                        window.masterData = window.normalizeMasterData ? window.normalizeMasterData({ data: dataToInstall }) : dataToInstall;
-                        if (window.saveMasterData) window.saveMasterData();
-                        if (window.GovernmentBootstrap) window.GovernmentBootstrap.reinit();
-                        
+                if (typeof window.importData === 'function') {
+                    window.importData().then(function() {
                         setTimeout(function() {
                             setupLocationTree();
                             renderGovernmentTab();
                             showToast(iconWithText(ICONS.CHECK, ' Import successful'), 'success');
-                        }, 100);
-                        
-                    } catch(err) {
-                        showToast(iconWithText(ICONS.WARNING, ' Invalid JSON: ' + err.message), 'error');
-                    }
-                };
-                reader.readAsText(file);
-            });
+                        }, 200);
+                    }).catch(function(err) {
+                        showToast(iconWithText(ICONS.WARNING, ' Import failed: ' + err.message), 'error');
+                    });
+                } else {
+                    alert('Import utility not loaded (exportUtils.js)');
+                }
+            };
         }
 
         if (exportBtn) {
             exportBtn.onclick = function() {
-                if (!window.masterData) {
-                    showToast(iconWithText(ICONS.WARNING, ' No data to export'), 'error');
-                    return;
-                }
-                try {
-                    var dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.masterData, null, 2));
-                    var dlAnchorElem = document.createElement('a');
-                    dlAnchorElem.setAttribute("href", dataStr);
-                    dlAnchorElem.setAttribute("download", "stillwaters_government_export.json");
-                    dlAnchorElem.click();
-                    showToast(iconWithText(ICONS.CHECK, ' Export started'), 'success');
-                } catch(err) {
-                    showToast(iconWithText(ICONS.WARNING, ' Export failed'), 'error');
+                if (typeof window.exportData === 'function') {
+                    try {
+                        window.exportData();
+                        showToast(iconWithText(ICONS.CHECK, ' Export started'), 'success');
+                    } catch (e) {
+                        showToast(iconWithText(ICONS.WARNING, ' Export failed'), 'error');
+                    }
+                } else {
+                    alert('Export utility not loaded (exportUtils.js)');
                 }
             };
         }
@@ -621,8 +588,6 @@
             setupLocationTree(); 
             setupTopBarActions();
             initMobileSidebar();
-            
-            // Auto-render the first location
             renderGovernmentTab();
         }, 150);
     }
