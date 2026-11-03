@@ -3,7 +3,7 @@
  * STILL WATERS - RANK RULES (rank-rules.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-rules.js
+ * LOCATION: js/ranks/rank-rules.js
  *
  * Pure policy for the rank domain.
  *
