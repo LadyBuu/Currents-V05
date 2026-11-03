@@ -2,11 +2,11 @@
  * =============================================================================
  * HOUSEHOLD OVERVIEW TAB (household-overview-tab.js)
  * =============================================================================
- * 
+ *
  * PURPOSE: Modular overview tab for the Household Manager tool.
  *          Displays household information with edit capabilities,
  *          name change tracking (with history), and residence assignment.
- * 
+ *
  * DEPENDS ON:
  *   - HouseholdState (household-state.js)
  *   - HouseholdCommands (household-commands.js)
@@ -16,9 +16,38 @@
  *   - ui.js (for toast notifications)
  *   - icons.js (for icons)
  *   - modals-char-selector.js (for character selection)
- * 
+ *
  * ICON POLICY: Uses icons.js - NO emojis
- * 
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear now uses getCurrentYear (canonical accessor in
+ *       time.js) instead of the deprecated getCurrentYearSafe alias,
+ *       and throws on missing time.js instead of falling back to 1250.
+ *       The 1250 fallback violated the "no magic year" invariant in
+ *       stillwaters-docs.txt §3.6 and corrupted household history
+ *       entries on any page where time.js hadn't loaded.
+ *     - _getCurrentHouseholdId now prefers
+ *       HouseholdState.getUIState().selectedHouseholdId (the canonical
+ *       selection store populated by HouseholdState.setSelectedHousehold,
+ *       which household-ui-list.js::selectHousehold calls). The flat
+ *       window._currentHouseholdId / window.currentHouseholdId /
+ *       window.selectedHouseholdId globals it used before are not
+ *       written by any canonical module, so a fresh page saw null even
+ *       after the user picked a household.
+ *     - Replaced window.renderHouseholdList() with
+ *       window.refreshHouseholdList() in every mutation success path.
+ *       household-ui-list.js exports refreshHouseholdList, not
+ *       renderHouseholdList; the old calls silently no-oped, leaving
+ *       the sidebar showing the pre-mutation state after a rename,
+ *       head change, or residence assignment.
+ *     - _doRenameWithHistory now routes the rename through
+ *       HouseholdCommands.updateHousehold + persist instead of
+ *       mutating masterData.data.households directly. The direct
+ *       write bypassed the accessor cache invalidation, so
+ *       getHouseholdById returned the pre-rename record until the
+ *       next full reload.
  * =============================================================================
  */
 
@@ -65,12 +94,25 @@
         return null;
     }
 
+    /**
+     * Returns the current simulation year.
+     *
+     * Delegates to the canonical accessor in time.js. The deprecated
+     * getCurrentYearSafe alias is NOT used, and there is NO 1250
+     * fallback. A missing time.js is a load-order bug; the caller
+     * should surface it, not silently substitute a wrong year.
+     *
+     * @throws {Error} if time.js is not loaded
+     */
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                '[HouseholdOverviewTab] requires time.js (getCurrentYear). ' +
+                'Load js/core/time.js before this tab.'
+            );
+        }
+        return window.getCurrentYear();
+    }
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
@@ -156,11 +198,32 @@
     }
 
     // =========================================================================
-    // 4. GET CURRENT HOUSEHOLD ID - FIXED to use window variable
+    // 4. GET CURRENT HOUSEHOLD ID
     // =========================================================================
+    //
+    // The canonical selection lives in HouseholdState.getUIState()
+    // .selectedHouseholdId. It is written by
+    // HouseholdState.setSelectedHousehold(id), which
+    // household-ui-list.js::selectHousehold is expected to call when
+    // the user picks a household from the sidebar.
+    //
+    // The flat globals (window._currentHouseholdId,
+    // window.currentHouseholdId, window.selectedHouseholdId) are NOT
+    // written by any canonical module. They are kept as a fallback
+    // for harnesses that set them directly, but they are no longer
+    // the source of truth.
 
     function _getCurrentHouseholdId() {
-        // Try multiple possible global locations
+        var HS = _getState();
+        if (HS && typeof HS.getUIState === 'function') {
+            try {
+                var s = HS.getUIState();
+                if (s && typeof s.selectedHouseholdId === 'string'
+                    && s.selectedHouseholdId.length > 0) {
+                    return s.selectedHouseholdId;
+                }
+            } catch (e) { /* fall through to legacy globals */ }
+        }
         if (window._currentHouseholdId) return window._currentHouseholdId;
         if (window.currentHouseholdId) return window.currentHouseholdId;
         if (window.selectedHouseholdId) return window.selectedHouseholdId;
@@ -373,7 +436,7 @@
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION - FIXED to use window._currentHouseholdId
+    // 7. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderHouseholdOverviewTab(containerId, householdId) {
@@ -389,7 +452,7 @@
                 return;
             }
 
-            // If no householdId provided, try to get it from the global variable
+            // If no householdId provided, resolve from canonical state.
             if (!householdId) {
                 householdId = _getCurrentHouseholdId();
             }
@@ -425,7 +488,7 @@
     }
 
     // =========================================================================
-    // 8. EVENT HANDLERS (same as before, omitted for brevity - but they work)
+    // 8. EVENT HANDLERS
     // =========================================================================
 
     function _attachEventHandlers(container, householdId) {
@@ -440,8 +503,11 @@
                 if (typeof window.openEditHouseholdModal === 'function') {
                     window.openEditHouseholdModal(householdId, function() {
                         renderHouseholdOverviewTab('tab-details', householdId);
-                        if (typeof window.renderHouseholdList === 'function') {
-                            window.renderHouseholdList();
+                        // Sync the sidebar's selected household back
+                        // to the canonical store so a subsequent
+                        // re-render sees the updated name.
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
                         }
                     });
                 } else {
@@ -577,60 +643,61 @@
                     return false;
                 }
                 var result = _doRenameWithHistory(householdId, newName, year, reason, changedBy);
-                if (result) {
+                if (result && result.success) {
                     _showToast('Household renamed from "' + household.name + '" to "' + newName + '" (' + year + ')', 'success');
                     _closeTopModal();
                     renderHouseholdOverviewTab('tab-details', householdId);
-                    if (typeof window.renderHouseholdList === 'function') {
-                        window.renderHouseholdList();
+                    if (typeof window.refreshHouseholdList === 'function') {
+                        window.refreshHouseholdList();
                     }
                     return true;
                 } else {
-                    _showToast('Failed to rename household', 'error');
+                    var reason2 = (result && result.reason) ? result.reason : 'Unknown error';
+                    _showToast('Failed to rename household: ' + reason2, 'error');
                     return false;
                 }
             }
         });
     }
 
+    /**
+     * Renames a household through HouseholdCommands.updateHousehold,
+     * which owns the field allowlist, the accessor cache invalidation,
+     * and the name-history append.
+     *
+     * The previous implementation mutated masterData.data.households
+     * directly, which bypassed invalidateAccessorCaches — so
+     * getHouseholdById returned the pre-rename record until the next
+     * full reload.
+     *
+     * @returns {object|null} the command result, or null on precondition failure
+     */
     function _doRenameWithHistory(householdId, newName, year, reason, changedBy) {
-        var HS = _getState();
-        var household = HS.getHousehold(householdId);
-        if (!household) return false;
-        if (!household.nameHistory) household.nameHistory = [];
-        var oldName = household.name;
-        household.nameHistory.push({
-            oldName: oldName,
-            newName: newName,
-            year: year,
-            reason: reason || 'Renamed',
-            changedBy: changedBy || 'User',
-            timestamp: Date.now()
+        var HC = _getCommands();
+        if (!HC) {
+            return { success: false, reason: 'HouseholdCommands not available' };
+        }
+        var result = HC.updateHousehold(householdId, {
+            name: newName,
+            renameYear: year,
+            renameReason: reason || 'Renamed',
+            changedBy: changedBy || null
         });
-        household.name = newName;
-        household.currentNameSince = year;
-        household.updatedAt = Date.now();
-        var households = HS.getAllHouseholds({ includeDeprecated: true });
-        for (var i = 0; i < households.length; i++) {
-            if (households[i].id === householdId) {
-                households[i] = household;
-                break;
-            }
+        if (!result || result.success !== true) {
+            return result || { success: false, reason: 'updateHousehold returned no result' };
         }
-        if (typeof HS._setHouseholds === 'function') {
-            HS._setHouseholds(households);
-        } else {
-            if (window.masterData && window.masterData.data) {
-                window.masterData.data.households = households;
-                if (typeof window.saveMasterData === 'function') {
-                    window.saveMasterData();
-                }
-            }
+        var persistResult = HC.persist();
+        if (persistResult && persistResult.success === false) {
+            // In-memory update succeeded; the flush failed. Surface
+            // the failure so the caller does not believe the rename
+            // survived a reload.
+            return {
+                success: false,
+                reason: 'Saved in memory; storage write failed: ' +
+                    (persistResult.reason || 'unknown')
+            };
         }
-        if (typeof window.invalidateAccessorCaches === 'function') {
-            window.invalidateAccessorCaches();
-        }
-        return true;
+        return result;
     }
 
     // =========================================================================
@@ -724,6 +791,9 @@
                         _showToast('Head of household removed', 'info');
                         _closeTopModal();
                         renderHouseholdOverviewTab('tab-details', householdId);
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
+                        }
                         return true;
                     } else {
                         _showToast(result ? result.reason : 'Failed to remove head', 'error');
@@ -736,8 +806,8 @@
                     _showToast((char ? char.name : 'Character') + ' set as head of household', 'success');
                     _closeTopModal();
                     renderHouseholdOverviewTab('tab-details', householdId);
-                    if (typeof window.renderHouseholdList === 'function') {
-                        window.renderHouseholdList();
+                    if (typeof window.refreshHouseholdList === 'function') {
+                        window.refreshHouseholdList();
                     }
                     return true;
                 } else {
@@ -807,7 +877,7 @@
             '<div style="margin-bottom:12px;">' +
                 '<div style="background:var(--bg3);padding:8px;border-radius:6px;margin-bottom:12px;font-size:0.6rem;">' +
                     'Assigning residence to: <strong>' + _escapeHtml(household.name) + '</strong>' +
-                    (locationId ? ' · Location: ' + _escapeHtml(_getPlaceById(locationId)?.displayName || 'Unknown') : '') +
+                    (locationId ? ' · Location: ' + _escapeHtml((_getPlaceById(locationId) || {}).displayName || 'Unknown') : '') +
                 '</div>' +
                 '<div class="form-group" style="margin-bottom:12px;">' +
                     '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Select Residence</label>' +
@@ -905,8 +975,8 @@
                 _showToast(household.name + ' assigned to Unit ' + unitNumber + ' of ' + residence.name, 'success');
                 _closeTopModal();
                 renderHouseholdOverviewTab('tab-details', householdId);
-                if (typeof window.renderHouseholdList === 'function') {
-                    window.renderHouseholdList();
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
                 }
                 return;
             } else {
@@ -920,8 +990,8 @@
                 _showToast(household.name + ' assigned to ' + residence.name, 'success');
                 _closeTopModal();
                 renderHouseholdOverviewTab('tab-details', householdId);
-                if (typeof window.renderHouseholdList === 'function') {
-                    window.renderHouseholdList();
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
                 }
             } else {
                 _showToast(result ? result.reason : 'Failed to assign residence', 'error');
@@ -937,8 +1007,8 @@
                 _showToast(household.name + ' associated with ' + residence.name, 'success');
                 _closeTopModal();
                 renderHouseholdOverviewTab('tab-details', householdId);
-                if (typeof window.renderHouseholdList === 'function') {
-                    window.renderHouseholdList();
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
                 }
             } else {
                 _showToast('Failed to associate residence', 'error');
@@ -989,8 +1059,8 @@
         if (result) {
             _showToast('Residence unassigned', 'info');
             renderHouseholdOverviewTab('tab-details', householdId);
-            if (typeof window.renderHouseholdList === 'function') {
-                window.renderHouseholdList();
+            if (typeof window.refreshHouseholdList === 'function') {
+                window.refreshHouseholdList();
             }
         } else {
             _showToast('Failed to unassign residence', 'error');
