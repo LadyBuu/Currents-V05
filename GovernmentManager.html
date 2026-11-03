@@ -11,42 +11,194 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
     
+    <!-- SHARED (external) -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
-    <link rel="stylesheet" href="css/worldManager.css">
-    <link rel="stylesheet" href="css/selectors.css">
-    <link rel="stylesheet" href="css/location-sidebar.css">
-    <link rel="stylesheet" href="css/gov-manager.css">
 
     <style>
+        /* ============================================================
+           GOVERNMENT MANAGER — INLINE (was css/gov-manager.css)
+           + Layout shell
+           + Theme toggle
+           + Mobile tweaks
+           ============================================================ */
+
+        /* ---- App shell (was in gov-manager.css §0) ---- */
         html, body { height: 100%; margin: 0; overflow: hidden; }
         body { display: flex; flex-direction: column; }
-        .topbar { flex-shrink: 0; }
-        
-        .world-app { display: flex; flex-direction: row; flex: 1; min-height: 0; overflow: hidden; }
-        .locations-sidebar { flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg2); border-right: 1px solid var(--border); }
-        .main-panel { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-        .tab-content-wrapper { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 16px; }
 
-        .panel-tabs { display: none !important; }
-        .gov-subtabs { position: sticky; top: 0; background: var(--bg); z-index: 10; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
-        .gov-subtab { padding: 10px 16px; border-bottom: 2px solid transparent; }
-        .gov-subtab.active { border-bottom-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+        .world-app {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
 
+        .locations-sidebar {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+        }
+
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .tab-content-wrapper {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 16px;
+        }
+
+        /* ---- Topbar buttons (was .tb-btn in gov-manager.css) ---- */
+        .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 5px 12px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.65rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+        }
+        .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
+        .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+        .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+
+        /* ---- Theme toggle dropdown (was missing) ---- */
+        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle__btn { gap: 6px; }
+        .theme-toggle__menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            z-index: 200;
+            min-width: 160px;
+            max-height: 60vh;
+            padding: 4px;
+            margin: 0;
+            list-style: none;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block;
+            width: 100%;
+            padding: 6px 12px;
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px);
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        .theme-toggle__menu button:hover,
+        .theme-toggle__menu button:focus-visible {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+            outline: none;
+        }
+
+        /* ---- Panel / sub-tab strip (was in gov-manager.css §2, §3) ---- */
+        .panel-tabs { display: none !important; } /* hidden — sub-tabs are the real nav */
+
+        .gov-subtabs {
+            position: sticky;
+            top: 0;
+            background: var(--bg);
+            z-index: 10;
+            display: flex;
+            gap: 2px;
+            padding: 0 4px;
+            margin-bottom: 14px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+        .gov-subtab {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: 2px solid transparent;
+            border-radius: 4px 4px 0 0;
+            font-family: var(--f-display);
+            font-size: 0.68rem;
+            letter-spacing: 0.05em;
+            color: var(--dim);
+            cursor: pointer;
+            transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+        }
+        .gov-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
+        .gov-subtab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: var(--accent-dim);
+            font-weight: 600;
+        }
+        .gov-subtab-icon { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; color: currentColor; }
+        .gov-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+        .gov-subpanel { min-height: 200px; }
+
+        /* ---- Toast fixes ---- */
         .toast-message { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .toast-message svg { flex-shrink: 0; }
         .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
 
-        .toast { box-shadow: none; backdrop-filter: none; }
-        .modal-container { box-shadow: none; backdrop-filter: none; }
-        .btn:hover { box-shadow: none; }
+        /* ---- No shadows/blurs anywhere for mobile ---- */
+        .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+        .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+        .btn:hover { box-shadow: none !important; }
+
+        /* ---- Sidebar title, mobile overlay ---- */
+        .sidebar-header h3 {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active { display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 999; }
 
         @media (max-width: 768px) {
             .world-app { flex-direction: column; }
-            .locations-sidebar { position: fixed; top: 0; bottom: 0; left: 0; height: 100vh; width: 85%; max-width: 280px; z-index: 1000; transform: translateX(-100%); transition: transform 0.3s ease; box-shadow: none; }
+            .locations-sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                height: 100vh;
+                width: 85%; max-width: 280px;
+                z-index: 1000;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: none;
+            }
             .locations-sidebar.visible { transform: translateX(0); }
-            .sidebar-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 999; }
-            .sidebar-overlay.active { display: block; }
             .gov-subtabs { flex-wrap: wrap; }
             .gov-subtab { flex: 1 1 100%; border-bottom: 1px solid var(--border); }
         }
@@ -79,13 +231,13 @@
 <div class="world-app">
     <div class="locations-sidebar" id="locationsSidebar">
         <div class="sidebar-header"><h3 id="sidebarTitle"></h3></div>
-        <div class="place-list" id="placeList"><div class="loading" id="loadingText">Loading locations...</div></div>
+        <div class="place-list" id="placeList"><div class="loading" id="loadingText">Loading governments...</div></div>
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
     <div class="main-panel">
         <div class="tab-content-wrapper" id="panelContent">
-            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
+            <div class="empty-state" id="emptyStateText">Select a government from the sidebar</div>
         </div>
     </div>
 </div>
@@ -156,7 +308,7 @@
 <!-- 11. State.js -->
 <script src="js/core/state.js"></script>
 
-<!-- 12. Character Domain (MUST load before ranks/roles/names chains) -->
+<!-- 12. Character Domain -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
 <script src="js/character/character-deletion-commands.js"></script>
@@ -248,6 +400,19 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
+<!-- 18a. Selectors (MOVED UP — required by modals-industry.js) -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            return window.buildLocationDropdown ? window.buildLocationDropdown(selectedId, null, true) : '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+<script src="js/selectors/modals-household-selector.js"></script>
+
 <!-- 18b. Industry Chain (required by government-queries.js) -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
@@ -282,29 +447,14 @@
 <script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
 
-<!-- 20. Selectors -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script>
-    if (typeof window.getFilteredLocationOptions !== 'function') {
-        window.getFilteredLocationOptions = function (selectedId) {
-            return window.buildLocationDropdown ? window.buildLocationDropdown(selectedId, null, true) : '<option value="">All locations</option>';
-        };
-    }
-</script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- 21. Government Tabs -->
+<!-- 20. Government Tabs -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
 <script src="js/tabs/government-history-tab.js"></script>
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
-<!-- ============================================================ -->
-<!-- SUB-TAB HOST & ORCHESTRATOR                                  -->
-<!-- ============================================================ -->
+<!-- SUB-TAB HOST -->
 <script>
     (function () {
         'use strict';
@@ -369,7 +519,7 @@
         var title = document.getElementById('govManagerTitle');
         if (title) title.innerHTML = iconWithText(getIcon('CROWN'), ' GOVERNMENT MANAGER');
         var sidebarTitle = document.getElementById('sidebarTitle');
-        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' GOVERNMENT');
+        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' GOVERNMENTS');
         var addDeptBtn = document.getElementById('addDeptBtn');
         if (addDeptBtn) addDeptBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Department');
         var importBtn = document.getElementById('importBtn');
@@ -379,7 +529,9 @@
         var refreshBtn = document.getElementById('refreshBtn');
         if (refreshBtn) refreshBtn.innerHTML = iconWithText(getIcon('REFRESH'), ' Refresh');
         var loadingText = document.getElementById('loadingText');
-        if (loadingText) loadingText.textContent = 'Loading locations...';
+        if (loadingText) loadingText.textContent = 'Loading governments...';
+        var emptyState = document.getElementById('emptyStateText');
+        if (emptyState) emptyState.textContent = 'Select a government from the sidebar';
     }
 
     function setupLocationTree() {
@@ -415,7 +567,7 @@
                     });
                 })(items[j]);
             }
-        } else { container.innerHTML = '<div class="empty-state">No locations found</div>'; }
+        } else { container.innerHTML = '<div class="empty-state">No governments found</div>'; }
     }
 
     function closeSidebar() { var s = document.getElementById('locationsSidebar'); var o = document.getElementById('sidebarOverlay'); if (s) s.classList.remove('visible'); if (o) o.classList.remove('active'); }
@@ -432,14 +584,14 @@
                 if (!currentPlaceId && places.length > 0) currentPlaceId = places[0].id;
             }
         }
-        if (!currentPlaceId) { panel.innerHTML = '<div class="empty-state">Select a location from the sidebar</div>'; return; }
+        if (!currentPlaceId) { panel.innerHTML = '<div class="empty-state">Select a government from the sidebar</div>'; return; }
         if (typeof window.renderGovernmentTab === 'function') { window.renderGovernmentTab('panelContent', currentPlaceId); }
     }
 
     function setupTopBarActions() {
         document.getElementById('addDeptBtn').onclick = function() {
             var lid = currentPlaceId || (getPlaces()[0] || {}).id;
-            if (!lid) { showToast('No location selected', 'warning'); return; }
+            if (!lid) { showToast('No government selected', 'warning'); return; }
             if (typeof window.openCreateGovernmentDepartmentModal === 'function') { window.openCreateGovernmentDepartmentModal(lid, renderGovernmentTab); }
         };
         document.getElementById('importBtn').onclick = function() {
