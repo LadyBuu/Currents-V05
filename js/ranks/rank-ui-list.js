@@ -2,8 +2,7 @@
  * =============================================================================
  * STILL WATERS - RANK UI LIST (rank-ui-list.js)
  * =============================================================================
- *
- * LOCATION: js/core/rank/rank-ui-list.js
+ * LOCATION: js/ranks/rank-ui-list.js
  *
  * Rendering for rank lists, cards, hierarchies, trees, selectors, and stats.
  *
