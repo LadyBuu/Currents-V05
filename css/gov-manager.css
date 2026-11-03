@@ -11,10 +11,68 @@
 
 
 /* ================================================================
-   0. TOPBAR BUTTONS & LAYOUT OVERRIDES
+   0. APP SHELL (sidebar + main panel layout)
+   ================================================================
+   GovernmentManager.html uses .world-app (not common.css's
+   .app-layout). In LocationManager.html the equivalent rules live
+   in location.css, which this page does NOT load. These rules
+   restore the GENERIC_sidebar.html layout contract:
+
+     body        -> column flex, fills viewport under topbar
+     .world-app  -> horizontal flex row, fills remaining height
+     .main-panel -> flex:1, min-width:0, vertical column
+     .tab-content-wrapper -> flex:1, scrolls, min-height:0
    ================================================================ */
 
-/* Topbar Buttons */
+html,
+body {
+    height: 100%;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.world-app {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+.world-app .locations-sidebar {
+    flex-shrink: 0;
+}
+
+.world-app .main-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+}
+
+.world-app .tab-content-wrapper {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 16px 20px;
+    background: var(--bg);
+    display: block;
+}
+
+
+/* ================================================================
+   1. TOPBAR BUTTONS
+   ================================================================ */
+
 .tb-btn {
     display: inline-flex;
     align-items: center;
@@ -48,24 +106,18 @@
     border-color: var(--accent-dark);
 }
 
-/* Layout: Main Panel (Vertical stack - Tabs Top, Content Bottom) */
-.main-panel {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    flex: 1;
-    overflow: hidden;
-    background: var(--bg);
-}
 
-/* Tab Strip (Horizontal, Top) */
-.panel-tabs {
+/* ================================================================
+   2. MAIN PANEL TABS (top of main panel)
+   ================================================================ */
+
+.main-panel .panel-tabs {
     display: flex;
     gap: 2px;
     padding: 0 12px;
     border-bottom: 1px solid var(--accent);
     background: var(--bg2);
-    flex-shrink: 0; /* Prevents the tabs from shrinking */
+    flex-shrink: 0;
     overflow-x: auto;
     white-space: nowrap;
     min-height: var(--tab-height, 38px);
@@ -73,7 +125,7 @@
     width: 100%;
 }
 
-.panel-tabs .tab-btn {
+.main-panel .panel-tabs .tab-btn {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -89,29 +141,23 @@
     height: 100%;
 }
 
-.panel-tabs .tab-btn:hover {
+.main-panel .panel-tabs .tab-btn:hover {
     color: var(--accent-light);
     background: var(--accent-dim);
 }
 
-.panel-tabs .tab-btn.active {
+.main-panel .panel-tabs .tab-btn.active {
     color: var(--accent);
     border-bottom-color: var(--accent);
     background: var(--accent-dim);
     font-weight: 600;
 }
 
-/* Content Area (Takes remaining space, scrolls independently) */
-.tab-content-wrapper {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 20px;
-    background: var(--bg);
-    min-width: 0;
-    display: block;
-}
 
-/* Sub-Tabs (Inside the Government tab) */
+/* ================================================================
+   3. GOV SUB-TABS (inside the Government tab)
+   ================================================================ */
+
 .gov-subtabs {
     display: flex;
     gap: 2px;
@@ -171,7 +217,7 @@
 
 
 /* ================================================================
-   1. LEGACY GOVERNMENT TAB SHELL
+   4. LEGACY GOVERNMENT TAB SHELL
    ================================================================ */
 
 .gov-tab {
@@ -322,7 +368,7 @@
 
 
 /* ================================================================
-   2. LEGACY GOVERNMENT TYPES TAB
+   5. LEGACY GOVERNMENT TYPES TAB
    ================================================================ */
 
 .gov-type-card {
@@ -427,7 +473,7 @@
 
 
 /* ================================================================
-   3. LEGACY GOVERNMENT STRUCTURE TAB (dept tree)
+   6. LEGACY GOVERNMENT STRUCTURE TAB (dept tree)
    ================================================================ */
 
 .dept-node {
@@ -534,7 +580,7 @@
 
 
 /* ================================================================
-   4. LEGACY GOVERNMENT OVERVIEW TAB
+   7. LEGACY GOVERNMENT OVERVIEW TAB
    ================================================================ */
 
 .overview-node {
@@ -596,7 +642,7 @@
 
 
 /* ================================================================
-   5. INTEGRATION BANNER + STATUS (civil laws + economy)
+   8. INTEGRATION BANNER + STATUS (civil laws + economy)
    ================================================================ */
 
 .gov-integration-banner,
@@ -685,7 +731,7 @@
 
 
 /* ================================================================
-   6. CIVIL LAWS TAB
+   9. CIVIL LAWS TAB
    ================================================================ */
 
 .law-tab-container {
@@ -1174,7 +1220,7 @@
 
 
 /* ================================================================
-   7. DEPARTMENTS TAB
+   10. DEPARTMENTS TAB
    ================================================================ */
 
 .dept-tab-container {
@@ -1606,7 +1652,7 @@
 
 
 /* ================================================================
-   8. GOVERNMENT DETAILS TAB
+   11. GOVERNMENT DETAILS TAB
    ================================================================ */
 
 .gov-details-container {
@@ -2049,7 +2095,7 @@
 
 
 /* ================================================================
-   9. HISTORY TAB
+   12. HISTORY TAB
    ================================================================ */
 
 .gh-tab-container {
@@ -2539,7 +2585,7 @@
 
 
 /* ================================================================
-   10. ECONOMY TAB
+   13. ECONOMY TAB
    ================================================================ */
 
 .eco-details-container {
@@ -2958,10 +3004,18 @@
 
 
 /* ================================================================
-   11. RESPONSIVE
+   14. RESPONSIVE
    ================================================================ */
 
 @media (max-width: 768px) {
+    /* On mobile the sidebar becomes an overlay. The layout shell
+       still treats it as a flex sibling, but the sidebar itself
+       is fixed-positioned via location-sidebar.css. */
+    .world-app .main-panel {
+        flex: 1;
+        min-width: 0;
+    }
+
     .gov-tab {
         padding: 10px;
     }
