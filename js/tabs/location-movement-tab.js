@@ -3,156 +3,202 @@
  * =============================================================================
  * LOCATION MOVEMENT TAB
  * =============================================================================
- * 
- * Displays movement history (who moved here) and travel statistics.
- * 
- * Exports:
- *   - window.LocationMovementTab.render(containerId, locationId, onRefresh)
+ *
+ * Displays every character move that touches this location — arrivals
+ * (move.locationId === this place) and departures
+ * (move.fromLocationId === this place), sorted newest-first.
+ *
+ * SCOPE
+ * -----
+ * - Read the place and the moves touching it via LocationQueries.
+ * - Render the movement list with arrival/departure styling and year.
+ *
+ * OUT OF SCOPE
+ * ------------
+ * - Enumerating character moves (owned by LocationQueries.getMovesForLocation).
+ * - Resolving current locations (owned by LocationQueries._resolveCurrentLocationId).
+ * - Character name resolution (owned by CharacterQueries/accessors).
+ * - Travel restrictions (owned by LocationMovement.getTravelRestrictions;
+ *   not surfaced on this tab because it is character-specific).
+ * - Inline CSS. All styling comes from css/location-tabs.css.
+ *
+ * HARD DEPENDENCIES (load-time):
+ *   - js/core/formatting.js           (window.escapeHtml)
+ *   - js/core/icons.js                (window.getIcon)
+ *   - js/location/location-queries.js (window.LocationQueries)
+ *
+ * CALL-TIME DEPENDENCIES (soft — resolved per call):
+ *   - window.getCharacterById  (character display name; 'Unknown' fallback)
+ *   - window.LocationQueries.getMovesForLocation (added in location-queries.js)
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    // =========================================================================
+    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // =========================================================================
+
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'location-movement-tab.js requires core/formatting.js ' +
+            '(window.escapeHtml).'
+        );
+    }
+    if (typeof window.getIcon !== 'function') {
+        throw new Error(
+            'location-movement-tab.js requires core/icons.js ' +
+            '(window.getIcon).'
+        );
+    }
+    if (!window.LocationQueries ||
+        typeof window.LocationQueries.getPlace !== 'function') {
+        throw new Error(
+            'location-movement-tab.js requires location-queries.js ' +
+            '(window.LocationQueries.getPlace).'
+        );
     }
 
-    function _getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
+    // =========================================================================
+    // 2. LOCAL ALIASES
+    // =========================================================================
+
+    var LQ = window.LocationQueries;
+
+    // =========================================================================
+    // 3. PRESENTATION HELPERS
+    // =========================================================================
+
+    function _characterName(character) {
+        if (!character) return 'Unknown';
+        var full = ((character.name || '') + ' ' +
+                    (character.surname || '')).trim();
+        return full || 'Unknown';
     }
 
-    function _getPlace(id) {
-        if (window.LocationQueries && window.LocationQueries.getPlace) {
-            return window.LocationQueries.getPlace(id);
-        }
-        return null;
+    function _placeName(placeId, cachedName) {
+        if (cachedName) return cachedName;
+        if (!placeId) return 'Unknown';
+        var p = LQ.getPlace(placeId);
+        return p && p.displayName ? p.displayName : 'Unknown';
     }
 
-    function _getMoveHistoryForLocation(locationId) {
-        if (!window.CharacterQueries || !window.CharacterQueries.getAllCharacters) return [];
-        
-        var allChars = window.CharacterQueries.getAllCharacters();
-        var events = [];
-        
-        for (var i = 0; i < allChars.length; i++) {
-            var c = allChars[i];
-            if (!c || !c.id || !Array.isArray(c.moves)) continue;
-            
-            for (var j = 0; j < c.moves.length; j++) {
-                var m = c.moves[j];
-                // If the move is to this location, or from this location
-                if (m.locationId === locationId || m.fromLocationId === locationId) {
-                    events.push({
-                        character: c,
-                        move: m,
-                        isArrival: m.locationId === locationId,
-                        isDeparture: m.fromLocationId === locationId
-                    });
-                }
-            }
-        }
-        
-        // Sort by year descending
-        events.sort(function(a, b) {
-            return (b.move.year || 0) - (a.move.year || 0);
-        });
-        
-        return events;
-    }
-
-    function _getTravelRestrictions(locationId) {
-        if (window.LocationMovement && window.LocationMovement.getTravelRestrictions) {
-            // Optional: Could show restrictions for a dummy character here, but usually this is character-specific.
-            // We'll skip the general restrictions and show a placeholder if needed.
-            return [];
-        }
-        return [];
-    }
+    // =========================================================================
+    // 4. RENDER
+    // =========================================================================
 
     function render(containerId, locationId, onRefresh) {
         var container = document.getElementById(containerId);
         if (!container) return;
 
-        var place = _getPlace(locationId);
+        var place = LQ.getPlace(locationId);
         if (!place) {
-            container.innerHTML = '<div class="empty-state">Location not found</div>';
+            container.innerHTML =
+                '<div class="empty-state">Location not found</div>';
             return;
         }
 
-        var events = _getMoveHistoryForLocation(locationId);
+        // Enumerate moves touching this location via the shared query.
+        // Falls back to [] if the query is missing (bare harness).
+        var events = [];
+        if (typeof LQ.getMovesForLocation === 'function') {
+            events = LQ.getMovesForLocation(locationId) || [];
+        }
 
-        var html = '<div style="padding: 4px;">';
+        var html = '';
 
-        // HEADER
-        html += '<div style="background: var(--bg2); padding: 14px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.75rem; color: var(--accent-light); font-weight: bold; margin-bottom: 4px;">' + _getIcon('TIMELINE') + ' Movement History: ' + _escapeHtml(place.displayName) + '</div>' +
-            '<div style="font-size: 0.6rem; color: var(--dim);">' + events.length + ' total movement events recorded</div>' +
-            '</div>';
+        // ---- HEADER ----
+        html += '<div class="loc-tab-header">';
+        html +=   '<div class="loc-tab-header-text">';
+        html +=     '<div class="loc-tab-header-title">' +
+                        window.getIcon('TIMELINE') + ' Movement History: ' +
+                        window.escapeHtml(place.displayName) +
+                    '</div>';
+        html +=     '<div class="loc-tab-header-subtitle">' +
+                        events.length + ' total movement event' +
+                        (events.length === 1 ? '' : 's') + ' recorded' +
+                    '</div>';
+        html +=   '</div>';
+        html += '</div>';
 
-        // LIST
-        html += '<div style="background: var(--bg2); padding: 14px; border-radius: 8px; border: 1px solid var(--border);">';
-        
+        // ---- LIST ----
+        html += '<div class="loc-tab-section">';
+
         if (events.length === 0) {
-            html += '<div style="color: var(--dim); font-size: 0.7rem; text-align: center; padding: 12px 0;">No movement records found for this location.</div>';
+            html += '<div class="loc-tab-empty">' +
+                        'No movement records found for this location.' +
+                    '</div>';
         } else {
-            html += '<div style="display: flex; flex-direction: column; gap: 6px; max-height: 500px; overflow-y: auto;">';
-            
+            html += '<div class="loc-move-list">';
+
             for (var i = 0; i < events.length; i++) {
                 var e = events[i];
-                var char = e.character;
-                var move = e.move;
-                
-                var charName = ((char.name || '') + ' ' + (char.surname || '')).trim() || 'Unknown';
-                var year = move.year || '?';
-                
-                var actionColor = e.isArrival ? 'var(--ok)' : 'var(--danger-lt)';
-                var actionText = e.isArrival ? 'Arrived' : 'Departed';
-                var arrowIcon = e.isArrival ? '→' : '←';
-                
-                var otherLocId = e.isArrival ? move.fromLocationId : move.locationId;
-                var otherLocName = move.fromLocationName;
-                if (e.isArrival && !otherLocName && otherLocId) {
-                    var otherPlace = _getPlace(otherLocId);
-                    if (otherPlace) otherLocName = otherPlace.displayName;
-                }
-                
-                var detailText = '';
-                if (e.isArrival) {
-                    detailText = 'from ' + (otherLocName || 'Unknown');
+                var move = e.move || {};
+                var char = e.character || {};
+
+                var isArrival = e.isArrival === true;
+                var rowClass = isArrival
+                    ? 'loc-move-row loc-move-row--arrival'
+                    : 'loc-move-row loc-move-row--departure';
+
+                var actionLabel = isArrival ? 'Arrived' : 'Departed';
+                var arrow = isArrival ? '\u2192' : '\u2190'; // → / ←
+                var charName = _characterName(char);
+                var year = (move.year === null || move.year === undefined)
+                    ? '?' : String(move.year);
+
+                // Build the "from/to" detail line.
+                var detail;
+                if (isArrival) {
+                    var fromName = _placeName(
+                        move.fromLocationId, move.fromLocationName);
+                    detail = 'from ' + fromName;
                 } else {
-                    detailText = 'to ' + (move.locationName || 'Unknown');
+                    var toName = _placeName(
+                        move.locationId, move.locationName);
+                    detail = 'to ' + toName;
                 }
 
-                html += '<div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg3); padding: 8px 12px; border-radius: 6px; border-left: 3px solid ' + actionColor + ';">' +
-                    '<div style="display: flex; flex-direction: column; gap: 2px;">' +
-                    '<div style="font-size: 0.7rem; font-weight: 500; color: var(--text);">' +
-                    _escapeHtml(charName) +
-                    '</div>' +
-                    '<div style="font-size: 0.55rem; color: var(--dim);">' +
-                    '<span style="color: ' + actionColor + '; font-weight: bold;">' + arrowIcon + ' ' + actionText + '</span> ' +
-                    _escapeHtml(detailText) +
-                    '</div>' +
-                    '</div>' +
-                    '<div style="font-size: 0.65rem; font-family: monospace; color: var(--dim); background: var(--bg); padding: 2px 8px; border-radius: 4px;">' +
-                    'Year ' + _escapeHtml(String(year)) +
-                    '</div>' +
-                    '</div>';
+                html += '<div class="' + rowClass + '">';
+                html +=   '<div class="loc-move-row-body">';
+                html +=     '<div class="loc-move-row-char">' +
+                                window.escapeHtml(charName) +
+                            '</div>';
+                html +=     '<div class="loc-move-row-detail">' +
+                                '<span class="loc-move-row-action">' +
+                                    window.escapeHtml(arrow + ' ' + actionLabel) +
+                                '</span> ' +
+                                window.escapeHtml(detail) +
+                            '</div>';
+                html +=   '</div>';
+                html +=   '<div class="loc-move-row-year">' +
+                                'Year ' + window.escapeHtml(year) +
+                          '</div>';
+                html += '</div>';
             }
+
             html += '</div>';
         }
-        
-        html += '</div>';
+
         html += '</div>';
 
         container.innerHTML = html;
+
+        // No interactive elements on this tab, so no event binding.
+        // `onRefresh` is unused; the parameter is kept for signature
+        // compatibility with the other tab renderers.
     }
 
-    window.LocationMovementTab = {
-        render: render
-    };
+    // =========================================================================
+    // 5. EXPORTS
+    // =========================================================================
+
+    window.LocationMovementTab = { render: render };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.LocationMovementTab;
+    }
 
 })();
