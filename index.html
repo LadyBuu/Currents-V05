@@ -5,87 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Still Waters · Nexus of Tools</title>
 
-    <!-- Fonts named by themes.css (--f-display / --f-body / --f-mono).
-         Without these, small card text falls back to Georgia and becomes
-         hard to read — especially the card-title, card-desc, and badge. -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
+    <!-- Stylesheets -->
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/nexus.css" />
-
-    <!-- Defensive fallback: if nexus.css is missing or mis-ordered, this
-         block keeps the cards legible and the page scrollable.
-         common.css and nexus.css normally win on specificity; the
-         scroll override here is a hard necessity because common.css
-         sets `overflow: hidden` for app-shell pages. -->
-    <style>
-        /* common.css sets overflow:hidden on html/body for app-shell
-           managers. The Nexus is a scrolling document, not an app
-           shell — opt back in here. This must stay inline so the page
-           is scrollable even if nexus.css fails to load. */
-        html, body {
-            height: auto !important;
-            min-height: 100%;
-            overflow-x: hidden;
-            overflow-y: auto !important;
-        }
-
-        .tool-card {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-            padding: 16px 18px;
-            color: var(--fg);
-            background: var(--bg2);
-            border: 1px solid var(--border);
-            border-radius: calc(var(--radius) * 2);
-            text-decoration: none;
-            transition: border-color 0.2s ease, background-color 0.2s ease;
-        }
-        .tool-card:hover {
-            border-color: var(--accent);
-            background: var(--bg3);
-        }
-        .tool-card .card-title {
-            font-family: var(--f-display);
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--fg);
-        }
-        .tool-card .card-desc {
-            font-size: 0.7rem;
-            color: var(--dim);
-        }
-        .tool-card .card-icon {
-            width: 32px;
-            height: 32px;
-            color: var(--accent);
-        }
-        .tool-card .badge {
-            display: inline-block;
-            padding: 1px 8px;
-            background: var(--accent-dim);
-            color: var(--accent);
-            border-radius: 10px;
-            font-size: 0.5rem;
-            font-family: var(--f-display);
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-        }
-        .tool-card .badge-strip {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-        }
-        .tool-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-            gap: 14px;
-        }
-    </style>
 </head>
 <body>
 
