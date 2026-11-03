@@ -86,12 +86,12 @@
         }
 
         /* ---- Sub-tab strip ---- */
-        .gov-subtabs {
+        .manager-subtabs {
             position: sticky; top: 0; background: var(--bg); z-index: 10;
             display: flex; gap: 2px; padding: 0 4px; margin-bottom: 14px;
             border-bottom: 1px solid var(--border); flex-wrap: wrap;
         }
-        .gov-subtab {
+        .manager-subtab {
             display: inline-flex; align-items: center; gap: 6px;
             padding: 6px 14px; background: transparent;
             border: 1px solid transparent; border-bottom: 2px solid transparent;
@@ -100,14 +100,24 @@
             cursor: pointer;
             transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
         }
-        .gov-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
-        .gov-subtab.active {
+        .manager-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
+        .manager-subtab.active {
             color: var(--accent); border-bottom-color: var(--accent);
             background: var(--accent-dim); font-weight: 600;
         }
-        .gov-subtab-icon { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; color: currentColor; }
-        .gov-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
-        .gov-subpanel { min-height: 200px; }
+        .manager-subtab-icon { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; color: currentColor; }
+        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
+        .manager-subpanel { min-height: 200px; }
+
+        /* ---- Sidebar tree — indent + border guide ----
+           This overrides the padding-left:0 / border-left:none from
+           common.css so the tree visibly nests by depth. If common.css
+           is patched later, these rules remain consistent. */
+        .location-tree-children {
+            margin-left: 0;
+            padding-left: 16px;
+            border-left: 1px solid var(--border-light);
+        }
 
         /* ---- Detail containers ---- */
         .gov-details-container, .dept-tab-container, .law-tab-container,
@@ -174,6 +184,21 @@
         .form-control:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
         .form-row { display: flex; gap: 10px; flex-wrap: wrap; }
         .form-row .form-group { flex: 1; min-width: 120px; }
+        .form-fieldset {
+            border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 10px 12px; margin: 0 0 12px 0;
+        }
+        .form-fieldset legend {
+            font-size: 0.65rem; color: var(--accent);
+            font-family: var(--f-display); letter-spacing: 0.04em;
+            padding: 0 6px;
+        }
+        .law-checkbox-label {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.65rem; color: var(--text);
+            font-family: var(--f-body);
+        }
+        .law-checkbox-label input[type="checkbox"] { accent-color: var(--accent); }
 
         /* ---- Cards ---- */
         .dept-card, .eco-stat-card, .gh-leader-card, .gh-official-card, .eco-settlement-details,
@@ -288,23 +313,6 @@
             border-bottom: 1px solid var(--border-light);
         }
         .law-edit-form { display: flex; flex-direction: column; gap: 4px; }
-        .law-edit-form .form-fieldset {
-            border: 1px solid var(--border); border-radius: var(--radius);
-            padding: 10px 12px; margin: 0 0 12px 0;
-        }
-        .law-edit-form .form-fieldset legend {
-            font-size: 0.65rem; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.04em;
-            padding: 0 6px;
-        }
-        .law-checkbox-label {
-            display: inline-flex; align-items: center; gap: 6px;
-            font-size: 0.65rem; color: var(--text);
-            font-family: var(--f-body);
-        }
-        .law-checkbox-label input[type="checkbox"] {
-            accent-color: var(--accent);
-        }
         .law-empty {
             text-align: center; padding: 30px 20px;
             background: var(--bg2); border: 1px dashed var(--border);
@@ -367,7 +375,7 @@
             font-size: 0.7rem; color: var(--text);
             font-family: var(--f-mono);
         }
-        .eco-crime-value.is-ok, .eco-crime-value.is-ok .eco-crime-label { color: var(--ok); }
+        .eco-crime-value.is-ok { color: var(--ok); }
         .eco-crime-value.is-warning { color: var(--warning); }
         .eco-crime-value.is-danger { color: var(--danger-lt); }
         .eco-crime-value.is-danger-strong { color: var(--danger); }
@@ -408,12 +416,11 @@
             background: var(--bg2); border: 1px dashed var(--border); border-radius: var(--radius);
         }
 
-        /* ---- Toast icons fix ---- */
+        /* ---- Toast / modal ---- */
         .toast-message { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .toast-message svg { flex-shrink: 0; }
         .icon-svg { display: inline-block; width: 1em; height: 1em; vertical-align: middle; fill: currentColor; }
 
-        /* ---- No shadows/blurs (mobile) ---- */
         .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
         .btn:hover { box-shadow: none !important; }
@@ -423,6 +430,25 @@
         .sidebar-overlay.active {
             display: block; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.8); z-index: 999;
+        }
+
+        /* ---- Empty / loading states ---- */
+        .empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.85rem;
+        }
+        .loading {
+            padding: 20px;
+            text-align: center;
+            color: var(--tmut);
+            font-size: 0.8rem;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
         }
 
         /* ---- Mobile ---- */
@@ -435,8 +461,8 @@
                 transition: transform 0.3s ease; box-shadow: none;
             }
             .locations-sidebar.visible { transform: translateX(0); }
-            .gov-subtabs { flex-wrap: wrap; }
-            .gov-subtab { flex: 1 1 100%; border-bottom: 1px solid var(--border); }
+            .manager-subtabs { flex-wrap: wrap; }
+            .manager-subtab { flex: 1 1 100%; border-bottom: 1px solid var(--border); }
         }
     </style>
 </head>
@@ -476,6 +502,7 @@
         </div>
     </div>
 </div>
+
 
 <!-- ================================================================
      BLOCK 1 — CORE CONSTANTS
@@ -538,19 +565,42 @@
 <script src="js/roles/skill-utils.js"></script>
 
 <!-- ================================================================
-     BLOCK 8 — CHARACTER STATE
+     BLOCK 8 — CHARACTER PURE POLICY
+     (Must load before family-queries.js and mortality-queries.js.
+      Character pure-policy modules are leaf rules; they have no
+      state dependency.)
+     ================================================================ -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- ================================================================
+     BLOCK 9 — CHARACTER STATE
      ================================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 9 — CHARACTER COMMANDS & QUERIES
+     BLOCK 10 — CHARACTER COMMANDS & QUERIES
      ================================================================ -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 10 — ROLES (state + queries + commands)
+     BLOCK 11 — CHARACTER CREATION & MORTALITY (AGGREGATION)
+     (character-creation-commands.js is required by modals-character.js.
+      mortality-queries.js is required by character-lifecycle.js.)
+     ================================================================ -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+
+<!-- ================================================================
+     BLOCK 12 — ROLES
      ================================================================ -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
@@ -558,7 +608,7 @@
 <script src="js/roles/role-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 11 — RANK SUBSYSTEM
+     BLOCK 13 — RANKS
      ================================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -568,7 +618,7 @@
 <script src="js/ranks/rank-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 12 — RELIGION SUBSYSTEM
+     BLOCK 14 — RELIGION
      ================================================================ -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
@@ -582,11 +632,9 @@
 <script src="js/religion/religion-view-models.js"></script>
 <script src="js/religion/religion-render.js"></script>
 <script src="js/religion/religion-ui-state.js"></script>
-<script src="js/religion/modals-religion.js"></script>
-<script src="js/religion/religion-bootstrap.js"></script>
 
 <!-- ================================================================
-     BLOCK 13 — INDUSTRY SUBSYSTEM
+     BLOCK 15 — INDUSTRY
      ================================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
@@ -601,7 +649,7 @@
 <script src="js/industry/industry-queries.js"></script>
 
 <!-- ================================================================
-     BLOCK 14 — HOUSEHOLD SUBSYSTEM
+     BLOCK 16 — HOUSEHOLDS
      ================================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
@@ -610,15 +658,17 @@
 <script src="js/households/household-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 15 — LOCATION SUBSYSTEM
-     (Moved before Settlement — Settlement query modules hard-guard
-      on LocationQueries; Location has no Settlement dependency.)
+     BLOCK 17 — LOCATION
+     (Moved before Settlement. Settlement + Government query layers
+      hard-guard on LocationQueries; Location has no Settlement
+      dependency at load.)
      ================================================================ -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
 <script src="js/location/location-queries.js"></script>
 <script src="js/location/location-movement.js"></script>
+<script src="js/location/location-ui-list.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
 <!-- PlaceQueries façade (settlement factory + view models + modals) -->
@@ -626,7 +676,7 @@
     (function () {
         'use strict';
         if (!window.LocationState || typeof window.LocationState.getPlaceById !== 'function') {
-            throw new Error('place-queries.js shim: location-state.js must load first.');
+            throw new Error('place-queries shim: location-state.js must load first.');
         }
         window.PlaceQueries = {
             getPlaceById: function (id) {
@@ -642,7 +692,7 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 16 — SETTLEMENT SUBSYSTEM
+     BLOCK 18 — SETTLEMENT
      ================================================================ -->
 <!-- Definitions -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
@@ -696,7 +746,7 @@
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 17 — GOVERNMENT SUBSYSTEM
+     BLOCK 19 — GOVERNMENT
      ================================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -715,12 +765,18 @@
 <script src="js/government/settlement-law-formatters.js"></script>
 
 <!-- ================================================================
-     BLOCK 18 — CHARACTER LIFECYCLE
+     BLOCK 20 — CHARACTER LIFECYCLE
+     (Requires mortality-rules.js — loaded in Block 8.
+      Call-time optional dependency on SettlementAnnualProcessor.)
      ================================================================ -->
 <script src="js/character/character-lifecycle.js"></script>
 
 <!-- ================================================================
-     BLOCK 19 — SELECTORS
+     BLOCK 21 — SELECTORS
+     (modals-char-selector.js must load BEFORE modals-religion.js,
+      modals-character.js, and modals-death.js. Its own load-time
+      guard requires FamilyQueries.getChildIds / getAllParentIds,
+      which are provided by family-queries.js in Block 10.)
      ================================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
@@ -737,14 +793,24 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 
 <!-- ================================================================
-     BLOCK 20 — CHARACTER UI MODALS
+     BLOCK 22 — RELIGION MODALS
+     (Must load AFTER modals-char-selector.js — religion modals open
+      the character picker at click time.)
+     ================================================================ -->
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ================================================================
+     BLOCK 23 — CHARACTER UI MODALS
+     (Must load AFTER modals-char-selector.js and character-creation-
+      commands.js.)
      ================================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
 <!-- ================================================================
-     BLOCK 21 — SETTLEMENT UI (modals + list)
+     BLOCK 24 — SETTLEMENT UI
      ================================================================ -->
 <script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
@@ -753,7 +819,7 @@
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
 <!-- ================================================================
-     BLOCK 22 — GOVERNMENT TABS
+     BLOCK 25 — GOVERNMENT TABS
      ================================================================ -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
@@ -761,13 +827,14 @@
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
+
 <!-- ================================================================
      SUB-TAB HOST
      ================================================================ -->
 <script>
     (function () {
         'use strict';
-        var GOV_SUBTABS = [
+        var SUBTABS = [
             { id: 'details', label: 'Details', icon: 'CROWN', render: function (c, p) { if (window.GovernmentDetailsTab) window.GovernmentDetailsTab.render(c, p); } },
             { id: 'departments', label: 'Departments', icon: 'HOUSEHOLD', render: function (c, p) { if (window.DepartmentsTab) window.DepartmentsTab.render(c, p); } },
             { id: 'history', label: 'History', icon: 'TIMELINE', render: function (c, p) { if (window.GovernmentHistoryTab) window.GovernmentHistoryTab.render(c, p); } },
@@ -775,39 +842,55 @@
             { id: 'economy', label: 'Economy', icon: 'COIN', render: function (c, p) { if (window.EconomyDetailsTab) window.EconomyDetailsTab.render(c, p); } }
         ];
         var _activeSubtabId = 'details';
-        function _icon(name) { return (window.Icons && typeof window.Icons[name] === 'string') ? window.Icons[name] : ''; }
-        function _esc(s) { return typeof window.escapeHtml === 'function' ? window.escapeHtml(s) : String(s == null ? '' : s); }
 
-        function renderSubtabStrip(containerId, placeId) {
+        function _icon(name) {
+            return (window.Icons && typeof window.Icons[name] === 'string') ? window.Icons[name] : '';
+        }
+        function _esc(s) {
+            return typeof window.escapeHtml === 'function'
+                ? window.escapeHtml(s)
+                : String(s == null ? '' : s);
+        }
+
+        function renderSubtabStrip(containerId, entityId) {
             var container = document.getElementById(containerId);
             if (!container) return;
-            var stripHtml = '<div class="gov-subtabs" role="tablist">';
-            for (var i = 0; i < GOV_SUBTABS.length; i++) {
-                var t = GOV_SUBTABS[i];
+
+            var stripHtml = '<div class="manager-subtabs" role="tablist">';
+            for (var i = 0; i < SUBTABS.length; i++) {
+                var t = SUBTABS[i];
                 var active = t.id === _activeSubtabId ? ' active' : '';
-                stripHtml += '<button type="button" class="gov-subtab' + active + '" data-subtab-id="' + _esc(t.id) + '">' +
-                    (_icon(t.icon) ? '<span class="gov-subtab-icon">' + _icon(t.icon) + '</span>' : '') +
+                stripHtml += '<button type="button" class="manager-subtab' + active + '" data-subtab-id="' + _esc(t.id) + '">' +
+                    (_icon(t.icon) ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>' : '') +
                     '<span>' + _esc(t.label) + '</span></button>';
             }
             stripHtml += '</div>';
-            var panelHtml = '<div id="' + _esc(containerId) + '-subpanel" class="gov-subpanel" role="tabpanel"></div>';
+            var panelHtml = '<div id="' + _esc(containerId) + '-subpanel" class="manager-subpanel" role="tabpanel"></div>';
             container.innerHTML = stripHtml + panelHtml;
-            var buttons = container.querySelectorAll('.gov-subtab');
+
+            var buttons = container.querySelectorAll('.manager-subtab');
             for (var b = 0; b < buttons.length; b++) {
                 (function (btn) {
                     btn.addEventListener('click', function () {
                         var id = btn.getAttribute('data-subtab-id');
-                        if (id && id !== _activeSubtabId) { _activeSubtabId = id; renderSubtabStrip(containerId, placeId); }
+                        if (id && id !== _activeSubtabId) {
+                            _activeSubtabId = id;
+                            renderSubtabStrip(containerId, entityId);
+                        }
                     });
                 })(buttons[b]);
             }
+
             var activeTab = null;
-            for (var j = 0; j < GOV_SUBTABS.length; j++) {
-                if (GOV_SUBTABS[j].id === _activeSubtabId) { activeTab = GOV_SUBTABS[j]; break; }
+            for (var j = 0; j < SUBTABS.length; j++) {
+                if (SUBTABS[j].id === _activeSubtabId) { activeTab = SUBTABS[j]; break; }
             }
-            if (activeTab) activeTab.render(containerId + '-subpanel', placeId);
+            if (activeTab) activeTab.render(containerId + '-subpanel', entityId);
         }
-        window.renderGovernmentTab = function (containerId, placeId) { renderSubtabStrip(containerId, placeId); };
+
+        window.renderManagerTab = function (containerId, entityId) {
+            renderSubtabStrip(containerId, entityId);
+        };
     })();
 </script>
 
@@ -815,17 +898,18 @@
      MANAGER INIT
      ================================================================ -->
 <script>
-(function() {
+(function () {
     'use strict';
+
     function getIcon(name) { return (window.Icons && window.Icons[name]) ? window.Icons[name] : ''; }
     function iconWithText(icon, text) {
         if (!icon) return text || '';
         return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
     }
+    function showToast(msg, type) { if (typeof window.showToast === 'function') window.showToast(msg, type); }
+
     var currentPlaceId = null;
     var isInitialized = false;
-    function showToast(msg, type) { if (typeof window.showToast === 'function') window.showToast(msg, type); }
-    function getPlaces() { return typeof window.getPlaces === 'function' ? window.getPlaces() : []; }
 
     function setupUIText() {
         var title = document.getElementById('govManagerTitle');
@@ -844,26 +928,30 @@
         if (emptyState) emptyState.textContent = 'Select a government from the sidebar';
     }
 
-    function setupLocationTree() {
+    function setupSidebar() {
         var container = document.getElementById('placeList');
         if (!container) return;
+
         if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
             try {
                 window.LocationUI.renderLocationList('placeList', {
                     selectedId: currentPlaceId,
-                    onSelect: function(placeOrId) {
-                        var id = (typeof placeOrId === 'string') ? placeOrId
-                               : (placeOrId && placeOrId.id ? placeOrId.id : null);
+                    onSelect: function (placeOrId) {
+                        var id = (typeof placeOrId === 'string')
+                            ? placeOrId
+                            : (placeOrId && placeOrId.id ? placeOrId.id : null);
                         if (!id) return;
                         currentPlaceId = id;
-                        renderGovernmentTab();
+                        renderTab();
                         if (window.innerWidth <= 768) closeSidebar();
                     }
                 });
                 return;
             } catch (e) { console.error(e); }
         }
-        var places = getPlaces();
+
+        // Flat fallback if LocationUI is unavailable.
+        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
         if (places && places.length > 0) {
             var html = '<div class="place-tree">';
             for (var i = 0; i < places.length; i++) {
@@ -875,10 +963,14 @@
             container.innerHTML = html;
             var items = container.querySelectorAll('.place-item');
             for (var j = 0; j < items.length; j++) {
-                (function(item) {
-                    item.addEventListener('click', function() {
+                (function (item) {
+                    item.addEventListener('click', function () {
                         var placeId = this.dataset.placeId;
-                        if (placeId) { currentPlaceId = placeId; renderGovernmentTab(); if (window.innerWidth <= 768) closeSidebar(); }
+                        if (placeId) {
+                            currentPlaceId = placeId;
+                            renderTab();
+                            if (window.innerWidth <= 768) closeSidebar();
+                        }
                     });
                 })(items[j]);
             }
@@ -887,75 +979,112 @@
         }
     }
 
-    function closeSidebar() { var s = document.getElementById('locationsSidebar'); var o = document.getElementById('sidebarOverlay'); if (s) s.classList.remove('visible'); if (o) o.classList.remove('active'); }
-    function openSidebar() { var s = document.getElementById('locationsSidebar'); var o = document.getElementById('sidebarOverlay'); if (s) s.classList.add('visible'); if (o) o.classList.add('active'); }
-    function toggleSidebar() { if (document.getElementById('locationsSidebar').classList.contains('visible')) closeSidebar(); else openSidebar(); }
+    function closeSidebar() {
+        var s = document.getElementById('locationsSidebar');
+        var o = document.getElementById('sidebarOverlay');
+        if (s) s.classList.remove('visible');
+        if (o) o.classList.remove('active');
+    }
+    function openSidebar() {
+        var s = document.getElementById('locationsSidebar');
+        var o = document.getElementById('sidebarOverlay');
+        if (s) s.classList.add('visible');
+        if (o) o.classList.add('active');
+    }
+    function toggleSidebar() {
+        if (document.getElementById('locationsSidebar').classList.contains('visible')) closeSidebar();
+        else openSidebar();
+    }
 
-    function renderGovernmentTab() {
+    function renderTab() {
         var panel = document.getElementById('panelContent');
         if (!panel) return;
+
         if (!currentPlaceId) {
-            var places = getPlaces();
+            var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
             if (places && places.length > 0) {
-                for (var i = 0; i < places.length; i++) { if (places[i].variableKey && places[i].variableKey !== 'world_root') { currentPlaceId = places[i].id; break; } }
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        currentPlaceId = places[i].id;
+                        break;
+                    }
+                }
                 if (!currentPlaceId && places.length > 0) currentPlaceId = places[0].id;
             }
         }
-        if (!currentPlaceId) { panel.innerHTML = '<div class="empty-state">Select a government from the sidebar</div>'; return; }
-        if (typeof window.renderGovernmentTab === 'function') { window.renderGovernmentTab('panelContent', currentPlaceId); }
+
+        if (!currentPlaceId) {
+            panel.innerHTML = '<div class="empty-state">Select a government from the sidebar</div>';
+            return;
+        }
+
+        if (typeof window.renderManagerTab === 'function') {
+            window.renderManagerTab('panelContent', currentPlaceId);
+        }
     }
 
     function setupTopBarActions() {
-        document.getElementById('importBtn').onclick = function() {
+        var importBtn = document.getElementById('importBtn');
+        if (importBtn) importBtn.onclick = function () {
             if (typeof window.importData !== 'function') { showToast('Import not available', 'error'); return; }
             window.importData()
-                .then(function() {
+                .then(function () {
                     if (window.GovernmentBootstrap && window.GovernmentBootstrap.reinit) {
                         try { window.GovernmentBootstrap.reinit(); } catch (e) { /* ignore */ }
                     }
-                    setupLocationTree();
-                    renderGovernmentTab();
+                    setupSidebar();
+                    renderTab();
                     showToast('Import successful', 'success');
                 })
-                .catch(function(err) {
+                .catch(function (err) {
                     showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
                 });
         };
-        document.getElementById('exportBtn').onclick = function() {
+
+        var exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.onclick = function () {
             if (typeof window.exportData !== 'function') { showToast('Export not available', 'error'); return; }
-            try {
-                window.exportData();
-                showToast('Export started', 'success');
-            } catch (e) {
-                showToast('Export failed: ' + (e.message || 'unknown'), 'error');
-            }
+            try { window.exportData(); showToast('Export started', 'success'); }
+            catch (e) { showToast('Export failed: ' + (e.message || 'unknown'), 'error'); }
         };
-        document.getElementById('refreshBtn').onclick = function() {
+
+        var refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) refreshBtn.onclick = function () {
             if (typeof window.loadMasterData === 'function') window.loadMasterData();
-            setTimeout(function() { setupLocationTree(); renderGovernmentTab(); showToast('Refreshed', 'success'); }, 100);
+            setTimeout(function () { setupSidebar(); renderTab(); showToast('Refreshed', 'success'); }, 100);
         };
     }
 
     function init() {
-        if (isInitialized) return; isInitialized = true;
+        if (isInitialized) return;
+        isInitialized = true;
+
         setupUIText();
+
         if (typeof window.loadMasterData === 'function') window.loadMasterData();
+
         if (window.GovernmentBootstrap) {
-            try {
-                window.GovernmentBootstrap.init();
-            } catch (e) {
-                console.error('GovernmentBootstrap.init failed:', e);
-            }
+            try { window.GovernmentBootstrap.init(); }
+            catch (e) { console.error('GovernmentBootstrap.init failed:', e); }
         }
-        setTimeout(function() {
-            setupLocationTree();
+
+        setTimeout(function () {
+            setupSidebar();
             setupTopBarActions();
-            renderGovernmentTab();
-            document.getElementById('menuToggle').addEventListener('click', toggleSidebar);
-            document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar);
+            renderTab();
+
+            var menuToggle = document.getElementById('menuToggle');
+            if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
+            var overlay = document.getElementById('sidebarOverlay');
+            if (overlay) overlay.addEventListener('click', closeSidebar);
         }, 150);
     }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
 </script>
 
@@ -970,7 +1099,11 @@
     var themeName = document.getElementById('themeName');
     var switcher = window.ThemeSwitcher;
     if (!switcher) return;
-    function updateLabel(id) { var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' '); if (themeName) themeName.textContent = label; }
+
+    function updateLabel(id) {
+        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        if (themeName) themeName.textContent = label;
+    }
     function buildMenu() {
         var html = '';
         for (var i = 0; i < switcher.themes.length; i++) {
@@ -982,13 +1115,21 @@
     }
     function openMenu() { if (themeMenu) { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); } }
     function closeMenu() { if (themeMenu) { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); } }
-    if (themeBtn) themeBtn.addEventListener('click', function (e) { e.stopPropagation(); if (themeMenu.hidden) openMenu(); else closeMenu(); });
+    if (themeBtn) themeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (themeMenu.hidden) openMenu(); else closeMenu();
+    });
     if (themeMenu) themeMenu.addEventListener('click', function (e) {
         var btn = e.target.closest('[data-theme-id]'); if (!btn) return;
-        var id = btn.getAttribute('data-theme-id'); switcher.apply(id); updateLabel(id); closeMenu();
+        var id = btn.getAttribute('data-theme-id');
+        switcher.apply(id); updateLabel(id); closeMenu();
     });
     document.addEventListener('click', function (e) {
-        if (themeMenu && !themeMenu.hidden) { if (themeMenu.contains(e.target)) return; if (e.target === themeBtn) return; closeMenu(); }
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
     });
     buildMenu();
     var saved = switcher.getSaved();
