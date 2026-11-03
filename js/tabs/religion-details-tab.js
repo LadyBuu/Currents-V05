@@ -2,31 +2,62 @@
  * =============================================================================
  * STILL WATERS - RELIGION DETAILS TAB (js/tabs/religion-details-tab.js)
  * =============================================================================
- * 
- * A modular tab for viewing and editing religion details.
- * 
+ *
+ * LOCATION: js/tabs/religion-details-tab.js
+ *
+ * A TabManager-rendered tab for viewing and editing religion details.
+ *
  * FEATURES:
- *   - View religion name, display name, icon, description
- *   - View and edit trait (monotheistic, polytheistic, etc.)
- *   - View and edit inheritance rules
- *   - View and manage religious leader (set, view, end term)
- *   - View and manage associated locations
- *   - View statistics (followers, gods, laws, places)
- *   - Edit religion details
- *   - Deprecate/Reactivate religion
- * 
- * DEPENDENCIES:
- *   - ReligionState, ReligionQueries, ReligionCommands
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - openCharacterSelector (from modals-char-selector.js)
- *   - locationDropdown.js (getFilteredLocationOptions)
- * 
- * ICON POLICY: Uses icons.js via _getIcon() - NO EMOJIS
- * 
+ *   - Hero (icon, name, slug, status, badges)
+ *   - Stats (followers, gods, laws, places, trait)
+ *   - Detail grid (name, display name, trait, inheritance, flags)
+ *   - Leader panel (set / end term, current leader, history count)
+ *   - Locations panel (add / remove)
+ *   - Description + notes
+ *   - Action footer (edit / deprecate / reactivate / delete)
+ *
+ * REGISTRATION (TabManager, not a bespoke registry):
+ *   TabManager.register('religion', 'details', renderAdapter)
+ *
+ *   renderAdapter(container, context) → renderDetailsTab(container, context.religion)
+ *
+ *   The editor host calls TabManager.configure('religion', { ... }) with a
+ *   buildContext() that returns { religion } (or any object with .religion).
+ *   TabManager handles the null-context case before our renderer runs, so
+ *   we can assume context.religion is a valid object when we render.
+ *
+ * DEPENDENCIES (all read at call time — no load-time guards, because
+ * TabManager treats this file as one of several optional renderers and
+ * will not fail the whole scope if one tab file is missing):
+ *   - TabManager            (js/core/tab-manager.js)
+ *   - ReligionState         (js/religion/religion-state.js)
+ *   - ReligionQueries       (js/religion/religion-queries.js)
+ *   - ReligionCommands      (js/religion/religion-commands.js)
+ *   - ReligionFormat        (js/religion/religion-format.js)
+ *   - formatting.js         (escapeHtml)
+ *   - icons.js              (Icons — record.icon is data; chrome icons via
+ *                            Icons[name] with CIRCLE fallback)
+ *   - ui.js                 (showToast)
+ *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
+ *   - modals-char-selector  (openCharacterSelector)
+ *   - locationDropdown.js   (getFilteredLocationOptions)
+ *   - religion modals       (openEditReligionModal, openDeprecateReligionModal,
+ *                            openDeleteReligionModal)
+ *
+ * TIME CONTRACT: window.getCurrentYear() (canonical). Throws if time.js is
+ * not loaded — that is a load-order failure and must be loud.
+ *
+ * ICON POLICY: no emojis. religion.icon is a DATA field and is rendered
+ * verbatim (escaped). Chrome icons route through _getIcon(name) which
+ * returns Icons[name] or '' — never a fabricated glyph.
+ *
+ * INLINE STYLES: none. All classes are in css/religion-tabs.css. If this
+ * file is edited to add a style="" attribute, that is a regression.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
@@ -34,21 +65,23 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _getIcon(name) {
         if (window.Icons && window.Icons[name]) return window.Icons[name];
-        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
         return '';
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') window._showToast(msg, type);
-        else if (typeof window.showToast === 'function') window.showToast(msg, type);
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
     function _openModal(options) {
@@ -63,9 +96,7 @@
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             window.confirmDialog(message, title, onConfirm);
-        } else if (typeof window._confirmDialog === 'function') {
-            window._confirmDialog(message, title, onConfirm);
-        } else if (confirm(message)) {
+        } else if (typeof confirm === 'function' && confirm(message)) {
             onConfirm();
         }
     }
@@ -82,18 +113,17 @@
         return typeof window.ReligionCommands !== 'undefined' ? window.ReligionCommands : null;
     }
 
-    function _getCharacterById(id) {
-        if (typeof window.getCharacterById === 'function') return window.getCharacterById(id);
-        return null;
+    function _getReligionFormat() {
+        return typeof window.ReligionFormat !== 'undefined' ? window.ReligionFormat : null;
     }
 
     function _getCharacterName(id) {
         if (typeof window.getCharacterFullNameById === 'function') {
             return window.getCharacterFullNameById(id);
         }
-        var char = _getCharacterById(id);
-        if (char) {
-            return char.name + (char.surname ? ' ' + char.surname : '');
+        if (typeof window.getCharacterById === 'function') {
+            var ch = window.getCharacterById(id);
+            if (ch) return ch.name + (ch.surname ? ' ' + ch.surname : '');
         }
         return 'Unknown';
     }
@@ -101,15 +131,14 @@
     function _getPlaceName(id) {
         if (typeof window.getPlaceName === 'function') return window.getPlaceName(id);
         if (typeof window.getPlaceById === 'function') {
-            var place = window.getPlaceById(id);
-            if (place) return place.displayName;
+            var pl = window.getPlaceById(id);
+            if (pl) return pl.displayName;
         }
         return 'Unknown';
     }
 
     function _getPlaces() {
-        if (typeof window.getPlaces === 'function') return window.getPlaces();
-        return [];
+        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
     }
 
     function _getLocationOptions(selectedId) {
@@ -119,93 +148,64 @@
         var places = _getPlaces();
         var html = '<option value="">— Select a location —</option>';
         for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' + _escapeHtml(places[i].displayName) + '</option>';
+            var p = places[i];
+            if (!p || !p.id) continue;
+            var sel = (selectedId === p.id) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(p.id) + '"' + sel + '>' +
+                _escapeHtml(p.displayName || p.name || p.id) + '</option>';
         }
         return html;
-    }
-
-    function _getReligiousTraitName(trait) {
-        if (typeof window.getReligiousTraitName === 'function') {
-            return window.getReligiousTraitName(trait);
-        }
-        var names = {
-            'monotheistic': 'Monotheistic',
-            'polytheistic': 'Polytheistic',
-            'syncretic': 'Syncretic',
-            'evangelical': 'Evangelical',
-            'animist': 'Animist'
-        };
-        return names[trait] || trait;
-    }
-
-    function _getInheritanceRuleName(rule) {
-        if (typeof window.getInheritanceRuleName === 'function') {
-            return window.getInheritanceRuleName(rule);
-        }
-        var names = {
-            'mother': 'Mother\'s Religion',
-            'father': 'Father\'s Religion',
-            'both': 'Both Parents (if same)',
-            'dominant': 'Location\'s Dominant Religion',
-            'none': 'No Inheritance'
-        };
-        return names[rule] || rule;
-    }
-
-    function _getFollowerCount(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getFollowerCount === 'function') {
-            return window.ReligionQueries.getFollowerCount(religionId);
-        }
-        return 0;
-    }
-
-    function _getGodCount(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getGodsByReligion === 'function') {
-            return window.ReligionQueries.getGodsByReligion(religionId).length;
-        }
-        return 0;
-    }
-
-    function _getLawCount(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getLawsByReligion === 'function') {
-            return window.ReligionQueries.getLawsByReligion(religionId).length;
-        }
-        return 0;
-    }
-
-    function _getPlaceCount(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getPlacesOfWorshipByReligion === 'function') {
-            return window.ReligionQueries.getPlacesOfWorshipByReligion(religionId).length;
-        }
-        return 0;
     }
 
     function _openCharacterSelector(options) {
         if (typeof window.openCharacterSelector === 'function') {
             return window.openCharacterSelector(options);
         }
+        if (typeof window.openUnifiedCharacterSelector === 'function') {
+            return window.openUnifiedCharacterSelector(options);
+        }
         return null;
     }
 
+    // =========================================================================
+    // 2. TIME / FORMAT (canonical accessors only)
+    // =========================================================================
+
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                'religion-details-tab.js requires time.js (getCurrentYear).'
+            );
+        }
+        return window.getCurrentYear();
+    }
+
+    function _traitLabel(trait) {
+        var fmt = _getReligionFormat();
+        if (fmt && typeof fmt.getReligiousTraitName === 'function') {
+            return fmt.getReligiousTraitName(trait);
+        }
+        return trait || '';
+    }
+
+    function _inheritanceLabel(ruleType) {
+        var fmt = _getReligionFormat();
+        if (fmt && typeof fmt.getInheritanceRuleName === 'function') {
+            return fmt.getInheritanceRuleName(ruleType);
+        }
+        return ruleType || '';
+    }
 
     // =========================================================================
-    // 2. RENDER FUNCTION
+    // 3. RENDER
     // =========================================================================
 
     function renderDetailsTab(container, religion) {
-        if (!religion) {
-            container.innerHTML = '<div style="padding:20px;color:var(--dim);">No religion loaded</div>';
+        if (!container) return;
+
+        if (!religion || typeof religion !== 'object' || !religion.id) {
+            container.innerHTML =
+                '<div class="rt-empty">Select a religion to view its details.</div>';
             return;
         }
 
@@ -214,488 +214,514 @@
         var RC = _getReligionCommands();
 
         if (!RS || !RQ || !RC) {
-            container.innerHTML = '<div style="padding:20px;color:var(--danger);">Religion system not available</div>';
+            container.innerHTML =
+                '<div class="rt-unavailable">Religion system not available.</div>';
             return;
         }
 
-        var followerCount = _getFollowerCount(religion.id);
-        var godCount = _getGodCount(religion.id);
-        var lawCount = _getLawCount(religion.id);
-        var placeCount = _getPlaceCount(religion.id);
-        var traitName = _getReligiousTraitName(religion.trait);
-        var inheritanceName = _getInheritanceRuleName(religion.inheritanceRule ? religion.inheritanceRule.type : 'mother');
+        var followerCount = RQ.getFollowerCount(religion.id);
+        var gods = RQ.getGodsByReligion(religion.id) || [];
+        var laws = RQ.getLawsByReligion(religion.id) || [];
+        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
 
-        var leaderName = religion.leader ? _getCharacterName(religion.leader.characterId) : 'None';
-        var leaderTitle = religion.leader ? religion.leader.title : '';
-        var isDeprecated = religion.isDeprecated || false;
+        var traitName = _traitLabel(religion.trait);
+        var inheritanceName = _inheritanceLabel(
+            religion.inheritanceRule ? religion.inheritanceRule.type : 'mother'
+        );
+
+        var isDeprecated = religion.isDeprecated === true;
+        var leaderName = religion.leader
+            ? _getCharacterName(religion.leader.characterId)
+            : null;
+        var leaderTitle = religion.leader ? (religion.leader.title || '') : '';
 
         var locationNames = [];
-        if (religion.locations) {
+        if (Array.isArray(religion.locations)) {
             for (var i = 0; i < religion.locations.length; i++) {
                 locationNames.push(_getPlaceName(religion.locations[i]));
             }
         }
 
-        var icon = _getIcon(religion.icon) || religion.icon || '✦';
-        var editIcon = _getIcon('EDIT');
-        var trashIcon = _getIcon('TRASH');
-        var personIcon = _getIcon('PERSON');
-        var locationIcon = _getIcon('LOCATION');
-        var bookIcon = _getIcon('BOOK');
-        var crownIcon = _getIcon('CROWN');
-        var gearIcon = _getIcon('GEAR');
+        var recordIcon = religion.icon
+            ? '<span class="rt-details__glyph">' + _escapeHtml(religion.icon) + '</span>'
+            : '';
 
-        var html = 
-            '<div class="religion-details-tab" style="padding:4px;">' +
+        var html =
+            '<div class="rt-tab">' +
 
-            // Header with icon, name, status
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:12px 16px;background:var(--bg2);border-radius:8px;margin-bottom:12px;border:1px solid var(--border);">' +
-            '<div style="display:flex;align-items:center;gap:12px;">' +
-            '<span style="font-size:1.8rem;">' + icon + '</span>' +
-            '<div>' +
-            '<div style="font-size:1.1rem;font-weight:bold;">' + _escapeHtml(religion.displayName || religion.name) + '</div>' +
-            '<div style="font-size:0.65rem;color:var(--dim);">' + _escapeHtml(religion.name) + '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-            (isDeprecated ? 
-                '<span style="font-size:0.55rem;padding:2px 10px;background:rgba(181,74,74,0.15);border:1px solid #b54a4a;border-radius:12px;color:#b54a4a;">Deprecated</span>' :
-                '<span style="font-size:0.55rem;padding:2px 10px;background:rgba(74,158,106,0.15);border:1px solid #4a9e6a;border-radius:12px;color:#4a9e6a;">Active</span>'
-            ) +
-            (religion.isOrganized ? '<span style="font-size:0.55rem;padding:2px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;color:var(--dim);">Organized</span>' : '') +
-            (religion.proselytizes ? '<span style="font-size:0.55rem;padding:2px 10px;background:rgba(181,164,74,0.15);border:1px solid #b5a44a;border-radius:12px;color:#b5a44a;">Proselytizes</span>' : '') +
-            '</div>' +
-            '</div>' +
-
-            // Stats grid
-            '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:12px;">' +
-            '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Followers</div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + followerCount + '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Gods</div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + godCount + '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Laws</div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + lawCount + '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Places</div>' +
-            '<div style="font-size:0.9rem;font-weight:bold;">' + placeCount + '</div>' +
-            '</div>' +
-            '<div style="background:var(--bg2);padding:8px;border-radius:6px;text-align:center;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.5rem;color:var(--dim);">Trait</div>' +
-            '<div style="font-size:0.7rem;font-weight:bold;">' + _escapeHtml(traitName) + '</div>' +
-            '</div>' +
-            '</div>' +
-
-            // Description
-            (religion.description ? '<div style="font-size:0.7rem;color:var(--dim);padding:8px 12px;background:var(--bg3);border-radius:6px;margin-bottom:12px;">' + _escapeHtml(religion.description) + '</div>' : '') +
-
-            // Details grid
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">' +
-
-            // Left column
-            '<div style="background:var(--bg2);padding:12px;border-radius:6px;border:1px solid var(--border-light);">' +
-            '<div style="font-size:0.55rem;font-weight:bold;color:var(--accent);margin-bottom:8px;">' + bookIcon + ' Religion Details</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:0.6rem;">' +
-            '<span style="color:var(--dim);">Name:</span><span>' + _escapeHtml(religion.name) + '</span>' +
-            '<span style="color:var(--dim);">Display Name:</span><span>' + _escapeHtml(religion.displayName || religion.name) + '</span>' +
-            '<span style="color:var(--dim);">Trait:</span><span>' + _escapeHtml(traitName) + '</span>' +
-            '<span style="color:var(--dim);">Inheritance:</span><span>' + _escapeHtml(inheritanceName) + '</span>' +
-            '<span style="color:var(--dim);">Organized:</span><span>' + (religion.isOrganized ? 'Yes' : 'No') + '</span>' +
-            '<span style="color:var(--dim);">Allows Conversion:</span><span>' + (religion.allowsConversion !== false ? 'Yes' : 'No') + '</span>' +
-            '<span style="color:var(--dim);">Proselytizes:</span><span>' + (religion.proselytizes ? 'Yes' : 'No') + '</span>' +
-            (isDeprecated ? '<span style="color:var(--dim);">Deprecated Year:</span><span>' + (religion.deprecatedYear || 'Unknown') + '</span>' : '') +
-            '</div>' +
-            '</div>' +
-
-            // Right column - Leader
-            '<div style="background:var(--bg2);padding:12px;border-radius:6px;border:1px solid var(--border-light);">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<span style="font-size:0.55rem;font-weight:bold;color:var(--accent);">' + crownIcon + ' Religious Leader</span>' +
-            (religion.leader && !isDeprecated ? '<button class="end-leader-btn btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">End Term</button>' : '') +
-            '</div>' +
-            (religion.leader ?
-                '<div style="font-size:0.6rem;">' +
-                '<div><span style="color:var(--dim);">Name:</span> ' + _escapeHtml(leaderName) + '</div>' +
-                '<div><span style="color:var(--dim);">Title:</span> ' + _escapeHtml(leaderTitle || 'Religious Leader') + '</div>' +
-                '<div><span style="color:var(--dim);">Start Year:</span> ' + (religion.leader.startYear || 'Unknown') + '</div>' +
+            // ---- Hero ----
+            '<div class="rt-details__hero">' +
+              '<div class="rt-details__identity">' +
+                recordIcon +
+                '<div>' +
+                  '<div class="rt-details__name">' +
+                    _escapeHtml(religion.displayName || religion.name) +
+                  '</div>' +
+                  '<div class="rt-details__slug">' + _escapeHtml(religion.name) + '</div>' +
                 '</div>' +
-                (religion.leaderHistory && religion.leaderHistory.length > 0 ?
-                    '<div style="margin-top:6px;font-size:0.5rem;color:var(--dim);">Previous Leaders: ' + religion.leaderHistory.length + '</div>' : '') :
-                '<div style="font-size:0.6rem;color:var(--dim);">No leader appointed</div>'
-            ) +
-            (!isDeprecated ? '<button class="set-leader-btn btn primary small" style="margin-top:6px;padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + personIcon + ' Set Leader</button>' : '') +
+              '</div>' +
+              '<div class="rt-details__badges">' +
+                (isDeprecated
+                  ? '<span class="rt-status rt-status--deprecated">Deprecated</span>'
+                  : '<span class="rt-status rt-status--active">Active</span>') +
+                (religion.isOrganized
+                  ? '<span class="rt-badge">Organized</span>'
+                  : '') +
+                (religion.proselytizes
+                  ? '<span class="rt-badge rt-badge--accent">Proselytizes</span>'
+                  : '') +
+              '</div>' +
             '</div>' +
+
+            // ---- Stats ----
+            '<div class="rt-details__stats">' +
+              _stat('Followers', followerCount, false) +
+              _stat('Gods', gods.length, false) +
+              _stat('Laws', laws.length, false) +
+              _stat('Places', places.length, false) +
+              _stat('Trait', traitName, true) +
+            '</div>' +
+
+            // ---- Description ----
+            (religion.description
+              ? '<div class="rt-details__note">' + _escapeHtml(religion.description) + '</div>'
+              : '') +
+
+            // ---- Detail / leader grid ----
+            '<div class="rt-details__grid">' +
+
+              '<div class="rt-panel">' +
+                '<div class="rt-panel__header">' +
+                  '<span class="rt-panel__title">Religion Details</span>' +
+                '</div>' +
+                '<div class="rt-kv">' +
+                  '<span class="rt-kv__key">Name:</span>' +
+                  '<span class="rt-kv__val">' + _escapeHtml(religion.name) + '</span>' +
+                  '<span class="rt-kv__key">Display Name:</span>' +
+                  '<span class="rt-kv__val">' +
+                    _escapeHtml(religion.displayName || religion.name) +
+                  '</span>' +
+                  '<span class="rt-kv__key">Trait:</span>' +
+                  '<span class="rt-kv__val">' + _escapeHtml(traitName) + '</span>' +
+                  '<span class="rt-kv__key">Inheritance:</span>' +
+                  '<span class="rt-kv__val">' + _escapeHtml(inheritanceName) + '</span>' +
+                  '<span class="rt-kv__key">Organized:</span>' +
+                  '<span class="rt-kv__val">' + (religion.isOrganized ? 'Yes' : 'No') + '</span>' +
+                  '<span class="rt-kv__key">Allows Conversion:</span>' +
+                  '<span class="rt-kv__val">' +
+                    (religion.allowsConversion !== false ? 'Yes' : 'No') +
+                  '</span>' +
+                  '<span class="rt-kv__key">Proselytizes:</span>' +
+                  '<span class="rt-kv__val">' +
+                    (religion.proselytizes ? 'Yes' : 'No') +
+                  '</span>' +
+                  (isDeprecated
+                    ? '<span class="rt-kv__key">Deprecated Year:</span>' +
+                      '<span class="rt-kv__val">' +
+                        _escapeHtml(String(religion.deprecatedYear || 'Unknown')) +
+                      '</span>'
+                    : '') +
+                '</div>' +
+              '</div>' +
+
+              '<div class="rt-panel">' +
+                '<div class="rt-panel__header">' +
+                  '<span class="rt-panel__title">Religious Leader</span>' +
+                  (religion.leader && !isDeprecated
+                    ? '<button type="button" class="rt-btn end-leader-btn">End Term</button>'
+                    : '') +
+                '</div>' +
+                (religion.leader
+                  ? '<div class="rt-kv">' +
+                      '<span class="rt-kv__key">Name:</span>' +
+                      '<span class="rt-kv__val">' + _escapeHtml(leaderName) + '</span>' +
+                      '<span class="rt-kv__key">Title:</span>' +
+                      '<span class="rt-kv__val">' +
+                        _escapeHtml(leaderTitle || 'Religious Leader') +
+                      '</span>' +
+                      '<span class="rt-kv__key">Start Year:</span>' +
+                      '<span class="rt-kv__val">' +
+                        _escapeHtml(String(religion.leader.startYear || 'Unknown')) +
+                      '</span>' +
+                    '</div>' +
+                    (Array.isArray(religion.leaderHistory) && religion.leaderHistory.length > 0
+                      ? '<div class="rt-form__hint">Previous leaders: ' +
+                        religion.leaderHistory.length + '</div>'
+                      : '')
+                  : '<div class="rt-form__hint">No leader appointed.</div>') +
+                (!isDeprecated
+                  ? '<button type="button" class="rt-btn rt-btn--primary set-leader-btn">Set Leader</button>'
+                  : '') +
+              '</div>' +
 
             '</div>' +
 
-            // Locations
-            '<div style="background:var(--bg2);padding:12px;border-radius:6px;border:1px solid var(--border-light);margin-bottom:12px;">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-            '<span style="font-size:0.55rem;font-weight:bold;color:var(--accent);">' + locationIcon + ' Associated Locations</span>' +
-            (!isDeprecated ? '<button class="add-location-btn btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Add Location</button>' : '') +
-            '</div>' +
-            (locationNames.length > 0 ?
-                '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
-                locationNames.map(function(name, index) {
-                    var locId = religion.locations[index];
-                    return '<span style="background:var(--bg3);padding:2px 8px;border-radius:12px;font-size:0.55rem;border:1px solid var(--border-light);display:inline-flex;align-items:center;gap:4px;">' +
-                        _escapeHtml(name) +
-                        (!isDeprecated ? '<button class="remove-location-btn" data-location-id="' + locId + '" style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:0.5rem;">✕</button>' : '') +
-                        '</span>';
-                }).join('') +
-                '</div>' :
-                '<div style="font-size:0.55rem;color:var(--dim);">No locations associated</div>'
-            ) +
+            // ---- Locations ----
+            '<div class="rt-panel">' +
+              '<div class="rt-panel__header">' +
+                '<span class="rt-panel__title">Associated Locations</span>' +
+                (!isDeprecated
+                  ? '<button type="button" class="rt-btn add-location-btn">Add Location</button>'
+                  : '') +
+              '</div>' +
+              (locationNames.length > 0
+                ? '<div class="rt-chipset">' + locationNames.map(function (name, idx) {
+                    var locId = religion.locations[idx];
+                    return '<span class="rt-chip">' + _escapeHtml(name) +
+                      (!isDeprecated
+                        ? '<button type="button" class="rt-chip__remove remove-location-btn"' +
+                          ' data-location-id="' + _escapeHtml(locId) + '"' +
+                          ' title="Remove">&times;</button>'
+                        : '') +
+                      '</span>';
+                  }).join('') + '</div>'
+                : '<div class="rt-form__hint">No locations associated.</div>') +
             '</div>' +
 
-            // Notes
-            (religion.notes ? '<div style="font-size:0.55rem;color:var(--dim);padding:8px 12px;background:var(--bg3);border-radius:6px;margin-bottom:12px;">Notes: ' + _escapeHtml(religion.notes) + '</div>' : '') +
+            // ---- Notes ----
+            (religion.notes
+              ? '<div class="rt-details__note">' + _escapeHtml(religion.notes) + '</div>'
+              : '') +
 
-            // Actions
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--border-light);">' +
-            (!isDeprecated ? 
-                '<button class="edit-religion-btn btn primary" style="padding:6px 14px;font-size:0.6rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">' + editIcon + ' Edit</button>' +
-                '<button class="deprecate-religion-btn btn warning" style="padding:6px 14px;font-size:0.6rem;background:rgba(181,164,74,0.2);border:1px solid #b5a44a;border-radius:4px;cursor:pointer;color:#b5a44a;">Deprecate</button>' :
-                '<button class="reactivate-religion-btn btn primary" style="padding:6px 14px;font-size:0.6rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">Reactivate</button>'
-            ) +
-            (followerCount === 0 ? 
-                '<button class="delete-religion-btn btn danger" style="padding:6px 14px;font-size:0.6rem;background:rgba(181,74,74,0.2);border:1px solid #b54a4a;border-radius:4px;cursor:pointer;color:#b54a4a;display:inline-flex;align-items:center;gap:4px;">' + trashIcon + ' Delete</button>' :
-                '<button class="delete-religion-btn btn danger" style="padding:6px 14px;font-size:0.6rem;background:rgba(181,74,74,0.2);border:1px solid #b54a4a;border-radius:4px;cursor:not-allowed;color:#b54a4a;opacity:0.5;display:inline-flex;align-items:center;gap:4px;" disabled title="Cannot delete religion with followers">' + trashIcon + ' Delete (' + followerCount + ' followers)</button>'
-            ) +
+            // ---- Actions ----
+            '<div class="rt-tab__footer">' +
+              (!isDeprecated
+                ? '<button type="button" class="rt-btn rt-btn--primary edit-religion-btn">Edit</button>' +
+                  '<button type="button" class="rt-btn deprecate-religion-btn">Deprecate</button>'
+                : '<button type="button" class="rt-btn rt-btn--primary reactivate-religion-btn">Reactivate</button>') +
+              (followerCount === 0
+                ? '<button type="button" class="rt-btn rt-btn--danger delete-religion-btn">Delete</button>'
+                : '<button type="button" class="rt-btn rt-btn--danger" disabled' +
+                  ' title="Cannot delete religion with followers">' +
+                  'Delete (' + followerCount + ' followers)</button>') +
             '</div>' +
 
             '</div>';
 
         container.innerHTML = html;
+        _attachHandlers(container, religion);
+    }
 
-        // Attach event handlers
-        attachDetailsTabHandlers(container, religion);
+    function _stat(label, value, small) {
+        var valClass = small
+            ? 'rt-stat__value rt-stat__value--small'
+            : 'rt-stat__value';
+        return '<div class="rt-stat">' +
+          '<span class="rt-stat__label">' + _escapeHtml(label) + '</span>' +
+          '<span class="' + valClass + '">' +
+            _escapeHtml(String(value === null || value === undefined ? '?' : value)) +
+          '</span>' +
+        '</div>';
     }
 
     // =========================================================================
-    // 3. EVENT HANDLERS
+    // 4. HANDLERS
     // =========================================================================
 
-    function attachDetailsTabHandlers(container, religion) {
-        var RS = _getReligionState();
-        var RQ = _getReligionQueries();
+    function _attachHandlers(container, religion) {
         var RC = _getReligionCommands();
+        if (!RC) return;
 
-        if (!RS || !RQ || !RC) return;
+        function rerender(updated) {
+            if (updated) renderDetailsTab(container, updated);
+        }
 
-        // Edit button
+        function reloadFromQueries() {
+            var RQ = _getReligionQueries();
+            if (!RQ) return;
+            var fresh = RQ.getReligion(religion.id);
+            if (fresh) rerender(fresh);
+        }
+
+        function refreshSidebar() {
+            if (typeof window.renderReligionList === 'function') {
+                window.renderReligionList();
+            }
+        }
+
+        // ---- Edit ----
         var editBtn = container.querySelector('.edit-religion-btn');
         if (editBtn) {
-            editBtn.addEventListener('click', function() {
-                if (typeof window.openEditReligionModal === 'function') {
-                    window.openEditReligionModal(religion.id, {
-                        onSuccess: function(updated) {
-                            _showToast('Religion updated', 'success');
-                            // Re-render the tab with updated data
-                            var container = document.getElementById('tab-details');
-                            if (container) {
-                                renderDetailsTab(container, updated);
-                            }
-                            // Also refresh the sidebar
-                            if (typeof window.renderReligionList === 'function') {
-                                window.renderReligionList();
-                            }
-                        }
-                    });
-                }
+            editBtn.addEventListener('click', function () {
+                if (typeof window.openEditReligionModal !== 'function') return;
+                window.openEditReligionModal(religion.id, {
+                    onSuccess: function (updated) {
+                        _showToast('Religion updated', 'success');
+                        rerender(updated);
+                        reloadFromQueries();
+                        refreshSidebar();
+                    }
+                });
             });
         }
 
-        // Deprecate button
+        // ---- Deprecate ----
         var deprecateBtn = container.querySelector('.deprecate-religion-btn');
         if (deprecateBtn) {
-            deprecateBtn.addEventListener('click', function() {
-                if (typeof window.openDeprecateReligionModal === 'function') {
-                    window.openDeprecateReligionModal(religion.id, {
-                        onSuccess: function(updated) {
-                            _showToast('Religion deprecated', 'warning');
-                            var container = document.getElementById('tab-details');
-                            if (container) {
-                                renderDetailsTab(container, updated);
-                            }
-                            if (typeof window.renderReligionList === 'function') {
-                                window.renderReligionList();
-                            }
-                        }
-                    });
-                }
+            deprecateBtn.addEventListener('click', function () {
+                if (typeof window.openDeprecateReligionModal !== 'function') return;
+                window.openDeprecateReligionModal(religion.id, {
+                    onSuccess: function (updated) {
+                        _showToast('Religion deprecated', 'warning');
+                        rerender(updated);
+                        reloadFromQueries();
+                        refreshSidebar();
+                    }
+                });
             });
         }
 
-        // Reactivate button
+        // ---- Reactivate (uses the command directly: updateReligion
+        //      rejects isDeprecated / deprecatedYear as unknown fields) ----
         var reactivateBtn = container.querySelector('.reactivate-religion-btn');
         if (reactivateBtn) {
-            reactivateBtn.addEventListener('click', function() {
-                _confirmDialog('Reactivate "' + religion.displayName + '"?', 'Reactivate Religion', function() {
-                    var result = RC.updateReligion(religion.id, {
-                        isDeprecated: false,
-                        deprecatedYear: null
-                    });
-                    if (result.success) {
-                        _showToast('Religion reactivated', 'success');
-                        var container = document.getElementById('tab-details');
-                        if (container) {
-                            renderDetailsTab(container, result.data);
-                        }
-                        if (typeof window.renderReligionList === 'function') {
-                            window.renderReligionList();
-                        }
-                    } else {
-                        _showToast('Failed to reactivate: ' + result.reason, 'error');
-                    }
-                });
-            });
-        }
-
-        // Delete button
-        var deleteBtn = container.querySelector('.delete-religion-btn:not([disabled])');
-        if (deleteBtn) {
-            deleteBtn.addEventListener('click', function() {
-                if (typeof window.openDeleteReligionModal === 'function') {
-                    window.openDeleteReligionModal(religion.id, {
-                        onSuccess: function() {
-                            _showToast('Religion deleted', 'info');
-                            // Clear the details tab
-                            var container = document.getElementById('tab-details');
-                            if (container) {
-                                container.innerHTML = 
-                                    '<div class="empty-state">' +
-                                    '<div class="icon">' + (window.Icons ? window.Icons.CIRCLE : '') + '</div>' +
-                                    '<div class="message">Religion deleted</div>' +
-                                    '<div class="sub-message">Select another religion from the sidebar</div>' +
-                                    '</div>';
-                            }
-                            if (typeof window.renderReligionList === 'function') {
-                                window.renderReligionList();
-                            }
-                        }
-                    });
-                }
-            });
-        }
-
-        // Set Leader button
-        var setLeaderBtn = container.querySelector('.set-leader-btn');
-        if (setLeaderBtn) {
-            setLeaderBtn.addEventListener('click', function() {
-                _openCharacterSelector({
-                    title: 'Select Religious Leader for ' + religion.name,
-                    preset: 'elder',
-                    filters: { showDeceased: false },
-                    onSelect: function(character) {
-                        var startYear = prompt('Start Year:', _getCurrentYear());
-                        if (startYear === null) return;
-                        var year = parseInt(startYear) || _getCurrentYear();
-                        var title = prompt('Title:', 'Religious Leader');
-                        if (title === null) return;
-                        
-                        var result = RC.setReligionLeader(religion.id, character.id, {
-                            title: title || 'Religious Leader',
-                            startYear: year
-                        });
-                        if (result.success) {
-                            _showToast('Leader appointed: ' + character.name, 'success');
-                            var container = document.getElementById('tab-details');
-                            if (container) {
-                                renderDetailsTab(container, result.data.religion);
-                            }
-                            if (typeof window.renderReligionList === 'function') {
-                                window.renderReligionList();
-                            }
-                        } else {
-                            _showToast('Failed to set leader: ' + result.reason, 'error');
-                        }
-                    }
-                });
-            });
-        }
-
-        // End Leader button
-        var endLeaderBtn = container.querySelector('.end-leader-btn');
-        if (endLeaderBtn) {
-            endLeaderBtn.addEventListener('click', function() {
-                if (!religion.leader) return;
+            reactivateBtn.addEventListener('click', function () {
                 _confirmDialog(
-                    'End the term of ' + religion.leader.characterName + ' as leader?',
-                    'End Leader Term',
-                    function() {
-                        var endYear = prompt('End Year:', _getCurrentYear());
-                        if (endYear === null) return;
-                        var year = parseInt(endYear) || _getCurrentYear();
-                        var reason = prompt('Reason:', 'Term ended');
-                        if (reason === null) return;
-                        
-                        var result = RC.endReligionLeaderTerm(
-                            religion.id,
-                            religion.leader.characterId,
-                            year,
-                            reason || 'Term ended'
-                        );
-                        if (result.success) {
-                            _showToast('Leader term ended', 'success');
-                            var container = document.getElementById('tab-details');
-                            if (container) {
-                                renderDetailsTab(container, result.data);
-                            }
-                            if (typeof window.renderReligionList === 'function') {
-                                window.renderReligionList();
-                            }
+                    'Reactivate "' + (religion.displayName || religion.name) + '"?',
+                    'Reactivate Religion',
+                    function () {
+                        var result = RC.reactivateReligion(religion.id);
+                        if (result && result.success) {
+                            _showToast('Religion reactivated', 'success');
+                            rerender(result.data);
+                            reloadFromQueries();
+                            refreshSidebar();
                         } else {
-                            _showToast('Failed to end term: ' + result.reason, 'error');
+                            _showToast(
+                                'Failed to reactivate: ' +
+                                (result && result.reason ? result.reason : 'unknown'),
+                                'error'
+                            );
                         }
                     }
                 );
             });
         }
 
-        // Add Location button
-        var addLocationBtn = container.querySelector('.add-location-btn');
-        if (addLocationBtn) {
-            addLocationBtn.addEventListener('click', function() {
-                var locationSelect = document.createElement('select');
-                locationSelect.style.cssText = 'width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;';
-                locationSelect.innerHTML = _getLocationOptions(null);
-
-                var content = 
-                    '<div style="display:flex;flex-direction:column;gap:12px;">' +
-                    '<p style="font-size:0.7rem;">Add a location to <strong>' + _escapeHtml(religion.displayName || religion.name) + '</strong></p>' +
-                    '<div class="form-group">' +
-                    '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
-                    '</div>' +
-                    '</div>';
-
-                _openModal({
-                    title: 'Add Location',
-                    content: content + '<div id="locationSelectContainer"></div>',
-                    confirmText: 'Add',
-                    cancelText: 'Cancel',
-                    onOpen: function() {
-                        var container = document.getElementById('locationSelectContainer');
-                        if (container) {
-                            container.appendChild(locationSelect);
-                        }
-                    },
-                    onConfirm: function() {
-                        var locationId = locationSelect.value;
-                        if (!locationId) {
-                            _showToast('Please select a location', 'error');
-                            return false;
-                        }
-                        var result = RC.addReligionLocation(religion.id, locationId);
-                        if (result.success) {
-                            _showToast('Location added', 'success');
-                            _closeTopModal();
-                            var container = document.getElementById('tab-details');
-                            if (container) {
-                                renderDetailsTab(container, result.data);
-                            }
-                            if (typeof window.renderReligionList === 'function') {
-                                window.renderReligionList();
-                            }
-                            return true;
-                        } else {
-                            _showToast('Failed to add location: ' + result.reason, 'error');
-                            return false;
-                        }
+        // ---- Delete ----
+        var deleteBtn = container.querySelector('.delete-religion-btn');
+        if (deleteBtn && !deleteBtn.disabled) {
+            deleteBtn.addEventListener('click', function () {
+                if (typeof window.openDeleteReligionModal !== 'function') return;
+                window.openDeleteReligionModal(religion.id, {
+                    onSuccess: function () {
+                        _showToast('Religion deleted', 'info');
+                        container.innerHTML =
+                            '<div class="rt-empty">' +
+                              'Religion deleted.' +
+                              '<span class="rt-empty__sub">' +
+                                'Select another religion from the sidebar.' +
+                              '</span>' +
+                            '</div>';
+                        refreshSidebar();
                     }
                 });
             });
         }
 
-        // Remove Location buttons
-        var removeLocationBtns = container.querySelectorAll('.remove-location-btn');
-        for (var i = 0; i < removeLocationBtns.length; i++) {
-            (function(btn) {
-                btn.addEventListener('click', function() {
-                    var locationId = this.dataset.locationId;
-                    var locationName = _getPlaceName(locationId);
+        // ---- Set Leader ----
+        var setLeaderBtn = container.querySelector('.set-leader-btn');
+        if (setLeaderBtn) {
+            setLeaderBtn.addEventListener('click', function () {
+                var selector = _openCharacterSelector({
+                    title: 'Select Religious Leader for ' + (religion.displayName || religion.name),
+                    preset: 'elder',
+                    filters: { showDeceased: false },
+                    onSelect: function (character) {
+                        if (!character || !character.id) return;
+
+                        var yearInput = prompt('Start Year:', _getCurrentYear());
+                        if (yearInput === null) return;
+                        var year = parseInt(yearInput, 10);
+                        if (Number.isNaN(year)) year = _getCurrentYear();
+
+                        var titleInput = prompt('Title:', 'Religious Leader');
+                        if (titleInput === null) return;
+
+                        var result = RC.setReligionLeader(religion.id, character.id, {
+                            title: titleInput || 'Religious Leader',
+                            startYear: year
+                        });
+                        if (result && result.success) {
+                            _showToast('Leader appointed: ' + character.name, 'success');
+                            rerender(result.data && result.data.religion ? result.data.religion : null);
+                            reloadFromQueries();
+                            refreshSidebar();
+                        } else {
+                            _showToast(
+                                'Failed to set leader: ' +
+                                (result && result.reason ? result.reason : 'unknown'),
+                                'error'
+                            );
+                        }
+                    }
+                });
+                if (!selector) {
+                    _showToast('Character selector not available', 'error');
+                }
+            });
+        }
+
+        // ---- End Leader Term ----
+        var endLeaderBtn = container.querySelector('.end-leader-btn');
+        if (endLeaderBtn && religion.leader) {
+            endLeaderBtn.addEventListener('click', function () {
+                var displayName = religion.leader.characterName
+                    || _getCharacterName(religion.leader.characterId);
+                _confirmDialog(
+                    'End the term of ' + displayName + ' as leader?',
+                    'End Leader Term',
+                    function () {
+                        var yearInput = prompt('End Year:', _getCurrentYear());
+                        if (yearInput === null) return;
+                        var year = parseInt(yearInput, 10);
+                        if (Number.isNaN(year)) year = _getCurrentYear();
+
+                        var reasonInput = prompt('Reason:', 'Term ended');
+                        if (reasonInput === null) return;
+
+                        var result = RC.endReligionLeaderTerm(
+                            religion.id,
+                            religion.leader.characterId,
+                            year,
+                            reasonInput || 'Term ended'
+                        );
+                        if (result && result.success) {
+                            _showToast('Leader term ended', 'success');
+                            rerender(result.data);
+                            reloadFromQueries();
+                            refreshSidebar();
+                        } else {
+                            _showToast(
+                                'Failed to end term: ' +
+                                (result && result.reason ? result.reason : 'unknown'),
+                                'error'
+                            );
+                        }
+                    }
+                );
+            });
+        }
+
+        // ---- Add Location ----
+        var addLocationBtn = container.querySelector('.add-location-btn');
+        if (addLocationBtn) {
+            addLocationBtn.addEventListener('click', function () {
+                var content =
+                    '<div class="rt-form">' +
+                      '<p class="rt-form__hint">Add a location to <strong>' +
+                        _escapeHtml(religion.displayName || religion.name) +
+                      '</strong>.</p>' +
+                      '<div class="rt-form__group">' +
+                        '<label class="rt-form__label" for="addLocationSelect">Location</label>' +
+                        '<select id="addLocationSelect">' +
+                          _getLocationOptions(null) +
+                        '</select>' +
+                      '</div>' +
+                    '</div>';
+
+                _openModal({
+                    titleHtml: 'Add Location',
+                    contentHtml: content,
+                    confirmText: 'Add',
+                    cancelText: 'Cancel',
+                    onConfirm: function (root) {
+                        var sel = root.querySelector('#addLocationSelect');
+                        var locationId = sel ? sel.value : '';
+                        if (!locationId) {
+                            _showToast('Please select a location', 'error');
+                            return false;
+                        }
+                        var result = RC.addReligionLocation(religion.id, locationId);
+                        if (result && result.success) {
+                            _showToast('Location added', 'success');
+                            rerender(result.data);
+                            refreshSidebar();
+                            return true;
+                        }
+                        _showToast(
+                            'Failed to add location: ' +
+                            (result && result.reason ? result.reason : 'unknown'),
+                            'error'
+                        );
+                        return false;
+                    }
+                });
+            });
+        }
+
+        // ---- Remove Location (one listener per chip button) ----
+        var removeBtns = container.querySelectorAll('.remove-location-btn');
+        for (var i = 0; i < removeBtns.length; i++) {
+            (function (btn) {
+                btn.addEventListener('click', function () {
+                    var locationId = btn.getAttribute('data-location-id');
+                    if (!locationId) return;
+                    var name = _getPlaceName(locationId);
                     _confirmDialog(
-                        'Remove "' + locationName + '" from ' + religion.displayName + '?',
+                        'Remove "' + name + '" from ' +
+                        (religion.displayName || religion.name) + '?',
                         'Remove Location',
-                        function() {
+                        function () {
                             var result = RC.removeReligionLocation(religion.id, locationId);
-                            if (result.success) {
+                            if (result && result.success) {
                                 _showToast('Location removed', 'info');
-                                var container = document.getElementById('tab-details');
-                                if (container) {
-                                    renderDetailsTab(container, result.data);
-                                }
-                                if (typeof window.renderReligionList === 'function') {
-                                    window.renderReligionList();
-                                }
+                                rerender(result.data);
+                                refreshSidebar();
                             } else {
-                                _showToast('Failed to remove location: ' + result.reason, 'error');
+                                _showToast(
+                                    'Failed to remove location: ' +
+                                    (result && result.reason ? result.reason : 'unknown'),
+                                    'error'
+                                );
                             }
                         }
                     );
                 });
-            })(removeLocationBtns[i]);
+            })(removeBtns[i]);
         }
     }
 
     // =========================================================================
-    // 4. TAB DEFINITION
+    // 5. TABMANAGER ADAPTER + REGISTRATION
     // =========================================================================
+    //
+    // TabManager renderers receive (container, context). The context
+    // is whatever the editor's buildContext() returns; by convention it
+    // carries { religion }. We forward to renderDetailsTab(container, religion)
+    // and leave every existing renderer contract intact.
+    //
+    // The adapter is defensive: if the editor forgot to pass a religion
+    // context object, we render the "select a religion" empty state
+    // (which renderDetailsTab already handles for null/undefined).
 
-    var ReligionDetailsTab = {
-        label: 'Details',
-        icon: 'CIRCLE_DOT',
-        render: renderDetailsTab,
-        save: function(religion) {
-            // Details tab doesn't modify the religion object directly
-            // Changes are made through modals
-            return religion;
-        },
-        validate: function(religion) {
-            return { valid: true };
-        }
-    };
+    function renderAdapter(container, context) {
+        var religion = (context && context.religion) ? context.religion : null;
+        renderDetailsTab(container, religion);
+    }
 
-    // =========================================================================
-    // 5. REGISTER FUNCTION
-    // =========================================================================
-
-    function registerReligionDetailsTab() {
-        if (typeof window.ReligionEditorTabs === 'undefined') {
-            console.warn('[ReligionDetailsTab] ReligionEditorTabs not available, tab not registered');
-            return false;
-        }
-
-        var result = window.ReligionEditorTabs.registerTab('details', ReligionDetailsTab);
-        if (result) {
-            console.log('[ReligionDetailsTab] Registered details tab successfully');
-        }
-        return result;
+    if (typeof window.TabManager !== 'undefined' && window.TabManager) {
+        window.TabManager.register('religion', 'details', renderAdapter);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'religion-details-tab.js: TabManager is not loaded; the details ' +
+            'tab was not registered. Load tab-manager.js first.'
+        );
     }
 
     // =========================================================================
     // 6. EXPORTS
     // =========================================================================
 
-    window.ReligionDetailsTab = ReligionDetailsTab;
-    window.registerReligionDetailsTab = registerReligionDetailsTab;
-
-    // Auto-register if ReligionEditorTabs is available
-    if (typeof window.ReligionEditorTabs !== 'undefined') {
-        registerReligionDetailsTab();
-    }
+    window.ReligionDetailsTab = {
+        id: 'details',
+        render: renderDetailsTab,
+        // Not used by TabManager, but kept for callers that want to
+        // render the tab directly (tests, ad-hoc previews).
+        renderAdapter: renderAdapter
+    };
 
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionDetailsTab: ReligionDetailsTab,
-            registerReligionDetailsTab: registerReligionDetailsTab
-        };
+        module.exports = { ReligionDetailsTab: window.ReligionDetailsTab };
     }
-
-
 })();
