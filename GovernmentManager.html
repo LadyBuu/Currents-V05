@@ -163,7 +163,7 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- CANONICAL LOAD ORDER                                         -->
+<!-- CANONICAL LOAD ORDER - FIXED DEPENDENCY SEQUENCE             -->
 <!-- ============================================================ -->
 
 <!-- 1. Core Constants -->
@@ -203,31 +203,58 @@
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- 6. Skill Taxonomy (MUST be before role-constants) -->
+<!-- 6. Skill Taxonomy -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- 7. Feature State Modules (Must load before state.js) -->
+<!-- 7. Role Constants (must load BEFORE role-state) -->
+<script src="js/roles/role-constants.js"></script>
+
+<!-- 8. Rank Dependencies (must load BEFORE rank-state) -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+
+<!-- 9. Name Dependencies (must load BEFORE names-state) -->
+<script src="js/names/name-queries.js"></script>
+<script src="js/names/name-rules.js"></script>
+
+<!-- 10. Feature State Modules (now all dependencies are resolved) -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 <script src="js/households/household-state.js"></script>
 <script src="js/location/location-ui-state.js"></script>
 <script src="js/roles/role-state.js"></script>
 <script src="js/ranks/rank-state.js"></script>
-<script src="js/names/names-state.js"></script> <!-- FIXED: plural per your rename -->
+<script src="js/names/names-state.js"></script>
 <script src="js/core/census-state.js"></script>
 <script src="js/core/matchmaker-state.js"></script>
 <script src="js/core/misc-state.js"></script>
 
-<!-- 8. State.js -->
+<!-- 11. State.js (all state modules are loaded) -->
 <script src="js/core/state.js"></script>
 
-<!-- 9. Character Domain -->
+<!-- 12. Ranks (rest of chain) -->
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+<script src="js/ranks/rank-issues.js"></script>
+<script src="js/ranks/rank-ui-list.js"></script>
+<script src="js/ranks/modals-rank.js"></script>
+<script src="js/ranks/rank-bootstrap.js"></script>
+
+<!-- 13. Roles (rest of chain) -->
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+<script src="js/roles/modals-roles.js"></script>
+
+<!-- 14. Names (rest of chain) -->
+<script src="js/names/name-commands.js"></script>
+
+<!-- 15. Character Domain -->
 <script src="js/character/character-factory.js"></script>
 <script src="js/character/character-creation-commands.js"></script>
-<script src="js/character/character-deletion-commands.js"></script> <!-- FIXED: required by modals-character.js -->
+<script src="js/character/character-deletion-commands.js"></script>
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
-<script src="js/character/family-rules.js"></script>
 <script src="js/character/family-queries.js"></script>
 <script src="js/character/family-commands.js"></script>
 <script src="js/character/mortality-rules.js"></script>
@@ -237,7 +264,7 @@
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
-<!-- 10. Location Domain -->
+<!-- 16. Location Domain -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
@@ -251,35 +278,13 @@
 <script src="js/location/modals-moves.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- 11. Ranks -->
-<script src="js/ranks/rank-constants.js"></script>
-<script src="js/ranks/rank-rules.js"></script>
-<script src="js/ranks/rank-queries.js"></script>
-<script src="js/ranks/rank-assignment.js"></script>
-<script src="js/ranks/rank-commands.js"></script>
-<script src="js/ranks/rank-issues.js"></script>
-<script src="js/ranks/rank-ui-list.js"></script>
-<script src="js/ranks/modals-rank.js"></script>
-<script src="js/ranks/rank-bootstrap.js"></script>
-
-<!-- 12. Roles -->
-<script src="js/roles/role-constants.js"></script> <!-- Now skill-utils is loaded earlier -->
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/role-commands.js"></script>
-<script src="js/roles/modals-roles.js"></script>
-
-<!-- 13. Names -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-<script src="js/names/name-commands.js"></script>
-
-<!-- 14. Households -->
+<!-- 17. Households -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
 <script src="js/households/household-queries.js"></script>
 <script src="js/households/household-commands.js"></script>
 
-<!-- 15. Settlement -->
+<!-- 18. Settlement -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
 <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -324,7 +329,7 @@
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
-<!-- 16. Government Subsystem -->
+<!-- 19. Government Subsystem -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
 <script src="js/government/government-rules.js"></script>
@@ -341,7 +346,7 @@
 <script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
 
-<!-- 17. Selectors -->
+<!-- 20. Selectors -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
 <script>
@@ -355,7 +360,7 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 <script src="js/selectors/modals-household-selector.js"></script>
 
-<!-- 18. Government Tabs -->
+<!-- 21. Government Tabs -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
 <script src="js/tabs/government-history-tab.js"></script>
