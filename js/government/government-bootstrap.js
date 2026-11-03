@@ -73,7 +73,9 @@
         _requireMethod('LocationCommands',  window.LocationCommands,  'endLeaderTerm');
         _requireMethod('LocationCommands',  window.LocationCommands,  'assignGovernment');
 
-        _requireMethod('RoleQueries',       window.RoleQueries,       'getRoleSummary');
+        // FIX: role-queries.js exports getRankSummary, not getRoleSummary.
+        // The original guard asked for a method that has never existed on
+        // RoleQueries, which caused every Government bootstrap to throw.
         _requireMethod('RoleQueries',       window.RoleQueries,       'getRankSummary');
 
         _requireMethod('SettlementQueries', window.SettlementQueries, 'getIndustryTaxRate');
