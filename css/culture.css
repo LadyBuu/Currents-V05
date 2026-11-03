@@ -1,0 +1,1808 @@
+/* ============================================================================
+   STILL WATERS — CULTURE MANAGER CSS
+   ============================================================================
+   File: css/culture.css
+   Dependencies: css/themes.css (tokens), css/common.css (structure)
+
+   SCOPE
+     Every class emitted by:
+       - culture-ui-list.js         (.culture-list, .culture-row,
+                                     .culture-card, .culture-select)
+       - culture-editor-tab.js      (.ct-editor, .ct-tabbar, .ct-nav-*,
+                                     .ct-pane*, .ct-editor__*)
+       - culture-appearance-tab.js  (.ct-appearance*, .ct-card,
+                                     .ct-form, .ct-hint)
+       - culture-mythology-tab.js   (.ct-mythology*, .ct-form)
+       - culture-characters-tab.js  (.ct-characters*, .ct-character-row*,
+                                     .ct-badge, .ct-search, .rt-*)
+       - culture-names-tab.js       (.ct-names*, .ct-names__chip*,
+                                     .ct-names__preview*)
+       - modals-culture.js          (.ct-details*, .ct-delete-confirm,
+                                     .ct-form, .ct-form__*)
+
+   NAMESPACE
+     .culture-*  — the culture list / row / card UI (culture-ui-list.js).
+     .ct-*       — everything the composite editor, its tabs, and its
+                   modals render. Scoped by prefix so a future culture
+                   surface does not collide with the sidebar's
+                   .culture-* classes.
+     .rt-*       — buttons, badges, empty states, and small bits shared
+                   with the religion tabs. Those classes are defined in
+                   religion.css; they are reused here unchanged. This file
+                   does NOT redefine .rt-*.
+
+   CONVENTIONS
+     - Every colour / radius / shadow is a token from themes.css.
+     - No inline-style-like single-purpose classes; group by concern.
+     - No emojis. Icons come from icons.js and are inserted by the renderer.
+     - Structural buttons use .rt-btn (defined in religion.css). This file
+       does not re-declare them.
+     - Lists use flex; grids use CSS grid with minmax; nothing is fixed-width
+       except chip and stat tiles, which are visually bounded and token-driven.
+
+   ============================================================================ */
+
+
+/* ============================================================================
+   1. CULTURE LIST (culture-ui-list.js sidebar / dropdown)
+   ============================================================================ */
+
+.culture-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+}
+
+.culture-list--empty {
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.8rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg2);
+}
+
+.culture-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    border-left: 3px solid transparent;
+    cursor: pointer;
+    color: var(--text);
+    background: transparent;
+    transition: background-color var(--transition-fast, 0.15s) ease,
+                border-color var(--transition-fast, 0.15s) ease;
+}
+
+.culture-row:hover {
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+}
+
+.culture-row.is-selected {
+    background: var(--accent-dim);
+    border-left-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+
+.culture-row__main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.culture-row__title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.culture-row__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    font-size: 0.95rem;
+    color: var(--accent-light);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 1px);
+    flex: none;
+}
+
+.culture-row__label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.culture-row__desc {
+    font-size: 0.55rem;
+    color: var(--dim);
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.culture-row__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    font-size: 0.55rem;
+    color: var(--dim);
+    margin-top: 2px;
+}
+
+.culture-row__sep {
+    color: var(--tmut);
+}
+
+.culture-row__locations,
+.culture-row__religions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.culture-row__tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.culture-row__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-soft);
+    color: var(--accent-light);
+    font-size: 0.5rem;
+    font-family: var(--f-mono);
+    flex: none;
+}
+
+.culture-select {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.7rem;
+    font-family: var(--f-body);
+}
+
+.culture-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+
+/* ============================================================================
+   2. CULTURE CARD (culture-ui-list.js)
+   ============================================================================ */
+
+.culture-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 2);
+    padding: 16px 18px;
+    color: var(--text);
+    margin-bottom: 12px;
+    transition: border-color var(--transition-base, 0.2s) ease;
+}
+
+.culture-card:hover {
+    border-color: var(--accent);
+}
+
+.culture-card--empty {
+    color: var(--dim);
+    text-align: center;
+    font-style: italic;
+}
+
+.culture-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.culture-card__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    font-size: 1.2rem;
+    color: var(--accent-light);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    flex: none;
+}
+
+.culture-card__label {
+    font-family: var(--f-display);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.culture-card__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-size: 0.6rem;
+    color: var(--dim);
+    margin-left: auto;
+}
+
+.culture-card__desc {
+    font-size: 0.7rem;
+    color: var(--dim);
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.culture-card__relations {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.culture-card__relation {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.65rem;
+}
+
+.culture-card__relation-label {
+    color: var(--dim);
+    min-width: 68px;
+    font-family: var(--f-display);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.culture-card__relation-values {
+    color: var(--text);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.culture-card__appearance {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+}
+
+.culture-card__appearance-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.6rem;
+}
+
+.culture-card__appearance-cat {
+    color: var(--dim);
+    min-width: 90px;
+    font-family: var(--f-mono);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.culture-card__appearance-preview {
+    color: var(--text);
+    flex: 1;
+}
+
+.culture-card__appearance-more {
+    color: var(--tmut);
+    font-size: 0.55rem;
+}
+
+.culture-card__mythology {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+}
+
+.culture-card__myth-section {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.6rem;
+}
+
+.culture-card__myth-label {
+    color: var(--dim);
+    min-width: 90px;
+    font-family: var(--f-display);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.culture-card__myth-value,
+.culture-card__myth-values {
+    color: var(--text);
+    flex: 1;
+    line-height: 1.4;
+}
+
+.culture-card__notes {
+    font-size: 0.6rem;
+    color: var(--dim);
+    padding: 6px 10px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    font-style: italic;
+}
+
+
+/* ============================================================================
+   3. COMPOSITE EDITOR SHELL (culture-editor-tab.js)
+   ============================================================================ */
+
+.ct-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 78vh;
+}
+
+.ct-editor__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ct-editor__title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.ct-editor__glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent-light);
+    font-size: 1.1rem;
+    flex: none;
+}
+
+.ct-editor__name {
+    font-family: var(--f-display);
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.ct-editor__errors {
+    font-size: 0.6rem;
+    color: var(--danger-lt);
+    flex: 1;
+    min-width: 160px;
+}
+
+.ct-errors-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ct-tabbar {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    padding: 4px;
+    border-radius: var(--radius);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+}
+
+.ct-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--dim);
+    font-size: 0.65rem;
+    font-family: var(--f-body);
+    cursor: pointer;
+    transition: border-color var(--transition-fast, 0.15s) ease,
+                background-color var(--transition-fast, 0.15s) ease,
+                color var(--transition-fast, 0.15s) ease;
+}
+
+.ct-nav-btn:hover {
+    color: var(--accent-light);
+    background: var(--accent-dim);
+}
+
+.ct-nav-btn--active {
+    color: var(--accent-light);
+    background: var(--bg2);
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+.ct-nav-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    flex: none;
+}
+
+.ct-nav-label {
+    font-size: 0.62rem;
+    white-space: nowrap;
+}
+
+.ct-panes {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.ct-pane {
+    display: none;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    overflow-y: auto;
+    min-height: 200px;
+}
+
+.ct-pane--active {
+    display: block;
+}
+
+.ct-pane-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-editor__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+}
+
+
+/* ============================================================================
+   4. SHARED TAB PRIMITIVES (all four tabs)
+   ============================================================================ */
+
+.ct-hint {
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    color: var(--dim);
+    font-size: 0.6rem;
+    line-height: 1.45;
+}
+
+.ct-hint--footer {
+    border-style: dashed;
+    text-align: center;
+    font-style: italic;
+}
+
+.ct-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.ct-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ct-card__title {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--f-display);
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    flex-wrap: wrap;
+}
+
+.ct-card__hint {
+    font-family: var(--f-body);
+    font-size: 0.55rem;
+    color: var(--dim);
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.ct-card__count {
+    font-size: 0.55rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+}
+
+.ct-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.55rem;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--dim);
+    letter-spacing: 0.02em;
+}
+
+.ct-badge--accent {
+    color: var(--accent-light);
+    border-color: var(--accent-soft);
+    background: var(--accent-dim);
+}
+
+.ct-badge--muted {
+    color: var(--tmut);
+}
+
+.ct-search {
+    flex: 1;
+    min-width: 120px;
+}
+
+.ct-search input {
+    width: 100%;
+}
+
+
+/* ============================================================================
+   5. FORM PRIMITIVES (modals-culture.js and tab modals)
+   ============================================================================ */
+
+.ct-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-form__group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ct-form__label {
+    font-family: var(--f-display);
+    font-size: 0.65rem;
+    color: var(--dim);
+    letter-spacing: 0.04em;
+}
+
+.ct-form__input,
+.ct-form__select,
+.ct-form__textarea {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.7rem;
+    box-sizing: border-box;
+}
+
+.ct-form__input:focus,
+.ct-form__select:focus,
+.ct-form__textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ct-form__textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+.ct-form__grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.ct-form__grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.ct-form__section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+}
+
+.ct-form__hint {
+    font-size: 0.55rem;
+    color: var(--tmut);
+    font-style: italic;
+    line-height: 1.4;
+}
+
+
+/* ============================================================================
+   6. APPEARANCE TAB (culture-appearance-tab.js)
+   ============================================================================ */
+
+.ct-appearance {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-appearance__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.ct-appearance-card {
+    min-height: 0;
+}
+
+.ct-appearance-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.ct-appearance-empty {
+    padding: 12px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.55rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+}
+
+.ct-appearance-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 72px auto auto;
+    gap: 6px;
+    align-items: center;
+    padding: 4px 6px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.ct-appearance-row__value {
+    width: 100%;
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.65rem;
+    font-family: var(--f-body);
+}
+
+.ct-appearance-row__value:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ct-appearance-row__weight {
+    width: 100%;
+    padding: 4px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.65rem;
+    font-family: var(--f-mono);
+    text-align: center;
+}
+
+.ct-appearance-row__weight:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.ct-appearance-row__weight-label {
+    font-size: 0.5rem;
+    color: var(--tmut);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ct-appearance-add {
+    align-self: flex-start;
+    margin-top: 6px;
+}
+
+.ct-appearance-height {
+    grid-column: 1 / -1;
+}
+
+.ct-appearance-height-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.ct-appearance-height-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ct-appearance-height-label {
+    font-family: var(--f-display);
+    font-size: 0.6rem;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ct-appearance-height-inputs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.ct-appearance-height-inputs input {
+    width: 72px;
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.65rem;
+    font-family: var(--f-mono);
+    text-align: center;
+}
+
+.ct-appearance-height-inputs input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.ct-appearance-height-sep,
+.ct-appearance-height-unit {
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+
+/* ============================================================================
+   7. MYTHOLOGY TAB (culture-mythology-tab.js)
+   ============================================================================ */
+
+.ct-mythology {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-mythology__overview {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    font-size: 0.6rem;
+    color: var(--dim);
+    flex-wrap: wrap;
+}
+
+.ct-mythology__overview-label {
+    font-family: var(--f-display);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.ct-mythology__overview-summary {
+    font-size: 0.55rem;
+    color: var(--text);
+}
+
+.ct-mythology__text-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.ct-mythology-text {
+    grid-column: span 1;
+}
+
+.ct-mythology-text[data-section="creation"] {
+    grid-column: 1 / -1;
+}
+
+.ct-mythology-wordcount {
+    font-size: 0.5rem;
+    color: var(--tmut);
+    font-family: var(--f-mono);
+}
+
+.ct-mythology-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.7rem;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 72px;
+    box-sizing: border-box;
+}
+
+.ct-mythology-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ct-mythology__list-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.ct-mythology-count {
+    font-size: 0.5rem;
+    color: var(--tmut);
+    font-family: var(--f-mono);
+}
+
+.ct-mythology-tag-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-height: 40px;
+    align-content: flex-start;
+}
+
+.ct-mythology-empty {
+    color: var(--tmut);
+    font-size: 0.55rem;
+    font-style: italic;
+    padding: 4px;
+}
+
+.ct-mythology-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-soft);
+    border-radius: 12px;
+    font-size: 0.55rem;
+    color: var(--accent-light);
+    line-height: 1.6;
+}
+
+.ct-mythology-tag__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+}
+
+.ct-mythology-tag__remove {
+    padding: 0 0 0 2px;
+    background: transparent;
+    border: none;
+    color: var(--accent-light);
+    font-family: var(--f-body);
+    font-size: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+}
+
+.ct-mythology-tag__remove:hover {
+    color: var(--danger-lt);
+}
+
+.ct-mythology-add-row {
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+}
+
+.ct-mythology-add-input {
+    flex: 1;
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.65rem;
+    font-family: var(--f-body);
+}
+
+.ct-mythology-add-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+
+/* ============================================================================
+   8. CHARACTERS TAB (culture-characters-tab.js)
+   ============================================================================ */
+
+.ct-characters {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-characters__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.ct-characters__stats {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ct-characters__actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.ct-characters__filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.ct-characters__filters select,
+.ct-characters__filters input[type="text"] {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.6rem;
+    font-family: var(--f-body);
+}
+
+.ct-characters__filters input[type="text"] {
+    width: 100%;
+}
+
+.ct-characters__filters select:focus,
+.ct-characters__filters input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ct-characters__list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 460px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.ct-character-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-left: 3px solid var(--success);
+    border-radius: var(--radius);
+    transition: border-color var(--transition-fast, 0.15s) ease;
+}
+
+.ct-character-row:hover {
+    border-color: var(--accent);
+}
+
+.ct-character-row--deceased {
+    border-left-color: var(--dim);
+    opacity: 0.75;
+}
+
+.ct-character-row__body {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+}
+
+.ct-character-row__top {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.7rem;
+}
+
+.ct-character-row__name {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.ct-character-row__meta {
+    font-size: 0.55rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+}
+
+.ct-character-row__sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+.ct-character-row__appearance {
+    color: var(--dim);
+}
+
+.ct-character-row__appearance--none {
+    color: var(--tmut);
+    font-style: italic;
+}
+
+.ct-character-row__actions {
+    display: flex;
+    flex: none;
+    gap: 4px;
+}
+
+
+/* ============================================================================
+   9. NAMES TAB (culture-names-tab.js)
+   ============================================================================ */
+
+.ct-names {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-names__header {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ct-names__country {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.ct-names__country--missing {
+    border-color: var(--warning);
+    background: var(--warning-soft);
+}
+
+.ct-names__country-label {
+    font-family: var(--f-display);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--dim);
+}
+
+.ct-names__country-name {
+    font-family: var(--f-display);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.ct-names__country--missing .ct-names__country-name {
+    color: var(--warning);
+    font-family: var(--f-body);
+    font-size: 0.6rem;
+    font-weight: 400;
+}
+
+.ct-names__columns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.ct-names__column {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.ct-names__column-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 10px;
+    background: var(--bg3);
+    border: none;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+    color: var(--text);
+    font-family: var(--f-display);
+    text-align: left;
+}
+
+.ct-names__column-header:hover {
+    background: var(--accent-dim);
+}
+
+.ct-names__column-title {
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    flex: 1;
+}
+
+.ct-names__column-count {
+    font-size: 0.5rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 6px;
+    line-height: 1.6;
+}
+
+.ct-names__column-caret {
+    font-size: 0.55rem;
+    color: var(--dim);
+}
+
+.ct-names__column-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+}
+
+.ct-names__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.ct-names__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--bg3);
+    border: 1px solid var(--border-light);
+    border-radius: 12px;
+    font-size: 0.55rem;
+    color: var(--text);
+    line-height: 1.6;
+    max-width: 100%;
+}
+
+.ct-names__chip-remove {
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+
+.ct-names__chip-remove:hover {
+    color: var(--danger-lt);
+}
+
+.ct-names__add-row {
+    display: flex;
+    gap: 6px;
+}
+
+.ct-names__add-input {
+    flex: 1;
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.6rem;
+    font-family: var(--f-body);
+}
+
+.ct-names__add-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.ct-names__empty {
+    padding: 8px;
+    text-align: center;
+    color: var(--tmut);
+    font-size: 0.55rem;
+    font-style: italic;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+}
+
+.ct-names__rules {
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.ct-names__rules-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: none;
+    border-bottom: 1px solid var(--border-light);
+    cursor: pointer;
+    color: var(--text);
+    font-family: var(--f-display);
+    text-align: left;
+    width: 100%;
+}
+
+.ct-names__rules-header:hover {
+    background: var(--accent-dim);
+}
+
+.ct-names__rules-summary {
+    font-family: var(--f-body);
+    font-size: 0.55rem;
+    color: var(--dim);
+    flex: 1;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.ct-names__rules-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+}
+
+.ct-names__rules-type {
+    font-family: var(--f-display);
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.ct-names__rules-detail {
+    font-size: 0.6rem;
+    color: var(--dim);
+    font-family: var(--f-mono);
+}
+
+.ct-names__preview {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.ct-names__preview-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.ct-names__preview-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.ct-names__preview-controls select {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.6rem;
+    font-family: var(--f-body);
+}
+
+.ct-names__preview-controls select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.ct-names__preview-results {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    min-height: 44px;
+    max-height: 200px;
+    overflow-y: auto;
+    align-content: flex-start;
+}
+
+.ct-names__preview-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font-size: 0.6rem;
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.ct-names__preview-empty {
+    color: var(--tmut);
+    font-size: 0.55rem;
+    font-style: italic;
+    padding: 8px;
+}
+
+
+/* ============================================================================
+   10. DETAILS MODAL (modals-culture.js)
+   ============================================================================ */
+
+.ct-details {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ct-details__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ct-details__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--accent-light);
+    font-size: 1.3rem;
+}
+
+.ct-details__label {
+    font-family: var(--f-display);
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--fg);
+}
+
+.ct-details__description {
+    font-size: 0.7rem;
+    color: var(--dim);
+    line-height: 1.5;
+}
+
+.ct-details__stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.ct-details__stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    text-align: center;
+}
+
+.ct-details__stat-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--accent-light);
+    font-family: var(--f-mono);
+}
+
+.ct-details__stat-label {
+    font-size: 0.5rem;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ct-details__section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+}
+
+.ct-details__section-title {
+    font-family: var(--f-display);
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.ct-details__list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ct-details__list li {
+    font-size: 0.65rem;
+    color: var(--text);
+    padding: 2px 0;
+    border-bottom: 1px dashed var(--border-light);
+}
+
+.ct-details__list li:last-child {
+    border-bottom: none;
+}
+
+.ct-details__appearance-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.6rem;
+}
+
+.ct-details__appearance-cat {
+    color: var(--dim);
+    min-width: 100px;
+    font-family: var(--f-mono);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.ct-details__appearance-preview {
+    color: var(--text);
+    flex: 1;
+}
+
+.ct-details__appearance-more {
+    color: var(--tmut);
+    font-size: 0.55rem;
+}
+
+.ct-details__myth-row {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 0.6rem;
+}
+
+.ct-details__myth-label {
+    color: var(--dim);
+    min-width: 100px;
+    font-family: var(--f-display);
+    font-size: 0.55rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ct-details__myth-value,
+.ct-details__myth-values {
+    color: var(--text);
+    flex: 1;
+    line-height: 1.4;
+}
+
+.ct-details__notes {
+    padding: 8px 12px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    font-size: 0.6rem;
+    color: var(--dim);
+    font-style: italic;
+    line-height: 1.5;
+}
+
+.ct-details__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border-light);
+}
+
+
+/* ============================================================================
+   11. DELETE CONFIRM MODAL (modals-culture.js)
+   ============================================================================ */
+
+.ct-delete-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 0.75rem;
+    color: var(--text);
+}
+
+.ct-delete-confirm p {
+    margin: 0;
+    line-height: 1.5;
+}
+
+.ct-delete-confirm__note {
+    padding: 8px 12px;
+    background: var(--warning-soft);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius);
+    color: var(--warning);
+    font-size: 0.6rem;
+    line-height: 1.5;
+}
+
+
+/* ============================================================================
+   12. RESPONSIVE
+   ============================================================================ */
+
+@media (max-width: 768px) {
+    .ct-appearance__grid,
+    .ct-mythology__text-grid,
+    .ct-mythology__list-grid,
+    .ct-names__columns,
+    .ct-form__grid-2,
+    .ct-form__grid-3,
+    .ct-appearance-height-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ct-mythology-text[data-section="creation"] {
+        grid-column: 1;
+    }
+
+    .ct-characters__header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ct-characters__filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ct-details__stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ct-editor {
+        max-height: 84vh;
+    }
+
+    .ct-nav-btn {
+        padding: 4px 8px;
+        font-size: 0.55rem;
+    }
+
+    .ct-nav-label {
+        font-size: 0.55rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .ct-appearance-row {
+        grid-template-columns: minmax(0, 1fr) 60px;
+        grid-template-rows: auto auto;
+    }
+
+    .ct-appearance-row__weight-label {
+        display: none;
+    }
+
+    .ct-appearance-row .rt-btn--icon {
+        grid-column: 1 / -1;
+        justify-self: end;
+    }
+
+    .ct-details__stats {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .ct-details__appearance-cat,
+    .ct-details__myth-label {
+        min-width: 0;
+        display: block;
+        margin-bottom: 1px;
+    }
+
+    .ct-details__appearance-row,
+    .ct-details__myth-row {
+        flex-direction: column;
+        gap: 2px;
+        align-items: stretch;
+    }
+
+    .ct-character-row__actions {
+        flex-direction: column;
+    }
+}
+
+
+/* ============================================================================
+   13. REDUCED MOTION
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+    .culture-row,
+    .culture-card,
+    .ct-nav-btn,
+    .ct-character-row,
+    .ct-names__column-header,
+    .ct-names__rules-header,
+    .ct-appearance-row,
+    .ct-names__chip-remove,
+    .ct-mythology-tag__remove {
+        transition: none;
+    }
+}
