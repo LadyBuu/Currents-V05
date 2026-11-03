@@ -3,199 +3,281 @@
  * =============================================================================
  * LOCATION POPULATION TAB
  * =============================================================================
- * 
+ *
  * Displays demographics and resident lists for a location.
- * 
- * Exports:
- *   - window.LocationPopulationTab.render(containerId, locationId, onRefresh)
+ *
+ * SCOPE
+ * -----
+ * - Read population statistics via LocationQueries.getLocationStatistics.
+ * - Read the resident list via LocationQueries.getResidentsAtLocation.
+ * - Compute age-band breakdowns (children / adults / elderly) for
+ *   presentation — this is a presentation aggregation, not domain logic.
+ * - Render the stats header, age breakdown, and resident list.
+ *
+ * OUT OF SCOPE
+ * ------------
+ * - Enumerating residents (owned by LocationQueries.getResidentsAtLocation).
+ * - Current-location resolution (owned by LocationQueries._resolveCurrentLocationId).
+ * - Age computation (owned by time.js window.calculateAge).
+ * - Character name resolution (owned by CharacterQueries/accessors).
+ * - Inline CSS. All styling comes from css/location-tabs.css.
+ *
+ * HARD DEPENDENCIES (load-time):
+ *   - js/core/formatting.js           (window.escapeHtml)
+ *   - js/core/icons.js                (window.getIcon)
+ *   - js/location/location-queries.js (window.LocationQueries)
+ *
+ * CALL-TIME DEPENDENCIES (soft — resolved per call):
+ *   - window.getCharacterById  (character projection for name/age/gender)
+ *   - window.calculateAge      (canonical age; time.js)
+ *   - window.getCurrentYear    (fallback year for calculateAge; time.js)
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    // =========================================================================
+    // 1. LOAD-TIME DEPENDENCY CHECKS
+    // =========================================================================
+
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'location-population-tab.js requires core/formatting.js ' +
+            '(window.escapeHtml).'
+        );
+    }
+    if (typeof window.getIcon !== 'function') {
+        throw new Error(
+            'location-population-tab.js requires core/icons.js ' +
+            '(window.getIcon).'
+        );
+    }
+    if (!window.LocationQueries ||
+        typeof window.LocationQueries.getPlace !== 'function' ||
+        typeof window.LocationQueries.getLocationStatistics !== 'function') {
+        throw new Error(
+            'location-population-tab.js requires location-queries.js ' +
+            '(getPlace, getLocationStatistics).'
+        );
     }
 
-    function _getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
+    // =========================================================================
+    // 2. LOCAL ALIASES
+    // =========================================================================
+
+    var LQ = window.LocationQueries;
+
+    // =========================================================================
+    // 3. PRESENTATION HELPERS
+    // =========================================================================
+
+    /**
+     * Resolve a character's age via the canonical time.js calculator.
+     * Returns null when birthYear is missing or calculateAge is absent.
+     * This is a thin wrapper — the actual arithmetic lives in time.js.
+     */
+    function _ageOf(character) {
+        if (!character) return null;
+        if (typeof character.birthYear !== 'number') return null;
+        if (typeof window.calculateAge !== 'function') return null;
+        var currentYear = (typeof window.getCurrentYear === 'function')
+            ? window.getCurrentYear()
+            : null;
+        if (currentYear === null) return null;
+        return window.calculateAge(
+            character.birthYear,
+            character.isDeceased === true,
+            character.deathYear,
+            currentYear
+        );
     }
 
-    function _getPlace(id) {
-        if (window.LocationQueries && window.LocationQueries.getPlace) {
-            return window.LocationQueries.getPlace(id);
-        }
-        return null;
+    function _displayName(character) {
+        if (!character) return 'Unknown';
+        var full = ((character.name || '') + ' ' +
+                    (character.surname || '')).trim();
+        return full || 'Unknown';
     }
 
-    function _getPopulationStats(locationId) {
-        if (window.LocationQueries && window.LocationQueries.getLocationStatistics) {
-            return window.LocationQueries.getLocationStatistics(locationId);
-        }
-        return null;
+    function _genderIcon(gender) {
+        if (gender === 'male') return '\u2642';   // ♂
+        if (gender === 'female') return '\u2640'; // ♀
+        return '?';
     }
 
-    function _getResidents(locationId) {
-        if (!window.CharacterQueries || !window.CharacterQueries.getAllCharacters) return [];
-        
-        var allChars = window.CharacterQueries.getAllCharacters();
-        var residents = [];
-        
-        for (var i = 0; i < allChars.length; i++) {
-            var c = allChars[i];
-            if (!c || !c.id) continue;
-            
-            // Resolve current location using the semantic query
-            var locId = null;
-            if (window.LocationQueries && window.LocationQueries.getCurrentLocationId) {
-                locId = window.LocationQueries.getCurrentLocationId(c.id);
-            }
-            
-            if (locId === locationId) {
-                residents.push(c);
-            }
-        }
-        return residents;
-    }
-
-    function _calculateAge(character) {
-        if (!character || typeof character.birthYear !== 'number') return null;
-        var currentYear = (window.getCurrentYear) ? window.getCurrentYear() : 1250;
-        if (character.isDeceased) {
-            if (typeof character.deathYear === 'number') {
-                return Math.max(0, character.deathYear - character.birthYear);
-            }
-            return Math.max(0, currentYear - character.birthYear); // fallback
-        }
-        return Math.max(0, currentYear - character.birthYear);
-    }
+    // =========================================================================
+    // 4. RENDER
+    // =========================================================================
 
     function render(containerId, locationId, onRefresh) {
         var container = document.getElementById(containerId);
         if (!container) return;
 
-        var place = _getPlace(locationId);
+        var place = LQ.getPlace(locationId);
         if (!place) {
-            container.innerHTML = '<div class="empty-state">Location not found</div>';
+            container.innerHTML =
+                '<div class="empty-state">Location not found</div>';
             return;
         }
 
-        var stats = _getPopulationStats(locationId);
-        var residents = _getResidents(locationId);
+        var stats = LQ.getLocationStatistics(locationId) || {};
 
-        // Calculate demographic breakdowns
+        // Resident enumeration via the shared query. Falls back to []
+        // in a bare harness where the query is absent.
+        var residents = [];
+        if (typeof LQ.getResidentsAtLocation === 'function') {
+            residents = LQ.getResidentsAtLocation(locationId, {
+                includeDeceased: true
+            }) || [];
+        }
+
+        // Age-band aggregation. This is presentation shape, not a domain
+        // fact — the same residents could be bucketed differently by a
+        // different view. Keep the boundaries local to this tab.
         var living = 0;
         var deceased = 0;
-        var children = 0; // < 18
-        var adults = 0;   // 18 - 59
-        var elderly = 0;  // >= 60
+        var children = 0;   // < 18
+        var adults = 0;     // 18–59
+        var elderly = 0;    // >= 60
 
         for (var i = 0; i < residents.length; i++) {
             var c = residents[i];
-            if (c.isDeceased) {
+            if (c.isDeceased === true) {
                 deceased++;
                 continue;
             }
             living++;
-            var age = _calculateAge(c);
-            if (age !== null) {
-                if (age < 18) children++;
-                else if (age >= 60) elderly++;
-                else adults++;
-            }
+            var age = _ageOf(c);
+            if (age === null) continue;
+            if (age < 18) children++;
+            else if (age >= 60) elderly++;
+            else adults++;
         }
 
-        var html = '<div style="padding: 4px;">';
+        var html = '';
 
-        // HEADER
-        html += '<div style="background: var(--bg2); padding: 14px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.75rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + _getIcon('PERSON') + ' Demographics: ' + _escapeHtml(place.displayName) + '</div>' +
-            '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; text-align: center;">' +
-            
-            '<div style="background: var(--bg3); padding: 10px; border-radius: 6px;">' +
-            '<div style="font-size: 1.2rem; font-weight: bold; color: var(--accent);">' + (stats ? stats.totalPopulation : 0) + '</div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); text-transform: uppercase;">Total Pop</div>' +
-            '</div>' +
+        // ---- HEADER + STATS ----
+        html += '<div class="loc-tab-header">';
+        html +=   '<div class="loc-tab-header-text">';
+        html +=     '<div class="loc-tab-header-title">' +
+                        window.getIcon('PERSON') + ' Demographics: ' +
+                        window.escapeHtml(place.displayName) +
+                    '</div>';
+        html +=   '</div>';
+        html += '</div>';
 
-            '<div style="background: var(--bg3); padding: 10px; border-radius: 6px;">' +
-            '<div style="font-size: 1.2rem; font-weight: bold; color: var(--ok);">' + (stats ? stats.ownPopulation : 0) + '</div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); text-transform: uppercase;">Direct Residents</div>' +
-            '</div>' +
+        html += '<div class="loc-tab-stats-grid loc-tab-stats-grid--wrap">';
 
-            '<div style="background: var(--bg3); padding: 10px; border-radius: 6px;">' +
-            '<div style="font-size: 1.2rem; font-weight: bold; color: var(--text);">' + living + '</div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); text-transform: uppercase;">Living</div>' +
-            '</div>' +
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-value loc-tab-stat-value--accent">' +
+                        (stats.totalPopulation || 0).toLocaleString() +
+                    '</div>';
+        html +=     '<div class="loc-tab-stat-label">Total Pop</div>';
+        html +=   '</div>';
 
-            '<div style="background: var(--bg3); padding: 10px; border-radius: 6px;">' +
-            '<div style="font-size: 1.2rem; font-weight: bold; color: var(--danger-lt);">' + deceased + '</div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); text-transform: uppercase;">Deceased</div>' +
-            '</div>' +
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-value loc-tab-stat-value--ok">' +
+                        (stats.ownPopulation || 0).toLocaleString() +
+                    '</div>';
+        html +=     '<div class="loc-tab-stat-label">Direct Residents</div>';
+        html +=   '</div>';
 
-            '</div>' +
-            '</div>';
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-value">' +
+                        living.toLocaleString() +
+                    '</div>';
+        html +=     '<div class="loc-tab-stat-label">Living</div>';
+        html +=   '</div>';
 
-        // AGE BREAKDOWN
-        html += '<div style="background: var(--bg2); padding: 14px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">Age Breakdown (Living)</div>' +
-            '<div style="display: flex; gap: 16px; flex-wrap: wrap;">' +
-            '<div><span style="color: var(--dim); font-size: 0.6rem;">Children (0-17):</span> <span style="color: var(--text); font-weight: bold;">' + children + '</span></div>' +
-            '<div><span style="color: var(--dim); font-size: 0.6rem;">Adults (18-59):</span> <span style="color: var(--text); font-weight: bold;">' + adults + '</span></div>' +
-            '<div><span style="color: var(--dim); font-size: 0.6rem;">Elderly (60+):</span> <span style="color: var(--text); font-weight: bold;">' + elderly + '</span></div>' +
-            '</div>' +
-            '</div>';
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-value loc-tab-stat-value--danger">' +
+                        deceased.toLocaleString() +
+                    '</div>';
+        html +=     '<div class="loc-tab-stat-label">Deceased</div>';
+        html +=   '</div>';
 
-        // RESIDENT LIST
-        html += '<div style="background: var(--bg2); padding: 14px; border-radius: 8px; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">Resident List (' + residents.length + ')</div>';
+        html += '</div>';
+
+        // ---- AGE BREAKDOWN ----
+        html += '<div class="loc-tab-section">';
+        html +=   '<div class="loc-tab-section-title">Age Breakdown (Living)</div>';
+        html +=   '<div class="loc-pop-age-row">';
+        html +=     '<div><span class="loc-tab-label">Children (0-17):</span> ' +
+                        '<span class="loc-tab-value loc-tab-value--bold">' +
+                            children + '</span></div>';
+        html +=     '<div><span class="loc-tab-label">Adults (18-59):</span> ' +
+                        '<span class="loc-tab-value loc-tab-value--bold">' +
+                            adults + '</span></div>';
+        html +=     '<div><span class="loc-tab-label">Elderly (60+):</span> ' +
+                        '<span class="loc-tab-value loc-tab-value--bold">' +
+                            elderly + '</span></div>';
+        html +=   '</div>';
+        html += '</div>';
+
+        // ---- RESIDENT LIST ----
+        html += '<div class="loc-tab-section">';
+        html +=   '<div class="loc-tab-section-title">' +
+                    'Resident List (' + residents.length + ')' +
+                  '</div>';
 
         if (residents.length === 0) {
-            html += '<div style="color: var(--dim); font-size: 0.7rem; text-align: center; padding: 12px 0;">No characters reside here.</div>';
+            html += '<div class="loc-tab-empty">' +
+                        'No characters reside here.' +
+                    '</div>';
         } else {
-            html += '<div style="display: flex; flex-direction: column; gap: 4px; max-height: 400px; overflow-y: auto;">';
-            
-            // Sort residents by name
-            residents.sort(function(a, b) {
-                var nameA = (a.name || '') + ' ' + (a.surname || '');
-                var nameB = (b.name || '') + ' ' + (b.surname || '');
-                return nameA.localeCompare(nameB);
+            // Sort by full name for stable, scannable display.
+            var sorted = residents.slice().sort(function (a, b) {
+                return _displayName(a).localeCompare(_displayName(b));
             });
 
-            for (var k = 0; k < residents.length; k++) {
-                var res = residents[k];
-                var resName = ((res.name || '') + ' ' + (res.surname || '')).trim() || 'Unknown';
-                var age = _calculateAge(res);
+            html += '<div class="loc-resident-list">';
+            for (var k = 0; k < sorted.length; k++) {
+                var res = sorted[k];
+                var resName = _displayName(res);
+                var age = _ageOf(res);
                 var isDead = res.isDeceased === true;
-                
-                var statusIcon = isDead ? '<span style="color: var(--danger-lt); font-size: 0.6rem;">(Deceased)</span>' : '';
-                var genderIcon = res.gender === 'male' ? '♂' : (res.gender === 'female' ? '♀' : '?');
+                var genderSym = _genderIcon(res.gender);
 
-                html += '<div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg3); padding: 6px 10px; border-radius: 4px;">' +
-                    '<div style="font-size: 0.7rem; color: var(--text); display: flex; align-items: center; gap: 6px;">' +
-                    '<span style="opacity: 0.6;">' + genderIcon + '</span>' +
-                    '<span>' + _escapeHtml(resName) + '</span>' +
-                    statusIcon +
-                    '</div>' +
-                    '<div style="font-size: 0.6rem; color: var(--dim);">' +
-                    (age !== null ? age + ' years' : 'Age unknown') +
-                    '</div>' +
-                    '</div>';
+                html += '<div class="loc-resident-row">';
+                html +=   '<div class="loc-resident-row-name">';
+                html +=     '<span class="loc-resident-row-gender">' +
+                                window.escapeHtml(genderSym) +
+                            '</span>';
+                html +=     '<span>' + window.escapeHtml(resName) + '</span>';
+                if (isDead) {
+                    html += '<span class="loc-resident-row-deceased">' +
+                                '(Deceased)' +
+                            '</span>';
+                }
+                html +=   '</div>';
+                html +=   '<div class="loc-resident-row-age">' +
+                            (age !== null
+                                ? window.escapeHtml(String(age)) + ' years'
+                                : 'Age unknown') +
+                          '</div>';
+                html += '</div>';
             }
             html += '</div>';
         }
 
         html += '</div>';
-        html += '</div>';
 
         container.innerHTML = html;
+
+        // No interactive elements on this tab. `onRefresh` is kept for
+        // signature compatibility with the other tab renderers.
     }
 
-    window.LocationPopulationTab = {
-        render: render
-    };
+    // =========================================================================
+    // 5. EXPORTS
+    // =========================================================================
+
+    window.LocationPopulationTab = { render: render };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.LocationPopulationTab;
+    }
 
 })();
