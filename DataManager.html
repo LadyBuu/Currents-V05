@@ -1,12 +1,23 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Data Manager</title>
+
+    <!-- 1. Theme Bootstrapper (MUST LOAD FIRST) -->
+    <script src="js/core/theme-boot.js"></script>
+
+    <!-- 2. Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- 3. Stylesheets -->
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/data-manager.css" />
+    <link rel="stylesheet" href="css/gov-manager.css" /> <!-- For .tb-btn and .panel-tabs -->
 </head>
 <body>
 
@@ -16,12 +27,22 @@
     <div class="topbar">
         <span class="title">Data Manager</span>
         <span class="spacer"></span>
+        
         <label for="yearInput">Year</label>
         <input type="number" class="year-input" id="yearInput" value="1250" />
         <button class="tb-btn" id="setYearBtn">Set</button>
         <button class="tb-btn" id="exportBtn">Export</button>
         <button class="tb-btn" id="importBtn">Import</button>
         <input type="file" id="fileInput" accept=".json" style="display:none;" />
+
+        <!-- Theme Toggle -->
+        <div class="theme-toggle" role="group" aria-label="Theme">
+            <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+                <span aria-hidden="true">◐</span>
+                <span id="themeName">Dark</span>
+            </button>
+            <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+        </div>
     </div>
 
     <!-- PANEL TABS -->
@@ -238,23 +259,6 @@
 <!-- ============================================================ -->
 <!-- GOVERNMENT DEPENDENCY STUBS                                   -->
 <!-- ============================================================ -->
-<!-- government-queries.js requires RoleQueries, SettlementQueries,
-     SettlementProsperityQueries, IndustryQueries at load. Those
-     modules are not in this page's load set, so we install minimal
-     stubs.
-
-     IMPORTANT — Rank data IS loaded on this page (js/ranks/*).
-     The "Allowed Ranks" picker in the Add/Edit Government Type
-     modals calls RoleQueries.getAllRankSummaries(). The stub below
-     reads from RankState.getAllRanks() so the picker shows the
-     real rank catalogue from masterData.data.ranks. Without this,
-     the picker would be empty even though ranks exist.
-
-     Settlement, Industry, and Role data are NOT loaded on this
-     page; those stubs return null / 0 / [] as before. Government
-     Type CRUD works fully. Government flows that reach the
-     Settlement / Industry / Role stubs will surface their own
-     failures. -->
 <script>
     (function () {
         if (!window.SettlementQueries) {
@@ -277,17 +281,9 @@
 
         if (!window.RoleQueries) {
             window.RoleQueries = {
-                getRoleSummary: function () {
-                    // Role data is not loaded on this page.
-                    return null;
-                },
+                getRoleSummary: function () { return null; },
                 getRankSummary: function (rankId) {
-                    // Rank data IS loaded via RankState. Project the
-                    // canonical rank record into the summary shape
-                    // that Government callers (getRankSummary for
-                    // display) expect.
-                    if (!rankId || !window.RankState
-                        || typeof window.RankState.getRank !== 'function') {
+                    if (!rankId || !window.RankState || typeof window.RankState.getRank !== 'function') {
                         return null;
                     }
                     var r = window.RankState.getRank(rankId);
@@ -295,19 +291,12 @@
                     return {
                         id: r.id,
                         name: r.name,
-                        priority: typeof r.priority === 'number'
-                            ? r.priority
-                            : 5,
+                        priority: typeof r.priority === 'number' ? r.priority : 5,
                         symbol: r.symbol || null
                     };
                 },
                 getAllRankSummaries: function () {
-                    // Read the real rank catalogue from RankState.
-                    // This is what populates the "Allowed Ranks"
-                    // multi-select in the Add/Edit Government Type
-                    // modals.
-                    if (!window.RankState
-                        || typeof window.RankState.getAllRanks !== 'function') {
+                    if (!window.RankState || typeof window.RankState.getAllRanks !== 'function') {
                         return [];
                     }
                     var ranks = window.RankState.getAllRanks() || [];
@@ -318,9 +307,7 @@
                         out.push({
                             id: r.id,
                             name: r.name,
-                            priority: typeof r.priority === 'number'
-                                ? r.priority
-                                : 5,
+                            priority: typeof r.priority === 'number' ? r.priority : 5,
                             symbol: r.symbol || null
                         });
                     }
@@ -328,15 +315,11 @@
                         var pa = a.priority || 999;
                         var pb = b.priority || 999;
                         if (pa !== pb) return pa - pb;
-                        return String(a.name || '')
-                            .localeCompare(String(b.name || ''));
+                        return String(a.name || '').localeCompare(String(b.name || ''));
                     });
                     return out;
                 },
-                getAllRoleSummaries: function () {
-                    // Role data is not loaded on this page.
-                    return [];
-                }
+                getAllRoleSummaries: function () { return []; }
             };
         }
 
@@ -354,17 +337,10 @@
         }
         if (!window.HouseholdCommands) {
             window.HouseholdCommands = {
-                adjustWealth: function () {
-                    return { success: false, reason: 'stub' };
-                },
-                creditWealth: function () {
-                    return { success: false, reason: 'stub' };
-                },
+                adjustWealth: function () { return { success: false, reason: 'stub' }; },
+                creditWealth: function () { return { success: false, reason: 'stub' }; },
                 clearLocationReferences: function () {
-                    return {
-                        success: true,
-                        data: { clearedCount: 0, households: [] }
-                    };
+                    return { success: true, data: { clearedCount: 0, households: [] } };
                 }
             };
         }
@@ -400,9 +376,6 @@
     (function() {
         'use strict';
 
-        // --- Inject Icons from icons.js into the DOM ---
-        // Only names that actually exist in icons.js are used. Missing
-        // names render empty rather than a guessed fallback.
         function injectIcons() {
             if (typeof window.Icons === 'undefined') {
                 setTimeout(injectIcons, 100);
@@ -485,7 +458,6 @@
         });
 
         // --- Set Year ---
-        // Write via the canonical path (markDataDirty → debounced save).
         document.getElementById('setYearBtn').addEventListener('click', function() {
             var val = parseInt(document.getElementById('yearInput').value, 10);
             if (isNaN(val)) return;
@@ -555,7 +527,6 @@
                             (err && err.message ? err.message : 'unknown error'));
                     }
 
-                    // Refresh every domain index that caches canonical data.
                     if (window.LocationState && typeof window.LocationState.refresh === 'function') {
                         window.LocationState.refresh();
                     }
@@ -574,7 +545,6 @@
                         );
                     }
 
-                    // Re-render only the currently visible tab.
                     Object.keys(TAB_RENDERERS).forEach(function(key) {
                         var btn = document.querySelector('.tab-btn[data-tab="' + key + '"]');
                         if (btn && btn.classList.contains('active')) {
@@ -599,6 +569,86 @@
         }
 
     })();
+</script>
+
+<!-- ============================================================ -->
+<!-- THEME SWITCHER (Shared Dropdown Logic)                       -->
+<!-- ============================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    var themeBtn  = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+
+    var switcher = window.ThemeSwitcher;
+    if (!switcher) return;
+
+    function updateLabel(id) {
+        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        if (themeName) themeName.textContent = label;
+    }
+
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' +
+                id + '">' + label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
+
+    function openMenu() {
+        if (!themeMenu) return;
+        themeMenu.hidden = false;
+        themeBtn.setAttribute('aria-expanded', 'true');
+    }
+    function closeMenu() {
+        if (!themeMenu) return;
+        themeMenu.hidden = true;
+        themeBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    if (themeBtn) {
+        themeBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (themeMenu.hidden) openMenu(); else closeMenu();
+        });
+    }
+
+    if (themeMenu) {
+        themeMenu.addEventListener('click', function (e) {
+            var btn = e.target.closest('[data-theme-id]');
+            if (!btn) return;
+            var id = btn.getAttribute('data-theme-id');
+            switcher.apply(id);
+            updateLabel(id);
+            closeMenu();
+        });
+    }
+
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) {
+            closeMenu();
+        }
+    });
+
+    buildMenu();
+    var saved = switcher.getSaved();
+    if (saved) updateLabel(saved);
+
+})();
 </script>
 
 </body>
