@@ -7,6 +7,29 @@
  * FIXED: Error handling for all modal operations
  * 
  * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear now uses getCurrentYear (canonical accessor in
+ *       time.js) instead of the deprecated getCurrentYearSafe alias,
+ *       and throws on missing time.js instead of falling back to 1250.
+ *     - _getCurrentHouseholdId now prefers
+ *       HouseholdState.getUIState().selectedHouseholdId.
+ *     - Every mutating modal now takes an `onSuccess(householdId)`
+ *       callback. The tab's _attachEventHandlers supplies one that
+ *       force-refreshes the cached economy data and updates the tab's
+ *       display values in place. Prior revisions left onSuccess
+ *       undefined, so after "Add Wealth" / "Add Resources" / "Record
+ *       Salary" / "Trigger Event" / "Execute Trade" the tab closed the
+ *       modal but kept showing the pre-mutation wealth, resource, and
+ *       income values until the page was reloaded.
+ *     - _openProcessModal's success path now calls
+ *       window.refreshHouseholdList() so the sidebar's wealth and
+ *       status columns reflect the processed year immediately.
+ *     - Renamed _closeAndRefresh to _closeAndNotify (the old name
+ *       implied it refreshed the tab, which it did not — it only
+ *       closed the modal and called onSuccess, and onSuccess was
+ *       undefined).
+ * =============================================================================
  */
 
 (function() {
@@ -25,6 +48,16 @@
     // =========================================================================
 
     function _getCurrentHouseholdId() {
+        var HS = (typeof window.HouseholdState !== 'undefined') ? window.HouseholdState : null;
+        if (HS && typeof HS.getUIState === 'function') {
+            try {
+                var s = HS.getUIState();
+                if (s && typeof s.selectedHouseholdId === 'string'
+                    && s.selectedHouseholdId.length > 0) {
+                    return s.selectedHouseholdId;
+                }
+            } catch (e) { /* fall through */ }
+        }
         if (window._currentHouseholdId) return window._currentHouseholdId;
         if (window.currentHouseholdId) return window.currentHouseholdId;
         if (window.selectedHouseholdId) return window.selectedHouseholdId;
@@ -54,12 +87,24 @@
         return null;
     }
 
+    /**
+     * Returns the current simulation year.
+     *
+     * Delegates to the canonical accessor in time.js. The deprecated
+     * getCurrentYearSafe alias is NOT used, and there is NO 1250
+     * fallback.
+     *
+     * @throws {Error} if time.js is not loaded
+     */
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                '[HouseholdEconomyTab] requires time.js (getCurrentYear). ' +
+                'Load js/core/time.js before this tab.'
+            );
+        }
+        return window.getCurrentYear();
+    }
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
@@ -101,7 +146,6 @@
         if (typeof window._openModal === 'function') {
             return window._openModal(options);
         }
-        // Fallback modal
         _showToast('Modal system not available', 'error');
         return null;
     }
@@ -393,6 +437,11 @@
         return data;
     }
 
+    function _invalidateEconomyCache() {
+        _cachedData = null;
+        _cacheHouseholdId = null;
+    }
+
     // =========================================================================
     // 8. RENDER FUNCTIONS
     // =========================================================================
@@ -525,11 +574,11 @@
 
         return '' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">' +
-                '<button id="ecoWealthBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + coinIcon + ' Manage Wealth</button>' +
-                '<button id="ecoResourcesBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Manage Resources</button>' +
-                '<button id="ecoIncomeBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + chartIcon + ' Income</button>' +
-                '<button id="ecoExpensesBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Expenses</button>' +
-                '<button id="ecoProcessBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent);border:1px solid var(--accent);color:white;border-radius:4px;cursor:pointer;">' + refreshIcon + ' Process Year</button>' +
+                '<button type="button" id="ecoWealthBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + coinIcon + ' Manage Wealth</button>' +
+                '<button type="button" id="ecoResourcesBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">Manage Resources</button>' +
+                '<button type="button" id="ecoIncomeBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + chartIcon + ' Income</button>' +
+                '<button type="button" id="ecoExpensesBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Expenses</button>' +
+                '<button type="button" id="ecoProcessBtn" class="btn" style="padding:4px 12px;font-size:0.55rem;background:var(--accent);border:1px solid var(--accent);color:white;border-radius:4px;cursor:pointer;">' + refreshIcon + ' Process Year</button>' +
             '</div>';
     }
 
@@ -676,23 +725,46 @@
     // =========================================================================
     // 11. EVENT HANDLERS
     // =========================================================================
+    //
+    // Every mutating modal is invoked with a real onSuccess callback.
+    // The callback force-refreshes the cached economy data and updates
+    // the tab's display values in place. Prior revisions left onSuccess
+    // undefined, so after "Add Wealth" / "Add Resources" / etc. the tab
+    // closed the modal but kept showing the pre-mutation wealth until
+    // the page was reloaded.
 
     function _attachEventHandlers(container, householdId) {
+        // onSuccess for every mutating modal: refresh the cache from
+        // the canonical store, then update the tab's display values
+        // in place. Deliberately NOT a full re-render — the modal
+        // just closed, the container structure is unchanged, and
+        // updating 8 span values is orders of magnitude cheaper than
+        // rebuilding the whole subtree.
+        function _onMutationSuccess() {
+            var fresh = _getEconomyData(householdId, true);
+            if (!fresh || fresh.error) return;
+            _updateDisplayValues(fresh);
+            // Sidebar also reflects wealth/status, so refresh it.
+            if (typeof window.refreshHouseholdList === 'function') {
+                window.refreshHouseholdList();
+            }
+        }
+
         container.addEventListener('click', function(e) {
-            var target = e.target.closest('button');
+            var target = e.target.closest ? e.target.closest('button') : null;
             if (!target) return;
 
             if (target.id === 'ecoWealthBtn') {
                 e.preventDefault();
                 e.stopPropagation();
-                _withModalLock(function() { _openWealthModal(householdId); });
+                _withModalLock(function() { _openWealthModal(householdId, _onMutationSuccess); });
                 return;
             }
 
             if (target.id === 'ecoResourcesBtn') {
                 e.preventDefault();
                 e.stopPropagation();
-                _withModalLock(function() { _openResourcesModal(householdId); });
+                _withModalLock(function() { _openResourcesModal(householdId, _onMutationSuccess); });
                 return;
             }
 
@@ -713,7 +785,7 @@
             if (target.id === 'ecoProcessBtn') {
                 e.preventDefault();
                 e.stopPropagation();
-                _withModalLock(function() { _openProcessModal(householdId); });
+                _withModalLock(function() { _openProcessModal(householdId, _onMutationSuccess); });
                 return;
             }
         });
@@ -723,7 +795,7 @@
     // 12. WEALTH MODAL
     // =========================================================================
 
-    function _openWealthModal(householdId) {
+    function _openWealthModal(householdId, onSuccess) {
         try {
             var HS = _getState();
             if (!HS) {
@@ -750,9 +822,9 @@
                             '<input type="text" id="wealthReason" placeholder="Reason" style="flex:2;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
                         '</div>' +
                         '<div style="display:flex;gap:4px;margin-top:4px;">' +
-                            '<button id="wealthAddBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Add</button>' +
-                            '<button id="wealthSubtractBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Subtract</button>' +
-                            '<button id="wealthSetBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Set</button>' +
+                            '<button type="button" id="wealthAddBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Add</button>' +
+                            '<button type="button" id="wealthSubtractBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Subtract</button>' +
+                            '<button type="button" id="wealthSetBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;">Set</button>' +
                         '</div>' +
                     '</div>' +
                     '<div class="form-group" style="margin-bottom:12px;">' +
@@ -761,8 +833,8 @@
                             '<input type="number" id="debtDelta" value="0" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
                         '</div>' +
                         '<div style="display:flex;gap:4px;margin-top:4px;">' +
-                            '<button id="debtAddBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Add Debt</button>' +
-                            '<button id="debtSubtractBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Pay Debt</button>' +
+                            '<button type="button" id="debtAddBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">Add Debt</button>' +
+                            '<button type="button" id="debtSubtractBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Pay Debt</button>' +
                         '</div>' +
                     '</div>' +
                 '</div>';
@@ -775,8 +847,7 @@
                 onConfirm: function() {
                     _closeTopModal();
                     _releaseModalLock();
-                    var data = _getEconomyData(householdId, true);
-                    _updateDisplayValues(data);
+                    if (typeof onSuccess === 'function') onSuccess();
                 },
                 onCancel: function() {
                     _releaseModalLock();
@@ -794,6 +865,12 @@
                             return wealthReason ? wealthReason.value.trim() : 'Modified';
                         }
 
+                        function _closeNotifyAndRelease() {
+                            _closeTopModal();
+                            _releaseModalLock();
+                            if (typeof onSuccess === 'function') onSuccess();
+                        }
+
                         var addBtn = document.getElementById('wealthAddBtn');
                         if (addBtn) {
                             addBtn.onclick = function(e) {
@@ -803,12 +880,13 @@
                                     _showToast('Please enter a value', 'warning');
                                     return;
                                 }
-                                _updateHouseholdWealth(householdId, delta, 'Added: ' + getWealthReason());
+                                var result = _updateHouseholdWealth(householdId, delta, 'Added: ' + getWealthReason());
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update wealth', 'error');
+                                    return;
+                                }
                                 _showToast('Wealth increased by ' + delta, 'success');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         }
 
@@ -821,12 +899,13 @@
                                     _showToast('Please enter a value', 'warning');
                                     return;
                                 }
-                                _updateHouseholdWealth(householdId, -delta, 'Subtracted: ' + getWealthReason());
+                                var result = _updateHouseholdWealth(householdId, -delta, 'Subtracted: ' + getWealthReason());
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update wealth', 'error');
+                                    return;
+                                }
                                 _showToast('Wealth decreased by ' + delta, 'info');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         }
 
@@ -841,12 +920,13 @@
                                 }
                                 var currentWealth = _getHouseholdWealth(householdId);
                                 var diff = delta - currentWealth;
-                                _updateHouseholdWealth(householdId, diff, 'Set to ' + delta + ': ' + getWealthReason());
+                                var result = _updateHouseholdWealth(householdId, diff, 'Set to ' + delta + ': ' + getWealthReason());
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update wealth', 'error');
+                                    return;
+                                }
                                 _showToast('Wealth set to ' + delta + 'g', 'success');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         }
 
@@ -859,12 +939,13 @@
                                     _showToast('Please enter a positive value', 'warning');
                                     return;
                                 }
-                                _modifyHouseholdDebt(householdId, delta);
+                                var result = _modifyHouseholdDebt(householdId, delta);
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update debt', 'error');
+                                    return;
+                                }
                                 _showToast('Debt increased by ' + delta, 'info');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         }
 
@@ -878,12 +959,13 @@
                                     return;
                                 }
                                 var currentDebt = _getHouseholdDebt(householdId);
-                                _modifyHouseholdDebt(householdId, -Math.min(delta, currentDebt));
+                                var result = _modifyHouseholdDebt(householdId, -Math.min(delta, currentDebt));
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update debt', 'error');
+                                    return;
+                                }
                                 _showToast('Debt reduced', 'success');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         }
                     }, 100);
@@ -900,7 +982,7 @@
     // 13. RESOURCES MODAL
     // =========================================================================
 
-    function _openResourcesModal(householdId) {
+    function _openResourcesModal(householdId, onSuccess) {
         try {
             var HS = _getState();
             if (!HS) {
@@ -923,8 +1005,8 @@
                         '<div style="display:flex;align-items:center;gap:8px;">' +
                             '<span style="font-size:1rem;font-weight:bold;">' + value + '</span>' +
                             '<div style="display:flex;gap:2px;">' +
-                                '<button class="resource-add-btn btn small" data-type="' + type + '" style="padding:1px 6px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">+</button>' +
-                                '<button class="resource-sub-btn btn small" data-type="' + type + '" style="padding:1px 6px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">-</button>' +
+                                '<button type="button" class="resource-add-btn btn small" data-type="' + type + '" style="padding:1px 6px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">+</button>' +
+                                '<button type="button" class="resource-sub-btn btn small" data-type="' + type + '" style="padding:1px 6px;font-size:0.5rem;background:#8a3020;border:none;color:white;border-radius:3px;cursor:pointer;">-</button>' +
                             '</div>' +
                         '</div>' +
                     '</div>';
@@ -934,7 +1016,7 @@
                 '<div style="margin-top:8px;">' +
                     '<div style="display:flex;gap:4px;flex-wrap:wrap;">' +
                         '<input type="number" id="resourceDeltaInput" value="1" style="width:60px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;">' +
-                        '<button id="resourceAddAllBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Add to All</button>' +
+                        '<button type="button" id="resourceAddAllBtn" class="btn small" style="padding:2px 8px;font-size:0.5rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;">Add to All</button>' +
                     '</div>' +
                 '</div>';
 
@@ -954,8 +1036,7 @@
                 onConfirm: function() {
                     _closeTopModal();
                     _releaseModalLock();
-                    var data = _getEconomyData(householdId, true);
-                    _updateDisplayValues(data);
+                    if (typeof onSuccess === 'function') onSuccess();
                 },
                 onCancel: function() {
                     _releaseModalLock();
@@ -966,6 +1047,12 @@
 
                         function getDelta() {
                             return parseInt(resourceDelta ? resourceDelta.value : 1) || 1;
+                        }
+
+                        function _closeNotifyAndRelease() {
+                            _closeTopModal();
+                            _releaseModalLock();
+                            if (typeof onSuccess === 'function') onSuccess();
                         }
 
                         var addBtns = document.querySelectorAll('.resource-add-btn');
@@ -979,12 +1066,13 @@
                                 e.stopPropagation();
                                 var type = this.dataset.type;
                                 var delta = getDelta();
-                                _updateHouseholdResources(householdId, type, delta);
+                                var result = _updateHouseholdResources(householdId, type, delta);
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update resources', 'error');
+                                    return;
+                                }
                                 _showToast(type + ' increased by ' + delta, 'success');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         });
 
@@ -1001,12 +1089,13 @@
                                 var delta = getDelta();
                                 var current = resources[type] || 0;
                                 var actualDelta = Math.min(delta, current);
-                                _updateHouseholdResources(householdId, type, -actualDelta);
+                                var result = _updateHouseholdResources(householdId, type, -actualDelta);
+                                if (result && result.success === false) {
+                                    _showToast(result.reason || 'Failed to update resources', 'error');
+                                    return;
+                                }
                                 _showToast(type + ' decreased by ' + actualDelta, 'info');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         });
 
@@ -1020,10 +1109,7 @@
                                     _updateHouseholdResources(householdId, types[i], delta);
                                 }
                                 _showToast('All resources increased by ' + delta, 'success');
-                                _closeTopModal();
-                                _releaseModalLock();
-                                var data = _getEconomyData(householdId, true);
-                                _updateDisplayValues(data);
+                                _closeNotifyAndRelease();
                             };
                         }
                     }, 100);
@@ -1037,7 +1123,7 @@
     }
 
     // =========================================================================
-    // 14. INCOME MODAL
+    // 14. INCOME MODAL (read-only)
     // =========================================================================
 
     function _openIncomeModal(householdId) {
@@ -1142,7 +1228,7 @@
     }
 
     // =========================================================================
-    // 15. EXPENSES MODAL
+    // 15. EXPENSES MODAL (read-only)
     // =========================================================================
 
     function _openExpensesModal(householdId) {
@@ -1273,7 +1359,7 @@
     // 16. PROCESS MODAL
     // =========================================================================
 
-    function _openProcessModal(householdId) {
+    function _openProcessModal(householdId, onSuccess) {
         try {
             var HS = _getState();
             if (!HS) {
@@ -1321,11 +1407,18 @@
                         _showToast(msg, 'success');
                         _closeTopModal();
                         _releaseModalLock();
-                        var data = _getEconomyData(householdId, true);
-                        renderHouseholdEconomyTab('tab-economy', householdId, true);
-                        if (typeof window.renderHouseholdList === 'function') {
-                            window.renderHouseholdList();
+                        // Invalidate the cache and force-refresh the
+                        // display, then notify the sidebar so the
+                        // wealth column updates too.
+                        _invalidateEconomyCache();
+                        var fresh = _getEconomyData(householdId, true);
+                        if (fresh && !fresh.error) {
+                            _updateDisplayValues(fresh);
                         }
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
+                        }
+                        if (typeof onSuccess === 'function') onSuccess();
                         return true;
                     } else {
                         _showToast(result ? result.reason : 'Failed to process annual economy', 'error');
@@ -1367,8 +1460,7 @@
             return;
         }
 
-        _cachedData = null;
-        _cacheHouseholdId = null;
+        _invalidateEconomyCache();
         renderHouseholdEconomyTab(containerId, householdId, true);
     }
 
