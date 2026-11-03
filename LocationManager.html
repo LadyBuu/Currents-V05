@@ -3,494 +3,1255 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>Still Waters · Location Manager</title>
+    <title>Location Manager</title>
 
-    <!-- 1. Theme Bootstrapper (MUST LOAD FIRST) -->
+    <link rel="icon" href="data:,">
+
     <script src="js/core/theme-boot.js"></script>
 
-    <!-- 2. Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
 
-    <!-- 3. Stylesheets -->
-    <link rel="stylesheet" href="css/themes.css" />
-    <link rel="stylesheet" href="css/common.css" />
-    <link rel="stylesheet" href="css/location.css" />
-    <link rel="stylesheet" href="css/location-sidebar.css" />
-    <link rel="stylesheet" href="css/gov-manager.css" /> <!-- Reuse tab styles -->
+    <!-- SHARED -->
+    <link rel="stylesheet" href="css/themes.css">
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/location.css">
+    <link rel="stylesheet" href="css/location-sidebar.css">
+    <link rel="stylesheet" href="css/location-tabs.css">
+
+    <style>
+        /* ============================================================
+           LOCATION MANAGER — STRUCTURAL SHELL ONLY
+           Every color, radius, shadow, and type value comes from
+           themes.css. Every domain style lives in the shared CSS
+           files above. Inline rules here are layout-only and match
+           the GovernmentManager shell so the two managers are
+           visually consistent.
+           ============================================================ */
+
+        /* ---- App shell ---- */
+        html, body { height: 100%; margin: 0; overflow: hidden; }
+        body { display: flex; flex-direction: column; }
+        .topbar { position: relative; z-index: 100; flex-shrink: 0; }
+
+        .world-app {
+            display: flex;
+            flex-direction: row;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .locations-sidebar {
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            width: 280px;
+        }
+
+        .sidebar-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg3);
+        }
+        .sidebar-header h3 {
+            margin: 0;
+            font-family: var(--f-display);
+            font-size: 0.65rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--accent);
+        }
+
+        .place-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+            min-height: 0;
+        }
+
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .tab-content-wrapper {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 20px 24px;
+        }
+
+        /* ---- Sidebar tree indent (matches GovernmentManager) ---- */
+        .place-list .location-tree-children,
+        .locations-sidebar .location-tree-children {
+            margin-left: 0 !important;
+            padding-left: 16px !important;
+            border-left: 1px solid var(--border-light) !important;
+        }
+        .place-list .location-tree-children .location-tree-children,
+        .locations-sidebar .location-tree-children .location-tree-children {
+            padding-left: 16px !important;
+        }
+        .place-list .location-tree-children,
+        .locations-sidebar .location-tree-children {
+            display: none;
+        }
+        .place-list .location-tree-children.is-expanded,
+        .locations-sidebar .location-tree-children.is-expanded {
+            display: block;
+        }
+
+        /* ---- Topbar buttons (same shape as GovernmentManager) ---- */
+        .tb-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 14px;
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            font-weight: 500;
+            cursor: pointer;
+            line-height: 1.2;
+            transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+        }
+        .tb-btn:hover {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+            color: var(--accent-light);
+        }
+        .tb-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: var(--accent-fg);
+        }
+        .tb-btn.primary:hover {
+            background: var(--accent-dark);
+            border-color: var(--accent-dark);
+        }
+        .tb-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        /* ---- Year input ---- */
+        .year-input {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            line-height: 1.2;
+        }
+        .year-input label {
+            font-family: var(--f-display);
+            font-size: 0.55rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--dim);
+            white-space: nowrap;
+        }
+        .year-input input {
+            width: 64px;
+            padding: 3px 6px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px);
+            color: var(--text);
+            font-family: var(--f-mono);
+            font-size: 0.7rem;
+            text-align: right;
+        }
+        .year-input input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-soft);
+        }
+        .year-input input::-webkit-outer-spin-button,
+        .year-input input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .year-input input[type=number] { -moz-appearance: textfield; }
+
+        /* ---- Theme toggle ---- */
+        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle__btn { gap: 6px; }
+        .theme-toggle__menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            z-index: 9999;
+            min-width: 160px;
+            max-height: 60vh;
+            padding: 4px;
+            margin: 0;
+            list-style: none;
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            overflow-y: auto;
+        }
+        .theme-toggle__menu[hidden] { display: none; }
+        .theme-toggle__menu button {
+            display: block;
+            width: 100%;
+            padding: 6px 12px;
+            text-align: left;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: var(--f-body);
+            font-size: 0.7rem;
+            border-radius: calc(var(--radius) - 2px);
+            cursor: pointer;
+            transition: background-color 0.15s ease;
+        }
+        .theme-toggle__menu button:hover,
+        .theme-toggle__menu button:focus-visible {
+            background: var(--accent-dim);
+            color: var(--accent-light);
+            outline: none;
+        }
+
+        /* ---- Toast / modal chrome (matches GovernmentManager) ---- */
+        .toast-message { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .toast-message svg { flex-shrink: 0; }
+        .icon-svg {
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            vertical-align: middle;
+            fill: currentColor;
+        }
+        .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+        .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+        .btn:hover { box-shadow: none !important; }
+
+        /* ---- Sidebar overlay (mobile) ---- */
+        .sidebar-overlay { display: none; }
+        .sidebar-overlay.active {
+            display: block;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 999;
+        }
+
+        /* ---- Empty / loading states ---- */
+        .empty-state {
+            padding: 48px 24px;
+            text-align: center;
+            color: var(--dim);
+            font-size: 0.88rem;
+            line-height: 1.6;
+        }
+        .loading {
+            padding: 24px;
+            text-align: center;
+            color: var(--tmut);
+            font-size: 0.85rem;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* ---- Mobile ---- */
+        @media (max-width: 768px) {
+            .world-app { flex-direction: column; }
+            .locations-sidebar {
+                position: fixed;
+                top: 0; bottom: 0; left: 0;
+                height: 100vh;
+                width: 85%;
+                max-width: 280px;
+                z-index: 1000;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: none;
+            }
+            .locations-sidebar.visible { transform: translateX(0); }
+            .tab-content-wrapper { padding: 16px; }
+            .year-input label { display: none; }
+            .year-input input { width: 52px; }
+        }
+    </style>
 </head>
 <body>
 
-    <!-- TOP BAR -->
-    <div class="topbar">
-        <button class="burger-btn" id="burgerBtn" type="button" aria-label="Toggle sidebar">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-        </button>
-        <h1 class="title">Still Waters · Location Manager</h1>
-        <span class="spacer" aria-hidden="true"></span>
+<div class="topbar">
+    <button id="menuToggle" class="burger-menu" aria-label="Toggle menu">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+    </button>
+    <div class="title" id="locationManagerTitle"></div>
+    <div class="spacer"></div>
 
-        <button class="tb-btn" id="addPlaceBtn" type="button">+ Add Location</button>
-        <button class="tb-btn" id="editPlaceBtn" type="button" disabled>Edit</button>
-        <button class="tb-btn" id="deletePlaceBtn" type="button" disabled>Delete</button>
+    <button id="addPlaceBtn" class="tb-btn primary" type="button"></button>
+    <button id="editPlaceBtn" class="tb-btn" type="button" disabled></button>
+    <button id="deletePlaceBtn" class="tb-btn" type="button" disabled></button>
 
+    <div class="year-input">
         <label for="yearInput">Year</label>
-        <input type="number" class="year-input" id="yearInput" name="yearInput" inputmode="numeric" />
-        <button class="tb-btn" id="setYearBtn" type="button">Set</button>
-        <button class="tb-btn" id="exportBtn" type="button">Export</button>
-        <button class="tb-btn" id="importBtn" type="button">Import</button>
-        <input type="file" id="fileInput" accept=".json" style="display:none;" />
+        <input type="number" id="yearInput" min="1" step="1">
+        <button id="setYearBtn" class="tb-btn" type="button">Set</button>
+    </div>
 
-        <!-- Theme Toggle -->
-        <div class="theme-toggle" role="group" aria-label="Theme">
-            <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
-                <span aria-hidden="true">◐</span>
-                <span id="themeName">Dark</span>
-            </button>
-            <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    <button id="importBtn" class="tb-btn" type="button"></button>
+    <button id="exportBtn" class="tb-btn" type="button"></button>
+    <button id="refreshBtn" class="tb-btn" type="button"></button>
+
+    <input type="file" id="fileInput" accept=".json" style="display:none;" />
+
+    <div class="theme-toggle" role="group" aria-label="Theme">
+        <button class="tb-btn theme-toggle__btn" id="themeBtn" type="button" aria-haspopup="menu" aria-expanded="false">
+            <span aria-hidden="true">◐</span>
+            <span id="themeName">Dark</span>
+        </button>
+        <ul class="theme-toggle__menu" id="themeMenu" role="menu" hidden></ul>
+    </div>
+</div>
+
+<div class="world-app">
+    <div class="locations-sidebar" id="locationsSidebar">
+        <div class="sidebar-header"><h3 id="sidebarTitle"></h3></div>
+        <div class="place-list" id="placeList">
+            <div class="loading" id="loadingText">Loading locations...</div>
         </div>
     </div>
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-    <!-- APP LAYOUT -->
-    <div class="world-app">
-
-        <!-- SIDEBAR -->
-        <aside class="locations-sidebar" id="sidebar" aria-label="Locations">
-            <div class="sidebar-header">
-                <h3 id="sidebarTitle">LOCATIONS</h3>
-            </div>
-            <div id="locationTreeContainer" class="place-list">
-                <div class="loading-placeholder">Loading locations…</div>
-            </div>
-        </aside>
-        <div id="sidebarOverlay" class="sidebar-overlay"></div>
-
-        <!-- MAIN PANEL -->
-        <main class="main-panel" id="mainPanel" role="main">
-            
-            <!-- Horizontal Tabs (Top) -->
-            <div class="panel-tabs" id="tabContainer">
-                <button class="tab-btn active" data-tab="details" id="tabDetails">Details</button>
-                <button class="tab-btn" data-tab="hierarchy" id="tabHierarchy">Hierarchy</button>
-                <button class="tab-btn" data-tab="population" id="tabPopulation">Population</button>
-                <button class="tab-btn" data-tab="movement" id="tabMovement">Movement</button>
-                <button class="tab-btn" data-tab="leadership" id="tabLeadership">Leadership</button>
-            </div>
-
-            <!-- Content Area -->
-            <div class="tab-content-wrapper" id="tabContent">
-                <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
-            </div>
-        </main>
+    <div class="main-panel">
+        <div class="tab-content-wrapper" id="panelContent">
+            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
+        </div>
     </div>
+</div>
 
-    <!-- ============================================================ -->
-    <!-- CORE (no domain dependencies)                                -->
-    <!-- ============================================================ -->
-    <script src="js/core/constants/constants.js"></script>
-    <script src="js/core/constants/age-constants.js"></script>
-    <script src="js/core/constants/character-constants.js"></script>
-    <script src="js/core/constants/character-traits.js"></script>
-    <script src="js/core/constants/location-constants.js"></script>
-    <script src="js/core/constants/relationship-constants.js"></script>
 
-    <script src="js/core/time.js"></script>
-    <script src="js/core/randomness.js"></script>
-    <script src="js/core/collections.js"></script>
-    <script src="js/core/formatting.js"></script>
-    <script src="js/core/icons.js"></script>
-    <script src="js/core/ids.js"></script>
-    <script src="js/core/storage-schema.js"></script>
-    <script src="js/core/storage.js"></script>
-    
-    <script>
-        (function () {
-            try {
-                if (typeof window.initializeStorage === 'function') window.initializeStorage();
-            } catch (e) { console.error('Storage init failed', e); }
-        })();
-    </script>
+<!-- ================================================================
+     BLOCK 1 — CORE CONSTANTS
+     ================================================================ -->
+<script src="js/core/constants/constants.js"></script>
+<script src="js/core/constants/age-constants.js"></script>
+<script src="js/core/constants/character-constants.js"></script>
+<script src="js/core/constants/character-traits.js"></script>
+<script src="js/core/constants/location-constants.js"></script>
+<script src="js/core/constants/relationship-constants.js"></script>
 
-    <script src="js/core/accessors.js"></script>
-    <script src="js/core/world.js"></script>
-    <script src="js/core/names.js"></script>
-    <script src="js/core/validation.js"></script>
-    <script src="js/core/integrity.js"></script>
-    <script src="js/core/maintenance.js"></script>
-    <script src="js/core/ui.js"></script>
-    <script src="js/core/ui-state.js"></script>
-    <script src="js/core/modals-core.js"></script>
-    <script src="js/core/collapsible.js"></script>
-    <script src="js/core/responsive.js"></script>
-    <script src="js/core/exportUtils.js"></script>
+<!-- ================================================================
+     BLOCK 2 — CORE UTILITIES
+     ================================================================ -->
+<script src="js/core/formatting.js"></script>
+<script src="js/core/icons.js"></script>
+<script src="js/core/collections.js"></script>
+<script src="js/core/ids.js"></script>
+<script src="js/core/randomness.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- CHARACTER (Location depends on CharacterCommands + Queries)  -->
-    <!-- ============================================================ -->
-    <script src="js/character/character-state.js"></script>
-    <script src="js/character/character-commands.js"></script>
-    <script src="js/character/character-queries.js"></script>
-    <script src="js/character/family-state.js"></script>
-    <script src="js/character/family-queries.js"></script>
-    <script src="js/character/family-commands.js"></script>
-    <script src="js/character/mortality-rules.js"></script>
-    <script src="js/character/character-lifecycle.js"></script>
+<!-- ================================================================
+     BLOCK 3 — CORE TIME
+     ================================================================ -->
+<script src="js/core/time.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- SELECTORS (before location modals)                           -->
-    <!-- ============================================================ -->
-    <script src="js/selectors/selector-base.js"></script>
-    <script src="js/selectors/locationDropdown.js"></script>
-    <script src="js/selectors/modals-char-selector.js"></script>
-    <script src="js/selectors/modals-household-selector.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- HOUSEHOLD (LocationCommands.deletePlace needs HC optionally) -->
-    <!-- ============================================================ -->
-    <script src="js/households/household-constants.js"></script>
-    <script src="js/households/household-queries.js"></script>
-    <script src="js/households/household-commands.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- LOCATION SYSTEM (canonical load order per location-docs.txt) -->
-    <!-- ============================================================ -->
-    <script src="js/location/location-state.js"></script>
-    <script src="js/location/location-hierarchy.js"></script>
-    <script src="js/location/location-commands.js"></script>
-    <script src="js/location/location-queries.js"></script>
-    <script src="js/location/location-movement.js"></script>
-    <script src="js/location/location-view-models.js"></script>
-    <script src="js/location/location-ui-state.js"></script>
-    <script src="js/location/location-ui-list.js"></script>
-    <script src="js/location/location-presentation.js"></script>
-    <script src="js/location/modals-location-helper.js"></script>
-    <script src="js/location/modals-location.js"></script>
-    <script src="js/location/modals-moves.js"></script>
-    <script src="js/location/location-bootstrap.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- LOCATION TABS (Modular components)                           -->
-    <!-- ============================================================ -->
-    <script src="js/tabs/location-tab.js"></script>
-    <script src="js/tabs/location-hierarchy-tab.js"></script>
-    <script src="js/tabs/location-population-tab.js"></script>
-    <script src="js/tabs/location-movement-tab.js"></script>
-    <script src="js/tabs/location-leadership-tab.js"></script>
-
-    <!-- ============================================================ -->
-    <!-- THEME SWITCHER (Shared Dropdown Logic)                       -->
-    <!-- ============================================================ -->
-    <script>
+<!-- ================================================================
+     BLOCK 4 — CORE STORAGE
+     ================================================================ -->
+<script src="js/core/storage-schema.js"></script>
+<script src="js/core/storage.js"></script>
+<script>
     (function () {
-        'use strict';
-        var themeBtn  = document.getElementById('themeBtn');
-        var themeMenu = document.getElementById('themeMenu');
-        var themeName = document.getElementById('themeName');
-        var switcher = window.ThemeSwitcher;
-        if (!switcher) return;
-
-        function updateLabel(id) {
-            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-            if (themeName) themeName.textContent = label;
-        }
-
-        function buildMenu() {
-            var html = '';
-            for (var i = 0; i < switcher.themes.length; i++) {
-                var id = switcher.themes[i];
-                var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
-                html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>';
-            }
-            if (themeMenu) themeMenu.innerHTML = html;
-        }
-
-        function openMenu() { if (themeMenu) { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); } }
-        function closeMenu() { if (themeMenu) { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); } }
-
-        if (themeBtn) {
-            themeBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                if (themeMenu.hidden) openMenu(); else closeMenu();
-            });
-        }
-
-        if (themeMenu) {
-            themeMenu.addEventListener('click', function (e) {
-                var btn = e.target.closest('[data-theme-id]');
-                if (!btn) return;
-                var id = btn.getAttribute('data-theme-id');
-                switcher.apply(id);
-                updateLabel(id);
-                closeMenu();
-            });
-        }
-
-        document.addEventListener('click', function (e) {
-            if (themeMenu && !themeMenu.hidden) {
-                if (themeMenu.contains(e.target)) return;
-                if (e.target === themeBtn) return;
-                closeMenu();
-            }
-        });
-
-        document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape' && themeMenu && !themeMenu.hidden) closeMenu();
-        });
-
-        buildMenu();
-        var saved = switcher.getSaved();
-        if (saved) updateLabel(saved);
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
     })();
-    </script>
+</script>
+<script src="js/core/accessors.js"></script>
 
-    <!-- ============================================================ -->
-    <!-- LOCATION MANAGER - MAIN CONTROLLER                           -->
-    <!-- ============================================================ -->
-    <script>
+<!-- ================================================================
+     BLOCK 5 — CORE VALIDATION, WORLD, NAMES
+     ================================================================ -->
+<script src="js/core/validation.js"></script>
+<script src="js/core/world.js"></script>
+<script src="js/core/names.js"></script>
+
+<!-- ================================================================
+     BLOCK 6 — CORE UI PRIMITIVES
+     ================================================================ -->
+<script src="js/core/ui.js"></script>
+<script src="js/core/ui-state.js"></script>
+<script src="js/core/modals-core.js"></script>
+<script src="js/core/responsive.js"></script>
+<script src="js/core/collapsible.js"></script>
+<script src="js/core/exportUtils.js"></script>
+
+<!-- ================================================================
+     BLOCK 7 — SKILL TAXONOMY
+     ================================================================ -->
+<script src="js/roles/skill-utils.js"></script>
+
+<!-- ================================================================
+     BLOCK 8 — CHARACTER PURE POLICY
+     ================================================================ -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- ================================================================
+     BLOCK 9 — CHARACTER STATE
+     ================================================================ -->
+<script src="js/character/character-state.js"></script>
+<script src="js/character/family-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 10 — CHARACTER COMMANDS & QUERIES
+     ================================================================ -->
+<script src="js/character/character-commands.js"></script>
+<script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 11 — CHARACTER FACTORY & CREATION
+     ================================================================ -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+
+<!-- ================================================================
+     BLOCK 12 — ROLES
+     ================================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 13 — RANKS
+     ================================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
+<script src="js/ranks/rank-queries.js"></script>
+<script src="js/ranks/rank-assignment.js"></script>
+<script src="js/ranks/rank-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 14 — RELIGION
+     ================================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 15 — INDUSTRY
+     ================================================================ -->
+<script src="js/industry/industry-constants.js"></script>
+<script src="js/industry/industry-economics.js"></script>
+<script src="js/industry/industry-type-defaults.js"></script>
+<script src="js/industry/industry-rules.js"></script>
+<script src="js/industry/industry-state.js"></script>
+<script src="js/industry/industry-type-init.js"></script>
+<script src="js/industry/industry-types.js"></script>
+<script src="js/industry/industry-migration.js"></script>
+<script src="js/industry/industry-type-commands.js"></script>
+<script src="js/industry/industry-commands.js"></script>
+<script src="js/industry/industry-queries.js"></script>
+
+<!-- ================================================================
+     BLOCK 16 — HOUSEHOLDS
+     ================================================================ -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 17 — LOCATION (core domain)
+     ================================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
+<script src="js/location/modals-location-helper.js"></script>
+<script src="js/location/modals-location.js"></script>
+<script src="js/location/modals-moves.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- PlaceQueries façade (needed by settlement + view models + modals) -->
+<script>
+    (function () {
+        'use strict';
+        if (!window.LocationState || typeof window.LocationState.getPlaceById !== 'function') {
+            throw new Error('place-queries shim: location-state.js must load first.');
+        }
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            }
+        };
+    })();
+</script>
+
+<!-- ================================================================
+     BLOCK 18 — SETTLEMENT (for cross-domain reads used by location tabs)
+     ================================================================ -->
+<script src="js/settlement/settlement-fiscal-definitions.js"></script>
+<script src="js/settlement/settlement-government-definitions.js"></script>
+<script src="js/settlement/settlement-rank-definitions.js"></script>
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/settlement/settlement-finance-definitions.js"></script>
+<script src="js/settlement/settlement-prosperity-definitions.js"></script>
+<script src="js/settlement/settlement-feature-definitions.js"></script>
+<script src="js/settlement/settlement-education-definitions.js"></script>
+
+<script src="js/settlement/settlement-rank-rules.js"></script>
+<script src="js/settlement/settlement-fiscal-rules.js"></script>
+<script src="js/settlement/settlement-government-rules.js"></script>
+<script src="js/settlement/settlement-feature-rules.js"></script>
+<script src="js/settlement/settlement-law-rules.js"></script>
+
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-command-commit.js"></script>
+
+<script src="js/settlement/settlement-rank-queries.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-feature-queries.js"></script>
+<script src="js/settlement/settlement-law-queries.js"></script>
+<script src="js/settlement/settlement-education-queries.js"></script>
+<script src="js/settlement/settlement-religion-queries.js"></script>
+<script src="js/settlement/settlement-employment-queries.js"></script>
+<script src="js/settlement/settlement-economy-queries.js"></script>
+<script src="js/settlement/settlement-crime-queries.js"></script>
+<script src="js/settlement/settlement-prosperity-queries.js"></script>
+
+<script src="js/settlement/settlement-feature-commands.js"></script>
+<script src="js/settlement/settlement-government-commands.js"></script>
+<script src="js/settlement/settlement-fiscal-commands.js"></script>
+<script src="js/settlement/settlement-law-commands.js"></script>
+<script src="js/settlement/settlement-wealth-commands.js"></script>
+<script src="js/settlement/settlement-debt-commands.js"></script>
+<script src="js/settlement/settlement-rank-commands.js"></script>
+<script src="js/settlement/settlement-specialization-commands.js"></script>
+
+<script src="js/settlement/settlement-factory.js"></script>
+<script src="js/settlement/settlement-annual-processor.js"></script>
+
+<script src="js/settlement/settlement-view-models.js"></script>
+<script src="js/settlement/settlement-ui-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 19 — GOVERNMENT (for government assignment display)
+     ================================================================ -->
+<script src="js/government/government-constants.js"></script>
+<script src="js/government/government-state.js"></script>
+<script src="js/government/government-rules.js"></script>
+<script src="js/government/government-queries.js"></script>
+<script src="js/government/government-commands.js"></script>
+<script src="js/government/government-economy.js"></script>
+<script src="js/government/government-bootstrap.js"></script>
+<script src="js/government/government-view-models.js"></script>
+
+<!-- ================================================================
+     BLOCK 20 — CHARACTER LIFECYCLE (death dispatch)
+     ================================================================ -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- ================================================================
+     BLOCK 21 — SELECTORS (location dropdown for cross-domain modals)
+     ================================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+
+<!-- ================================================================
+     BLOCK 22 — RELIGION MODALS
+     ================================================================ -->
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ================================================================
+     BLOCK 23 — CHARACTER UI MODALS
+     ================================================================ -->
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+<script src="js/character/modals-death.js"></script>
+
+<!-- ================================================================
+     BLOCK 24 — SETTLEMENT UI
+     ================================================================ -->
+<script src="js/settlement/settlement-tabs.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ================================================================
+     BLOCK 25 — LOCATION TABS (the refactored modules)
+     ================================================================ -->
+<script src="js/tabs/location-details-tab.js"></script>
+<script src="js/tabs/location-hierarchy-tab.js"></script>
+<script src="js/tabs/location-population-tab.js"></script>
+<script src="js/tabs/location-movement-tab.js"></script>
+<script src="js/tabs/location-leadership-tab.js"></script>
+
+
+<!-- ================================================================
+     SUB-TAB HOST
+     ================================================================
+     Mirrors the GovernmentManager sub-tab strip pattern. Each entry
+     binds to the corresponding window.Location*Tab.render method.
+     The host passes (containerId, placeId) to the tab's render
+     function; the tab is responsible for its own events and reads.
+     ================================================================ -->
+<script>
     (function () {
         'use strict';
 
-        var treeContainer  = document.getElementById('locationTreeContainer');
-        var burgerBtn      = document.getElementById('burgerBtn');
-        var sidebar        = document.getElementById('sidebar');
-        var sidebarOverlay = document.getElementById('sidebarOverlay');
-        
-        var addPlaceBtn    = document.getElementById('addPlaceBtn');
-        var editPlaceBtn   = document.getElementById('editPlaceBtn');
-        var deletePlaceBtn = document.getElementById('deletePlaceBtn');
-        var yearInput      = document.getElementById('yearInput');
-        var setYearBtn     = document.getElementById('setYearBtn');
-        
-        var tabButtons     = document.querySelectorAll('.panel-tabs .tab-btn');
-        var tabContent     = document.getElementById('tabContent');
-        var emptyState     = document.getElementById('emptyStateText');
-
-        var selectedId     = null;
-        var activeTabId    = 'details';
-        var isInitialized  = false;
-
-        // -------------------------------------------------------------
-        // INITIALIZATION
-        // -------------------------------------------------------------
-        function bootstrap() {
-            if (isInitialized) return;
-            isInitialized = true;
-
-            // 1. Location domain bootstrap
-            if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
-                try { window.LocationBootstrap.init(); } catch (e) { console.error('Location bootstrap failed:', e); }
-            }
-
-            syncYearInput();
-            renderTree();
-            pickInitialSelection();
-            activateTab(activeTabId);
-
-            // Listen for events from tabs (e.g. hierarchy navigation)
-            document.addEventListener('locationSelected', function(e) {
-                if (e.detail && e.detail.id) {
-                    selectLocation(e.detail.id);
+        var SUBTABS = [
+            {
+                id: 'details',
+                label: 'Details',
+                icon: 'LOCATION',
+                render: function (containerId, placeId) {
+                    if (window.LocationDetailsTab && typeof window.LocationDetailsTab.render === 'function') {
+                        window.LocationDetailsTab.render(containerId, placeId, function () {
+                            renderSubtabStrip('panelContent', placeId);
+                        });
+                    }
                 }
-            });
+            },
+            {
+                id: 'hierarchy',
+                label: 'Hierarchy',
+                icon: 'TREE',
+                render: function (containerId, placeId) {
+                    if (window.LocationHierarchyTab && typeof window.LocationHierarchyTab.render === 'function') {
+                        window.LocationHierarchyTab.render(containerId, placeId, function () {
+                            renderSubtabStrip('panelContent', placeId);
+                        });
+                    }
+                }
+            },
+            {
+                id: 'population',
+                label: 'Population',
+                icon: 'PEOPLE',
+                render: function (containerId, placeId) {
+                    if (window.LocationPopulationTab && typeof window.LocationPopulationTab.render === 'function') {
+                        window.LocationPopulationTab.render(containerId, placeId, function () {
+                            renderSubtabStrip('panelContent', placeId);
+                        });
+                    }
+                }
+            },
+            {
+                id: 'movement',
+                label: 'Movement',
+                icon: 'TIMELINE',
+                render: function (containerId, placeId) {
+                    if (window.LocationMovementTab && typeof window.LocationMovementTab.render === 'function') {
+                        window.LocationMovementTab.render(containerId, placeId, function () {
+                            renderSubtabStrip('panelContent', placeId);
+                        });
+                    }
+                }
+            },
+            {
+                id: 'leadership',
+                label: 'Leadership',
+                icon: 'CROWN',
+                render: function (containerId, placeId) {
+                    if (window.LocationLeadershipTab && typeof window.LocationLeadershipTab.render === 'function') {
+                        window.LocationLeadershipTab.render(containerId, placeId, function () {
+                            renderSubtabStrip('panelContent', placeId);
+                        });
+                    }
+                }
+            }
+        ];
 
-            if (window.innerWidth <= 768) closeSidebar();
+        var _activeSubtabId = 'details';
+        var _currentPlaceId = null;
+
+        function _icon(name) {
+            return (window.Icons && typeof window.Icons[name] === 'string')
+                ? window.Icons[name]
+                : '';
         }
 
-        // -------------------------------------------------------------
-        // SIDEBAR
-        // -------------------------------------------------------------
-        function renderTree() {
-            if (!treeContainer) return;
-            var Render = window.LocationUI;
-            if (!Render || typeof Render.renderLocationList !== 'function') {
-                treeContainer.innerHTML = '<div class="empty-state">Location UI not loaded.</div>';
+        function _esc(s) {
+            return typeof window.escapeHtml === 'function'
+                ? window.escapeHtml(s)
+                : String(s == null ? '' : s);
+        }
+
+        function _findSubtab(id) {
+            for (var i = 0; i < SUBTABS.length; i++) {
+                if (SUBTABS[i].id === id) return SUBTABS[i];
+            }
+            return null;
+        }
+
+        function renderSubtabStrip(containerId, placeId) {
+            var container = document.getElementById(containerId);
+            if (!container) return;
+
+            _currentPlaceId = placeId || null;
+
+            if (!placeId) {
+                container.innerHTML =
+                    '<div class="empty-state">Select a location from the sidebar</div>';
                 return;
             }
 
+            var stripHtml = '<div class="manager-subtabs" role="tablist">';
+            for (var i = 0; i < SUBTABS.length; i++) {
+                var t = SUBTABS[i];
+                var isActive = (t.id === _activeSubtabId);
+                var cls = 'manager-subtab' + (isActive ? ' active' : '');
+                var iconHtml = _icon(t.icon)
+                    ? '<span class="manager-subtab-icon">' + _icon(t.icon) + '</span>'
+                    : '';
+                stripHtml +=
+                    '<button type="button" class="' + cls + '" ' +
+                    'data-subtab-id="' + _esc(t.id) + '" ' +
+                    'role="tab" aria-selected="' + (isActive ? 'true' : 'false') + '">' +
+                    iconHtml +
+                    '<span>' + _esc(t.label) + '</span>' +
+                    '</button>';
+            }
+            stripHtml += '</div>';
+            stripHtml += '<div id="' + _esc(containerId) + '-subpanel" ' +
+                'class="manager-subpanel" role="tabpanel"></div>';
+
+            container.innerHTML = stripHtml;
+
+            // Bind sub-tab click handling.
+            var buttons = container.querySelectorAll('.manager-subtab');
+            for (var b = 0; b < buttons.length; b++) {
+                (function (btn) {
+                    btn.addEventListener('click', function () {
+                        var id = btn.getAttribute('data-subtab-id');
+                        if (!id || id === _activeSubtabId) return;
+                        _activeSubtabId = id;
+                        renderSubtabStrip(containerId, _currentPlaceId);
+                    });
+                })(buttons[b]);
+            }
+
+            // Render the active subtab.
+            var activeTab = _findSubtab(_activeSubtabId);
+            if (activeTab && typeof activeTab.render === 'function') {
+                activeTab.render(containerId + '-subpanel', _currentPlaceId);
+            }
+        }
+
+        /**
+         * Public entry point used by the manager init block below.
+         * Resets nothing (preserves the active sub-tab across
+         * location changes), just re-renders the strip and panel for
+         * the new place.
+         */
+        window.renderLocationManagerTab = function (containerId, placeId) {
+            renderSubtabStrip(containerId, placeId);
+        };
+    })();
+</script>
+
+<!-- ================================================================
+     MANAGER INIT
+     ================================================================
+     Same shape as GovernmentManager's init block: setupUIText, load,
+     bootstrap, then bind sidebar + topbar + year control + sub-tab
+     render. Delegates Edit/Delete to the canonical modals
+     (openEditPlaceModal / openDeletePlaceModal) — no inline modal
+     reimplementation.
+     ================================================================ -->
+<script>
+(function () {
+    'use strict';
+
+    function getIcon(name) {
+        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
+    }
+    function iconWithText(icon, text) {
+        if (!icon) return text || '';
+        return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' +
+               icon + '<span>' + (text || '') + '</span></span>';
+    }
+    function showToast(msg, type) {
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
+    }
+
+    var currentPlaceId = null;
+    var isInitialized = false;
+
+    // ---- UI text ----
+    function setupUIText() {
+        var title = document.getElementById('locationManagerTitle');
+        if (title) title.innerHTML = iconWithText(getIcon('LOCATION'), ' LOCATION MANAGER');
+
+        var sidebarTitle = document.getElementById('sidebarTitle');
+        if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(getIcon('LOCATION'), ' LOCATIONS');
+
+        var addBtn = document.getElementById('addPlaceBtn');
+        if (addBtn) addBtn.innerHTML = iconWithText(getIcon('PLUS'), ' Add Location');
+
+        var editBtn = document.getElementById('editPlaceBtn');
+        if (editBtn) editBtn.innerHTML = iconWithText(getIcon('EDIT'), ' Edit');
+
+        var deleteBtn = document.getElementById('deletePlaceBtn');
+        if (deleteBtn) deleteBtn.innerHTML = iconWithText(getIcon('TRASH'), ' Delete');
+
+        var importBtn = document.getElementById('importBtn');
+        if (importBtn) importBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Import');
+
+        var exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.innerHTML = iconWithText(getIcon('ARROW_RIGHT'), ' Export');
+
+        var refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) refreshBtn.innerHTML = iconWithText(getIcon('REFRESH'), ' Refresh');
+
+        var loadingText = document.getElementById('loadingText');
+        if (loadingText) loadingText.textContent = 'Loading locations...';
+
+        var emptyState = document.getElementById('emptyStateText');
+        if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
+    }
+
+    // ---- Year control ----
+    function setupYearControl() {
+        var input = document.getElementById('yearInput');
+        var btn = document.getElementById('setYearBtn');
+        if (!input || !btn) return;
+
+        function syncFromCanonical() {
             try {
-                Render.renderLocationList('locationTreeContainer', {
-                    selectedId: selectedId,
-                    onSelect: function (place) {
-                        if (!place || !place.id) return;
-                        selectLocation(place.id);
-                        if (window.innerWidth <= 768) closeSidebar();
+                var y = (typeof window.getCurrentYear === 'function')
+                    ? window.getCurrentYear()
+                    : (window.masterData && window.masterData.data
+                        ? window.masterData.data.currentYear
+                        : null);
+                if (typeof y === 'number' && isFinite(y)) {
+                    input.value = String(y);
+                }
+            } catch (e) { /* ignore */ }
+        }
+        syncFromCanonical();
+
+        function applyYear() {
+            var raw = input.value;
+            var y = parseInt(raw, 10);
+            if (!isFinite(y)) {
+                showToast('Enter a valid year', 'error');
+                return;
+            }
+            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
+                showToast('Year out of range', 'error');
+                return;
+            }
+
+            var applied = false;
+
+            if (typeof window.setCurrentYear === 'function') {
+                try {
+                    var result = window.setCurrentYear(y);
+                    if (result === false) {
+                        showToast('Could not set year', 'error');
+                        return;
+                    }
+                    applied = true;
+                } catch (e) {
+                    showToast('Set year failed: ' + (e.message || 'unknown'), 'error');
+                    return;
+                }
+            }
+
+            if (!applied) {
+                if (!window.masterData || !window.masterData.data) {
+                    showToast('Storage not initialized', 'error');
+                    return;
+                }
+                window.masterData.data.currentYear = y;
+                if (typeof window.markDataDirty === 'function') {
+                    try { window.markDataDirty(); } catch (e) { /* ignore */ }
+                }
+                if (typeof window.saveMasterData === 'function') {
+                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
+                }
+                applied = true;
+            }
+
+            if (applied) {
+                showToast('Year set to ' + y, 'success');
+                syncFromCanonical();
+                if (typeof window.renderLocationManagerTab === 'function' && currentPlaceId) {
+                    try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
+                    catch (e) { /* ignore */ }
+                }
+                setupSidebar();
+            }
+        }
+
+        btn.addEventListener('click', applyYear);
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyYear();
+            }
+        });
+    }
+
+    // ---- Sidebar (delegated to LocationUI) ----
+    function setupSidebar() {
+        var container = document.getElementById('placeList');
+        if (!container) return;
+
+        if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
+            try {
+                window.LocationUI.renderLocationList('placeList', {
+                    selectedId: currentPlaceId,
+                    onSelect: function (placeOrId) {
+                        var id = (typeof placeOrId === 'string')
+                            ? placeOrId
+                            : (placeOrId && placeOrId.id ? placeOrId.id : null);
+                        if (!id) return;
+                        selectLocation(id);
                     }
                 });
+                return;
             } catch (e) {
-                console.error('[location-manager] renderTree failed:', e);
+                console.error('[location-manager] renderLocationList failed:', e);
             }
         }
 
-        function pickInitialSelection() {
-            if (selectedId) return;
-            if (!window.LocationQueries) return;
-            try {
-                var places = window.LocationQueries.getAllPlaces({});
-                if (places && places.length > 0) {
-                    selectLocation(places[0].id);
-                }
-            } catch (e) {}
-        }
-
-        function selectLocation(id) {
-            if (!id) return;
-            selectedId = id;
-
-            editPlaceBtn.disabled = false;
-            deletePlaceBtn.disabled = false;
-
-            if (window.LocationUIState && typeof window.LocationUIState.setSelectedLocationId === 'function') {
-                window.LocationUIState.setSelectedLocationId(id);
+        // Fallback list if LocationUI is unavailable (bare harness).
+        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+        if (places && places.length > 0) {
+            var html = '';
+            for (var i = 0; i < places.length; i++) {
+                var p = places[i];
+                var sel = (p.id === currentPlaceId);
+                html += '<div class="place-item' + (sel ? ' selected' : '') +
+                        '" data-place-id="' + p.id + '">' +
+                        (p.displayName || p.name || 'Unknown') +
+                        '</div>';
             }
-
-            renderTree();
-            renderActiveTab();
-        }
-
-        // -------------------------------------------------------------
-        // TABS
-        // -------------------------------------------------------------
-        function activateTab(tabId) {
-            activeTabId = tabId;
-
-            for (var i = 0; i < tabButtons.length; i++) {
-                var btn = tabButtons[i];
-                var isActive = btn.dataset.tab === tabId;
-                btn.classList.toggle('active', isActive);
+            container.innerHTML = html;
+            var items = container.querySelectorAll('.place-item');
+            for (var j = 0; j < items.length; j++) {
+                (function (item) {
+                    item.addEventListener('click', function () {
+                        var placeId = this.dataset.placeId;
+                        if (placeId) selectLocation(placeId);
+                    });
+                })(items[j]);
             }
+        } else {
+            container.innerHTML = '<div class="empty-state">No locations found</div>';
+        }
+    }
 
-            renderActiveTab();
+    function selectLocation(id) {
+        if (!id) return;
+        currentPlaceId = id;
+
+        var editBtn = document.getElementById('editPlaceBtn');
+        var deleteBtn = document.getElementById('deletePlaceBtn');
+        if (editBtn) editBtn.disabled = false;
+        if (deleteBtn) deleteBtn.disabled = false;
+
+        if (window.LocationUIState &&
+            typeof window.LocationUIState.setSelectedLocationId === 'function') {
+            try { window.LocationUIState.setSelectedLocationId(id); }
+            catch (e) { /* ignore */ }
         }
 
-        for (var i = 0; i < tabButtons.length; i++) {
-            (function (btn) {
-                btn.addEventListener('click', function () {
-                    activateTab(btn.dataset.tab);
-                });
-            })(tabButtons[i]);
+        setupSidebar();
+
+        if (typeof window.renderLocationManagerTab === 'function') {
+            try { window.renderLocationManagerTab('panelContent', id); }
+            catch (e) { console.error(e); }
         }
 
-        function renderActiveTab() {
-            if (!tabContent) return;
+        if (window.innerWidth <= 768) closeSidebar();
+    }
 
-            if (!selectedId) {
-                tabContent.innerHTML = '<div class="empty-state">Select a location from the sidebar.</div>';
+    // ---- Sidebar toggle ----
+    function closeSidebar() {
+        var s = document.getElementById('locationsSidebar');
+        var o = document.getElementById('sidebarOverlay');
+        if (s) s.classList.remove('visible');
+        if (o) o.classList.remove('active');
+    }
+    function openSidebar() {
+        var s = document.getElementById('locationsSidebar');
+        var o = document.getElementById('sidebarOverlay');
+        if (s) s.classList.add('visible');
+        if (o) o.classList.add('active');
+    }
+    function toggleSidebar() {
+        var s = document.getElementById('locationsSidebar');
+        if (!s) return;
+        if (s.classList.contains('visible')) closeSidebar();
+        else openSidebar();
+    }
+
+    // ---- Initial selection ----
+    function pickInitialSelection() {
+        if (currentPlaceId) return;
+        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+        if (!places || places.length === 0) return;
+
+        // Prefer a non-root place with a variableKey (matches the
+        // GovernmentManager convention), then the first place.
+        for (var i = 0; i < places.length; i++) {
+            if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                selectLocation(places[i].id);
                 return;
             }
+        }
+        selectLocation(places[0].id);
+    }
 
-            var modules = {
-                details: window.LocationDetailsTab,
-                hierarchy: window.LocationHierarchyTab,
-                population: window.LocationPopulationTab,
-                movement: window.LocationMovementTab,
-                leadership: window.LocationLeadershipTab
-            };
-
-            var mod = modules[activeTabId];
-            if (mod && typeof mod.render === 'function') {
-                try {
-                    mod.render('tabContent', selectedId, function() {
-                        // Callback to refresh current tab
-                        renderActiveTab();
-                    });
-                } catch (e) {
-                    console.error('[location-manager] tab "' + activeTabId + '" failed:', e);
-                    tabContent.innerHTML = '<div class="error-state">Error rendering tab.</div>';
-                }
-            } else {
-                tabContent.innerHTML = '<div class="error-state">Tab module not loaded (' + activeTabId + ').</div>';
+    // ---- Topbar actions (delegate to canonical modals) ----
+    function setupTopBarActions() {
+        var addBtn = document.getElementById('addPlaceBtn');
+        if (addBtn) addBtn.onclick = function () {
+            if (typeof window.openAddPlaceModal !== 'function') {
+                showToast('Add modal unavailable', 'error');
+                return;
             }
-        }
-
-        // -------------------------------------------------------------
-        // SIDEBAR TOGGLE
-        // -------------------------------------------------------------
-        function toggleSidebar() { if (sidebar) sidebar.classList.toggle('visible'); if (sidebarOverlay) sidebarOverlay.classList.toggle('active'); }
-        function closeSidebar() { if (sidebar) sidebar.classList.remove('visible'); if (sidebarOverlay) sidebarOverlay.classList.remove('active'); }
-
-        if (burgerBtn) burgerBtn.addEventListener('click', toggleSidebar);
-        if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
-        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSidebar(); });
-
-        // -------------------------------------------------------------
-        // YEAR
-        // -------------------------------------------------------------
-        function syncYearInput() {
-            if (typeof window.getCurrentYear !== 'function') return;
-            try { if (yearInput) yearInput.value = String(window.getCurrentYear()); } catch (e) {}
-        }
-
-        if (setYearBtn) {
-            setYearBtn.addEventListener('click', function () {
-                if (typeof window.isValidYear !== 'function') return;
-                var val = parseInt(yearInput.value, 10);
-                if (isNaN(val)) { window.alert('Enter a valid year.'); return; }
-                if (!window.isValidYear(val)) { window.alert('Year is outside the allowed range.'); return; }
-                if (window.masterData && window.masterData.data) {
-                    window.masterData.data.currentYear = val;
-                }
-                if (typeof window.markDataDirty === 'function') window.markDataDirty();
-                if (typeof window.saveMasterData === 'function') window.saveMasterData();
-                renderActiveTab();
+            window.openAddPlaceModal(null, function (newId) {
+                setupSidebar();
+                if (newId) selectLocation(newId);
             });
-        }
+        };
 
-        // -------------------------------------------------------------
-        // TOPBAR ACTIONS
-        // -------------------------------------------------------------
-        if (addPlaceBtn) {
-            addPlaceBtn.addEventListener('click', function () {
-                if (typeof window.openAddPlaceModal !== 'function') {
-                    window.alert('Add Location modal not loaded.'); return;
+        var editBtn = document.getElementById('editPlaceBtn');
+        if (editBtn) editBtn.onclick = function () {
+            if (!currentPlaceId) return;
+            if (typeof window.openEditPlaceModal !== 'function') {
+                showToast('Edit modal unavailable', 'error');
+                return;
+            }
+            window.openEditPlaceModal(currentPlaceId, function () {
+                setupSidebar();
+                if (typeof window.renderLocationManagerTab === 'function') {
+                    try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
+                    catch (e) { /* ignore */ }
                 }
-                window.openAddPlaceModal(null, function (newId) {
-                    if (!newId) return;
-                    renderTree();
-                    selectLocation(newId);
+            });
+        };
+
+        var deleteBtn = document.getElementById('deletePlaceBtn');
+        if (deleteBtn) deleteBtn.onclick = function () {
+            if (!currentPlaceId) return;
+            if (typeof window.openDeletePlaceModal !== 'function') {
+                showToast('Delete modal unavailable', 'error');
+                return;
+            }
+            window.openDeletePlaceModal(currentPlaceId, function () {
+                currentPlaceId = null;
+                var e = document.getElementById('editPlaceBtn');
+                var d = document.getElementById('deletePlaceBtn');
+                if (e) e.disabled = true;
+                if (d) d.disabled = true;
+                setupSidebar();
+                pickInitialSelection();
+            });
+        };
+
+        var importBtn = document.getElementById('importBtn');
+        if (importBtn) importBtn.onclick = function () {
+            if (typeof window.importData !== 'function') {
+                showToast('Import not available', 'error');
+                return;
+            }
+            window.importData()
+                .then(function () {
+                    if (window.LocationBootstrap && typeof window.LocationBootstrap.init === 'function') {
+                        try { window.LocationBootstrap.init(); } catch (e) { /* ignore */ }
+                    }
+                    setupSidebar();
+                    if (currentPlaceId && typeof window.renderLocationManagerTab === 'function') {
+                        try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
+                        catch (e) { /* ignore */ }
+                    }
+                    showToast('Import successful', 'success');
+                })
+                .catch(function (err) {
+                    showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
                 });
-            });
-        }
+        };
 
-        if (editPlaceBtn) {
-            editPlaceBtn.addEventListener('click', function () {
-                if (!selectedId) return;
-                if (typeof window.openEditPlaceModal !== 'function') {
-                    window.alert('Edit Location modal not loaded.'); return;
+        var exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.onclick = function () {
+            if (typeof window.exportData !== 'function') {
+                showToast('Export not available', 'error');
+                return;
+            }
+            try { window.exportData(); showToast('Export started', 'success'); }
+            catch (e) { showToast('Export failed: ' + (e.message || 'unknown'), 'error'); }
+        };
+
+        var refreshBtn = document.getElementById('refreshBtn');
+        if (refreshBtn) refreshBtn.onclick = function () {
+            if (typeof window.loadMasterData === 'function') window.loadMasterData();
+            setTimeout(function () {
+                setupSidebar();
+                if (currentPlaceId && typeof window.renderLocationManagerTab === 'function') {
+                    try { window.renderLocationManagerTab('panelContent', currentPlaceId); }
+                    catch (e) { /* ignore */ }
                 }
-                window.openEditPlaceModal(selectedId, function () {
-                    renderTree();
-                    renderActiveTab();
-                });
-            });
+                showToast('Refreshed', 'success');
+            }, 100);
+        };
+    }
+
+    // ---- Init ----
+    function init() {
+        if (isInitialized) return;
+        isInitialized = true;
+
+        setupUIText();
+
+        if (typeof window.loadMasterData === 'function') window.loadMasterData();
+
+        if (window.LocationBootstrap) {
+            try { window.LocationBootstrap.init(); }
+            catch (e) { console.error('LocationBootstrap.init failed:', e); }
         }
 
-        if (deletePlaceBtn) {
-            deletePlaceBtn.addEventListener('click', function () {
-                if (!selectedId) return;
-                if (typeof window.openDeletePlaceModal !== 'function') {
-                    window.alert('Delete Location modal not loaded.'); return;
+        setTimeout(function () {
+            setupSidebar();
+            setupTopBarActions();
+            setupYearControl();
+            pickInitialSelection();
+
+            if (!currentPlaceId) {
+                // No places yet; still render the sub-tab host so the
+                // empty state shows.
+                if (typeof window.renderLocationManagerTab === 'function') {
+                    window.renderLocationManagerTab('panelContent', null);
                 }
-                window.openDeletePlaceModal(selectedId, function () {
-                    selectedId = null;
-                    editPlaceBtn.disabled = true;
-                    deletePlaceBtn.disabled = true;
-                    renderTree();
-                    pickInitialSelection();
-                });
-            });
-        }
+            }
 
-        // -------------------------------------------------------------
-        // INIT
-        // -------------------------------------------------------------
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', bootstrap);
-        } else {
-            bootstrap();
-        }
+            var menuToggle = document.getElementById('menuToggle');
+            if (menuToggle) menuToggle.addEventListener('click', toggleSidebar);
+            var overlay = document.getElementById('sidebarOverlay');
+            if (overlay) overlay.addEventListener('click', closeSidebar);
+        }, 150);
+    }
 
-    })();
-    </script>
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+})();
+</script>
+
+<!-- ================================================================
+     THEME SWITCHER (identical to GovernmentManager)
+     ================================================================ -->
+<script>
+(function () {
+    'use strict';
+    var themeBtn = document.getElementById('themeBtn');
+    var themeMenu = document.getElementById('themeMenu');
+    var themeName = document.getElementById('themeName');
+    var switcher = window.ThemeSwitcher;
+    if (!switcher) return;
+
+    function updateLabel(id) {
+        var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+        if (themeName) themeName.textContent = label;
+    }
+    function buildMenu() {
+        var html = '';
+        for (var i = 0; i < switcher.themes.length; i++) {
+            var id = switcher.themes[i];
+            var label = id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ');
+            html += '<li role="none"><button role="menuitem" type="button" data-theme-id="' + id + '">' + label + '</button></li>';
+        }
+        if (themeMenu) themeMenu.innerHTML = html;
+    }
+    function openMenu() { if (themeMenu) { themeMenu.hidden = false; themeBtn.setAttribute('aria-expanded', 'true'); } }
+    function closeMenu() { if (themeMenu) { themeMenu.hidden = true; themeBtn.setAttribute('aria-expanded', 'false'); } }
+    if (themeBtn) themeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (themeMenu.hidden) openMenu(); else closeMenu();
+    });
+    if (themeMenu) themeMenu.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-theme-id]'); if (!btn) return;
+        var id = btn.getAttribute('data-theme-id');
+        switcher.apply(id); updateLabel(id); closeMenu();
+    });
+    document.addEventListener('click', function (e) {
+        if (themeMenu && !themeMenu.hidden) {
+            if (themeMenu.contains(e.target)) return;
+            if (e.target === themeBtn) return;
+            closeMenu();
+        }
+    });
+    buildMenu();
+    var saved = switcher.getSaved();
+    if (saved) updateLabel(saved);
+})();
+</script>
 
 </body>
 </html>
