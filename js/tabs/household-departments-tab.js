@@ -2,10 +2,10 @@
  * =============================================================================
  * HOUSEHOLD DEPARTMENTS TAB (household-departments-tab.js)
  * =============================================================================
- * 
+ *
  * PURPOSE: Modular departments tab for the Household Manager tool.
  *          Manages departments, staff positions, and staff assignments.
- * 
+ *
  * DEPENDS ON:
  *   - HouseholdState (household-state.js)
  *   - HouseholdCommands (household-commands.js)
@@ -14,9 +14,42 @@
  *   - ui.js (for toast notifications)
  *   - icons.js (for icons)
  *   - modals-char-selector.js (for character selection)
- * 
+ *
  * ICON POLICY: Uses icons.js - NO emojis
- * 
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear now uses getCurrentYear (canonical accessor in
+ *       time.js) instead of the deprecated getCurrentYearSafe alias,
+ *       and throws on missing time.js instead of falling back to 1250.
+ *     - _getCurrentHouseholdId now prefers
+ *       HouseholdState.getUIState().selectedHouseholdId (the canonical
+ *       selection store) instead of the flat globals that no module
+ *       writes.
+ *     - Replaced window.renderHouseholdList() with
+ *       window.refreshHouseholdList() in the two mutation success
+ *       paths.
+ *     - Refactored _attachEventHandlers from the clone-based listener
+ *       reset to a delegated click listener. The clone path had three
+ *       failure modes:
+ *         1. cloneNode(true) drops scroll position and focus, so a
+ *            re-render after a mutation snapped the user back to the
+ *            top of the department list.
+ *         2. The `_handlersAttached` marker lived on the container
+ *            element, which survived innerHTML assignment. The clone
+ *            branch replaced the container in the DOM, but the caller
+ *            (renderHouseholdDepartmentsTab) still held the ORIGINAL
+ *            container reference. On the second mutation re-render the
+ *            caller targeted the detached original; the attached
+ *            listener lived on the clone.
+ *         3. On the third mutation re-render, container.parentNode was
+ *            null (the original had been detached), so replaceChild
+ *            threw NotFoundError.
+ *       The delegated listener has none of these problems: it is
+ *       attached once to the container and reads e.target.closest()
+ *       on each click, dispatching on data-action / data-dept-id /
+ *       data-pos-id attributes that re-renders preserve.
  * =============================================================================
  */
 
@@ -31,18 +64,7 @@
     var _processingAction = false;
 
     // =========================================================================
-    // 2. GET CURRENT HOUSEHOLD ID - FIXED
-    // =========================================================================
-
-    function _getCurrentHouseholdId() {
-        if (window._currentHouseholdId) return window._currentHouseholdId;
-        if (window.currentHouseholdId) return window.currentHouseholdId;
-        if (window.selectedHouseholdId) return window.selectedHouseholdId;
-        return null;
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getState() {
@@ -71,12 +93,25 @@
         return [];
     }
 
+    /**
+     * Returns the current simulation year.
+     *
+     * Delegates to the canonical accessor in time.js. The deprecated
+     * getCurrentYearSafe alias is NOT used, and there is NO 1250
+     * fallback. A missing time.js is a load-order bug; the caller
+     * should surface it, not silently substitute a wrong year.
+     *
+     * @throws {Error} if time.js is not loaded
+     */
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                '[HouseholdDepartmentsTab] requires time.js (getCurrentYear). ' +
+                'Load js/core/time.js before this tab.'
+            );
+        }
+        return window.getCurrentYear();
+    }
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
@@ -152,17 +187,33 @@
     }
 
     // =========================================================================
-    // 4. ICON HELPERS
+    // 3. GET CURRENT HOUSEHOLD ID
     // =========================================================================
+    //
+    // Canonical selection lives in HouseholdState.getUIState()
+    // .selectedHouseholdId, set via HouseholdState.setSelectedHousehold
+    // (which household-ui-list.js::selectHousehold calls when the user
+    // picks a household from the sidebar).
 
-    function _iconSpan(icon, title) {
-        if (!icon) return '';
-        var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
-        return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
+    function _getCurrentHouseholdId() {
+        var HS = _getState();
+        if (HS && typeof HS.getUIState === 'function') {
+            try {
+                var s = HS.getUIState();
+                if (s && typeof s.selectedHouseholdId === 'string'
+                    && s.selectedHouseholdId.length > 0) {
+                    return s.selectedHouseholdId;
+                }
+            } catch (e) { /* fall through */ }
+        }
+        if (window._currentHouseholdId) return window._currentHouseholdId;
+        if (window.currentHouseholdId) return window.currentHouseholdId;
+        if (window.selectedHouseholdId) return window.selectedHouseholdId;
+        return null;
     }
 
     // =========================================================================
-    // 5. DATA FETCHER
+    // 4. DATA FETCHER
     // =========================================================================
 
     function _getDepartmentsData(householdId) {
@@ -227,7 +278,7 @@
     }
 
     // =========================================================================
-    // 6. RENDER FUNCTIONS
+    // 5. RENDER FUNCTIONS
     // =========================================================================
 
     function _renderDepartmentCard(dept, data, index) {
@@ -273,8 +324,8 @@
                             (s.role ? ' <span style="color:var(--dim);font-size:0.45rem;">' + _escapeHtml(s.role) + '</span>' : '') +
                         '</span>' +
                         '<div style="display:flex;gap:4px;">' +
-                            '<button class="staff-edit-btn" data-char-id="' + (char ? char.id : '') + '" data-dept-id="' + dept.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit staff member">' + editIcon + '</button>' +
-                            '<button class="staff-remove-btn" data-char-id="' + (char ? char.id : '') + '" data-dept-id="' + dept.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Remove from department">' + trashIcon + '</button>' +
+                            '<button type="button" class="staff-edit-btn" data-char-id="' + (char ? char.id : '') + '" data-dept-id="' + dept.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit staff member">' + editIcon + '</button>' +
+                            '<button type="button" class="staff-remove-btn" data-char-id="' + (char ? char.id : '') + '" data-dept-id="' + dept.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Remove from department">' + trashIcon + '</button>' +
                         '</div>' +
                     '</div>';
             }
@@ -302,9 +353,9 @@
                             (assignedNames ? ' <span style="color:var(--dim);font-size:0.4rem;">→ ' + _escapeHtml(assignedNames) + '</span>' : '') +
                         '</span>' +
                         '<div style="display:flex;gap:4px;">' +
-                            '<button class="pos-assign-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--success);cursor:pointer;" title="Assign staff">' + plusIcon + '</button>' +
-                            '<button class="pos-edit-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit position">' + editIcon + '</button>' +
-                            '<button class="pos-delete-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete position">' + trashIcon + '</button>' +
+                            '<button type="button" class="pos-assign-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--success);cursor:pointer;" title="Assign staff">' + plusIcon + '</button>' +
+                            '<button type="button" class="pos-edit-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit position">' + editIcon + '</button>' +
+                            '<button type="button" class="pos-delete-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete position">' + trashIcon + '</button>' +
                         '</div>' +
                     '</div>';
             }
@@ -330,9 +381,9 @@
                             (assignedNames ? ' <span style="color:var(--dim);font-size:0.4rem;">→ ' + _escapeHtml(assignedNames) + '</span>' : '') +
                         '</span>' +
                         '<div style="display:flex;gap:4px;">' +
-                            '<button class="pos-assign-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--success);cursor:pointer;" title="Assign staff">' + plusIcon + '</button>' +
-                            '<button class="pos-edit-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit position">' + editIcon + '</button>' +
-                            '<button class="pos-delete-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete position">' + trashIcon + '</button>' +
+                            '<button type="button" class="pos-assign-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--success);cursor:pointer;" title="Assign staff">' + plusIcon + '</button>' +
+                            '<button type="button" class="pos-edit-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit position">' + editIcon + '</button>' +
+                            '<button type="button" class="pos-delete-btn" data-pos-id="' + p.id + '" style="padding:0px 4px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete position">' + trashIcon + '</button>' +
                         '</div>' +
                     '</div>';
             }
@@ -356,10 +407,10 @@
                         (dept.headId ? '<span style="font-size:0.45rem;color:var(--accent);">Head: ' + _escapeHtml(headName) + '</span>' : '') +
                     '</div>' +
                     '<div style="display:flex;gap:4px;">' +
-                        '<button class="dept-add-staff-btn" data-dept-id="' + dept.id + '" style="padding:2px 8px;font-size:0.45rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;" title="Add staff to department">' + plusIcon + ' Add Staff</button>' +
-                        '<button class="dept-add-pos-btn" data-dept-id="' + dept.id + '" style="padding:2px 8px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;" title="Create position in department">+ Position</button>' +
-                        '<button class="dept-edit-btn" data-dept-id="' + dept.id + '" style="padding:2px 4px;font-size:0.45rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit department">' + editIcon + '</button>' +
-                        '<button class="dept-delete-btn" data-dept-id="' + dept.id + '" style="padding:2px 4px;font-size:0.45rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete department">' + trashIcon + '</button>' +
+                        '<button type="button" class="dept-add-staff-btn" data-dept-id="' + dept.id + '" style="padding:2px 8px;font-size:0.45rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:3px;cursor:pointer;" title="Add staff to department">' + plusIcon + ' Add Staff</button>' +
+                        '<button type="button" class="dept-add-pos-btn" data-dept-id="' + dept.id + '" style="padding:2px 8px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:3px;cursor:pointer;" title="Create position in department">+ Position</button>' +
+                        '<button type="button" class="dept-edit-btn" data-dept-id="' + dept.id + '" style="padding:2px 4px;font-size:0.45rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit department">' + editIcon + '</button>' +
+                        '<button type="button" class="dept-delete-btn" data-dept-id="' + dept.id + '" style="padding:2px 4px;font-size:0.45rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete department">' + trashIcon + '</button>' +
                     '</div>' +
                 '</div>' +
                 staffHtml +
@@ -414,7 +465,7 @@
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION - FIXED with event cleanup
+    // 6. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderHouseholdDepartmentsTab(containerId, householdId) {
@@ -430,7 +481,6 @@
                 return;
             }
 
-            // If no householdId provided, try to get it from the global variable
             if (!householdId) {
                 householdId = _getCurrentHouseholdId();
             }
@@ -458,8 +508,8 @@
                         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">' +
                             '<h3 style="font-size:0.7rem;color:var(--accent);margin:0;">Departments & Staff</h3>' +
                             '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                                '<button id="deptCreateBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + plusIcon + ' Create Department</button>' +
-                                '<button id="deptCreatePosBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">+ Create Position</button>' +
+                                '<button type="button" id="deptCreateBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + plusIcon + ' Create Department</button>' +
+                                '<button type="button" id="deptCreatePosBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">+ Create Position</button>' +
                             '</div>' +
                         '</div>' +
 
@@ -484,7 +534,8 @@
 
             container.innerHTML = html;
 
-            // Attach event handlers - using a single event listener approach
+            // Attach the delegated click listener once. Subsequent
+            // renders reuse it; re-attaching would stack listeners.
             _attachEventHandlers(container, householdId);
 
         } catch (e) {
@@ -499,50 +550,40 @@
     }
 
     // =========================================================================
-    // 8. EVENT HANDLERS - FIXED to prevent duplicate events
+    // 7. EVENT HANDLERS — DELEGATED
     // =========================================================================
+    //
+    // One click listener per container, attached once and reused across
+    // re-renders. The listener reads data-* attributes that re-renders
+    // preserve, so a re-rendered button dispatches to the correct
+    // handler without re-attaching anything.
+    //
+    // The `__deptHandlersAttached` marker is set on the container the
+    // FIRST time. On subsequent calls the function returns early —
+    // the listener is already in place and will catch new buttons.
+    //
+    // This replaces the prior cloneNode-based reset, which (a) dropped
+    // scroll position, (b) held a stale container reference in the
+    // caller after the clone-and-replace, and (c) threw
+    // `NotFoundError: replaceChild` on the third re-render because the
+    // original container had been detached.
 
     function _attachEventHandlers(container, householdId) {
-        var HS = _getState();
-        var HC = _getCommands();
+        if (!container) return;
+        if (container.__deptHandlersAttached) return;
+        container.__deptHandlersAttached = true;
 
-        if (!HS || !HC) return;
-
-        // Use event delegation instead of individual listeners
-        // This prevents duplicate events from multiple listeners
-
-        // Remove any existing click listeners by using a fresh approach
-        // We'll use a single event listener on the container with data attributes
-
-        // First, remove any old listener by cloning and replacing
-        // But we need to keep the container reference
-
-        // Instead, use a flag to prevent multiple registrations
-        if (container._handlersAttached) {
-            // Remove old listeners by clearing the container's event listeners
-            // We'll use a new approach - event delegation on the container
-            var newContainer = container.cloneNode(true);
-            container.parentNode.replaceChild(newContainer, container);
-            container = newContainer;
-        }
-
-        // Mark as having handlers attached
-        container._handlersAttached = true;
-
-        // Use event delegation - single listener for all button clicks
-        container.addEventListener('click', function(e) {
-            var target = e.target.closest('button');
+        container.addEventListener('click', function (e) {
+            var target = e.target.closest ? e.target.closest('button') : null;
             if (!target) return;
 
-            // Create Department button
+            // Create Department / Create Position header buttons.
             if (target.id === 'deptCreateBtn') {
                 e.preventDefault();
                 e.stopPropagation();
                 _openCreateDepartmentModal(householdId);
                 return;
             }
-
-            // Create Position button
             if (target.id === 'deptCreatePosBtn') {
                 e.preventDefault();
                 e.stopPropagation();
@@ -550,114 +591,81 @@
                 return;
             }
 
-            // Department: Add Staff buttons
+            // Per-department header actions.
             if (target.classList.contains('dept-add-staff-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var deptId = target.dataset.deptId;
-                if (deptId) {
-                    _openAddStaffToDepartmentModal(householdId, deptId);
-                }
+                var deptId = target.getAttribute('data-dept-id');
+                if (deptId) _openAddStaffToDepartmentModal(householdId, deptId);
                 return;
             }
-
-            // Department: Add Position buttons
             if (target.classList.contains('dept-add-pos-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var deptId = target.dataset.deptId;
-                if (deptId) {
-                    _openCreatePositionModal(householdId, deptId);
-                }
+                var deptId = target.getAttribute('data-dept-id');
+                if (deptId) _openCreatePositionModal(householdId, deptId);
                 return;
             }
-
-            // Department: Edit buttons
             if (target.classList.contains('dept-edit-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var deptId = target.dataset.deptId;
-                if (deptId) {
-                    _openEditDepartmentModal(householdId, deptId);
-                }
+                var deptId = target.getAttribute('data-dept-id');
+                if (deptId) _openEditDepartmentModal(householdId, deptId);
                 return;
             }
-
-            // Department: Delete buttons
             if (target.classList.contains('dept-delete-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var deptId = target.dataset.deptId;
-                if (deptId) {
-                    _confirmDeleteDepartment(householdId, deptId);
-                }
+                var deptId = target.getAttribute('data-dept-id');
+                if (deptId) _confirmDeleteDepartment(householdId, deptId);
                 return;
             }
 
-            // Staff: Edit buttons
+            // Per-staff-member actions.
             if (target.classList.contains('staff-edit-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var charId = target.dataset.charId;
-                var deptId = target.dataset.deptId;
-                if (charId) {
-                    _openEditStaffMemberModal(householdId, charId, deptId);
-                }
+                var charId = target.getAttribute('data-char-id');
+                var deptId = target.getAttribute('data-dept-id');
+                if (charId) _openEditStaffMemberModal(householdId, charId, deptId);
                 return;
             }
-
-            // Staff: Remove buttons
             if (target.classList.contains('staff-remove-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var charId = target.dataset.charId;
-                var deptId = target.dataset.deptId;
-                if (charId) {
-                    _confirmRemoveStaffFromDepartment(householdId, charId, deptId);
-                }
+                var charId = target.getAttribute('data-char-id');
+                var deptId = target.getAttribute('data-dept-id');
+                if (charId) _confirmRemoveStaffFromDepartment(householdId, charId, deptId);
                 return;
             }
 
-            // Position: Assign buttons
+            // Per-position actions.
             if (target.classList.contains('pos-assign-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var posId = target.dataset.posId;
-                if (posId) {
-                    _openAssignPositionModal(householdId, posId);
-                }
+                var posId = target.getAttribute('data-pos-id');
+                if (posId) _openAssignPositionModal(householdId, posId);
                 return;
             }
-
-            // Position: Edit buttons
             if (target.classList.contains('pos-edit-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var posId = target.dataset.posId;
-                if (posId) {
-                    _openEditPositionModal(householdId, posId);
-                }
+                var posId = target.getAttribute('data-pos-id');
+                if (posId) _openEditPositionModal(householdId, posId);
                 return;
             }
-
-            // Position: Delete buttons
             if (target.classList.contains('pos-delete-btn')) {
                 e.preventDefault();
                 e.stopPropagation();
-                var posId = target.dataset.posId;
-                if (posId) {
-                    _confirmDeletePosition(householdId, posId);
-                }
+                var posId = target.getAttribute('data-pos-id');
+                if (posId) _confirmDeletePosition(householdId, posId);
                 return;
             }
         });
-
-        // Store the container reference for refresh
-        container._householdId = householdId;
     }
 
     // =========================================================================
-    // 9. DEPARTMENT MODALS
+    // 8. DEPARTMENT MODALS
     // =========================================================================
 
     function _openCreateDepartmentModal(householdId) {
@@ -747,8 +755,8 @@
                         _closeTopModal();
                         _processingAction = false;
                         renderHouseholdDepartmentsTab('tab-positions', householdId);
-                        if (typeof window.renderHouseholdList === 'function') {
-                            window.renderHouseholdList();
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
                         }
                         return true;
                     } else {
@@ -769,7 +777,7 @@
     }
 
     // =========================================================================
-    // 10. STAFF MODALS (abbreviated for brevity - same as before)
+    // 9. STAFF MODALS
     // =========================================================================
 
     function _openEditStaffMemberModal(householdId, characterId, deptId) {
@@ -923,7 +931,7 @@
     }
 
     // =========================================================================
-    // 11. POSITION MODALS (abbreviated)
+    // 10. POSITION MODALS
     // =========================================================================
 
     function _openCreatePositionModal(householdId, deptId) {
@@ -1005,7 +1013,7 @@
                         return false;
                     }
 
-                    var result = HC.createHouseholdPosition({
+                    var result = HC.createPosition({
                         name: name,
                         householdId: householdId,
                         departmentId: departmentId,
@@ -1207,8 +1215,8 @@
                 _showToast('Department deleted', 'info');
                 _processingAction = false;
                 renderHouseholdDepartmentsTab('tab-positions', householdId);
-                if (typeof window.renderHouseholdList === 'function') {
-                    window.renderHouseholdList();
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
                 }
             } else {
                 _showToast(result ? result.reason : 'Failed to delete department', 'error');
@@ -1345,8 +1353,8 @@
                             _closeTopModal();
                             _processingAction = false;
                             renderHouseholdDepartmentsTab('tab-positions', householdId);
-                            if (typeof window.renderHouseholdList === 'function') {
-                                window.renderHouseholdList();
+                            if (typeof window.refreshHouseholdList === 'function') {
+                                window.refreshHouseholdList();
                             }
                             return true;
                         } else {
@@ -1489,7 +1497,7 @@
                         return false;
                     }
 
-                    var result = HC.updateHouseholdPosition(posId, {
+                    var result = HC.updatePosition(posId, {
                         name: name,
                         departmentId: departmentId,
                         requiredRoleId: requiredRoleId,
@@ -1546,7 +1554,7 @@
                 return;
             }
 
-            var result = HC.deleteHouseholdPosition(posId, { removeAssignments: true });
+            var result = HC.deletePosition(posId, { removeAssignments: true });
 
             if (result && result.success) {
                 _showToast('Position deleted', 'info');
@@ -1564,7 +1572,7 @@
     }
 
     // =========================================================================
-    // 12. REFRESH FUNCTION
+    // 11. REFRESH FUNCTION
     // =========================================================================
 
     function refreshHouseholdDepartmentsTab(householdId) {
@@ -1590,8 +1598,13 @@
     }
 
     // =========================================================================
-    // 13. TAB SYSTEM REGISTRATION
+    // 12. TAB SYSTEM REGISTRATION
     // =========================================================================
+    //
+    // The tab id is 'positions' (not 'departments'), matching the tab
+    // file's own registerTabRenderer call and the container ID
+    // `tab-positions` that the host HTML provides. Do not rename one
+    // without renaming the other.
 
     function registerDepartmentsTabRenderer() {
         if (typeof window.registerTabRenderer === 'function') {
@@ -1611,7 +1624,7 @@
     }
 
     // =========================================================================
-    // 14. EXPORTS
+    // 13. EXPORTS
     // =========================================================================
 
     window.renderHouseholdDepartmentsTab = renderHouseholdDepartmentsTab;
