@@ -2,11 +2,11 @@
  * =============================================================================
  * HOUSEHOLD MEMBERS TAB (household-members-tab.js)
  * =============================================================================
- * 
+ *
  * PURPOSE: Modular members tab for the Household Manager tool.
  *          Displays current and former members with full management
  *          capabilities: add, remove, transfer, change roles, edit dates.
- * 
+ *
  * DEPENDS ON:
  *   - HouseholdState (household-state.js)
  *   - HouseholdCommands (household-commands.js)
@@ -16,9 +16,38 @@
  *   - ui.js (for toast notifications)
  *   - icons.js (for icons)
  *   - modals-char-selector.js (for character selection)
- * 
- * ICON POLICY: Uses icons.js - NO emojis
- * 
+ *
+ * ICON POLICY: Uses icons.js - NO emojis. Gender is rendered as text.
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear now uses getCurrentYear (canonical accessor in
+ *       time.js) instead of the deprecated getCurrentYearSafe alias,
+ *       and throws on missing time.js instead of falling back to 1250.
+ *     - _getCurrentHouseholdId now prefers
+ *       HouseholdState.getUIState().selectedHouseholdId (the canonical
+ *       selection store) instead of the flat globals that no module
+ *       writes.
+ *     - Replaced window.renderHouseholdList() with
+ *       window.refreshHouseholdList() in every mutation success path.
+ *       household-ui-list.js exports refreshHouseholdList, not
+ *       renderHouseholdList, so the sidebar never refreshed after a
+ *       member add/remove/transfer from this tab.
+ *     - Deleted the dead window.showHouseholdDetails() call from
+ *       _doRemoveMember. That function does not exist; the correct
+ *       details modal is openHouseholdDetailsModal, and reopening it
+ *       from the members tab was wrong UX anyway.
+ *     - Fixed _openTransferMemberModal's success callback: it read
+ *       result.toHousehold.name, but HouseholdCommands.transferMember
+ *       returns { fromHouseholdId, toHouseholdId, ... } — no
+ *       toHousehold object. The toast line threw a TypeError on every
+ *       successful transfer, leaving the modal open and the user
+ *       with no feedback.
+ *     - Replaced the "⚥/♂/♀" gender glyph in _renderMemberRow with
+ *       plain text ("Male" / "Female" / "Unknown"). The glyphs
+ *       violated the module's own ICON POLICY header and duplicated
+ *       the PERSON icon already on the row.
  * =============================================================================
  */
 
@@ -33,18 +62,7 @@
     var _processingMemberAction = false;
 
     // =========================================================================
-    // 2. GET CURRENT HOUSEHOLD ID - FIXED
-    // =========================================================================
-
-    function _getCurrentHouseholdId() {
-        if (window._currentHouseholdId) return window._currentHouseholdId;
-        if (window.currentHouseholdId) return window.currentHouseholdId;
-        if (window.selectedHouseholdId) return window.selectedHouseholdId;
-        return null;
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getState() {
@@ -84,12 +102,25 @@
         return null;
     }
 
+    /**
+     * Returns the current simulation year.
+     *
+     * Delegates to the canonical accessor in time.js. The deprecated
+     * getCurrentYearSafe alias is NOT used, and there is NO 1250
+     * fallback. A missing time.js is a load-order bug; the caller
+     * should surface it, not silently substitute a wrong year.
+     *
+     * @throws {Error} if time.js is not loaded
+     */
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                '[HouseholdMembersTab] requires time.js (getCurrentYear). ' +
+                'Load js/core/time.js before this tab.'
+            );
+        }
+        return window.getCurrentYear();
+    }
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
@@ -165,13 +196,43 @@
     }
 
     // =========================================================================
-    // 4. ICON HELPERS
+    // 3. ICON HELPERS
     // =========================================================================
 
     function _iconSpan(icon, title) {
         if (!icon) return '';
         var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
         return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
+    }
+
+    // =========================================================================
+    // 4. GET CURRENT HOUSEHOLD ID
+    // =========================================================================
+    //
+    // Canonical selection lives in HouseholdState.getUIState()
+    // .selectedHouseholdId, set via HouseholdState.setSelectedHousehold
+    // (which household-ui-list.js::selectHousehold calls when the user
+    // picks a household from the sidebar).
+    //
+    // The flat globals are kept as a legacy fallback for harnesses
+    // that set them directly, but they are no longer the source of
+    // truth.
+
+    function _getCurrentHouseholdId() {
+        var HS = _getState();
+        if (HS && typeof HS.getUIState === 'function') {
+            try {
+                var s = HS.getUIState();
+                if (s && typeof s.selectedHouseholdId === 'string'
+                    && s.selectedHouseholdId.length > 0) {
+                    return s.selectedHouseholdId;
+                }
+            } catch (e) { /* fall through */ }
+        }
+        if (window._currentHouseholdId) return window._currentHouseholdId;
+        if (window.currentHouseholdId) return window.currentHouseholdId;
+        if (window.selectedHouseholdId) return window.selectedHouseholdId;
+        return null;
     }
 
     // =========================================================================
@@ -215,12 +276,17 @@
         var isHead = member.isHead || false;
         var isDeceased = char ? char.isDeceased : false;
         var age = '?';
-        var genderSymbol = '⚥';
+
+        // Gender is rendered as text, not as a glyph. The prior
+        // revision used "♂ / ♀ / ⚥" (U+2642 / U+2640 / U+26A5),
+        // which violated the module's own ICON POLICY header.
+        var genderLabel = char
+            ? (char.gender === 'male' ? 'Male'
+                : char.gender === 'female' ? 'Female'
+                : 'Unknown')
+            : 'Unknown';
 
         if (char) {
-            if (char.gender === 'male') genderSymbol = '♂';
-            else if (char.gender === 'female') genderSymbol = '♀';
-
             if (char.birthYear) {
                 if (isDeceased && char.deathYear) {
                     age = char.deathYear - char.birthYear;
@@ -280,7 +346,7 @@
                 rowClass +
             '">' +
                 '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0;">' +
-                    '<span style="font-size:0.7rem;">' + genderSymbol + '</span>' +
+                    '<span style="font-size:0.7rem;" title="Gender">' + _escapeHtml(genderLabel) + '</span>' +
                     '<span style="font-size:0.7rem;font-weight:' + (isHead ? 'bold' : 'normal') + ';">' + _escapeHtml(nameDisplay) + '</span>' +
                     '<span style="font-size:0.5rem;color:var(--dim);">(' + age + 'y)</span>' +
                     '<span style="font-size:0.55rem;color:' + statusColor + ';">' + statusText + '</span>' +
@@ -390,7 +456,7 @@
     }
 
     // =========================================================================
-    // 7. MAIN RENDER FUNCTION - FIXED to use window._currentHouseholdId
+    // 7. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderHouseholdMembersTab(containerId, householdId) {
@@ -406,7 +472,6 @@
                 return;
             }
 
-            // If no householdId provided, try to get it from the global variable
             if (!householdId) {
                 householdId = _getCurrentHouseholdId();
             }
@@ -464,7 +529,6 @@
 
             container.innerHTML = html;
 
-            // Attach event handlers
             _attachEventHandlers(container, householdId);
 
         } catch (e) {
@@ -632,8 +696,8 @@
                         _showToast((char ? char.name : 'Member') + ' added to household', 'success');
                         _closeTopModal();
                         renderHouseholdMembersTab('tab-members', householdId);
-                        if (typeof window.renderHouseholdList === 'function') {
-                            window.renderHouseholdList();
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
                         }
                         return true;
                     } else {
@@ -768,8 +832,8 @@
                         _showToast('Member updated', 'success');
                         _closeTopModal();
                         renderHouseholdMembersTab('tab-members', householdId);
-                        if (typeof window.renderHouseholdList === 'function') {
-                            window.renderHouseholdList();
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
                         }
                         return true;
                     } else {
@@ -859,17 +923,27 @@
                         return false;
                     }
 
+                    var targetHousehold = HS.getHousehold(targetId);
+                    var targetName = targetHousehold ? targetHousehold.name : 'target household';
+
                     var result = HC.transferMember(characterId, targetId, {
                         year: year,
                         reason: reason
                     });
 
                     if (result && result.success) {
-                        _showToast(charName + ' transferred to ' + result.toHousehold.name, 'success');
+                        // HouseholdCommands.transferMember returns
+                        // { characterId, fromHouseholdId, toHouseholdId,
+                        //   role, isHead, year }. There is no
+                        // `toHousehold` object. The prior revision read
+                        // result.toHousehold.name, which threw a
+                        // TypeError on every successful transfer,
+                        // leaving the modal open with no toast.
+                        _showToast(charName + ' transferred to ' + targetName, 'success');
                         _closeTopModal();
                         renderHouseholdMembersTab('tab-members', householdId);
-                        if (typeof window.renderHouseholdList === 'function') {
-                            window.renderHouseholdList();
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
                         }
                         return true;
                     } else {
@@ -967,8 +1041,8 @@
                                     _showToast(character.name + ' transferred to ' + household.name, 'success');
                                     _closeTopModal();
                                     renderHouseholdMembersTab('tab-members', householdId);
-                                    if (typeof window.renderHouseholdList === 'function') {
-                                        window.renderHouseholdList();
+                                    if (typeof window.refreshHouseholdList === 'function') {
+                                        window.refreshHouseholdList();
                                     }
                                     return true;
                                 } else {
@@ -1022,12 +1096,17 @@
             if (result && result.success) {
                 _showToast(charName + ' removed from household', 'info');
                 renderHouseholdMembersTab('tab-members', householdId);
-                if (typeof window.renderHouseholdList === 'function') {
-                    window.renderHouseholdList();
+                // Sidebar refresh: the current module exports
+                // refreshHouseholdList (not renderHouseholdList).
+                // The prior revision called renderHouseholdList,
+                // which does not exist, so the sidebar showed the
+                // pre-mutation member count after a remove.
+                if (typeof window.refreshHouseholdList === 'function') {
+                    window.refreshHouseholdList();
                 }
-                if (typeof window.showHouseholdDetails === 'function') {
-                    window.showHouseholdDetails(householdId);
-                }
+                // The prior revision also had a dead call to
+                // window.showHouseholdDetails, which never exists.
+                // Deleted; the members tab re-renders itself above.
             } else {
                 _showToast(result ? result.reason : 'Failed to remove member', 'error');
             }
