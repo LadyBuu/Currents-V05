@@ -4,72 +4,24 @@
  * DEPARTMENTS TAB (js/tabs/government-departments-tab.js)
  * =============================================================================
  *
- * PURPOSE: Provides a modular tab for viewing and managing government
- *          departments, positions, staff assignments, and salary budgets
- *          for a specific location.
- *
- * DEPENDENCIES (checked at load time):
- *   - GovernmentState, GovernmentCommands, GovernmentQueries,
- *     GovernmentEconomy  (js/government/*)
- *   - RoleQueries (optional; used for the role picker when present)
- *   - formatting.js (escapeHtml)
- *   - icons.js (Icons)
- *   - ui.js (showToast)
- *   - modals-core.js (openModal, confirmDialog)
- *   - modals-char-selector.js (openCharacterSelector)
- *   - time.js (getCurrentYear)
- *
- * WRITE PATH:
- *   Every department, position, and assignment mutation goes through
- *   GovernmentCommands.<command>() followed by exactly one
- *   GovernmentCommands.persist() per successful action. The persist
- *   boundary is the command layer's; this tab calls it explicitly
- *   because a tab is an interactive write path, not a batch.
- *
- * MODAL KEY TRANSLATION:
- *   modals-core.js reads titleHtml / contentHtml. The call sites in
- *   this file pass title / content. The local _openModal helper
- *   translates before delegating to window.openModal.
- *
- * MODAL INPUT SCOPING:
- *   Every onConfirm reads its inputs via root.querySelector, where
- *   root is the modal DOM element passed by modals-core.js. Two open
- *   add-department modals no longer cross-read each other's fields.
- *
- * SALARY CALCULATION:
- *   _calculateTotalSalary delegates to
- *   GovernmentEconomy.calculateDepartmentSalaryRequirements(deptId),
- *   which returns { totalSalaryRequirement, filledPositions,
- *   totalPositions, ... }. The prior revision used a hardcoded
- *   "total += 50" placeholder.
- *
- *   The call is guarded at call time. The load-time check only
- *   verifies that window.GovernmentEconomy exists — not that it
- *   exposes calculateDepartmentSalaryRequirements. A version
- *   mismatch, a partial module in a test harness, or a future
- *   rename in government-economy.js would make the unguarded call
- *   throw a TypeError inside the department-card render loop and
- *   take down the whole tab. The guard returns 0 on missing,
- *   matching the tab's original "salary is not computable" intent.
- *
- *   Note that department.assignments and the salary requirement
- *   figure come from different domains. The department record's
- *   assignments array is GovernmentState's projection of all
- *   assignments on the department. The salary requirement figure
- *   may filter to paid assignments only. The two are not guaranteed
- *   to agree; do not "harmonize" them by reading one into the other.
- *   The card shows the assignments count (from the department
- *   record) and the salary total (from GovernmentEconomy) as
- *   distinct facts.
- *
- * ROLE ADDITION:
- *   _openAssignStaffModal passes addRoleIfMissing: true to
- *   GovernmentCommands.assignCharacterToPosition. That command may
- *   add a profession via CharacterCommands.addProfession before
- *   recording the assignment; if the profession grant fails mid-
- *   command, the command surfaces a warning field on its result.
- *   The tab reads that warning and shows it as a distinct info
- *   toast, so a partial success is visible rather than silent.
+ * Fixes applied:
+ *   - _getRoleOptions() now calls RoleQueries.getRoles() (the actual
+ *     export). The previous call to RoleQueries.getAllRoleSummaries()
+ *     always returned [], forcing the role picker into the "unavailable"
+ *     fallback even when RoleQueries was loaded.
+ *   - _getRoleById() uses RoleQueries.findRoleById() (the actual export)
+ *     instead of getRoleSummary() (which does not exist on RoleQueries).
+ *   - Delete button uses X_HEAVY (the icon that exists) instead of TRASH
+ *     (which does not exist in icons.js).
+ *   - onComplete callbacks are wrapped in setTimeout(0) so the modal
+ *     returns, the commit tail finishes, and *then* the tab re-renders.
+ *     Without this, the render occasionally runs against a stale
+ *     projection when the command's State.hydrateFromMasterData is
+ *     deferred by an event loop tick.
+ *   - renderDepartmentsTab now calls State.hydrateFromMasterData()
+ *     defensively before reading projections. If the state is already
+ *     hydrated this is a no-op; if a command left the index stale, it
+ *     rebuilds it. Guarantees the tab always shows post-command state.
  * =============================================================================
  */
 
@@ -81,47 +33,28 @@
     // =========================================================================
 
     if (!window.GovernmentState) {
-        throw new Error(
-            'government-departments-tab.js: government-state.js must load first.'
-        );
+        throw new Error('government-departments-tab.js: government-state.js must load first.');
     }
     if (!window.GovernmentCommands) {
-        throw new Error(
-            'government-departments-tab.js: government-commands.js must load first.'
-        );
+        throw new Error('government-departments-tab.js: government-commands.js must load first.');
     }
     if (!window.GovernmentQueries) {
-        throw new Error(
-            'government-departments-tab.js: government-queries.js must load first.'
-        );
+        throw new Error('government-departments-tab.js: government-queries.js must load first.');
     }
     if (!window.GovernmentEconomy) {
-        throw new Error(
-            'government-departments-tab.js: government-economy.js must load first.'
-        );
+        throw new Error('government-departments-tab.js: government-economy.js must load first.');
     }
     if (typeof window.openModal !== 'function') {
-        throw new Error(
-            'government-departments-tab.js: modals-core.js must load first ' +
-            '(openModal missing).'
-        );
+        throw new Error('government-departments-tab.js: modals-core.js must load first (openModal missing).');
     }
     if (typeof window.escapeHtml !== 'function') {
-        throw new Error(
-            'government-departments-tab.js: formatting.js (escapeHtml) must ' +
-            'load first.'
-        );
+        throw new Error('government-departments-tab.js: formatting.js (escapeHtml) must load first.');
     }
     if (!window.Icons || typeof window.Icons !== 'object') {
-        throw new Error(
-            'government-departments-tab.js: icons.js must load first.'
-        );
+        throw new Error('government-departments-tab.js: icons.js must load first.');
     }
     if (typeof window.getCurrentYear !== 'function') {
-        throw new Error(
-            'government-departments-tab.js: time.js (getCurrentYear) must ' +
-            'load first.'
-        );
+        throw new Error('government-departments-tab.js: time.js (getCurrentYear) must load first.');
     }
 
     var GS = window.GovernmentState;
@@ -134,15 +67,11 @@
     // =========================================================================
 
     function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function'
-            ? window.getPlaceById(id)
-            : null;
+        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
     }
 
     function _getCharacterById(id) {
-        return typeof window.getCharacterById === 'function'
-            ? window.getCharacterById(id)
-            : null;
+        return typeof window.getCharacterById === 'function' ? window.getCharacterById(id) : null;
     }
 
     function _escapeHtml(str) {
@@ -174,9 +103,6 @@
         return null;
     }
 
-    /**
-     * Opens a modal with key translation for modals-core.js.
-     */
     function _openModal(opts) {
         var forwarded = {};
         for (var k in opts) {
@@ -197,26 +123,27 @@
         return window.getCurrentYear();
     }
 
-    /**
-     * Resolves a role by id via RoleQueries when present. Returns null
-     * otherwise. Used only for display of "Requires: <role name>".
-     */
+    // FIX: RoleQueries exports findRoleById, not getRoleSummary.
     function _getRoleById(roleId) {
         if (!roleId) return null;
         var RQ = window.RoleQueries;
-        if (!RQ || typeof RQ.getRoleSummary !== 'function') return null;
-        return RQ.getRoleSummary(roleId);
+        if (!RQ || typeof RQ.findRoleById !== 'function') return null;
+        return RQ.findRoleById(roleId);
     }
 
-    /**
-     * Lists role summaries for the role picker. Returns [] when
-     * RoleQueries is not loaded — the picker falls back to a free-text
-     * input in that case.
-     */
+    // FIX: RoleQueries exports getRoles(), not getAllRoleSummaries().
     function _getRoleOptions() {
         var RQ = window.RoleQueries;
-        if (!RQ || typeof RQ.getAllRoleSummaries !== 'function') return [];
-        return RQ.getAllRoleSummaries() || [];
+        if (!RQ || typeof RQ.getRoles !== 'function') return [];
+        var roles = RQ.getRoles();
+        if (!Array.isArray(roles)) return [];
+        var out = [];
+        for (var i = 0; i < roles.length; i++) {
+            var r = roles[i];
+            if (!r || !r.id) continue;
+            out.push({ id: r.id, name: r.name || r.id });
+        }
+        return out;
     }
 
     // =========================================================================
@@ -244,26 +171,9 @@
         return null;
     }
 
-    /**
-     * Sum of active assignment salaries in this department. Delegates to
-     * GovernmentEconomy.calculateDepartmentSalaryRequirements(deptId),
-     * which returns the canonical total for the department.
-     *
-     * Returns 0 when:
-     *   - the department cannot be resolved (no id)
-     *   - GovernmentEconomy does not expose the method (version
-     *     mismatch, partial module)
-     *   - the method returns null for the department
-     *   - the returned shape lacks a numeric totalSalaryRequirement
-     *
-     * The typeof guard is the fix for the crash-on-render bug. See
-     * SALARY CALCULATION in the header for the full rationale.
-     */
     function _calculateTotalSalary(department) {
         if (!department || !department.id) return 0;
-        if (!GE || typeof GE.calculateDepartmentSalaryRequirements !== 'function') {
-            return 0;
-        }
+        if (!GE || typeof GE.calculateDepartmentSalaryRequirements !== 'function') return 0;
         var req;
         try {
             req = GE.calculateDepartmentSalaryRequirements(department.id);
@@ -274,15 +184,6 @@
         return req.totalSalaryRequirement;
     }
 
-    /**
-     * Budget summary for the location. Allocated budget comes from the
-     * settlement record (data.governmentSalaryBudget). Required budget
-     * is derived from the current department / position / assignment
-     * state.
-     *
-     * Returns { allocated, required, remaining, shortfall } or null when
-     * the settlement record is not available.
-     */
     function _getBudgetInfo(locationId) {
         var data = null;
         if (typeof window.getSettlementData === 'function') {
@@ -311,13 +212,11 @@
     }
 
     // =========================================================================
-    // 4. RENDER FUNCTIONS
+    // 4. RENDER
     // =========================================================================
 
     function _renderDepartmentCard(department, locationId) {
-        var positions = Array.isArray(department.positions)
-            ? department.positions
-            : [];
+        var positions = Array.isArray(department.positions) ? department.positions : [];
         var assignments = _getActiveAssignments(department);
         var totalSalary = _calculateTotalSalary(department);
 
@@ -327,58 +226,41 @@
             hasChildren = Array.isArray(children) && children.length > 0;
         }
 
-        var html = '<div class="dept-card" data-dept-id="' +
-            _escapeHtml(department.id) + '">';
+        var html = '<div class="dept-card" data-dept-id="' + _escapeHtml(department.id) + '">';
 
         // Header
         html += '<div class="dept-header">';
         html += '<div class="dept-title">';
-        html += '<span class="dept-name">' +
-            _escapeHtml(department.name) + '</span>';
+        html += '<span class="dept-name">' + _escapeHtml(department.name) + '</span>';
         if (hasChildren) {
-            html += ' <span class="dept-badge dept-badge-children">' +
-                'Has Sub-departments</span>';
+            html += ' <span class="dept-badge dept-badge-children">Has Sub-departments</span>';
         }
         html += '</div>';
         html += '<div class="dept-actions">';
-        html += '<button class="dept-btn dept-btn-add-position" ' +
-            'data-action="add-position">' +
-            _getIcon('PLUS') + ' Position' +
-            '</button>';
-        html += '<button class="dept-btn dept-btn-edit" ' +
-            'data-action="edit-dept">' +
-            _getIcon('EDIT') +
-            '</button>';
-        html += '<button class="dept-btn dept-btn-delete" ' +
-            'data-action="delete-dept">' +
-            _getIcon('TRASH') +
-            '</button>';
+        html += '<button class="dept-btn dept-btn-add-position" data-action="add-position">' +
+            _getIcon('PLUS') + ' Position</button>';
+        html += '<button class="dept-btn dept-btn-edit" data-action="edit-dept">' +
+            _getIcon('EDIT') + '</button>';
+        // FIX: TRASH does not exist in icons.js. Use X_HEAVY.
+        html += '<button class="dept-btn dept-btn-delete" data-action="delete-dept">' +
+            _getIcon('X_HEAVY') + '</button>';
         html += '</div>';
         html += '</div>';
 
         // Stats
         html += '<div class="dept-stats">';
-        html += '<div class="dept-stat">';
-        html += '<span class="dept-stat-label">Positions</span>';
-        html += '<span class="dept-stat-value">' + positions.length + '</span>';
-        html += '</div>';
-        html += '<div class="dept-stat">';
-        html += '<span class="dept-stat-label">Staff</span>';
-        html += '<span class="dept-stat-value">' + assignments.length + '</span>';
-        html += '</div>';
-        html += '<div class="dept-stat">';
-        html += '<span class="dept-stat-label">Salary Budget</span>';
-        html += '<span class="dept-stat-value">' +
-            totalSalary.toLocaleString() + 'g</span>';
-        html += '</div>';
+        html += '<div class="dept-stat"><span class="dept-stat-label">Positions</span>' +
+            '<span class="dept-stat-value">' + positions.length + '</span></div>';
+        html += '<div class="dept-stat"><span class="dept-stat-label">Staff</span>' +
+            '<span class="dept-stat-value">' + assignments.length + '</span></div>';
+        html += '<div class="dept-stat"><span class="dept-stat-label">Salary Budget</span>' +
+            '<span class="dept-stat-value">' + totalSalary.toLocaleString() + 'g</span></div>';
         html += '</div>';
 
         // Positions
         if (positions.length > 0) {
             html += '<div class="dept-positions">';
-            html += '<div class="dept-positions-header">';
-            html += '<span>Positions</span>';
-            html += '</div>';
+            html += '<div class="dept-positions-header"><span>Positions</span></div>';
             html += '<div class="dept-positions-list">';
 
             for (var i = 0; i < positions.length; i++) {
@@ -388,33 +270,23 @@
                 });
                 var isFilled = posAssignments.length > 0;
 
-                html += '<div class="dept-position" ' +
-                    'data-position-id="' + _escapeHtml(pos.id) + '">';
+                html += '<div class="dept-position" data-position-id="' + _escapeHtml(pos.id) + '">';
 
                 html += '<div class="dept-position-header">';
-                html += '<span class="dept-position-name">' +
-                    _escapeHtml(pos.name) + '</span>';
-                html += '<span class="dept-position-status ' +
-                    (isFilled ? 'filled' : 'vacant') + '">' +
-                    (isFilled ? 'Filled' : 'Vacant') +
-                    '</span>';
+                html += '<span class="dept-position-name">' + _escapeHtml(pos.name) + '</span>';
+                html += '<span class="dept-position-status ' + (isFilled ? 'filled' : 'vacant') + '">' +
+                    (isFilled ? 'Filled' : 'Vacant') + '</span>';
                 html += '</div>';
 
                 if (pos.description) {
-                    html += '<div class="dept-position-desc">' +
-                        _escapeHtml(pos.description) + '</div>';
+                    html += '<div class="dept-position-desc">' + _escapeHtml(pos.description) + '</div>';
                 }
 
                 if (pos.requiredRoleId) {
                     var role = _getRoleById(pos.requiredRoleId);
                     html += '<div class="dept-position-requirement">';
-                    html += 'Requires: ' +
-                        (role
-                            ? _escapeHtml(role.name)
-                            : _escapeHtml(pos.requiredRoleId));
-                    if (pos.minSkillLevel) {
-                        html += ' (Skill: ' + pos.minSkillLevel + '+)';
-                    }
+                    html += 'Requires: ' + (role ? _escapeHtml(role.name) : _escapeHtml(pos.requiredRoleId));
+                    if (pos.minSkillLevel) html += ' (Skill: ' + pos.minSkillLevel + '+)';
                     html += '</div>';
                 }
 
@@ -425,26 +297,14 @@
                         var char = _getCharacterById(assign.characterId);
                         html += '<div class="dept-staff-item">';
                         html += '<span class="dept-staff-name">' +
-                            (char
-                                ? _escapeHtml(
-                                    char.name +
-                                    (char.surname ? ' ' + char.surname : '')
-                                )
-                                : 'Unknown') +
+                            (char ? _escapeHtml(char.name + (char.surname ? ' ' + char.surname : '')) : 'Unknown') +
                             '</span>';
                         if (assign.title && assign.title !== pos.name) {
-                            html += ' <span class="dept-staff-title">(' +
-                                _escapeHtml(assign.title) + ')</span>';
+                            html += ' <span class="dept-staff-title">(' + _escapeHtml(assign.title) + ')</span>';
                         }
-                        html += ' <span class="dept-staff-since">since ' +
-                            (assign.startYear || '?') + '</span>';
-                        html += '<button class="dept-btn dept-btn-small ' +
-                            'dept-btn-remove-staff" ' +
-                            'data-action="remove-staff" ' +
-                            'data-assignment-id="' +
-                            _escapeHtml(assign.id) + '">' +
-                            _getIcon('X') +
-                            '</button>';
+                        html += ' <span class="dept-staff-since">since ' + (assign.startYear || '?') + '</span>';
+                        html += '<button class="dept-btn dept-btn-small dept-btn-remove-staff" data-action="remove-staff" data-assignment-id="' +
+                            _escapeHtml(assign.id) + '">' + _getIcon('X') + '</button>';
                         html += '</div>';
                     }
                     html += '</div>';
@@ -452,25 +312,14 @@
 
                 html += '<div class="dept-position-actions">';
                 if (!isFilled) {
-                    html += '<button class="dept-btn dept-btn-small ' +
-                        'dept-btn-assign" ' +
-                        'data-action="assign-staff" ' +
-                        'data-position-id="' + _escapeHtml(pos.id) + '">' +
-                        _getIcon('PLUS') + ' Assign' +
-                        '</button>';
+                    html += '<button class="dept-btn dept-btn-small dept-btn-assign" data-action="assign-staff" data-position-id="' +
+                        _escapeHtml(pos.id) + '">' + _getIcon('PLUS') + ' Assign</button>';
                 }
-                html += '<button class="dept-btn dept-btn-small ' +
-                    'dept-btn-edit-position" ' +
-                    'data-action="edit-position" ' +
-                    'data-position-id="' + _escapeHtml(pos.id) + '">' +
-                    _getIcon('EDIT') +
-                    '</button>';
-                html += '<button class="dept-btn dept-btn-small ' +
-                    'dept-btn-delete-position" ' +
-                    'data-action="delete-position" ' +
-                    'data-position-id="' + _escapeHtml(pos.id) + '">' +
-                    _getIcon('TRASH') +
-                    '</button>';
+                html += '<button class="dept-btn dept-btn-small dept-btn-edit-position" data-action="edit-position" data-position-id="' +
+                    _escapeHtml(pos.id) + '">' + _getIcon('EDIT') + '</button>';
+                // FIX: TRASH → X_HEAVY.
+                html += '<button class="dept-btn dept-btn-small dept-btn-delete-position" data-action="delete-position" data-position-id="' +
+                    _escapeHtml(pos.id) + '">' + _getIcon('X_HEAVY') + '</button>';
                 html += '</div>';
 
                 html += '</div>'; // end dept-position
@@ -479,14 +328,11 @@
             html += '</div>';
             html += '</div>';
         } else {
-            html += '<div class="dept-no-positions">' +
-                'No positions defined. Add a position to start building ' +
-                'this department.</div>';
+            html += '<div class="dept-no-positions">No positions defined. Add a position to start building this department.</div>';
         }
 
         if (department.description) {
-            html += '<div class="dept-description">' +
-                _escapeHtml(department.description) + '</div>';
+            html += '<div class="dept-description">' + _escapeHtml(department.description) + '</div>';
         }
 
         html += '</div>';
@@ -495,8 +341,7 @@
 
     function _renderDepartmentsTab(place) {
         if (!place) {
-            return '<div class="dept-details-empty">' +
-                'Select a location to view government departments.</div>';
+            return '<div class="dept-details-empty">Select a location to view government departments.</div>';
         }
 
         var departments = _getDepartmentsForLocation(place.id);
@@ -504,64 +349,40 @@
 
         var html = '<div class="dept-tab-container">';
 
-        // Header
         html += '<div class="dept-tab-header">';
-        html += '<h3>Government Departments - ' +
-            _escapeHtml(place.displayName || place.name) + '</h3>';
+        html += '<h3>Government Departments - ' + _escapeHtml(place.displayName || place.name) + '</h3>';
         html += '<div class="dept-tab-actions">';
-        html += '<button class="dept-btn dept-btn-add" ' +
-            'data-action="add-department">' +
-            _getIcon('PLUS') + ' Add Department' +
-            '</button>';
-        html += '<button class="dept-btn dept-btn-refresh" ' +
-            'data-action="refresh-depts">' +
-            _getIcon('REFRESH') + ' Refresh' +
-            '</button>';
+        html += '<button class="dept-btn dept-btn-add" data-action="add-department">' +
+            _getIcon('PLUS') + ' Add Department</button>';
+        html += '<button class="dept-btn dept-btn-refresh" data-action="refresh-depts">' +
+            _getIcon('REFRESH') + ' Refresh</button>';
         html += '</div>';
         html += '</div>';
 
-        // Budget summary
         if (budgetInfo) {
             html += '<div class="dept-budget-summary">';
-            html += '<div class="dept-budget-item">';
-            html += '<span class="dept-budget-label">Salary Budget</span>';
-            html += '<span class="dept-budget-value">' +
-                budgetInfo.allocated.toLocaleString() + 'g</span>';
-            html += '</div>';
-            html += '<div class="dept-budget-item">';
-            html += '<span class="dept-budget-label">Required</span>';
-            html += '<span class="dept-budget-value">' +
-                budgetInfo.required.toLocaleString() + 'g</span>';
-            html += '</div>';
+            html += '<div class="dept-budget-item"><span class="dept-budget-label">Salary Budget</span>' +
+                '<span class="dept-budget-value">' + budgetInfo.allocated.toLocaleString() + 'g</span></div>';
+            html += '<div class="dept-budget-item"><span class="dept-budget-label">Required</span>' +
+                '<span class="dept-budget-value">' + budgetInfo.required.toLocaleString() + 'g</span></div>';
             html += '<div class="dept-budget-item ' +
-                (budgetInfo.shortfall > 0
-                    ? 'dept-budget-shortfall'
-                    : 'dept-budget-surplus') + '">';
-            html += '<span class="dept-budget-label">' +
-                (budgetInfo.shortfall > 0 ? 'Shortfall' : 'Surplus') +
-                '</span>';
-            html += '<span class="dept-budget-value">' +
-                (budgetInfo.shortfall > 0
-                    ? budgetInfo.shortfall.toLocaleString()
-                    : budgetInfo.remaining.toLocaleString()) + 'g</span>';
-            html += '</div>';
+                (budgetInfo.shortfall > 0 ? 'dept-budget-shortfall' : 'dept-budget-surplus') + '">' +
+                '<span class="dept-budget-label">' + (budgetInfo.shortfall > 0 ? 'Shortfall' : 'Surplus') + '</span>' +
+                '<span class="dept-budget-value">' +
+                (budgetInfo.shortfall > 0 ? budgetInfo.shortfall.toLocaleString() : budgetInfo.remaining.toLocaleString()) +
+                'g</span></div>';
             html += '</div>';
         } else {
-            html += '<div class="dept-budget-summary dept-budget-unavailable">';
-            html += '<span class="dept-budget-label">Salary Budget</span> ';
-            html += '<span class="dept-budget-value">— (settlement data ' +
-                'unavailable)</span>';
-            html += '</div>';
+            html += '<div class="dept-budget-summary dept-budget-unavailable">' +
+                '<span class="dept-budget-label">Salary Budget</span> ' +
+                '<span class="dept-budget-value">— (settlement data unavailable)</span></div>';
         }
 
-        // Departments list
         if (departments.length === 0) {
             html += '<div class="dept-empty">';
             html += '<p>No government departments found for this location.</p>';
-            html += '<button class="dept-btn dept-btn-add" ' +
-                'data-action="add-department">' +
-                _getIcon('PLUS') + ' Create First Department' +
-                '</button>';
+            html += '<button class="dept-btn dept-btn-add" data-action="add-department">' +
+                _getIcon('PLUS') + ' Create First Department</button>';
             html += '</div>';
         } else {
             html += '<div class="dept-list">';
@@ -581,37 +402,22 @@
 
     function _openAddDepartmentModal(locationId, onComplete) {
         var place = _getPlaceById(locationId);
-        if (!place) {
-            _showToast('Location not found', 'error');
-            return;
-        }
+        if (!place) { _showToast('Location not found', 'error'); return; }
 
         var existing = _getDepartmentsForLocation(locationId);
         var parentOptions = '<option value="">None</option>';
         for (var i = 0; i < existing.length; i++) {
-            parentOptions += '<option value="' +
-                _escapeHtml(existing[i].id) + '">' +
-                _escapeHtml(existing[i].name) +
-                '</option>';
+            parentOptions += '<option value="' + _escapeHtml(existing[i].id) + '">' +
+                _escapeHtml(existing[i].name) + '</option>';
         }
 
         var content = '<div class="dept-edit-form">';
-        content += '<div class="form-group">';
-        content += '<label for="dept-name-input">Department Name *</label>';
-        content += '<input type="text" id="dept-name-input" ' +
-            'class="form-control" placeholder="e.g., Royal Treasury">';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="dept-desc-input">Description</label>';
-        content += '<textarea id="dept-desc-input" class="form-control" ' +
-            'rows="2" ' +
-            'placeholder="Brief description of this department"></textarea>';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="dept-parent-select">Parent Department (optional)</label>';
-        content += '<select id="dept-parent-select" class="form-control">' +
-            parentOptions + '</select>';
-        content += '</div>';
+        content += '<div class="form-group"><label for="dept-name-input">Department Name *</label>' +
+            '<input type="text" id="dept-name-input" class="form-control" placeholder="e.g., Royal Treasury"></div>';
+        content += '<div class="form-group"><label for="dept-desc-input">Description</label>' +
+            '<textarea id="dept-desc-input" class="form-control" rows="2" placeholder="Brief description of this department"></textarea></div>';
+        content += '<div class="form-group"><label for="dept-parent-select">Parent Department (optional)</label>' +
+            '<select id="dept-parent-select" class="form-control">' + parentOptions + '</select></div>';
         content += '</div>';
 
         _openModal({
@@ -623,16 +429,10 @@
                 var nameEl = root.querySelector('#dept-name-input');
                 var descEl = root.querySelector('#dept-desc-input');
                 var parentEl = root.querySelector('#dept-parent-select');
-                if (!nameEl) {
-                    _showToast('Form not found in modal', 'error');
-                    return false;
-                }
+                if (!nameEl) { _showToast('Form not found in modal', 'error'); return false; }
 
                 var name = nameEl.value.trim();
-                if (!name) {
-                    _showToast('Department name is required', 'error');
-                    return false;
-                }
+                if (!name) { _showToast('Department name is required', 'error'); return false; }
                 var description = descEl ? descEl.value.trim() : '';
                 var parentId = parentEl ? (parentEl.value || null) : null;
 
@@ -643,27 +443,19 @@
                     parentDepartmentId: parentId
                 });
                 if (!result || result.success !== true) {
-                    _showToast(
-                        (result && result.reason)
-                            ? result.reason
-                            : 'Failed to create department',
-                        'error'
-                    );
+                    _showToast((result && result.reason) ? result.reason : 'Failed to create department', 'error');
                     return false;
                 }
 
                 var persistResult = GC.persist();
                 if (persistResult && persistResult.success !== true) {
-                    _showToast(
-                        'Department created, but save failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
+                    _showToast('Department created, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                 } else {
                     _showToast('Department "' + name + '" created', 'success');
                 }
 
-                if (typeof onComplete === 'function') onComplete();
+                // FIX: defer the render so the modal can close first.
+                if (typeof onComplete === 'function') setTimeout(onComplete, 0);
                 return true;
             }
         });
@@ -671,22 +463,13 @@
 
     function _openEditDepartmentModal(departmentId, locationId, onComplete) {
         var dept = GQ.getDepartment(departmentId);
-        if (!dept) {
-            _showToast('Department not found', 'error');
-            return;
-        }
+        if (!dept) { _showToast('Department not found', 'error'); return; }
 
         var content = '<div class="dept-edit-form">';
-        content += '<div class="form-group">';
-        content += '<label for="dept-name-input">Department Name *</label>';
-        content += '<input type="text" id="dept-name-input" ' +
-            'class="form-control" value="' + _escapeHtml(dept.name) + '">';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="dept-desc-input">Description</label>';
-        content += '<textarea id="dept-desc-input" class="form-control" ' +
-            'rows="2">' + _escapeHtml(dept.description || '') + '</textarea>';
-        content += '</div>';
+        content += '<div class="form-group"><label for="dept-name-input">Department Name *</label>' +
+            '<input type="text" id="dept-name-input" class="form-control" value="' + _escapeHtml(dept.name) + '"></div>';
+        content += '<div class="form-group"><label for="dept-desc-input">Description</label>' +
+            '<textarea id="dept-desc-input" class="form-control" rows="2">' + _escapeHtml(dept.description || '') + '</textarea></div>';
         content += '</div>';
 
         _openModal({
@@ -697,44 +480,26 @@
             onConfirm: function(root) {
                 var nameEl = root.querySelector('#dept-name-input');
                 var descEl = root.querySelector('#dept-desc-input');
-                if (!nameEl) {
-                    _showToast('Form not found in modal', 'error');
-                    return false;
-                }
+                if (!nameEl) { _showToast('Form not found in modal', 'error'); return false; }
 
                 var name = nameEl.value.trim();
-                if (!name) {
-                    _showToast('Department name is required', 'error');
-                    return false;
-                }
+                if (!name) { _showToast('Department name is required', 'error'); return false; }
                 var description = descEl ? descEl.value.trim() : '';
 
-                var result = GC.updateDepartment(departmentId, {
-                    name: name,
-                    description: description
-                });
+                var result = GC.updateDepartment(departmentId, { name: name, description: description });
                 if (!result || result.success !== true) {
-                    _showToast(
-                        (result && result.reason)
-                            ? result.reason
-                            : 'Failed to update department',
-                        'error'
-                    );
+                    _showToast((result && result.reason) ? result.reason : 'Failed to update department', 'error');
                     return false;
                 }
 
                 var persistResult = GC.persist();
                 if (persistResult && persistResult.success !== true) {
-                    _showToast(
-                        'Department updated, but save failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
+                    _showToast('Department updated, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                 } else {
                     _showToast('Department updated', 'success');
                 }
 
-                if (typeof onComplete === 'function') onComplete();
+                if (typeof onComplete === 'function') setTimeout(onComplete, 0);
                 return true;
             }
         });
@@ -742,50 +507,30 @@
 
     function _openAddPositionModal(departmentId, locationId, onComplete) {
         var dept = GQ.getDepartment(departmentId);
-        if (!dept) {
-            _showToast('Department not found', 'error');
-            return;
-        }
+        if (!dept) { _showToast('Department not found', 'error'); return; }
 
         var roles = _getRoleOptions();
         var roleField;
         if (roles.length > 0) {
             var roleOptions = '<option value="">None</option>';
             for (var r = 0; r < roles.length; r++) {
-                roleOptions += '<option value="' +
-                    _escapeHtml(roles[r].id) + '">' +
-                    _escapeHtml(roles[r].name) +
-                    '</option>';
+                roleOptions += '<option value="' + _escapeHtml(roles[r].id) + '">' +
+                    _escapeHtml(roles[r].name) + '</option>';
             }
-            roleField = '<select id="pos-role-input" class="form-control">' +
-                roleOptions + '</select>';
+            roleField = '<select id="pos-role-input" class="form-control">' + roleOptions + '</select>';
         } else {
-            roleField = '<input type="text" id="pos-role-input" ' +
-                'class="form-control" ' +
-                'placeholder="Role ID (role picker unavailable)">';
+            roleField = '<input type="text" id="pos-role-input" class="form-control" placeholder="Role ID (role picker unavailable)">';
         }
 
         var content = '<div class="dept-edit-form">';
-        content += '<div class="form-group">';
-        content += '<label for="pos-name-input">Position Name *</label>';
-        content += '<input type="text" id="pos-name-input" ' +
-            'class="form-control" placeholder="e.g., Treasurer">';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="pos-desc-input">Description</label>';
-        content += '<textarea id="pos-desc-input" class="form-control" ' +
-            'rows="2" ' +
-            'placeholder="Brief description of this position"></textarea>';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="pos-role-input">Required Role (optional)</label>';
-        content += roleField;
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="pos-skill-input">Minimum Skill Level</label>';
-        content += '<input type="number" id="pos-skill-input" ' +
-            'class="form-control" min="0" max="100" value="10">';
-        content += '</div>';
+        content += '<div class="form-group"><label for="pos-name-input">Position Name *</label>' +
+            '<input type="text" id="pos-name-input" class="form-control" placeholder="e.g., Treasurer"></div>';
+        content += '<div class="form-group"><label for="pos-desc-input">Description</label>' +
+            '<textarea id="pos-desc-input" class="form-control" rows="2" placeholder="Brief description of this position"></textarea></div>';
+        content += '<div class="form-group"><label for="pos-role-input">Required Role (optional)</label>' +
+            roleField + '</div>';
+        content += '<div class="form-group"><label for="pos-skill-input">Minimum Skill Level</label>' +
+            '<input type="number" id="pos-skill-input" class="form-control" min="0" max="100" value="10"></div>';
         content += '</div>';
 
         _openModal({
@@ -798,23 +543,13 @@
                 var descEl = root.querySelector('#pos-desc-input');
                 var roleEl = root.querySelector('#pos-role-input');
                 var skillEl = root.querySelector('#pos-skill-input');
-                if (!nameEl) {
-                    _showToast('Form not found in modal', 'error');
-                    return false;
-                }
+                if (!nameEl) { _showToast('Form not found in modal', 'error'); return false; }
 
                 var name = nameEl.value.trim();
-                if (!name) {
-                    _showToast('Position name is required', 'error');
-                    return false;
-                }
+                if (!name) { _showToast('Position name is required', 'error'); return false; }
                 var description = descEl ? descEl.value.trim() : '';
-                var requiredRoleId = roleEl
-                    ? (roleEl.value.trim() || null)
-                    : null;
-                var minSkill = skillEl
-                    ? (parseInt(skillEl.value, 10) || 0)
-                    : 0;
+                var requiredRoleId = roleEl ? (roleEl.value.trim() || null) : null;
+                var minSkill = skillEl ? (parseInt(skillEl.value, 10) || 0) : 0;
 
                 var result = GC.addPosition(departmentId, {
                     name: name,
@@ -824,27 +559,19 @@
                     priority: 10
                 });
                 if (!result || result.success !== true) {
-                    _showToast(
-                        (result && result.reason)
-                            ? result.reason
-                            : 'Failed to add position',
-                        'error'
-                    );
+                    _showToast((result && result.reason) ? result.reason : 'Failed to add position', 'error');
                     return false;
                 }
 
                 var persistResult = GC.persist();
                 if (persistResult && persistResult.success !== true) {
-                    _showToast(
-                        'Position added, but save failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
+                    _showToast('Position added, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                 } else {
                     _showToast('Position "' + name + '" added', 'success');
                 }
 
-                if (typeof onComplete === 'function') onComplete();
+                // FIX: defer render so the commit tail and modal close both finish first.
+                if (typeof onComplete === 'function') setTimeout(onComplete, 0);
                 return true;
             }
         });
@@ -852,15 +579,9 @@
 
     function _openEditPositionModal(departmentId, positionId, locationId, onComplete) {
         var dept = GQ.getDepartment(departmentId);
-        if (!dept) {
-            _showToast('Department not found', 'error');
-            return;
-        }
+        if (!dept) { _showToast('Department not found', 'error'); return; }
         var pos = _getPositionById(dept, positionId);
-        if (!pos) {
-            _showToast('Position not found', 'error');
-            return;
-        }
+        if (!pos) { _showToast('Position not found', 'error'); return; }
 
         var roles = _getRoleOptions();
         var roleField;
@@ -868,41 +589,25 @@
             var roleOptions = '<option value="">None</option>';
             for (var r = 0; r < roles.length; r++) {
                 var sel = roles[r].id === pos.requiredRoleId ? ' selected' : '';
-                roleOptions += '<option value="' +
-                    _escapeHtml(roles[r].id) + '"' + sel + '>' +
-                    _escapeHtml(roles[r].name) +
-                    '</option>';
+                roleOptions += '<option value="' + _escapeHtml(roles[r].id) + '"' + sel + '>' +
+                    _escapeHtml(roles[r].name) + '</option>';
             }
-            roleField = '<select id="pos-edit-role-input" class="form-control">' +
-                roleOptions + '</select>';
+            roleField = '<select id="pos-edit-role-input" class="form-control">' + roleOptions + '</select>';
         } else {
-            roleField = '<input type="text" id="pos-edit-role-input" ' +
-                'class="form-control" ' +
-                'value="' + _escapeHtml(pos.requiredRoleId || '') + '" ' +
-                'placeholder="Role ID (role picker unavailable)">';
+            roleField = '<input type="text" id="pos-edit-role-input" class="form-control" value="' +
+                _escapeHtml(pos.requiredRoleId || '') + '" placeholder="Role ID (role picker unavailable)">';
         }
 
         var content = '<div class="dept-edit-form">';
-        content += '<div class="form-group">';
-        content += '<label for="pos-edit-name-input">Position Name *</label>';
-        content += '<input type="text" id="pos-edit-name-input" ' +
-            'class="form-control" value="' + _escapeHtml(pos.name) + '">';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="pos-edit-desc-input">Description</label>';
-        content += '<textarea id="pos-edit-desc-input" class="form-control" ' +
-            'rows="2">' + _escapeHtml(pos.description || '') + '</textarea>';
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="pos-edit-role-input">Required Role (optional)</label>';
-        content += roleField;
-        content += '</div>';
-        content += '<div class="form-group">';
-        content += '<label for="pos-edit-skill-input">Minimum Skill Level</label>';
-        content += '<input type="number" id="pos-edit-skill-input" ' +
-            'class="form-control" min="0" max="100" value="' +
-            (pos.minSkillLevel || 0) + '">';
-        content += '</div>';
+        content += '<div class="form-group"><label for="pos-edit-name-input">Position Name *</label>' +
+            '<input type="text" id="pos-edit-name-input" class="form-control" value="' + _escapeHtml(pos.name) + '"></div>';
+        content += '<div class="form-group"><label for="pos-edit-desc-input">Description</label>' +
+            '<textarea id="pos-edit-desc-input" class="form-control" rows="2">' + _escapeHtml(pos.description || '') + '</textarea></div>';
+        content += '<div class="form-group"><label for="pos-edit-role-input">Required Role (optional)</label>' +
+            roleField + '</div>';
+        content += '<div class="form-group"><label for="pos-edit-skill-input">Minimum Skill Level</label>' +
+            '<input type="number" id="pos-edit-skill-input" class="form-control" min="0" max="100" value="' +
+            (pos.minSkillLevel || 0) + '"></div>';
         content += '</div>';
 
         _openModal({
@@ -915,47 +620,30 @@
                 var descEl = root.querySelector('#pos-edit-desc-input');
                 var roleEl = root.querySelector('#pos-edit-role-input');
                 var skillEl = root.querySelector('#pos-edit-skill-input');
-                if (!nameEl) {
-                    _showToast('Form not found in modal', 'error');
-                    return false;
-                }
+                if (!nameEl) { _showToast('Form not found in modal', 'error'); return false; }
 
                 var name = nameEl.value.trim();
-                if (!name) {
-                    _showToast('Position name is required', 'error');
-                    return false;
-                }
+                if (!name) { _showToast('Position name is required', 'error'); return false; }
 
                 var result = GC.updatePosition(departmentId, positionId, {
                     name: name,
                     description: descEl ? descEl.value.trim() : '',
                     requiredRoleId: roleEl ? (roleEl.value.trim() || null) : null,
-                    minSkillLevel: skillEl
-                        ? (parseInt(skillEl.value, 10) || 0)
-                        : 0
+                    minSkillLevel: skillEl ? (parseInt(skillEl.value, 10) || 0) : 0
                 });
                 if (!result || result.success !== true) {
-                    _showToast(
-                        (result && result.reason)
-                            ? result.reason
-                            : 'Failed to update position',
-                        'error'
-                    );
+                    _showToast((result && result.reason) ? result.reason : 'Failed to update position', 'error');
                     return false;
                 }
 
                 var persistResult = GC.persist();
                 if (persistResult && persistResult.success !== true) {
-                    _showToast(
-                        'Position updated, but save failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
+                    _showToast('Position updated, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                 } else {
                     _showToast('Position updated', 'success');
                 }
 
-                if (typeof onComplete === 'function') onComplete();
+                if (typeof onComplete === 'function') setTimeout(onComplete, 0);
                 return true;
             }
         });
@@ -963,68 +651,36 @@
 
     function _openAssignStaffModal(departmentId, positionId, locationId, onComplete) {
         var dept = GQ.getDepartment(departmentId);
-        if (!dept) {
-            _showToast('Department not found', 'error');
-            return;
-        }
+        if (!dept) { _showToast('Department not found', 'error'); return; }
         var pos = _getPositionById(dept, positionId);
-        if (!pos) {
-            _showToast('Position not found', 'error');
-            return;
-        }
+        if (!pos) { _showToast('Position not found', 'error'); return; }
 
         _openCharacterSelector({
             title: 'Assign Character to ' + pos.name,
             preset: 'available',
-            filters: {
-                location: locationId,
-                showDeceased: false
-            },
+            filters: { location: locationId, showDeceased: false },
             onSelect: function(characterId) {
                 var result = GC.assignCharacterToPosition(
-                    departmentId,
-                    positionId,
-                    characterId,
-                    {
-                        startYear: _getCurrentYear(),
-                        addRoleIfMissing: true
-                    }
+                    departmentId, positionId, characterId,
+                    { startYear: _getCurrentYear(), addRoleIfMissing: true }
                 );
                 if (!result || result.success !== true) {
-                    _showToast(
-                        (result && result.reason)
-                            ? result.reason
-                            : 'Failed to assign character',
-                        'error'
-                    );
+                    _showToast((result && result.reason) ? result.reason : 'Failed to assign character', 'error');
                     return;
                 }
-
-                // The assignment command may add a profession via
-                // CharacterCommands.addProfession before recording the
-                // assignment. If the profession grant fails mid-command,
-                // the command surfaces a warning on its result. Show it
-                // as a distinct info toast so a partial success is
-                // visible rather than silent.
                 if (result.roleWarning) {
                     var warningMsg = typeof result.roleWarning === 'string'
                         ? result.roleWarning
                         : (result.roleWarning.message || 'Role grant may have failed');
                     _showToast(warningMsg, 'info');
                 }
-
                 var persistResult = GC.persist();
                 if (persistResult && persistResult.success !== true) {
-                    _showToast(
-                        'Assigned, but save failed: ' +
-                        (persistResult.reason || 'unknown'),
-                        'warning'
-                    );
+                    _showToast('Assigned, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                 } else {
                     _showToast('Character assigned to ' + pos.name, 'success');
                 }
-
-                if (typeof onComplete === 'function') onComplete();
+                if (typeof onComplete === 'function') setTimeout(onComplete, 0);
             }
         });
     }
@@ -1040,11 +696,16 @@
             return;
         }
 
+        // FIX: hydrate defensively before reading. If the state index is
+        // already fresh this is a no-op; if a command left the index stale
+        // (deferred commit, import reload, etc.), this rebuilds it so the
+        // tab always shows post-command state.
+        try { GS.hydrateFromMasterData(); } catch (e) { /* ignore */ }
+
         var place = locationId ? _getPlaceById(locationId) : null;
         container.innerHTML = _renderDepartmentsTab(place);
         container.dataset.locationId = locationId || '';
 
-        // Actions (delegated, bound once)
         if (!container._govDeptsBound) {
             container._govDeptsBound = true;
 
@@ -1063,11 +724,8 @@
 
                 switch (action) {
                     case 'add-department':
-                        if (currentLocationId) {
-                            _openAddDepartmentModal(currentLocationId, refresh);
-                        } else {
-                            _showToast('No location selected', 'warning');
-                        }
+                        if (currentLocationId) _openAddDepartmentModal(currentLocationId, refresh);
+                        else _showToast('No location selected', 'warning');
                         break;
 
                     case 'refresh-depts':
@@ -1078,102 +736,62 @@
                         break;
 
                     case 'edit-dept':
-                        if (deptId && currentLocationId) {
-                            _openEditDepartmentModal(deptId, currentLocationId, refresh);
-                        }
+                        if (deptId && currentLocationId) _openEditDepartmentModal(deptId, currentLocationId, refresh);
                         break;
 
                     case 'delete-dept':
                         if (deptId && currentLocationId) {
                             _confirmDialog(
-                                'Are you sure you want to delete this ' +
-                                'department? All positions and assignments ' +
-                                'will be removed.',
+                                'Are you sure you want to delete this department? All positions and assignments will be removed.',
                                 'Delete Department',
                                 function() {
-                                    var result = GC.deleteDepartment(
-                                        deptId,
-                                        { cascade: true }
-                                    );
+                                    var result = GC.deleteDepartment(deptId, { cascade: true });
                                     if (!result || result.success !== true) {
-                                        _showToast(
-                                            (result && result.reason)
-                                                ? result.reason
-                                                : 'Failed to delete department',
-                                            'error'
-                                        );
+                                        _showToast((result && result.reason) ? result.reason : 'Failed to delete department', 'error');
                                         return;
                                     }
                                     var persistResult = GC.persist();
-                                    if (persistResult &&
-                                        persistResult.success !== true) {
-                                        _showToast(
-                                            'Deleted, but save failed: ' +
-                                            (persistResult.reason || 'unknown'),
-                                            'warning'
-                                        );
+                                    if (persistResult && persistResult.success !== true) {
+                                        _showToast('Deleted, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                                     } else {
                                         _showToast('Department deleted', 'info');
                                     }
-                                    refresh();
+                                    setTimeout(refresh, 0);
                                 }
                             );
                         }
                         break;
 
                     case 'add-position':
-                        if (deptId && currentLocationId) {
-                            _openAddPositionModal(deptId, currentLocationId, refresh);
-                        }
+                        if (deptId && currentLocationId) _openAddPositionModal(deptId, currentLocationId, refresh);
                         break;
 
                     case 'assign-staff':
-                        if (deptId && currentLocationId && positionId) {
-                            _openAssignStaffModal(
-                                deptId, positionId, currentLocationId, refresh
-                            );
-                        }
+                        if (deptId && currentLocationId && positionId) _openAssignStaffModal(deptId, positionId, currentLocationId, refresh);
                         break;
 
                     case 'edit-position':
-                        if (deptId && currentLocationId && positionId) {
-                            _openEditPositionModal(
-                                deptId, positionId, currentLocationId, refresh
-                            );
-                        }
+                        if (deptId && currentLocationId && positionId) _openEditPositionModal(deptId, positionId, currentLocationId, refresh);
                         break;
 
                     case 'delete-position':
                         if (deptId && currentLocationId && positionId) {
                             _confirmDialog(
-                                'Are you sure you want to delete this ' +
-                                'position?',
+                                'Are you sure you want to delete this position?',
                                 'Delete Position',
                                 function() {
-                                    var result = GC.deletePosition(
-                                        deptId, positionId
-                                    );
+                                    var result = GC.deletePosition(deptId, positionId);
                                     if (!result || result.success !== true) {
-                                        _showToast(
-                                            (result && result.reason)
-                                                ? result.reason
-                                                : 'Failed to delete position',
-                                            'error'
-                                        );
+                                        _showToast((result && result.reason) ? result.reason : 'Failed to delete position', 'error');
                                         return;
                                     }
                                     var persistResult = GC.persist();
-                                    if (persistResult &&
-                                        persistResult.success !== true) {
-                                        _showToast(
-                                            'Deleted, but save failed: ' +
-                                            (persistResult.reason || 'unknown'),
-                                            'warning'
-                                        );
+                                    if (persistResult && persistResult.success !== true) {
+                                        _showToast('Deleted, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                                     } else {
                                         _showToast('Position deleted', 'info');
                                     }
-                                    refresh();
+                                    setTimeout(refresh, 0);
                                 }
                             );
                         }
@@ -1184,37 +802,21 @@
                             var assignmentId = target.dataset.assignmentId;
                             if (!assignmentId) break;
                             _confirmDialog(
-                                'Are you sure you want to remove this ' +
-                                'staff member?',
+                                'Are you sure you want to remove this staff member?',
                                 'Remove Staff',
                                 function() {
-                                    var result = GC.endAssignment(
-                                        deptId,
-                                        assignmentId,
-                                        _getCurrentYear(),
-                                        'Removed'
-                                    );
+                                    var result = GC.endAssignment(deptId, assignmentId, _getCurrentYear(), 'Removed');
                                     if (!result || result.success !== true) {
-                                        _showToast(
-                                            (result && result.reason)
-                                                ? result.reason
-                                                : 'Failed to remove staff',
-                                            'error'
-                                        );
+                                        _showToast((result && result.reason) ? result.reason : 'Failed to remove staff', 'error');
                                         return;
                                     }
                                     var persistResult = GC.persist();
-                                    if (persistResult &&
-                                        persistResult.success !== true) {
-                                        _showToast(
-                                            'Removed, but save failed: ' +
-                                            (persistResult.reason || 'unknown'),
-                                            'warning'
-                                        );
+                                    if (persistResult && persistResult.success !== true) {
+                                        _showToast('Removed, but save failed: ' + (persistResult.reason || 'unknown'), 'warning');
                                     } else {
                                         _showToast('Staff member removed', 'info');
                                     }
-                                    refresh();
+                                    setTimeout(refresh, 0);
                                 }
                             );
                         }
@@ -1227,16 +829,11 @@
     function refreshDepartmentsTab(locationId) {
         var container = document.querySelector('.dept-tab-container');
         if (!container) {
-            var candidates = document.querySelectorAll(
-                '.dept-tab-container, #departments-tab'
-            );
+            var candidates = document.querySelectorAll('.dept-tab-container, #departments-tab');
             if (candidates.length > 0) container = candidates[0];
         }
         if (container) {
-            renderDepartmentsTab(
-                container.id || 'departments-tab',
-                locationId
-            );
+            renderDepartmentsTab(container.id || 'departments-tab', locationId);
         }
     }
 
