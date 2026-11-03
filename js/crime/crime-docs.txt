@@ -1,1213 +1,2329 @@
-# Crime & Law System — Domain Documentation
+================================================================================
+STILL WATERS — CRIME SUBSYSTEM DOCUMENTATION AND DEPENDENCIES
+================================================================================
 
-Version: 6.1 (core-compatibility pass)
-Replaces: `crime-docs.txt`
-Owns: `crimes`, `vendettas` on `masterData.data`
-Depends on: Character, Household, Location, Settlement, Religion, Industry
+Scope of this document:
+  - Every crime file provided in this batch (9 files):
+      js/crime/crime-constants.js
+      js/crime/crime-state.js
+      js/crime/crime-law-integration.js
+      js/crime/crime-queries.js
+      js/crime/crime-commands.js
+      js/crime/crime-view-models.js
+      js/crime/crime-ui-stats.js
+      js/crime/modals-crime.js
+      js/crime/crime-bootstrap.js
+      js/crime/vendetta-system.js    (deprecated compatibility shim)
+  - Every core, character, household, location, settlement, religion,
+    and cross-domain file the crime subsystem depends on, at LOAD time
+    (module-level guards) or at CALL time (typeof-guarded lookups),
+    and how each is used.
+  - The dependency graph across crime layers (constants -> state ->
+    law-integration -> queries -> commands -> view-models -> ui-stats
+    -> modals -> bootstrap; with vendetta-system as a deprecated
+    forwarder).
+  - Cross-references to the crime subsystem's own narrative doc
+    (crime-docs.txt).
 
-Version history:
-    6.0  Post-refactor baseline.
-    6.1  Core-compatibility pass. All crime modules now use canonical
-         core helpers (getCurrentYear, escapeHtml, showToast, getIcon).
-         Deprecated aliases (getCurrentYearSafe, _escapeHtml, _showToast,
-         _getIcon) are no longer used anywhere in the crime domain.
-         Cross-domain resolver in crime-law-integration.js and
-         crime-bootstrap.js corrected to point at the canonical
-         settlement query modules (SettlementLawQueries,
-         SettlementReligionQueries) instead of methods that do not
-         exist on SettlementQueries. Modals now use the core modal
-         shell's accepted keys (titleHtml/contentHtml) and its return
-         shape (result.element); the previous code passed title/content
-         and read result.content, both of which the core ignores.
+PATHS NOTE:
+  The supplied files use js/crime/ for the constants and most modules,
+  but two of them (crime-constants.js and crime-bootstrap.js) declare
+  "LOCATION: js/core/crime/<file>" in their own headers. Per
+  crime-docs.txt §1 the canonical path is js/crime/<file>; the
+  js/core/crime/ path is pre-refactor and must not appear in any HTML
+  script tag. crime-docs.txt §18 calls this out explicitly.
 
----
+  Similarly, vendetta-system.js's own header says
+  "LOCATION: js/core/crime/vendetta-system.js". The file is a shim;
+  treat its physical path as js/crime/vendetta-system.js.
 
-## 1. Ownership contract
+Anything not provable from the supplied files is marked [UNVERIFIED].
 
-The Crime domain owns exactly two canonical arrays on `masterData.data`:
 
-| Array | Shape | Owner |
-|---|---|---|
-| `crimes` | `[{ id, type, perpetratorId, perpetratorName, victimId, victimName, year, reason, locationId, witnesses[], evidence[], solved, solvedAt, solution, punishment, method, severity, recordedAt, notes, metadata, civilViolation, religiousViolation, religionId, violatedLaws[] }]` | Crime |
-| `vendettas` | `[{ id, householdAId, householdAName, householdBId, householdBName, characterAId, characterAName, characterBId, characterBName, cause, originCrimeId, startedYear, status, deaths[], escalatedAt, resolvedAt, resolution, notes, createdAt, updatedAt }]` | Crime |
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
 
-Crime **does not** own:
+The crime subsystem follows the reference layer chain (constants ->
+state -> queries -> commands -> view-models -> UI -> modals), with
+two distinct additions:
 
-| Data | Owner | Read via | Written via |
-|---|---|---|---|
-| Character identity, death, professions | Character | `getCharacterById`, `getCurrentLocationId` (global) | `killCharacter`, `CharacterCommands.addProfession` (for profession additions) |
-| Household membership, prestige, crime history | Household | `getHouseholdById` | `HouseholdCommands.applyPerpetratorCrime` / `applyVictimCrime` / `applyExecutionToHousehold` |
-| Places, leaders, government assignment | Location | `getPlaceById`, `getCurrentLocationId` | — |
-| Government type, justice severity, watch, settlement wealth/debt, civil laws | Settlement | `SettlementQueries.getSettlementData`, `SettlementLawQueries.getCivilLaws`, `SettlementReligionQueries.getDominantReligion` | `SettlementGovernmentCommands.setJusticeSeverity` / `setWatch`, `SettlementLawCommands` |
-| Religious laws, religion membership | Religion | `ReligionLaws.getLawsByReligion`, `ReligionQueries.getReligion` / `getAllReligions` | — |
-| Enterprises and their impact on settlement income | Industry | `IndustryQueries.getIndustryTaxRevenue` / `getIndustryEnterpriseStats` | — |
-| Relationships | Character | `getRelationshipsForCharacter`, `endRelationship` (globals) | those same globals |
+  - A law-integration layer between constants and commands. It
+    composes the settlement and religion domains to decide legality.
+  - A compatibility shim (vendetta-system.js) that forwards legacy
+    callers onto the canonical modules.
 
-Cross-domain **writes** go through the owning domain's commands. Cross-domain **reads** go through the owning domain's queries. Crime code never writes into another domain's canonical arrays.
-
-### Canonical law sources
-
-The ownership table above names the correct modules. The following
-resolvers in `crime-law-integration.js` consume those modules. Each
-resolver tries the canonical source first, then a documented
-alternative, then throws:
-
-    _getCivilLaws(locationId)
-        SettlementLawQueries.getCivilLaws          ← canonical
-        GovernmentLaws.getCivilLaws                ← alternative
-        throw otherwise
-
-    _getReligionLaws(religionId)
-        ReligionLaws.getLawsByReligion             ← canonical
-        ReligionState.getLawsByReligion            ← alternative
-        throw otherwise
-
-    _getDominantReligion(locationId)
-        SettlementReligionQueries.getDominantReligion  ← canonical
-        SettlementState.getDominantReligion            ← alternative
-        throw otherwise
-
-    _getSettlementData(locationId)
-        SettlementState.getSettlementData          ← canonical
-        window.getSettlementData                   ← alternative
-
-Note: `SettlementQueries.getDominantReligion` and
-`SettlementQueries.getCivilLaws` do NOT exist. Those methods belong
-to `SettlementReligionQueries` and `SettlementLawQueries`
-respectively. If a future contributor sees a resolver probing
-`SettlementQueries` for those methods, it is a bug — the probe will
-always fail. The v6.1 pass removed all such dead probes.
-
-### File inventory
-
-Each crime module lives at `js/crime/<file>`. The pre-refactor path
-`js/core/crime/<file>` is no longer used and must not appear in any
-HTML script tag.
-
-    js/crime/crime-constants.js          vocabulary and defaults
-    js/crime/crime-state.js              canonical records + indexes
-    js/crime/crime-law-integration.js    applicability + evaluation
-    js/crime/crime-queries.js            derived read API
-    js/crime/crime-commands.js           orchestration + persist
-    js/crime/crime-view-models.js        presentation shaping
-    js/crime/crime-ui-stats.js           DOM rendering for stats
-    js/crime/modals-crime.js             modal lifecycle
-    js/crime/crime-bootstrap.js          load-time verification
-    js/crime/vendetta-system.js          DEPRECATED compatibility shim
-
-`vendetta-system.js` is retained only so pre-refactor callers that
-reference `window.VendettaSystem.*` do not break during migration.
-Every one of its functions forwards to the canonical implementation
-in `CrimeState`, `CrimeCommands`, or `CrimeQueries` and emits a
-one-time deprecation warning. New code must not use it.
-
----
-
-## 2. Load order
-
-Load order in every HTML page that includes the crime domain:
-
-    <!-- Core -->
-    js/core/storage.js
-    js/core/ids.js
-    js/core/time.js
-    js/core/formatting.js
-    js/core/accessors.js
-    js/core/collections.js
-    js/core/icons.js
-    js/core/modals-core.js
-    js/core/ui.js
-
-    <!-- Cross-domain (crime reads from these) -->
-    js/location/location-state.js
-    js/location/location-queries.js
-    js/location/location-hierarchy.js
-    js/location/location-commands.js
-    js/location/location-bootstrap.js
-
-    js/character/character-state.js
-    js/character/character-commands.js
-    js/character/character-queries.js
-
-    js/households/household-state.js
-    js/households/household-commands.js
-    js/households/household-queries.js
-
-    js/religion/religion-state.js
-    js/religion/religion-laws.js
-    js/religion/religion-queries.js
-
-    js/settlement/settlement-state.js
-    js/settlement/settlement-command-commit.js
-    js/settlement/settlement-queries.js
-    js/settlement/settlement-rank-queries.js
-    js/settlement/settlement-law-queries.js
-    js/settlement/settlement-religion-queries.js
-    js/settlement/settlement-government-commands.js
-    js/settlement/settlement-fiscal-commands.js
-    js/settlement/settlement-law-commands.js
-    js/settlement/settlement-rank-commands.js
-    js/settlement/settlement-specialization-commands.js
-    js/settlement/settlement-debt-commands.js
-    js/settlement/settlement-wealth-commands.js
-    js/settlement/settlement-feature-commands.js
-    js/settlement/settlement-view-models.js
-    js/settlement/settlement-ui-state.js
-
-    js/industry/industry-queries.js
-
-    <!-- Crime domain (loads last) -->
+  CONSTANTS (leaf; pure vocabulary + helpers; NO dependencies)
     js/crime/crime-constants.js
+
+  STATE (owns canonical crime + vendetta arrays + indexes)
     js/crime/crime-state.js
+
+  LAW INTEGRATION (composes Settlement + Religion to evaluate
+                   legality)
     js/crime/crime-law-integration.js
+
+  QUERIES (read-only; composes State into derived statistics)
     js/crime/crime-queries.js
+
+  COMMANDS (orchestration; the only saveMasterData site)
     js/crime/crime-commands.js
+
+  VIEW MODELS (presentation shaping; NO DOM, NO reads)
     js/crime/crime-view-models.js
+
+  UI STATS (DOM rendering for stats + crime + vendetta lists)
     js/crime/crime-ui-stats.js
+
+  MODALS (DOM + commands; batch persist per successful action)
     js/crime/modals-crime.js
-    js/crime/vendetta-system.js       (legacy shim; loads after CrimeCommands)
-    js/crime/crime-bootstrap.js       (loads LAST)
 
-Critical constraints:
-
-  1. `crime-constants.js` must load before everything else in the crime
-     domain. Every other crime module reads it at load.
-
-  2. `crime-state.js` must load before `crime-law-integration.js`,
-     `crime-queries.js`, `crime-commands.js`, and `crime-bootstrap.js`.
-     All four call CrimeState methods at load or on first use.
-
-  3. `crime-law-integration.js` must load before `crime-commands.js`.
-     Commands call Law.evaluateAction() at runtime.
-
-  4. `crime-commands.js` must load before `crime-bootstrap.js` and
-     before `vendetta-system.js`. Bootstrap verifies its surface; the
-     shim forwards to it.
-
-  5. `modals-crime.js` must load after `modals-core.js`, `ui.js`,
-     `formatting.js`, and `icons.js`. It verifies all four at load.
-
-  6. `crime-ui-stats.js` must load after `icons.js` (for getIcon) and
-     after `modals-crime.js` (for CrimeModals formatters).
-
-  7. `crime-bootstrap.js` must load LAST. It verifies every other
-     crime module, every cross-domain method, and hydrates CrimeState.
-
-If you see `Cannot read property 'X' of undefined` at load, check
-the order above against the actual HTML script tags.
-
----
-
-## 3. Core compatibility
-
-The crime domain relies on the canonical core helpers. The following
-patterns are prohibited in crime modules. Each one was present in the
-pre-v6.1 code and was removed by the compatibility pass.
-
-### Time
-
-    PROHIBITED:  window.getCurrentYearSafe()
-    CANONICAL:   window.getCurrentYear()
-
-`getCurrentYearSafe` is a deprecated alias in `js/core/time.js`. Every
-crime module uses the canonical name. The pattern `return 1250;` as a
-fallback does not exist in this domain. A missing `getCurrentYear` is
-an application load failure, not a fabricated year.
-
-Files affected by the v6.1 pass:
-    crime-bootstrap.js        (verify globals)
-    crime-view-models.js      (_currentYear helper)
-    crime-queries.js          (_getCurrentYear helper)
-    crime-state.js            (_now helper)
-    crime-commands.js         (_now helper)
-    modals-crime.js           (default year in three submit paths)
-
-### UI helpers
-
-    PROHIBITED:  window._escapeHtml(), window._showToast(), window._getIcon()
-    CANONICAL:   window.escapeHtml(), window.showToast(), window.getIcon()
-
-The underscore-prefixed names are deprecated aliases. Every crime
-module uses the canonical names. Loading a crime module against a
-future core where the aliases are removed must not break.
-
-Files affected:
-    modals-crime.js           (load guards, all inline escape/toast/icon calls)
-    crime-ui-stats.js         (load guard, getIcon helper)
-
-### Modal infrastructure
-
-The core modal shell is `js/core/modals-core.js`. It exposes:
-
-    window.openModal(options)  →  { element, close }
-    window.closeTopModal()
-    window.showToast(message, type)    (from ui.js)
-    window.confirmDialog(message, title, onConfirm)
-    window.escapeHtml(str)             (from formatting.js)
-    window.getIcon(name)               (from icons.js)
-
-The accepted keys on `openModal` are:
-
-    titleHtml      trusted HTML for the modal title
-    contentHtml    trusted HTML for the modal body
-    confirmText    button label
-    cancelText     button label ('' hides the cancel button)
-    onMount        fn(element)   — called after DOM insertion
-    onConfirm      fn(element)   — called on confirm; return false to keep open
-    size           'small' | 'medium' | 'large'
-
-The keys `title` and `content` are silently ignored. A modal that
-passes those renders with the default title ("Modal") and an empty
-body. The v6.1 pass corrected 7 modal call sites.
-
-The return value is `{ element, close }`. Event delegation must
-attach to `result.element`. The v6.1 pass corrected all 6 crime
-modals to read `result.element` instead of `result.content`.
-
-There is no `window.ModalsCore` namespace. Some pre-refactor files in
-other domains reference one; those files are legacy and must be
-migrated to the direct globals before they will work.
-
-Files affected:
-    modals-crime.js           (all 6 modal call sites)
-
-### Cross-domain resolver naming
-
-The settlement domain splits its read APIs across several query
-modules. The following names do NOT exist:
-
-    SettlementQueries.getDominantReligion     → SettlementReligionQueries.getDominantReligion
-    SettlementQueries.getCivilLaws            → SettlementLawQueries.getCivilLaws
-    SettlementState.getCivilLaws              → SettlementLawQueries.getCivilLaws
-    SettlementState.getDominantReligion       → SettlementReligionQueries.getDominantReligion
-                                              (SettlementState retained as alternative — see §1)
-
-A resolver that probes these dead names will always fail. The v6.1
-pass removed all such probes from `crime-law-integration.js` and
-`crime-bootstrap.js`.
-
-The crime domain's cross-domain resolvers are documented in §1
-under "Canonical law sources".
-
-### Bootstrap verification
-
-`crime-bootstrap.js` verifies the surfaces above at load. If a
-dependency is missing or wrong, the page fails at load with a clear
-message naming the missing item. The bootstrap does NOT fall back to
-silent degradation for any required dependency.
-
-Optional dependencies (currently `SettlementGovernmentCommands
-.recordCrimeImpact`) are warned once on first use and skipped. No
-other dependency is optional.
-
-### Files reviewed in the v6.1 pass
-
-    crime-constants.js         clean (no changes)
-    crime-state.js             getCurrentYearSafe → getCurrentYear;
-                               _emptyVendettas wrapper removed
-    crime-law-integration.js   cross-domain resolvers fixed; silent
-                               null fallback removed from
-                               _getDominantReligion
-    crime-queries.js           getCurrentYearSafe → getCurrentYear
-    crime-commands.js          getCurrentYearSafe → getCurrentYear
-    crime-view-models.js       getCurrentYearSafe → getCurrentYear
-    crime-ui-stats.js          _getIcon → getIcon
-    modals-crime.js            title/content → titleHtml/contentHtml;
-                               _escapeHtml/_showToast/_getIcon → canonical;
-                               getCurrentYearSafe → getCurrentYear
-    crime-bootstrap.js         getCurrentYearSafe → getCurrentYear;
-                               cross-domain resolver corrected;
-                               SettlementReligionQueries and
-                               SettlementLawQueries added to the
-                               verification surface
-    vendetta-system.js         clean (shim, delegates to canonical)
-
----
-
-## 4. State contract
-
-`CrimeState` (`js/crime/crime-state.js`) is the domain authority for
-canonical crime and vendetta records. It owns:
-
-  - the canonical arrays (`masterData.data.crimes`,
-    `masterData.data.vendettas`)
-  - indexes over those arrays
-  - lifecycle transitions (record → solve; active → escalated →
-    resolved)
-  - subscription notification
-
-It does not:
-  - save (`CrimeCommands.persist` owns the write)
-  - decide punishments or consequences (`CrimeLawIntegration`)
-  - compute statistics (`CrimeQueries`)
-  - orchestrate workflows (`CrimeCommands`)
-
-### Public reads return clones
-
-Every public read (`getCrime`, `getAllCrimes`, `getCrimesByPerpetrator`,
-`getCrimesByVictim`, `getCrimesInvolvingCharacter`, `getCrimesByType`,
-`getCrimesByLocation`, `getUnsolvedCrimes`, `getCrimeCount`,
-`getVendetta`, `getAllVendettas`, `getVendettasByHousehold`,
-`getVendettasByCharacter`, `getActiveVendettas`,
-`getActiveVendettaBetween`, `getVendettaCount`) returns deep clones.
-Callers cannot mutate canonical state through a returned object.
-
-### Canonical accessors
-
-`_getCrimeCanonical`, `_getAllCrimesCanonical`, `_getVendettaCanonical`,
-`_getAllVendettasCanonical`, and `_setVendettaStatus` return live
-records and are reserved for `CrimeCommands` and `CrimeLawIntegration`
-during a command. Anything else must use the public reads.
-
-### Mutation primitives
-
-`recordCrime`, `solveCrime`, `deleteCrime`, `createVendetta`,
-`recordVendettaDeath`, `resolveVendetta`, `deleteVendetta` each:
-
-  1. Acquire a mutation lock (single-threaded recursive-call guard)
-  2. Hydrate from masterData if not yet hydrated
-  3. Perform the mutation
-  4. Call `window.markDataDirty()`
-  5. Publish the event to subscribers
-  6. Release the mutation lock
-  7. Return `{ success: true, data: ... }` or
-     `{ success: false, reason, code }`
-
-They do NOT save, do NOT dispatch `CustomEvent`, and do NOT modify
-indexes for other records. The commands own the commit tail.
-
-### Lifecycle invariants
-
-  - A crime is either solved or not. `solved === true` implies
-    `solvedAt` is a year; `solved === false` implies `solvedAt` is
-    null. `recordCrime` NEVER records a solved crime — the invariant
-    is enforced by ignoring `data.solved`. `triggerExecution` records
-    the crime unsolved, then calls `solveCrime` immediately.
-
-  - A vendetta's status only reaches `ESCALATED` via
-    `recordVendettaDeath` (automatic at the threshold) or via the
-    explicit `_setVendettaStatus` primitive (called by
-    `CrimeCommands.escalateVendetta`). It only reaches `RESOLVED` via
-    `resolveVendetta`.
-
-  - Historical snapshot fields (`perpetratorName`, `victimName`,
-    `householdAName`, `householdBName`, `characterAName`,
-    `characterBName`) are snapshots at time of recording and are
-    never refreshed from live sources.
-
-### Cache management
-
-  - `hydrateFromMasterData(force)` — idempotent. If `force` is falsy
-    and indexes are already built, no-op. If `force` is true, rebuild
-    from masterData regardless. Throws on duplicate IDs, missing
-    IDs, or malformed canonical shape.
-
-  - `reload()` — clears indexes and forces a full rebuild. Publishes
-    `STATE_EVENTS.CACHE_RELOADED` on success. Returns `true` on
-    success, `false` on failure (which is also logged to console).
-
-  - `invalidateCache()` — legacy alias for `reload()`.
-
-  - `validateIntegrity()` — warn-only. Returns an array of warning
-    strings and logs them via `console.warn`. Does NOT throw. Used by
-    `crime-bootstrap.js` on first load.
-
----
-
-## 5. Command contract
-
-`CrimeCommands` (`js/crime/crime-commands.js`) is the orchestration
-layer. It does NOT decide legal consequences; it executes what
-`CrimeLawIntegration.evaluateAction()` returns.
-
-### Result shape
-
-Every command returns:
-
-    { success: true, data: {...} }
-    { success: false, reason: string, code?: string }
-
-Codes come from `CrimeConstants.CODES`. Codes are stable strings and
-may be switched on by callers. Codes are never removed once they
-have appeared in a shipped result.
-
-### The four public commands
-
-`triggerMurder(victimId, killerId, options)`:
-
-  1. Resolve victim and killer, validate (both exist, victim alive,
-     not self)
-  2. Resolve year, reason, killerGotAway, startVendetta, location
-  3. Call `Law.evaluateAction(killerId, action, context)`
-  4. `State.recordCrime(...)` (unsolved)
-  5. If `!killerGotAway`: `State.solveCrime(...)` (solved)
-  6. `window.killCharacter(victim, year, 'Murdered', {...})`
-  7. Execute legal consequences (currently: only EXECUTION
-     consequences are handled; other consequence types are returned
-     with `applied: false, reason: 'no-handler'` and surfaced to the
-     caller without being guessed at)
-  8. If `startVendetta` and different households:
-     `createBloodFeud(...)`
-  9. Apply household side effects via
-     `HouseholdCommands.applyVictimCrime` /
-     `applyPerpetratorCrime`
-  10. Apply settlement side effects via
-      `SettlementGovernmentCommands.recordCrimeImpact` (optional)
-  11. `logEvent('murder', 'Murder', ...)`
-  12. `_commit(C.EVENTS.CRIME_RECORDED, {...})`
-
-`triggerExecution(condemnedId, options)`:
-
-  1. Resolve condemned, validate (exists, alive)
-  2. Resolve year, reason, method, executionerId, location
-  3. If `executionerId`: `Law.evaluateAction(...)`. Else: skip law
-     evaluation (executions by "the state" have no executioner to
-     evaluate).
-  4. `State.recordCrime(...)` (unsolved)
-  5. `State.solveCrime(...)` (solved — the outcome is legally
-     determined)
-  6. `window.killCharacter(...)`
-  7. If `endRelationships !== false`: for each ongoing relationship,
-     `window.endRelationship(...)`
-  8. Apply household side effects via
-     `HouseholdCommands.applyExecutionToHousehold`
-  9. Apply settlement side effects via `recordCrimeImpact` (optional)
-  10. `logEvent('execution', 'Execution', ...)`
-  11. `_commit(C.EVENTS.CRIME_RECORDED, {...})`
-
-`escalateVendetta(vendettaId, options)`:
-
-  Two modes. See command body for full details.
-
-  Without `options.force`:
-     Succeeds only if the vendetta has reached
-     `C.VENDETTA_ESCALATION_THRESHOLD`. This is the retry path for
-     automatic escalation that somehow did not fire.
-
-  With `options.force === true`:
-     Succeeds regardless of the death count, but requires
-     `options.reason` for the audit trail.
-
-  Returns `{ success: true, data: { vendetta, escalated } }` where
-  `escalated` is true if the call transitioned the vendetta to
-  ESCALATED, false if it was already ESCALATED (idempotent).
-
-`createBloodFeud(victimId, killerId, options)`:
-
-  Called by `triggerMurder`. Derives household IDs from the two
-  characters. If a vendetta already exists between those households,
-  records a new death on it. Otherwise creates a new vendetta and
-  records the first death.
-
-### The commit tail
-
-Every command that mutates calls `_commit(eventName, payload)`. That
-helper performs, in order:
-
-  1. `State.hydrateFromMasterData(true)` — force rebuild of indexes
-  2. `window.markDataDirty()` — flag for next save
-  3. `State.publish(eventName, payload)` — in-process subscribers
-  4. `window.dispatchEvent(new CustomEvent(eventName, { detail }))` —
-     cross-domain consumers
-
-It does NOT save. Persistence is `CrimeCommands.persist()`.
-
-### Persistence boundary
-
-`CrimeCommands.persist()`:
-
-  1. If `window.saveMasterData` is missing, return
-     `{ success: false, reason: 'saveMasterData unavailable',
-     code: C.CODES.PERSIST_FAILED }`.
-  2. Call `window.saveMasterData()`.
-  3. Return `{ success: true, data: null }` or
-     `{ success: false, reason, code: PERSIST_FAILED }`.
-
-The UI calls `persist()` exactly once per user action, after the
-command returns success. `modals-crime.js` does this via
-`_commitAndPersist()`.
-
-### Household side effects
-
-All household effects route through `HouseholdCommands`:
-
-    HouseholdCommands.applyPerpetratorCrime(householdId, params)
-    HouseholdCommands.applyVictimCrime(householdId, params)
-    HouseholdCommands.applyExecutionToHousehold(householdId, params)
-
-Each is a required dependency of `crime-commands.js`. If
-`HouseholdCommands` is missing, the module fails at load with a
-clear error naming the missing surface.
-
-### Settlement side effects
-
-`SettlementGovernmentCommands.recordCrimeImpact(locationId,
-eventData)` is optional. If absent, crime-commands warns once on
-first use and skips the settlement effect. If present but broken
-(module loaded, method missing), that is a boot-order failure — the
-warn-once path is only for the "whole module is absent" case.
-
-### Legal consequence execution
-
-`_executeConsequence(consequence, ctx)` handles:
-
-    EXECUTION         → triggerExecution(...)
-    IMPRISONMENT      → { applied: false, reason: 'no-handler' }
-    EXILE             → { applied: false, reason: 'no-handler' }
-    FINE              → { applied: false, reason: 'no-handler' }
-    PENANCE           → { applied: false, reason: 'no-handler' }
-    EXCOMMUNICATION   → { applied: false, reason: 'no-handler' }
-    OTHER             → { applied: false, reason: 'unrecognised' }
-    (unknown)         → { applied: false, reason: 'unrecognised' }
-
-Unhandled consequences are returned to the caller in the result's
-`consequenceResults` array. They are never silently dropped, and the
-caller is never told a consequence was applied that was not.
-
----
-
-## 6. Query contract
-
-`CrimeQueries` (`js/crime/crime-queries.js`) is the application-facing
-read API. It composes the primitive reads from `CrimeState` into
-derived statistics.
-
-### Result shape
-
-Queries return their natural values:
-
-  - `getCrime(id)` → crime record or null
-  - `getAllCrimes()` → array (clones)
-  - `getCrimesByPerpetrator(id)` → array (clones)
-  - `getCrimesByVictim(id)` → array (clones)
-  - `getCrimesInvolvingCharacter(id)` → array (clones, deduplicated
-    across perpetrator and victim)
-  - `getCrimesByCharacter(id)` → array (LEGACY alias for
-    getCrimesByPerpetrator)
-  - `getCrimesByType(type)` → array (clones)
-  - `getCrimesByLocation(id)` → array (clones)
-  - `getUnsolvedCrimes()` → array (clones)
-  - `getCrimeCount()` → number
-
-Vendetta queries have the same shape. `includeResolved` defaults to
-TRUE (resolved vendettas are included). Pass
-`{ includeResolved: false }` to exclude them.
-
-### Statistics
-
-`getLocationCrimeStats(locationId, year, windowYears)` returns a
-structure whose `period` field carries `{ startYear, endYear,
-windowYears }` — the exact window used for the "recent" columns. All
-other statistics in the result cover the FULL history for that
-location. The `year` argument selects the reference year for the
-recent window; it is NOT a filter on `totalCrimes` and is NOT a
-filter on the derived distributions.
-
-`getOverallCrimeStats(year, windowYears)` has the same semantics
-globally.
-
-`getCrimeSeverityStats()`, `getCrimeClearanceRate()`, and
-`getCrimeTrends(locationId, years, endYear)` are also available. See
-the query reference below.
-
-### Crime burden semantics
-
-The metric `crimeBurden` is "historical recorded crimes per current
-resident". It is NOT a rate (it is not temporal), and it does not
-cover a specific window. `recentCrimeBurden` is the equivalent for
-the recent window. Both are null when the population accessor
-(`getLocationPopulationCount`) is unavailable.
-
-`getNormalizedCrimeBurden(locationId, year, windowYears)` clamps the
-value into [0, 1] for UI code that expects a bounded scalar. The
-unclamped value remains available on the location stats result.
-
-`getCrimeRateByLocation(locationId)` is a LEGACY alias for
-`getNormalizedCrimeBurden`. Documented as lossy; prefer the
-non-aliased name.
-
-### Empty vs missing
-
-A missing settlement/location is null.
-An existing location with zero crimes is an empty array or zero
-count. These are not the same, and this module never conflates them.
-
----
-
-## 7. Law integration contract
-
-`CrimeLawIntegration` (`js/crime/crime-law-integration.js`) is the
-boundary between Crime and the two law systems (civil via Settlement,
-religious via Religion).
-
-### Applicability
-
-`getApplicableLaws(characterId, domain)` returns all laws that apply
-to the character, regardless of enforcement status. Each item is:
-
-    {
-      law:         the law record,
-      source:      'civil' | 'religious',
-      sourceId:    locationId (civil) or religionId (religious),
-      sourceName:  resolved display name,
-      applicability: 'universal' | 'follower' | 'official_religion',
-      isEnforced:  boolean
-    }
-
-Applicability modes:
-
-  `universal`         Civil laws. Apply to everyone in the location.
-
-  `follower`          Religious laws of the character's own religion.
-                      Apply only to followers.
-
-  `official_religion` Religious laws of the settlement's dominant
-                      religion in a theocracy or a settlement with
-                      `useReligiousLawsAsCivil === true`. Apply to
-                      everyone, always enforced.
-
-`getEnforcedLaws(characterId, domain)` returns only the subset
-whose `isEnforced === true`. This is the correct entry point for
-enforcement logic.
-
-### Action evaluation
-
-`evaluateAction(characterId, action, context)` returns:
-
-    {
-      lawful:        boolean,
-      violations:    all violations (civil + religious, post-supremacy),
-      civil:         civil violations after supremacy,
-      religious:     religious violations after supremacy,
-      governingLaw:  highest-severity enforced violation, or null,
-      consequences:  derived consequences (enforced only)
-    }
-
-`action` must include `type` and `domain`. `context` may include
-`locationId` (overrides the character's current location) and any
-other fields the law's violationCheck might read.
-
-### Supremacy
-
-In a theocracy or `useReligiousLawsAsCivil` settlement, the state
-religion's law governs. If any religious violation exists, it takes
-precedence and civil violations are folded into it. This is applied
-INSIDE `evaluateAction`; there is no separate "apply supremacy
-afterwards" step.
-
-### Violation detection
-
-A law only criminalises an action if it explicitly opts in.
-Matching the law's `domain` against the action's `domain` is NOT
-sufficient — any violence-domain law would otherwise catch any
-violent action. Explicit opt-in is one of:
-
-  - `law.crimeMapping.crimeType === action.type`
-  - `law.crimeMapping.crimeTypes` contains `action.type`
-  - `law.violationCheck(action, context)` returns true
-
-Modifiers (`law.modifiers`) further constrain the match: each key
-must equal the corresponding value on `action.details[key]` or
-`context[key]`. Falsy values (0, false, '') are legitimate; only
-undefined falls through to the secondary source.
-
-### Consequences
-
-Consequences are derived only from ENFORCED violations. A law that
-is applicable but not enforced produces no consequence.
-
-The consequences array is never populated with invented punishments.
-If a law is enforced but declares no consequence, the result includes
-`{ type: 'other', description: null, source: {...} }` so the caller
-knows the law was enforced without a prescribed punishment.
-
-Each consequence has shape:
-
-    {
-      type:        one of CONSEQUENCE_TYPES, or 'other',
-      description: string | null,
-      method:      string | null,   (for EXECUTION)
-      authority:   string | null,
-      source:      { lawId, lawName, source, sourceId, sourceName }
-    }
-
-The command layer executes what it recognises (currently: EXECUTION).
-Unrecognised types are returned with `applied: false` and surfaced
-to the caller.
-
-### Search and statistics
-
-`searchLaws(query, locationId, religionId)` searches either civil
-laws of a location, religious laws of a religion, or both. Empty
-arguments to both `locationId` and `religionId` search all known
-locations and all known religions. If a source fails to load, it is
-skipped and the search continues — search is a UI-facing best-effort
-operation.
-
-`getLawStatistics(locationId)` returns aggregate counts by source,
-domain, severity, and type.
-
----
-
-## 8. View model contract
-
-`CrimeViewModels` (`js/crime/crime-view-models.js`) is the pure
-presentation-shaping layer. No DOM, no queries, no state, no commands.
-Every function takes the data it needs as an argument.
-
-### What view models own
-
-  - the shape every renderer consumes
-  - label lookups (crime type names, vendetta status labels, severity
-    labels)
-  - icon NAMES (not rendered icons; the UI resolves via getIcon)
-  - modal field defaults
-
-### What view models do not own
-
-  - HTML
-  - icon resolution
-  - state, query, or command access
-  - severity band thresholds (delegated to CrimeConstants.classifySeverity)
-  - crime type vocabulary (falls back to snake_case-to-Title for
-    unknown types so the identifier is still legible)
-
-### Primitive formatters
-
-`formatCrimeType(type)`, `formatVendettaStatus(status)`,
-`formatSeverity(severity)`, `formatSeverityBand(severity)`,
-`formatYear(year)`, `formatPersonName(character)`,
-`formatSnapshotName(name)`. All pure, all presentational.
-
-### Builders
-
-  `toCrimeListItem(crime, ctx)` — the shape crime list renderers consume
-  `toCrimeListItems(crimes, ctx)` — batch
-  `toCrimeDetailsViewModel(crime, ctx)` — full details modal shape
-  `toVendettaListItem(vendetta)` — the shape vendetta list renderers consume
-  `toVendettaListItems(vendettas)` — batch
-  `toVendettaDetailsViewModel(vendetta)` — full details modal shape
-  `toCrimeStatsViewModel(stats, locationName)` — stats panel shape
-  `toMurderModalViewModel(options)` — default field values
-  `toExecutionModalViewModel(options)` — default field values
-  `toVendettaModalViewModel(options)` — default field values
-  `toLawEvaluationViewModel(evaluation)` — display-ready summary of a
-                                       legal evaluation
-
-View models never fabricate domain values. Missing values are null,
-not defaults. A missing crime returns null from every builder.
-
----
-
-## 9. Modal contract
-
-`CrimeModals` (`js/crime/modals-crime.js`) is the modal lifecycle
-layer. It calls commands for mutations, queries for reads, and view
-models for presentation.
-
-### Public modals
-
-    openMurderModal(options)
-    openExecutionModal(options)
-    openVendettaModal(options)
-    openCrimeDetailsModal(crimeId)       (read-only)
-    openVendettaDetailsModal(vendettaId) (read-only)
-    openCrimeStatsModal(locationId, year) (read-only)
-
-Each takes `options` and, in the write paths, calls
-`options.onComplete(data)` after a successful command + persist.
-
-### Persist boundary
-
-Every write modal calls `_commitAndPersist()` after the command
-returns success. That helper:
-
-  1. Calls `CrimeCommands.persist()`
-  2. If persist fails, shows a warning toast ("Saved in memory, but
-     persisting failed: ...")
-  3. Closes the modal and calls `options.onComplete`
-
-The read-only modals (details, stats) do not call `persist()`.
-
-### Presentation helpers
-
-`CrimeModals` re-exports `formatCrimeType`, `formatVendettaStatus`,
-`formatSeverity`, `formatPersonName`, and `iconForCrimeType` from
-`CrimeViewModels`. These exist for backward compatibility with
-callers that use `CrimeModals.formatX`. New code should use
-`CrimeViewModels` directly.
-
-`iconForCrimeType(type)` is the only helper that resolves the icon
-NAME to an actual icon element. It calls `window.getIcon(name)`.
-
-### Vendetta creation quirk
-
-`openVendettaModal` calls `window.CrimeState.createVendetta` directly
-(not through `CrimeCommands.createBloodFeud`). This is intentional:
-`createBloodFeud` derives households from characters, but the
-vendetta modal collects households directly. If `CrimeCommands`
-gains a `createVendettaForHouseholds(householdAId, householdBId,
-options)` command, this modal calls that instead. Documented so
-future maintainers do not "fix" this by routing it through the wrong
-command.
-
----
-
-## 10. Stats UI contract
-
-`CrimeStatsUI` (`js/crime/crime-ui-stats.js`) is the DOM renderer for
-crime statistics panels, crime lists, vendetta lists, and simple
-charts.
-
-### Public renders
-
-    renderStatsPanel(containerId, options)
-    renderCrimeList(containerId, crimes, options)
-    renderVendettaList(containerId, vendettas, options)
-    renderCrimeChart(containerId, data, type)
-    refreshAll()
-    unmount(containerId)
-
-### The render registry
-
-Every render call registers its container, kind, and options in an
-internal `_renderRegistry` map. `refreshAll()` iterates the registry
-and re-renders each container with its original options — this
-preserves `showActions`, `emptyMessage`, and any other presentation
-configuration across refresh.
-
-If a container is unmounted from the DOM, call `unmount(containerId)`
-so `refreshAll()` does not attempt to render into a stale element.
-
-### Render errors
-
-Render errors are logged via `console.error` and return `false`.
-They are never silently swallowed. The renderer does not catch and
-hide errors — it surfaces them so a broken data shape is visible
-in the console.
-
-### Location vs household
-
-Crimes have `locationId`. Vendettas do not — they have participating
-households. The crime list accepts a location filter; the vendetta
-list accepts a household filter. Do not conflate the two.
-
----
-
-## 11. Legacy shim
-
-`vendetta-system.js` (`js/crime/vendetta-system.js`) is a
-DEPRECATED compatibility shim. Every function forwards to the
-canonical implementation and emits a one-time deprecation warning
-via `console.warn`.
-
-The shim exists so pre-refactor callers that referenced
-`window.VendettaSystem.*` continue to work during migration. Its
-returns match the canonical results — structured
-`{ success, data }` / `{ success, reason, code }` — NOT the old
-bare-object-or-null shape. Any caller that used
-`if (result === null)` must migrate to `if (!result.success)`.
-
-The shim must NOT become:
-  - a second storage layer
-  - a second index set
-  - a second VENDETTA_STATUS constant
-  - a second createBloodFeud implementation
-  - anything that writes to `masterData.data.vendettas` directly
-
-If any of those reappear, the file has regressed.
-
----
-
-## 12. Command reference
-
-    CrimeCommands.triggerMurder(victimId, killerId, options)
-    CrimeCommands.triggerExecution(condemnedId, options)
-    CrimeCommands.escalateVendetta(vendettaId, options)
-    CrimeCommands.createBloodFeud(victimId, killerId, options)
-    CrimeCommands.persist()
-    CrimeCommands.getRandomMurderReason(category?)
-    CrimeCommands.getRandomExecutionMethod()
-
-Every command returns a structured result. Success results have
-`success: true`. Failure results have `success: false` and a `code`.
-Commands never display UI and never show toasts.
-
----
-
-## 13. Query reference
-
-Crime
-    CrimeQueries.getCrime(crimeId)
-    CrimeQueries.getAllCrimes()
-    CrimeQueries.getCrimesByPerpetrator(characterId)
-    CrimeQueries.getCrimesByVictim(characterId)
-    CrimeQueries.getCrimesInvolvingCharacter(characterId)
-    CrimeQueries.getCrimesByCharacter(characterId)         (legacy alias)
-    CrimeQueries.getCrimesByType(type)
-    CrimeQueries.getCrimesByLocation(locationId)
-    CrimeQueries.getUnsolvedCrimes()
-    CrimeQueries.getCrimeCount()
-
-Vendetta
-    CrimeQueries.getVendetta(vendettaId)
-    CrimeQueries.getAllVendettas(options)
-    CrimeQueries.getVendettasByHousehold(householdId, options)
-    CrimeQueries.getVendettasByCharacter(characterId, options)
-    CrimeQueries.getActiveVendettas(householdId)
-    CrimeQueries.getActiveVendettaBetween(householdAId, householdBId)
-    CrimeQueries.getVendettaCount()
-
-Statistics
-    CrimeQueries.getLocationCrimeStats(locationId, year?, windowYears?)
-    CrimeQueries.getCrimeTrends(locationId, years?, endYear?)
-    CrimeQueries.getCrimeTypeDistribution(locationId)
-    CrimeQueries.getOverallCrimeStats(year?, windowYears?)
-    CrimeQueries.getCrimeSeverityStats()
-    CrimeQueries.getCrimeClearanceRate()
-    CrimeQueries.getVendettaStats(householdId?)
-    CrimeQueries.getNormalizedCrimeBurden(locationId, year?, windowYears?)
-    CrimeQueries.getCrimeRateByLocation(locationId)        (legacy alias)
-
-Severity bands
-    CrimeQueries.SEVERITY_BANDS                             (read-only view;
-                                                            owned by CrimeConstants)
-
----
-
-## 14. Constants reference
-
-All vocabulary lives in `CrimeConstants` (`js/crime/crime-constants.js`).
-No other module carries a copy of any of these.
-
-    CRIME_TYPES           canonical crime-type ids
-    LAW_TYPES             law / taboo / guideline
-    LAW_CATEGORIES        religious / civil / custom
-    LAW_DOMAINS           marriage / behavior / worship / ... / death
-    LAW_SEVERITY          minor / major / mortal
-    CRIME_SEVERITY        default severity by crime type (overridable by law)
-    SEVERITY_BANDS        low / medium / high / critical
-    CONSEQUENCE_TYPES     execution / imprisonment / exile / fine /
-                          penance / excommunication / other
-    VENDETTA_STATUS       active / escalated / resolved
-    VENDETTA_ESCALATION_THRESHOLD   default 3
-    RELIGIOUS_PUNISHMENTS label vocabulary only (a law must reference)
-    MURDER_REASONS        UI/input vocabulary (not legal truth)
-    EXECUTION_METHODS     UI/system selection vocabulary
-
-    CODES                 error codes for command results
-    EVENTS                cross-domain CustomEvent names
-    STATE_EVENTS          in-process State.publish event names
-
-    DEFAULT_STATS_WINDOW_YEARS      default 5
-    DEFAULT_TREND_YEARS             default 10
-    DEFAULT_CLEARANCE_WINDOW        default 10
-    DEFAULT_VENDETTA_MAX_HISTORY    default 100
-
-    Helpers:
-      getAllCrimeTypes()
-      getSecularCrimeTypes()
-      getReligiousCrimeTypes()
-      isReligiousCrime(crimeType)
-      isSecularCrime(crimeType)
-      isKnownCrimeType(crimeType)
-      getDefaultCrimeSeverity(crimeType)
-      classifySeverity(severity)    single source for band thresholds
-
-Legacy global aliases (`window.CRIME_TYPES`, `window.LAW_TYPES`, etc.)
-are also exported from `crime-constants.js` for pre-refactor callers.
-New code must use `window.CrimeConstants.*` exclusively.
-
----
-
-## 15. Error contract
-
-Silent failure is prohibited.
-
-The patterns
-
-    catch (error) { return []; }
-    catch (error) { return null; }
-    catch (error) { return false; }
-
-are not used to hide dependency or runtime failures in domain code.
-
-An error is either:
-  - rethrown,
-  - converted into a structured domain/application error,
-  - handled explicitly as a documented best-effort operation.
-
-The single documented best-effort operation is
-`CrimeStatsUI` render functions, which log via `console.error` and
-return `false` on failure. This is because rendering must not
-interrupt other DOM work; the failure is surfaced in the console,
-not swallowed.
-
-Everything else — State mutations, Command orchestrations, Law
-evaluation, Bootstrap verification — fails loudly and returns a
-structured failure result, never `null` or `undefined` on the
-failure path.
-
----
-
-## 16. Recursion guard policy
-
-Global processing guards are not used in queries, rules,
-calculations, commands, or renderers.
-
-The single exception is `CrimeState`'s `_mutatingState` boolean,
-which guards against reentrant state mutations during a single
-commit. It is scoped to State's mutation primitives only. It is not
-consulted by queries, commands, view models, or renderers.
-
-The following do not exist anywhere in the crime system:
-
-    _processing
-    _processingCrime
-    _processingQuery
-    _processingCommand
-    _rendering
-
-Composition is legal. A query may call another query. A command may
-call another command (e.g. `triggerMurder` calls `createBloodFeud`).
-A renderer may call another renderer.
-
-If a genuine cycle exists, the dependency graph must be fixed, not
-masked by a boolean flag.
-
----
-
-## 17. Dependency policy
-
-Required dependencies are explicit. They are accessed directly. They
-are not probed with `typeof window.X !== 'undefined'` to decide
-whether to run.
-
-Missing required dependencies fail loudly.
-
-Optional dependencies, where they exist, are documented as optional
-at the point of use, not silently substituted.
-
-The crime domain's required dependencies:
-
-    CrimeConstants
-    CrimeState
-    CrimeLawIntegration
-    CrimeQueries
-    CrimeCommands
-    CrimeBootstrap
-
-    Time (getCurrentYear)
-    ID generation (generateId)
-    Persistence (saveMasterData, markDataDirty)
-    Character death (killCharacter)
-    Event log (logEvent)
-    Randomness (chance, pickRandom)
-
-    CharacterQueries.getCharacterById
-    CharacterQueries.getCurrentLocationId
-    CharacterCommands (any method)
-    HouseholdQueries.getHouseholdById
-    HouseholdCommands.applyPerpetratorCrime
-    HouseholdCommands.applyVictimCrime
-    HouseholdCommands.applyExecutionToHousehold
-    LocationQueries.getPlaceById
-
-    SettlementQueries.getSettlementData
-    SettlementReligionQueries.getDominantReligion
-    SettlementLawQueries.getCivilLaws
-
-    ReligionLaws.getLawsByReligion
-
-    Character relationship globals:
-      getRelationshipsForCharacter
-      endRelationship
-
-Optional (warn-once-on-first-use, then skip):
-
-    SettlementGovernmentCommands.recordCrimeImpact
-
-Informational (used for display only; absence degrades a label,
-not a metric):
-
-    getLocationPopulationCount
-    getPlaceName
-    ReligionState.getReligion
-    ReligionState.getAllReligions
-
----
-
-## 18. Completion standard
-
-The crime module is complete when:
-
-  - State owns canonical records and indexes, and nothing else.
-  - Commands own transaction boundaries and persistence.
-  - Queries are observational and never mutate.
-  - Law integration is the only place that decides legality.
-  - View models are pure presentation shaping.
-  - Modals are the only UI layer.
-  - No module contains fabricated fallbacks for missing values.
-  - No module silently swallows a required-dependency failure.
-  - No module carries a second copy of vocabulary that lives in
-    CrimeConstants.
-  - No module probes for a method that does not exist on its target
-    module.
-  - No module uses a deprecated core alias.
-  - Documentation matches the architecture actually implemented.
-
-Mechanical requirements for the current version:
-
-  - No crime module calls `window.getCurrentYearSafe`. The canonical
-    accessor is `window.getCurrentYear`.
-  - No crime module calls `window._escapeHtml`, `window._showToast`,
-    or `window._getIcon`. The canonical names are `escapeHtml`,
-    `showToast`, `getIcon`.
-  - No crime modal call site passes `title:` or `content:` to
-    `window.openModal`. The accepted keys are `titleHtml` and
-    `contentHtml`.
-  - No crime modal call site reads `result.content` from
-    `window.openModal`. The modal element is `result.element`.
-  - No crime module probes `SettlementQueries.getDominantReligion`
-    or `SettlementQueries.getCivilLaws`. Those methods live on
-    `SettlementReligionQueries` and `SettlementLawQueries`.
-  - No crime module references `window.ModalsCore`. That namespace
-    does not exist.
-  - Every crime module's `LOCATION:` header names `js/crime/<file>`,
-    not `js/core/crime/<file>`.
-
----
-
-## 19. Amendment rule
-
-This document describes the current architecture. If implementation
-reveals a genuine domain contradiction, the contract is amended
-explicitly before the code is changed to accommodate it.
-
-The correct sequence is:
-
-    discover contradiction
-        ↓
-    resolve domain meaning
-        ↓
-    amend contract
-        ↓
-    update affected modules
-
-The incorrect sequence is:
-
-    code gets awkward
-        ↓
-    add another fallback
-        ↓
-    add another State helper
-        ↓
-    add another global flag
-        ↓
-    pretend nothing happened
-
-The crime system has had enough of those.
-
----
-
-END OF DOCUMENTATION
+  BOOTSTRAP (load-time verification + hydration + namespace)
+    js/crime/crime-bootstrap.js
+
+  COMPATIBILITY SHIM (deprecated; forwards to CrimeState /
+                     CrimeCommands / CrimeQueries)
+    js/crime/vendetta-system.js
+
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws/refuses if the dependency
+                          is missing when invoked; the module loads
+                          without it.
+  OPTIONAL              — the module checks and falls back.
+  INFORMATIONAL         — read for display only; absence degrades a
+                          label, not a metric.
+
+Cross-domain references are labeled with their subsystem:
+  [core]        js/core/...
+  [character]   js/character/...
+  [household]   js/households/...
+  [location]    js/location/...
+  [settlement]  js/settlement/...
+  [religion]    js/religion/...
+  [industry]    js/industry/...
+  [formatting]  js/core/formatting.js
+  [ui]          js/core/ui.js
+  [icons]       js/core/icons.js
+  [modals]      js/core/modals-core.js
+  [accessors]   js/core/accessors.js
+  [ids]         js/core/ids.js
+  [time]        js/core/time.js
+  [storage]     js/core/storage.js
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS — crime-constants.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-constants.js
+    Owns: window.CrimeConstants
+      ({ CRIME_TYPES, LAW_TYPES, LAW_CATEGORIES, LAW_DOMAINS,
+         LAW_SEVERITY, CRIME_SEVERITY, SEVERITY_BANDS,
+         CONSEQUENCE_TYPES, VENDETTA_STATUS,
+         VENDETTA_ESCALATION_THRESHOLD, RELIGIOUS_PUNISHMENTS,
+         MURDER_REASONS, EXECUTION_METHODS, CODES, EVENTS,
+         STATE_EVENTS, DEFAULT_STATS_WINDOW_YEARS,
+         DEFAULT_TREND_YEARS, DEFAULT_CLEARANCE_WINDOW,
+         DEFAULT_VENDETTA_MAX_HISTORY,
+         getAllCrimeTypes, getSecularCrimeTypes,
+         getReligiousCrimeTypes, isReligiousCrime, isSecularCrime,
+         isKnownCrimeType, getDefaultCrimeSeverity,
+         classifySeverity }).
+    Load-time dependencies: NONE. Pure data.
+    Call-time dependencies:  NONE.
+    Also exports legacy globals (window.CRIME_TYPES,
+      window.LAW_TYPES, window.LAW_CATEGORIES, window.LAW_DOMAINS,
+      window.LAW_SEVERITY, window.CRIME_SEVERITY,
+      window.VENDETTA_STATUS, window.RELIGIOUS_PUNISHMENTS,
+      window.MURDER_REASONS, window.EXECUTION_METHODS) — flagged
+      as migration-only, new code must use window.CrimeConstants.*.
+    Consumed by (load-time hard guards):
+      [load] crime-state.js             (LOAD-TIME GUARD on
+                                         CrimeConstants)
+      [load] crime-law-integration.js   (LOAD-TIME GUARD;
+                                         also reads LAW_DOMAINS
+                                         via window.CrimeConstants
+                                         at call time)
+      [load] crime-queries.js           (LOAD-TIME GUARD)
+      [load] crime-commands.js          (LOAD-TIME GUARD)
+      [load] crime-view-models.js       (LOAD-TIME GUARD)
+      [load] crime-bootstrap.js         (LOAD-TIME VERIFICATION)
+    Notes:
+      - Pure vocabulary. SEVERITY_BANDS and classifySeverity are the
+        single source for severity band thresholds. No other crime
+        module re-derives them.
+      - CRIME_SEVERITY is a DEFAULT map (not the authoritative
+        severity — laws may override per crime type via
+        crimeMapping). A crime type absent from the map has no
+        default; getDefaultCrimeSeverity returns undefined for it.
+      - CONSEQUENCE_TYPES is the vocabulary the law layer emits and
+        the command layer executes.
+      - MURDER_REASONS and EXECUTION_METHODS are UI/input vocabulary,
+        not legal truth.
+      - The module has no fallback for unknown crime types.
+        isKnownCrimeType / getAllCrimeTypes return exactly what the
+        CRIME_TYPES map contains.
+      - Header declares LOCATION: js/core/crime/crime-constants.js.
+        The physical path is js/crime/crime-constants.js (per the
+        tree). crime-docs.txt §18 calls this out as a
+        pre-refactor path that must not appear in HTML.
+
+--------------------------------------------------------------------------------
+2.2 STATE — crime-state.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-state.js
+    Owns: window.CrimeState
+      ({ hydrateFromMasterData, _initialize,
+         validateIntegrity, getCrime, getAllCrimes,
+         getCrimesByPerpetrator, getCrimesByVictim,
+         getCrimesInvolvingCharacter, getCrimesByCharacter,
+         getCrimesByType, getCrimesByLocation, getUnsolvedCrimes,
+         getCrimeCount, recordCrime, solveCrime, deleteCrime,
+         getVendetta, getAllVendettas, getVendettasByHousehold,
+         getVendettasByCharacter, getActiveVendettas,
+         getActiveVendettaBetween, getVendettaCount,
+         createVendetta, recordVendettaDeath, resolveVendetta,
+         deleteVendetta,
+         _getCrimeCanonical, _getAllCrimesCanonical,
+         _getVendettaCanonical, _getAllVendettasCanonical,
+         _setVendettaStatus, subscribe, reload, invalidateCache }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CrimeConstants          [core] via crime-constants.js
+      window.generateId              [ids]
+      window.getCurrentYear          [time]
+      window.markDataDirty           [storage]
+      window.getCharacterById        [accessors]
+      window.getHouseholdById        [accessors / household facade]
+    Call-time dependencies:
+      window.markDataDirty           (typeof-guarded inside
+                                      _markDirty; missing is
+                                      tolerated with a null check)
+      window.masterData              (defensive — _syncToCanonical
+                                      returns silently if absent)
+    Consumed by:
+      [load] crime-law-integration.js   (indirect — reads via
+                                          runtime, does not load-guard
+                                          on CrimeState)
+      [load] crime-queries.js           (LOAD-TIME GUARD on
+                                          CrimeState namespace)
+      [load] crime-commands.js          (LOAD-TIME GUARD)
+      [load] crime-bootstrap.js         (LOAD-TIME VERIFICATION;
+                                          hydrateFromMasterData;
+                                          validateIntegrity)
+      [load] vendetta-system.js         (LOAD-TIME GUARD + method
+                                          checks for the full
+                                          delegating surface)
+      [load] modals-crime.js            (call-time — used only for
+                                          createVendetta; see
+                                          HAZARDS §2)
+    Notes:
+      - PERSISTENCE CONTRACT (from the header): State owns the
+        canonical arrays on masterData.data.crimes and
+        masterData.data.vendettas. Every mutation primitive calls
+        _markDirty, which FIRST syncs in-memory indexes back to
+        canonical storage (_syncToCanonical) and THEN calls
+        window.markDataDirty. This is critical: prior revisions kept
+        in-memory arrays and canonical arrays out of sync, so the
+        commit tail's hydrateFromMasterData(true) rebuilt indexes
+        from PRE-mutation canonical data and silently discarded the
+        just-applied mutation.
+      - READ CONTRACT: public reads return deep clones. Only the
+        _getXCanonical accessors return live records, and they are
+        reserved for CrimeCommands (and CrimeLawIntegration during a
+        command).
+      - MUTATION PRIMITIVES: recordCrime / solveCrime / deleteCrime
+        / createVendetta / recordVendettaDeath / resolveVendetta /
+        deleteVendetta each:
+          1. Acquire a mutation lock (_mutatingState)
+          2. Hydrate from masterData if not yet hydrated
+          3. Perform the mutation
+          4. Call markDataDirty (via _markDirty, which syncs to
+             canonical first)
+          5. Publish an in-process event via _publish
+          6. Release the lock
+          7. Return { success, data } or { success, reason, code }
+        They do NOT save, do NOT dispatch CustomEvent, and do NOT
+        modify other records' indexes.
+      - LIFECYCLE INVARIANTS (from the header):
+          * A crime is either solved or not. recordCrime NEVER
+            records a solved crime (ignores data.solved). Solving
+            is a transition performed by solveCrime().
+          * A vendetta's status only reaches ESCALATED via
+            recordVendettaDeath (automatic at the threshold) or via
+            _setVendettaStatus (called by
+            CrimeCommands.escalateVendetta). It only reaches RESOLVED
+            via resolveVendetta.
+          * Historical snapshot fields (perpetratorName,
+            victimName, householdAName, householdBName,
+            characterAName, characterBName) are NEVER refreshed from
+            live sources.
+      - CACHE MANAGEMENT:
+          hydrateFromMasterData(force) — idempotent; forces rebuild
+            when force is true.
+          reload() — clears indexes and forces a full rebuild;
+            publishes STATE_EVENTS.CACHE_RELOADED.
+          invalidateCache() — legacy alias for reload().
+          validateIntegrity() — warn-only; returns warning array
+            and logs via console.warn; never throws.
+
+--------------------------------------------------------------------------------
+2.3 LAW INTEGRATION — crime-law-integration.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-law-integration.js
+    Owns: window.CrimeLawIntegration
+      ({ getApplicableLaws, getEnforcedLaws, getReligiousLaws,
+         getCivilLawsForCharacter, evaluateAction, searchLaws,
+         getLawStatistics }).
+    Load-time dependencies: NONE at parse. No module-level guard
+      block; every dependency is checked at call time.
+    Call-time dependencies:
+      window.getCharacterById         [accessors] — _getCharacterById
+                                         throws if missing
+      window.getCurrentLocationId     [accessors] — optional fallback
+                                         path via _getCurrentLocationId
+      window.SettlementState.getSettlementData
+                                      [settlement] — primary source;
+                                         falls back to
+                                         window.getSettlementData
+      window.ReligionLaws.getLawsByReligion
+                                      [religion] — canonical source;
+                                         falls back to
+                                         ReligionState.getLawsByReligion;
+                                         throws if BOTH missing
+      window.SettlementLawQueries.getCivilLaws
+                                      [settlement] — canonical source;
+                                         falls back to
+                                         GovernmentLaws.getCivilLaws;
+                                         throws if BOTH missing
+      window.SettlementReligionQueries.getDominantReligion
+                                      [settlement] — canonical source;
+                                         falls back to
+                                         SettlementState.getDominantReligion;
+                                         throws if BOTH missing
+      window.ReligionState.getReligion
+                                      [religion] — soft (display
+                                         name; missing -> 'Unknown')
+      window.getPlaceName             [accessors] — soft
+                                         (falls back to
+                                         getPlaceById().displayName)
+      window.getPlaceById             [accessors] — soft
+      window.CrimeConstants.LAW_DOMAINS
+                                      [core] via crime-constants.js —
+                                         throws if missing
+    Consumed by:
+      [load] crime-commands.js          (LOAD-TIME GUARD on
+                                          CrimeLawIntegration
+                                          namespace; calls
+                                          evaluateAction at runtime)
+      [load] crime-bootstrap.js         (LOAD-TIME VERIFICATION)
+    Notes:
+      - CANONICAL LAW SOURCES (from the header): the settlement
+        domain splits its reads across three modules —
+          SettlementQueries.getSettlementData
+          SettlementLawQueries.getCivilLaws
+          SettlementReligionQueries.getDominantReligion
+        The prior version probed SettlementState.getCivilLaws and
+        SettlementQueries.getCivilLaws; neither method exists. Those
+        probes were dead code and were removed. A future probe that
+        resurrects them is a bug.
+      - SILENT FALLBACK REMOVED FROM _getDominantReligion: prior
+        versions returned null when neither source was available.
+        In a theocracy this silently skipped religious law, and a
+        murder that violated religious law could be recorded as
+        lawful. The fallback is removed; the function throws.
+      - APPLICABILITY MODES (from the header):
+          'universal'          Civil laws (apply to all residents)
+          'follower'           Religious laws of the character's own
+                               religion
+          'official_religion'  State-religion laws in a theocracy or
+                               useReligiousLawsAsCivil settlement
+                               (apply to everyone, always enforced)
+      - ACTION EVALUATION: a law only criminalises an action if it
+        opts in explicitly via crimeMapping.crimeType,
+        crimeMapping.crimeTypes, or law.violationCheck. Matching the
+        law's `domain` against the action's `domain` is NOT
+        sufficient.
+      - SUPREMACY: in a theocracy or useReligiousLawsAsCivil
+        settlement, religious violations take precedence and civil
+        violations are folded into them. Applied INSIDE
+        evaluateAction, not as a separate post-step.
+      - CONSEQUENCES: derived ONLY from enforced violations. A law
+        that is applicable but not enforced produces no consequence.
+        If an enforced law declares no consequence, the result
+        carries { type: 'other', description: null } so the caller
+        knows the law was enforced but no punishment was prescribed.
+      - NO FABRICATED PUNISHMENTS: consequences come from the laws.
+        Unknown consequence types surface to the caller unchanged.
+
+--------------------------------------------------------------------------------
+2.4 QUERIES — crime-queries.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-queries.js
+    Owns: window.CrimeQueries
+      ({ getCrime, getAllCrimes, getCrimesByPerpetrator,
+         getCrimesByVictim, getCrimesInvolvingCharacter,
+         getCrimesByCharacter, getCrimesByType, getCrimesByLocation,
+         getUnsolvedCrimes, getCrimeCount,
+         getVendetta, getAllVendettas, getVendettasByHousehold,
+         getVendettasByCharacter, getActiveVendettas,
+         getActiveVendettaBetween, getVendettaCount,
+         getLocationCrimeStats, getCrimeTrends,
+         getCrimeTypeDistribution, getOverallCrimeStats,
+         getCrimeSeverityStats, getCrimeClearanceRate,
+         getVendettaStats, getNormalizedCrimeBurden,
+         getCrimeRateByLocation, SEVERITY_BANDS }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CrimeConstants          [core] via crime-constants.js
+      window.CrimeState              [core] via crime-state.js
+      window.getCurrentYear          [time]
+    Call-time dependencies:
+      window.getPlaceById            [accessors] — soft (missing ->
+                                        'Unknown' location label)
+      window.getLocationPopulationCount
+                                     [UNVERIFIED] — soft (missing ->
+                                        crimeBurden/recentCrimeBurden
+                                        are null; NOT 0)
+    Consumed by:
+      [load] crime-bootstrap.js         (LOAD-TIME VERIFICATION;
+                                          method checks)
+      [load] modals-crime.js            (call-time — getCrime,
+                                          getVendetta,
+                                          getLocationCrimeStats,
+                                          getOverallCrimeStats)
+      [load] crime-ui-stats.js          (call-time —
+                                          getLocationCrimeStats,
+                                          getOverallCrimeStats)
+      [load] vendetta-system.js         (LOAD-TIME GUARD + method
+                                          check for
+                                          getVendettaStats)
+    Notes:
+      - READ CONTRACT: queries are observational. They never
+        mutate, never persist, never display UI, never fabricate
+        values for missing dependencies.
+      - TIME WINDOW SEMANTICS: the `year` argument for
+        getLocationCrimeStats / getOverallCrimeStats is an ANALYSIS
+        REFERENCE YEAR for the "recent" window, not a filter on
+        totalCrimes or on the derived distributions. The result
+        carries `period: { referenceYear, windowYears, startYear,
+        endYear }` so callers know the window.
+      - CRIME BURDEN SEMANTICS: crimeBurden = historical recorded
+        crimes per CURRENT resident. Not a rate (not temporal). The
+        documented metric name matches the semantics. Null when
+        getLocationPopulationCount is unavailable.
+      - INCLUDE_RESOLVED DEFAULT: resolved vendettas are INCLUDED by
+        default. Callers pass { includeResolved: false } to exclude.
+        Matches CrimeState.
+      - SEVERITY BANDS: SEVERITY_BANDS is re-exported from
+        CrimeQueries for callers that read from this module, but the
+        canonical owner is CrimeConstants. classifySeverity (also
+        from CrimeConstants) is the single implementation.
+      - EMPTY vs MISSING: a missing settlement/location is null.
+        An existing location with zero crimes is [] or 0. The
+        module never conflates them.
+
+--------------------------------------------------------------------------------
+2.5 COMMANDS — crime-commands.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-commands.js
+    Owns: window.CrimeCommands
+      ({ triggerMurder, triggerExecution, escalateVendetta,
+         createBloodFeud, persist, getRandomMurderReason,
+         getRandomExecutionMethod }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CrimeConstants           [core]
+      window.CrimeState               [core]
+      window.CrimeLawIntegration      [core]
+      window.getCurrentYear           [time]
+      window.generateId               [ids]
+      window.killCharacter            [character] — the TWO-ARGUMENT
+                                       form killCharacter(id, data)
+      window.logEvent                 [events]
+      window.getCharacterById         [accessors]
+      window.getHouseholdById         [accessors / household facade]
+      window.getCurrentLocationId     [accessors]
+      window.getRelationshipsForCharacter
+                                      [character]
+      window.endRelationship          [character]
+      window.HouseholdCommands        [household] —
+        applyPerpetratorCrime, applyVictimCrime,
+        applyExecutionToHousehold are LOAD-TIME METHOD CHECKS
+    Call-time dependencies:
+      window.getCurrentYear           [time] — via _now; missing ->
+                                        throw
+      window.getCurrentLocationId     [accessors] — via
+                                        _resolveLocation
+      window.getHouseholdById         [accessors] — via
+                                        createVendetta — required
+                                        for the household check
+      window.pickRandom               [randomness] — via
+                                        getRandomMurderReason and
+                                        _randomExecutionMethod;
+                                        missing -> 'Unspecified'
+                                        / { id:'unknown', name:
+                                        'Unknown' }
+      window.chance                   [randomness] — for the
+                                        killerGotAway roll; missing
+                                        -> Math.random() < 0.3
+                                        (documented fallback)
+      window.SettlementGovernmentCommands.recordCrimeImpact
+                                      [settlement] — OPTIONAL;
+                                        missing -> warn once and
+                                        skip settlement side
+                                        effects
+      window.saveMasterData           [storage] — via persist();
+                                        missing -> { success:
+                                        false }
+      window.getLastSaveError         [storage] — via persist()
+                                        failure path (typeof-
+                                        guarded)
+      window.dispatchEvent / CustomEvent
+                                      browser — via _dispatch;
+                                        typeof-guarded
+    Consumed by:
+      [load] crime-bootstrap.js         (LOAD-TIME VERIFICATION;
+                                          method checks for
+                                          triggerMurder,
+                                          triggerExecution,
+                                          createBloodFeud,
+                                          escalateVendetta)
+      [load] vendetta-system.js         (LOAD-TIME GUARD + method
+                                          checks for
+                                          escalateVendetta,
+                                          createBloodFeud)
+      [load] modals-crime.js            (call-time —
+                                          triggerMurder,
+                                          triggerExecution)
+    Notes:
+      - DEATH SIGNATURE CONTRACT (from the header): every
+        killCharacter call uses the TWO-ARGUMENT form
+        killCharacter(characterId, deathData) matching
+        markDeceased's payload contract. The pre-refactor four-
+        argument form killCharacter(character, year, cause, options)
+        is NOT supported by the current character subsystem; callers
+        that used it every invocation failed with 'characterId is
+        required.' and crime rolled back.
+      - PERSISTENCE CONTRACT: persist() inspects the boolean return
+        value of window.saveMasterData(). It uses Pattern A from
+        storage.js's DOMAIN PERSIST CONTRACT: on false, reads
+        getLastSaveError() for the reason. Pattern C (discard the
+        return value, report success) is banned.
+      - COMMIT TAIL: every successful command calls
+        _commit(eventName, payload), which performs, in order:
+          1. State.hydrateFromMasterData(true) — rebuild indexes
+          2. window.markDataDirty() — flag for next save
+          3. State.publish(eventName, payload) — in-process
+             subscribers
+          4. dispatchEvent(CustomEvent) — cross-domain consumers
+        It does NOT save. Persistence is CrimeCommands.persist().
+      - LEGAL CONSEQUENCES: _executeConsequence handles EXECUTION;
+        all other types return { applied: false, reason:
+        'no-handler' }. Unknown types return 'unrecognised'. The
+        caller is NEVER told a consequence was applied that was
+        not. Unhandled consequences are returned in
+        consequenceResults.
+      - HOUSEHOLD SIDE EFFECTS: route through HouseholdCommands.
+        applyPerpetratorCrime / applyVictimCrime /
+        applyExecutionToHousehold. All three are HARD load-time
+        method checks.
+      - SETTLEMENT SIDE EFFECTS:
+        SettlementGovernmentCommands.recordCrimeImpact is OPTIONAL.
+        Missing -> warn once and skip. Present-but-missing-method
+        is a boot-order failure (caught by crime-bootstrap.js).
+      - RANDOMNESS: getRandomMurderReason and
+        getRandomExecutionMethod use window.pickRandom. If absent,
+        they return the string 'Unspecified' / { id:'unknown',
+        name:'Unknown' }. The killerGotAway roll uses
+        window.chance if present, otherwise Math.random() < 0.3.
+        Under the documented full-app order, randomness.js is
+        loaded and chance/pickRandom are present.
+
+--------------------------------------------------------------------------------
+2.6 VIEW MODELS — crime-view-models.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-view-models.js
+    Owns: window.CrimeViewModels
+      ({ formatCrimeType, formatVendettaStatus, formatSeverity,
+         formatSeverityBand, formatYear, formatPersonName,
+         formatSnapshotName, crimeIconName,
+         toCrimeListItem, toCrimeListItems,
+         toCrimeDetailsViewModel,
+         toVendettaListItem, toVendettaListItems,
+         toVendettaDetailsViewModel, toCrimeStatsViewModel,
+         toMurderModalViewModel, toExecutionModalViewModel,
+         toVendettaModalViewModel, toLawEvaluationViewModel }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CrimeConstants          [core] via crime-constants.js
+    Call-time dependencies:
+      window.getCurrentYear          [time] — required by
+                                        _currentYear; throws if
+                                        missing. Used by the modal
+                                        default view models.
+    Consumed by:
+      [load] crime-bootstrap.js         (presence check only)
+      [load] modals-crime.js            (LOAD-TIME GUARD on the
+                                          namespace)
+    Notes:
+      - PURE. No DOM. No queries. No state. No commands. Every
+        function takes the data it needs as an argument.
+      - ICON POLICY: exposes icon NAMES via crimeIconName. The UI
+        layer resolves via window.getIcon.
+      - SEVERITY BANDS: formatSeverityBand delegates to
+        CrimeConstants.classifySeverity. Single source.
+      - UNKNOWN CRIME TYPES: formatCrimeType falls through to
+        snake_case-to-Title so the identifier is still legible.
+        crimeIconName returns CIRCLE_DOT for unknown types.
+      - MISSING VALUES: builders return null for null input. View
+        models NEVER fabricate domain values (a missing crime is
+        null, not a defaulted record).
+
+--------------------------------------------------------------------------------
+2.7 UI STATS — crime-ui-stats.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-ui-stats.js
+    Owns: window.CrimeStatsUI
+      ({ renderStatsPanel, renderCrimeList, renderVendettaList,
+         renderCrimeChart, refreshAll, unmount }).
+    Load-time dependencies: NONE at parse. No module-level guard
+      block. Every dependency is checked via _require at call time.
+    Call-time dependencies:
+      window.escapeHtml              [formatting] — required by
+                                        _escapeHtml
+      window.getIcon                 [icons] — required by _getIcon
+      window.formatYear              [formatting] — soft (missing
+                                        -> local formatter)
+      window.getCharacterById        [accessors] — soft (used for
+                                        crime perpetrator/victim
+                                        labels)
+      window.getPlaceById            [accessors] — soft (used for
+                                        crime location labels)
+      window.getPlaceName            [accessors] — soft (used for
+                                        crime location labels)
+      window.CrimeQueries            [crime] — required by
+                                        _getQueries; used by
+                                        renderStatsPanel
+      window.CrimeConstants          [crime] — required by
+                                        _getConstants; used by
+                                        renderVendettaList
+      window.CrimeModals             [crime] — required by
+                                        _getModals; used by both
+                                        renderCrimeList and
+                                        renderVendettaList for
+                                        detail modal openers AND by
+                                        the presentation formatter
+                                        fallbacks
+    Consumed by: any dashboard that renders crime stats, crime
+      lists, vendetta lists, or crime charts.
+    Notes:
+      - RENDER REGISTRY: every render call registers its container,
+        kind, and options. refreshAll() iterates the registry and
+        re-renders each container with its ORIGINAL options.
+        Preserves showActions, emptyMessage, location filters, etc.
+      - RENDER ERRORS: logged via console.error and return false.
+        The renderer does not catch and hide errors — it surfaces
+        them so a broken data shape is visible.
+      - LOCATION vs HOUSEHOLD: crimes have locationId. Vendettas
+        do NOT. The crime list accepts a location filter; the
+        vendetta list accepts a household filter. Do not conflate.
+      - The _getIcon helper requires window.getIcon. Prior revisions
+        called window._getIcon, which does not exist.
+      - Presentation formatters come from CrimeModals first; fall
+        back to CrimeConstants-derived defaults only.
+
+--------------------------------------------------------------------------------
+2.8 MODALS — modals-crime.js
+--------------------------------------------------------------------------------
+
+  js/crime/modals-crime.js
+    Owns: window.CrimeModals
+      ({ openMurderModal, openExecutionModal, openVendettaModal,
+         openCrimeDetailsModal, openVendettaDetailsModal,
+         openCrimeStatsModal, formatCrimeType,
+         formatVendettaStatus, formatSeverity, formatPersonName,
+         iconForCrimeType }).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CrimeConstants          [core]
+      window.CrimeCommands           [crime]
+      window.CrimeQueries            [crime]
+      window.CrimeViewModels         [crime]
+      window.openModal               [modals] via modals-core.js
+      window.closeTopModal           [modals] via modals-core.js
+      window.escapeHtml              [formatting]
+      window.getIcon                 [icons]
+      window.showToast               [ui]
+      window.openCharacterSelector   [selectors] via
+                                     modals-char-selector.js
+      window.openHouseholdSelector   [selectors] via
+                                     modals-household-selector.js
+      window.getFilteredLocationOptions
+                                     [selectors] via
+                                     locationDropdown.js
+      window.getCurrentYear          [time]
+      window.getCharacterById        [accessors]
+      window.getHouseholdById        [accessors / household facade]
+      window.getPlaceById            [accessors]
+    Call-time dependencies:
+      window.CrimeState              [crime] — used by
+                                        _submitVendetta (one place;
+                                        documented exception; see
+                                        HAZARDS §2)
+      window.openCharacterSelector / openHouseholdSelector
+                                     [selectors] — via click
+                                        handlers (already required
+                                        at load)
+    Consumed by: any dashboard that opens crime modals.
+    Notes:
+      - MODAL INFRASTRUCTURE CONTRACT: uses the core modal shell
+        from modals-core.js with titleHtml / contentHtml (NOT
+        title / content) and reads the DOM element from the
+        onMount/onConfirm callback parameter (NOT result.content).
+      - PERSISTENCE: every successful write modal calls
+        _commitAndPersist(), which:
+          1. Calls CrimeCommands.persist()
+          2. On false, shows a warning toast ('Saved in memory,
+             but persisting failed')
+          3. Closes the modal and calls options.onComplete
+        Read-only modals (details, stats) do not persist.
+      - VENDETTA CREATION QUIRK: openVendettaModal's _submitVendetta
+        calls window.CrimeState.createVendetta directly (not through
+        CrimeCommands.createBloodFeud). This is documented in
+        crime-docs.txt §9 as intentional — createBloodFeud derives
+        households from characters, but the modal collects
+        households directly. If CrimeCommands later gains
+        createVendettaForHouseholds, the modal calls that instead.
+      - PRESENTATION HELPERS: CrimeModals re-exports
+        formatCrimeType / formatVendettaStatus / formatSeverity /
+        formatPersonName / iconForCrimeType from CrimeViewModels
+        for backward compatibility. New code should use
+        CrimeViewModels directly.
+
+--------------------------------------------------------------------------------
+2.9 BOOTSTRAP — crime-bootstrap.js
+--------------------------------------------------------------------------------
+
+  js/crime/crime-bootstrap.js
+    Owns: window.CrimeBootstrap and window.Crime (namespace,
+      installed by init()).
+    Load-time dependencies: NONE at parse. Auto-init runs at load
+      if masterData.data exists.
+    init() verified globals:
+      window.generateId              [ids]
+      window.getCurrentYear          [time]  (NOT
+                                     getCurrentYearSafe)
+      window.saveMasterData          [storage]
+      window.markDataDirty           [storage]
+      window.killCharacter           [character]
+      window.logEvent                [events]
+      window.chance                  [randomness]
+      window.pickRandom              [randomness]
+    init() verified crime modules:
+      CrimeConstants
+      CrimeState                     + recordCrime, solveCrime,
+                                       deleteCrime, createVendetta,
+                                       recordVendettaDeath,
+                                       resolveVendetta, reload
+      CrimeLawIntegration            + evaluateAction,
+                                       getApplicableLaws
+      CrimeQueries                   + getLocationCrimeStats,
+                                       getOverallCrimeStats,
+                                       getVendettaStats
+      CrimeCommands                  + triggerMurder,
+                                       triggerExecution,
+                                       createBloodFeud,
+                                       escalateVendetta
+    init() verified cross-domain:
+      CharacterQueries               + getCharacterById,
+                                       getCurrentLocationId
+      CharacterCommands              (presence only)
+      HouseholdQueries               + getHouseholdById
+      HouseholdCommands              + applyPerpetratorCrime,
+                                       applyVictimCrime,
+                                       applyExecutionToHousehold
+      LocationQueries                + getPlaceById
+      SettlementQueries              + getSettlementData
+      SettlementLawQueries           + getCivilLaws
+      SettlementReligionQueries      + getDominantReligion
+      SettlementGovernmentCommands   (OPTIONAL — if present, must
+                                       expose recordCrimeImpact;
+                                       absent -> warn once)
+      ReligionLaws                   + getLawsByReligion
+      getLocationPopulationCount     (OPTIONAL — warn-only)
+    init() verified canonical shape:
+      masterData.data.crimes         (array or absent)
+      masterData.data.vendettas      (array or absent)
+    init() performs:
+      CrimeState.hydrateFromMasterData() (or _initialize as
+                                          fallback)
+      CrimeState.validateIntegrity() (warn-only)
+      window.Crime = { constants, state, law, queries, commands }
+    Consumed by: application bootstrap.
+    Notes:
+      - CROSS-DOMAIN SPLIT (from the header): verifies
+        SettlementLawQueries.getCivilLaws AND
+        SettlementReligionQueries.getDominantReligion, NOT
+        SettlementQueries.getCivilLaws /
+        SettlementQueries.getDominantReligion. Prior revisions
+        verified the phantom surface on SettlementQueries, which
+        either failed boot against a clean SettlementQueries or
+        silently passed against a SettlementQueries shim while the
+        modules the domain actually uses went unverified.
+      - OPTIONAL SETTLEMENT GOVERNMENT COMMANDS: if the module is
+        present but does not expose recordCrimeImpact, that is a
+        boot-order error, not an optional gap. If the module is
+        entirely absent, warn once and continue.
+      - AUTO-INIT: init() is called at load if masterData.data
+        exists. Otherwise the loader calls
+        window.CrimeBootstrap.init() explicitly.
+      - Header declares LOCATION: js/core/crime/crime-bootstrap.js.
+        Physical path is js/crime/crime-bootstrap.js (per
+        crime-docs.txt §1). The js/core/crime/ path must not appear
+        in HTML.
+
+--------------------------------------------------------------------------------
+2.10 COMPATIBILITY SHIM — vendetta-system.js
+--------------------------------------------------------------------------------
+
+  js/crime/vendetta-system.js
+    Owns: window.VendettaSystem (legacy alias surface).
+    Load-time dependencies (HARD — throw at load if missing):
+      window.CrimeConstants
+      window.CrimeState              + createVendetta, getVendetta,
+                                       getAllVendettas,
+                                       getVendettasByHousehold,
+                                       getVendettasByCharacter,
+                                       getActiveVendettas,
+                                       recordVendettaDeath,
+                                       resolveVendetta, reload
+      window.CrimeCommands           + escalateVendetta,
+                                       createBloodFeud
+      window.CrimeQueries            + getVendettaStats
+    Call-time dependencies: NONE beyond the load guards.
+    Consumed by: legacy callers that reference
+      window.VendettaSystem.*. New code must not use it.
+    Notes:
+      - DEPRECATED COMPATIBILITY SHIM. Every function forwards to
+        the canonical implementation and emits a one-time
+        deprecation warning via console.warn.
+      - RESULT SHAPE: the shim forwards the CANONICAL structured
+        result ({ success, data } / { success, reason, code }),
+        NOT the old bare-object-or-null shape. Callers that used
+        `if (result === null)` must migrate to
+        `if (!result.success)`.
+      - STATELESS. It has no storage, no indexes, no caches of its
+        own. It forwards to CrimeState / CrimeCommands /
+        CrimeQueries.
+      - MUST NOT BECOME a second storage layer, a second index
+        set, a second VENDETTA_STATUS constant, a second
+        createBloodFeud implementation, or anything that writes to
+        masterData.data.vendettas directly. If any of those
+        reappear, the file has regressed.
+      - clearVendettaCache() forwards to CrimeState.reload()
+        (returns true/false). The old shim returned undefined;
+        callers that relied on that should continue not relying on
+        the return value.
+
+
+================================================================================
+PART 3 — CORE / CHARACTER / HOUSEHOLD / LOCATION / SETTLEMENT /
+          RELIGION DEPENDENCIES
+================================================================================
+
+Legend:
+  core        — js/core/... files
+  char        — js/character/... files
+  house       — js/households/... files
+  loc         — js/location/... files
+  settle      — js/settlement/... files
+  rel         — js/religion/... files
+  sel         — js/selectors/... files
+  industry    — js/industry/... files
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/core/ids.js (generateId)
+    Used by:
+      [load] crime-state.js              (LOAD-TIME GUARD)
+      [load] crime-commands.js           (LOAD-TIME GUARD)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  js/core/time.js (getCurrentYear, calculateAge)
+    Used by:
+      [load] crime-state.js              (LOAD-TIME GUARD;
+                                           getCurrentYear only)
+      [load] crime-queries.js            (LOAD-TIME GUARD)
+      [load] crime-commands.js           (LOAD-TIME GUARD)
+      [load] crime-view-models.js        (call-time; throws if
+                                           missing)
+      [load] modals-crime.js             (LOAD-TIME GUARD)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+    Notes:
+      - getCurrentYearSafe is NOT used anywhere in crime.
+        crime-docs.txt §3 and §18 prohibit it.
+
+  js/core/storage.js (saveMasterData, markDataDirty,
+                      getLastSaveError)
+    Used by:
+      [load] crime-state.js              (LOAD-TIME GUARD on
+                                           markDataDirty)
+      [load] crime-commands.js           (call-time — saveMasterData
+                                           via persist;
+                                           getLastSaveError —
+                                           typeof-guarded)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION;
+                                           both saveMasterData and
+                                           markDataDirty)
+
+  js/core/formatting.js (escapeHtml, formatYear, _escapeHtml
+                         [deprecated])
+    Used by:
+      [load] modals-crime.js             (LOAD-TIME GUARD on
+                                           escapeHtml)
+      [load] crime-ui-stats.js           (call-time — escapeHtml
+                                           via _require; formatYear
+                                           via soft _formatYear)
+    Notes:
+      - The deprecated window._escapeHtml is NOT used.
+
+  js/core/ui.js (showToast)
+    Used by:
+      [load] modals-crime.js             (LOAD-TIME GUARD on
+                                           showToast)
+    Notes:
+      - The deprecated window._showToast is NOT used.
+
+  js/core/icons.js (getIcon, Icons)
+    Used by:
+      [load] modals-crime.js             (LOAD-TIME GUARD on
+                                           getIcon)
+      [load] crime-ui-stats.js           (call-time — getIcon via
+                                           _getIcon)
+    Notes:
+      - The deprecated window._getIcon is NOT used.
+
+  js/core/modals-core.js (openModal, closeTopModal,
+                          confirmDialog)
+    Used by:
+      [load] modals-crime.js             (LOAD-TIME GUARDS on
+                                           openModal and
+                                           closeTopModal;
+                                           confirmDialog is used
+                                           at call time via
+                                           _confirm)
+
+  js/core/accessors.js (getCharacterById, getCurrentLocationId,
+                        getPlaceById, getPlaceName,
+                        getHouseholdById)
+    Used by:
+      [load] crime-state.js              (LOAD-TIME GUARD on
+                                           getCharacterById and
+                                           getHouseholdById)
+      [load] crime-commands.js           (LOAD-TIME GUARD on
+                                           getCharacterById,
+                                           getHouseholdById,
+                                           getCurrentLocationId)
+      [call] crime-law-integration.js    (getCharacterById via
+                                           _getCharacterById;
+                                           getCurrentLocationId
+                                           optional;
+                                           getPlaceById /
+                                           getPlaceName optional)
+      [call] crime-queries.js            (getPlaceById optional;
+                                           getLocationPopulationCount
+                                           [UNVERIFIED] optional)
+      [call] modals-crime.js             (getCharacterById,
+                                           getHouseholdById,
+                                           getPlaceById)
+      [call] crime-ui-stats.js           (getCharacterById,
+                                           getPlaceById,
+                                           getPlaceName — all
+                                           optional)
+
+  js/core/randomness.js (chance, pickRandom)
+    Used by:
+      [load] crime-commands.js           (call-time — pickRandom
+                                           via getRandomMurderReason
+                                           and _randomExecution
+                                           Method; chance for the
+                                           killerGotAway roll;
+                                           missing -> documented
+                                           fallbacks)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION
+                                           on both chance and
+                                           pickRandom)
+
+  js/core/collections.js
+  js/core/validation.js
+  js/core/integrity.js
+  js/core/maintenance.js
+  js/core/ui-state.js
+  js/core/responsive.js
+  js/core/collapsible.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+  js/core/simulation-generators.js
+  js/core/names.js
+    Used by: none of the crime files provided in this batch.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  CharacterQueries.getCharacterById
+    Used by:
+      [load] crime-commands.js           (LOAD-TIME GUARD; used by
+                                           triggerMurder /
+                                           triggerExecution /
+                                           createBloodFeud /
+                                           _executeExecution
+                                           Consequence)
+      [call] crime-law-integration.js    (via _getCharacterById)
+      [call] crime-ui-stats.js           (soft; missing -> 'Unknown'
+                                           label)
+      [call] modals-crime.js             (victim/killer/condemned
+                                           display in modals)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  CharacterQueries.getCurrentLocationId
+    Used by:
+      [load] crime-commands.js           (LOAD-TIME GUARD;
+                                           _resolveLocation)
+      [call] crime-law-integration.js    (_getCurrentLocationId
+                                           falls back to
+                                           character.currentLocationId
+                                           and character.moves if
+                                           the accessor is absent)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  CharacterCommands
+    Used by:
+      [load] crime-bootstrap.js          (presence check only)
+    Notes:
+      - The crime subsystem does NOT call CharacterCommands
+        directly in the supplied code. Cross-domain writes go
+        through the killCharacter global (exported by
+        character-lifecycle.js).
+
+  window.killCharacter (global)
+    Used by:
+      [load] crime-commands.js           (LOAD-TIME GUARD; used by
+                                           triggerMurder and
+                                           triggerExecution)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+    Notes:
+      - TWO-ARGUMENT SIGNATURE: killCharacter(characterId,
+        deathData). The pre-refactor four-argument form is NOT
+        supported by the current character subsystem.
+      - DEATH DATA: for murder, isMurder requires killerId (per
+        mortality-rules.js::validateDeath). For execution,
+        isExecution requires executionReason.
+
+  window.getRelationshipsForCharacter / window.endRelationship
+    Used by:
+      [load] crime-commands.js           (LOAD-TIME GUARDS;
+                                           triggerExecution calls
+                                           them when
+                                           endRelationships !==
+                                           false)
+
+--------------------------------------------------------------------------------
+3.3 HOUSEHOLD DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  HouseholdQueries.getHouseholdById
+    Used by:
+      [load] crime-state.js              (LOAD-TIME GUARD;
+                                           createVendetta uses it to
+                                           validate household
+                                           existence)
+      [load] crime-commands.js           (LOAD-TIME GUARD)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  HouseholdCommands
+    Used by:
+      [load] crime-commands.js           (LOAD-TIME GUARD on
+                                           applyPerpetratorCrime,
+                                           applyVictimCrime,
+                                           applyExecutionTo
+                                           Household — all three
+                                           method checks)
+
+--------------------------------------------------------------------------------
+3.4 LOCATION DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  LocationQueries.getPlaceById
+    Used by:
+      [load] crime-law-integration.js    (call-time — used for
+                                           location display names)
+      [load] crime-queries.js            (call-time — used for
+                                           location labels)
+      [load] modals-crime.js             (call-time — used for
+                                           location labels)
+      [load] crime-ui-stats.js           (call-time — used for
+                                           location labels)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  window.getCurrentLocationId
+    Used by:
+      [load] crime-commands.js           (LOAD-TIME GUARD)
+    Notes:
+      - getCurrentLocationId is treated as a global in
+        crime-commands.js; the accessors.js version is the
+        canonical provider.
+
+--------------------------------------------------------------------------------
+3.5 SETTLEMENT DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  SettlementQueries.getSettlementData
+    Used by:
+      [load] crime-law-integration.js    (call-time — required;
+                                           missing -> throws)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  SettlementLawQueries.getCivilLaws
+    Used by:
+      [load] crime-law-integration.js    (call-time — canonical
+                                           source; falls back to
+                                           GovernmentLaws.getCivil
+                                           Laws; throws if both
+                                           missing)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+    Notes:
+      - SettlementQueries.getCivilLaws does NOT exist and must not
+        be probed. The canonical source is SettlementLawQueries.
+
+  SettlementReligionQueries.getDominantReligion
+    Used by:
+      [load] crime-law-integration.js    (call-time — canonical
+                                           source; falls back to
+                                           SettlementState.get
+                                           DominantReligion; throws
+                                           if both missing)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+    Notes:
+      - SettlementQueries.getDominantReligion does NOT exist and
+        must not be probed. The canonical source is
+        SettlementReligionQueries.
+
+  SettlementGovernmentCommands.recordCrimeImpact
+    Used by:
+      [load] crime-commands.js           (OPTIONAL — warn once and
+                                           skip if absent)
+      [load] crime-bootstrap.js          (OPTIONAL — warn-only; if
+                                           module is present but
+                                           method is missing, that
+                                           is a boot-order error)
+
+  SettlementState.getDominantReligion / getCivilLaws
+    Used by: crime-law-integration.js    (fallback only; primary
+                                           path goes through the
+                                           split modules above)
+
+--------------------------------------------------------------------------------
+3.6 RELIGION DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  ReligionLaws.getLawsByReligion
+    Used by:
+      [load] crime-law-integration.js    (call-time — canonical
+                                           source; falls back to
+                                           ReligionState.getLaws
+                                           ByReligion; throws if
+                                           both missing)
+      [load] crime-bootstrap.js          (LOAD-TIME VERIFICATION)
+
+  ReligionState.getLawsByReligion / getReligion /
+                     getAllReligions
+    Used by:
+      [load] crime-law-integration.js    (fallback only; also used
+                                           for display name
+                                           resolution via
+                                           _getReligionName)
+
+--------------------------------------------------------------------------------
+3.7 SELECTOR DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  window.openCharacterSelector / window.openHouseholdSelector
+    Used by:
+      [load] modals-crime.js             (LOAD-TIME GUARDS on both;
+                                           used by click handlers
+                                           in the murder/execution/
+                                           vendetta modals)
+
+  window.getFilteredLocationOptions
+    Used by:
+      [load] modals-crime.js             (LOAD-TIME GUARD; used in
+                                           the location <select>
+                                           builders)
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks in the supplied files,
+  (b) call-time window.X lookups in code,
+  (c) crime-docs.txt §2 (the crime subsystem's own documented
+      load order),
+  (d) the canonical core / character / household / location /
+      settlement / religion / selector load orders.
+
+Group labels:
+
+  C1..C5   — core prerequisites.
+  R1..R6   — character, household, location, settlement, religion,
+             selector prerequisites.
+  CR1..CR9 — crime subsystem.
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - No crime file reads these directly.
+
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: escapeHtml required at load by
+      modals-crime.js; formatYear used at call time by
+      crime-ui-stats.js (soft).
+    - icons.js: getIcon required at load by modals-crime.js; used
+      at call time by crime-ui-stats.js.
+    - ids.js: generateId required at load by crime-state.js and
+      crime-commands.js; verified by crime-bootstrap.js.
+    - randomness.js: chance, pickRandom verified by
+      crime-bootstrap.js; used at call time by crime-commands.js.
+    - collections.js: not read by crime.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - getCurrentYear required at load by crime-state.js,
+      crime-queries.js, crime-commands.js, modals-crime.js;
+      verified by crime-bootstrap.js.
+    - getCurrentYear used at call time by crime-view-models.js
+      (throws if missing).
+    - getCurrentYearSafe is NOT used anywhere in crime.
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  Notes:
+    - markDataDirty is a LOAD-TIME GUARD of crime-state.js.
+    - saveMasterData is a call-time requirement of
+      crime-commands.js::persist; verified by crime-bootstrap.js.
+    - getLastSaveError is a call-time soft requirement of
+      crime-commands.js::persist (typeof-guarded).
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  Notes:
+    - ui.js provides showToast (LOAD-TIME GUARD of modals-crime.js).
+    - modals-core.js provides openModal and closeTopModal (LOAD-
+      TIME GUARDS of modals-crime.js) and confirmDialog (call-time
+      via _confirm).
+
+--------------------------------------------------------------------------------
+GROUP R1 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: initializeStorage()
+
+  js/character/character-commands.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+
+  js/character/character-queries.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    Notes:
+      Must expose getCharacterById and getCurrentLocationId (both
+      are LOAD-TIME VERIFICATION targets of crime-bootstrap.js).
+
+  js/character/character-lifecycle.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/character/mortality-rules.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/randomness.js
+    Notes:
+      Exports window.killCharacter (the two-argument form). It is a
+      LOAD-TIME GUARD of crime-commands.js and a LOAD-TIME
+      VERIFICATION target of crime-bootstrap.js.
+
+  js/character/family-queries.js
+  js/character/family-commands.js
+    (Not directly required by crime; loaded by the character
+    subsystem.)
+
+  js/character/relationship-queries.js (relationship edges)
+    Provides window.getRelationshipsForCharacter and
+    window.endRelationship (LOAD-TIME GUARDS of crime-commands.js).
+
+--------------------------------------------------------------------------------
+GROUP R2 — HOUSEHOLD PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+  js/households/household-queries.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/character/character-queries.js
+    Notes:
+      Must expose getHouseholdById (LOAD-TIME VERIFICATION target
+      of crime-bootstrap.js).
+  js/households/household-commands.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/households/household-queries.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/time.js
+    Notes:
+      Must expose applyPerpetratorCrime, applyVictimCrime,
+      applyExecutionToHousehold (all three are LOAD-TIME METHOD
+      CHECKS of crime-commands.js).
+
+--------------------------------------------------------------------------------
+GROUP R3 — LOCATION PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/location/location-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/collections.js
+    <- AFTER: initializeStorage()
+
+  js/location/location-hierarchy.js
+    <- AFTER: js/location/location-state.js
+
+  js/location/location-queries.js
+    <- AFTER: js/location/location-state.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/core/world.js
+    Notes:
+      Must expose getPlaceById (LOAD-TIME VERIFICATION target of
+      crime-bootstrap.js).
+
+  js/location/location-commands.js
+    <- AFTER: js/location/location-state.js
+    <- AFTER: js/location/location-hierarchy.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+
+--------------------------------------------------------------------------------
+GROUP R4 — SETTLEMENT PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/settlement/settlement-*-definitions.js      (all eight)
+  js/settlement/settlement-*-rules.js            (all five)
+  js/settlement/settlement-state.js
+  js/settlement/settlement-command-commit.js
+  js/settlement/settlement-queries.js
+    Notes:
+      Must expose getSettlementData (LOAD-TIME VERIFICATION target
+      of crime-bootstrap.js).
+  js/settlement/settlement-rank-queries.js
+  js/settlement/settlement-law-queries.js
+    Notes:
+      Must expose getCivilLaws (LOAD-TIME VERIFICATION target of
+      crime-bootstrap.js; canonical source for crime-law-
+      integration.js::_getCivilLaws).
+  js/settlement/settlement-religion-queries.js
+    Notes:
+      Must expose getDominantReligion (LOAD-TIME VERIFICATION
+      target of crime-bootstrap.js; canonical source for
+      crime-law-integration.js::_getDominantReligion).
+  js/settlement/settlement-government-commands.js
+    Notes:
+      Must expose recordCrimeImpact OR be entirely absent. Present-
+      but-missing-method is a boot-order error per crime-bootstrap
+      verification.
+  js/settlement/settlement-fiscal-commands.js
+  js/settlement/settlement-law-commands.js
+  js/settlement/settlement-rank-commands.js
+  js/settlement/settlement-specialization-commands.js
+  js/settlement/settlement-debt-commands.js
+  js/settlement/settlement-wealth-commands.js
+  js/settlement/settlement-feature-commands.js
+  js/settlement/settlement-view-models.js
+  js/settlement/settlement-ui-state.js
+
+--------------------------------------------------------------------------------
+GROUP R5 — RELIGION PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/religion/religion-constants.js
+  js/religion/religion-format.js
+  js/religion/religion-validation.js
+  js/religion/religion-state.js
+  js/religion/religion-queries.js
+  js/religion/religion-rules.js
+  js/religion/religion-commands.js
+  js/religion/religion-laws.js
+    Notes:
+      Must expose getLawsByReligion (LOAD-TIME VERIFICATION target
+      of crime-bootstrap.js; canonical source for crime-law-
+      integration.js::_getReligionLaws).
+  js/religion/religion-inheritance.js
+  js/religion/religion-view-models.js
+  js/religion/religion-render.js
+  js/religion/religion-ui-state.js
+
+--------------------------------------------------------------------------------
+GROUP R6 — SELECTOR PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/selectors/selector-base.js
+  js/selectors/locationDropdown.js
+    Notes:
+      Provides window.getFilteredLocationOptions (LOAD-TIME GUARD
+      of modals-crime.js).
+  js/selectors/modals-char-selector.js
+    Notes:
+      Provides window.openCharacterSelector (LOAD-TIME GUARD of
+      modals-crime.js).
+  js/selectors/modals-household-selector.js
+    Notes:
+      Provides window.openHouseholdSelector (LOAD-TIME GUARD of
+      modals-crime.js).
+
+--------------------------------------------------------------------------------
+GROUP CR1 — CRIME CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/crime/crime-constants.js
+
+  Notes:
+    - No dependencies. Loads first in the crime group.
+    - Load BEFORE crime-state.js, crime-law-integration.js,
+      crime-queries.js, crime-commands.js, crime-view-models.js,
+      crime-bootstrap.js.
+    - Also installs the legacy flat globals (window.CRIME_TYPES,
+      etc.) for migration compatibility.
+
+--------------------------------------------------------------------------------
+GROUP CR2 — CRIME STATE
+--------------------------------------------------------------------------------
+
+  js/crime/crime-state.js
+    <- AFTER: js/crime/crime-constants.js   (LOAD-TIME GUARD)
+    <- AFTER: js/core/ids.js                 (LOAD-TIME GUARD —
+                                               generateId)
+    <- AFTER: js/core/time.js                (LOAD-TIME GUARD —
+                                               getCurrentYear)
+    <- AFTER: js/core/storage.js             (LOAD-TIME GUARD —
+                                               markDataDirty)
+    <- AFTER: js/core/accessors.js           (LOAD-TIME GUARD —
+                                               getCharacterById)
+    <- AFTER: js/core/accessors.js           (LOAD-TIME GUARD —
+                                               getHouseholdById)
+
+  Notes:
+    - Hydration is explicit. Bootstrap calls
+      CrimeState.hydrateFromMasterData() (or _initialize as
+      fallback). Public reads hydrate lazily on first access.
+    - Load BEFORE crime-law-integration.js (indirect), crime-
+      queries.js (LOAD-TIME GUARD), crime-commands.js (LOAD-TIME
+      GUARD), crime-bootstrap.js (verification).
+
+--------------------------------------------------------------------------------
+GROUP CR3 — CRIME LAW INTEGRATION
+--------------------------------------------------------------------------------
+
+  js/crime/crime-law-integration.js
+    <- after: js/crime/crime-constants.js    (call-time —
+                                                LAW_DOMAINS via
+                                                window.CrimeConstants)
+    <- after: js/core/accessors.js           (call-time —
+                                                getCharacterById via
+                                                _getCharacterById;
+                                                getCurrentLocationId
+                                                optional)
+    <- after: js/settlement/settlement-state.js
+        (call-time — getSettlementData via
+                     _getSettlementData)
+    <- after: js/settlement/settlement-law-queries.js
+        (call-time — getCivilLaws via _getCivilLaws;
+                     canonical source)
+    <- after: js/settlement/settlement-religion-queries.js
+        (call-time — getDominantReligion via
+                     _getDominantReligion; canonical source)
+    <- after: js/religion/religion-laws.js
+        (call-time — getLawsByReligion via _getReligionLaws;
+                     canonical source)
+    <- after: js/religion/religion-state.js
+        (call-time — getReligion / getAllReligions for
+                     display-name fallback)
+    <- after: js/core/accessors.js
+        (call-time — getPlaceById / getPlaceName)
+
+  Notes:
+    - No load-time guard block; the module parses regardless of
+      whether the settlement/religion surfaces are loaded yet.
+      Every dependency is checked at call time.
+    - Load BEFORE crime-commands.js (LOAD-TIME GUARD on the
+      namespace; calls evaluateAction at runtime).
+
+--------------------------------------------------------------------------------
+GROUP CR4 — CRIME QUERIES
+--------------------------------------------------------------------------------
+
+  js/crime/crime-queries.js
+    <- AFTER: js/crime/crime-constants.js    (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-state.js        (LOAD-TIME GUARD)
+    <- AFTER: js/core/time.js                (LOAD-TIME GUARD —
+                                                getCurrentYear)
+    <- after: js/core/accessors.js           (call-time —
+                                                getPlaceById;
+                                                getLocationPopulation
+                                                Count [UNVERIFIED])
+
+  Notes:
+    - Load BEFORE crime-bootstrap.js (LOAD-TIME VERIFICATION).
+
+--------------------------------------------------------------------------------
+GROUP CR5 — CRIME COMMANDS
+--------------------------------------------------------------------------------
+
+  js/crime/crime-commands.js
+    <- AFTER: js/crime/crime-constants.js    (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-state.js        (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-law-integration.js
+        (LOAD-TIME GUARD)
+    <- AFTER: js/core/time.js                (LOAD-TIME GUARD —
+                                                getCurrentYear)
+    <- AFTER: js/core/ids.js                 (LOAD-TIME GUARD —
+                                                generateId)
+    <- AFTER: js/character/character-lifecycle.js
+        (LOAD-TIME GUARD — killCharacter global with the
+         two-argument form)
+    <- AFTER: js/events/eventLogger.js
+        (LOAD-TIME GUARD — logEvent global)
+    <- AFTER: js/core/accessors.js
+        (LOAD-TIME GUARD — getCharacterById,
+                          getHouseholdById,
+                          getCurrentLocationId)
+    <- AFTER: js/character/relationship-queries.js
+        (LOAD-TIME GUARD — getRelationshipsForCharacter,
+                          endRelationship)
+    <- AFTER: js/households/household-commands.js
+        (LOAD-TIME GUARD on the HouseholdCommands namespace;
+         applyPerpetratorCrime, applyVictimCrime,
+         applyExecutionToHousehold method checks)
+    <- after: js/core/randomness.js
+        (call-time — pickRandom, chance for getRandomMurderReason /
+         _randomExecutionMethod / killerGotAway roll)
+    <- after: js/core/storage.js
+        (call-time — saveMasterData via persist;
+         getLastSaveError on failure)
+    <- after: js/settlement/settlement-government-commands.js
+        (call-time — recordCrimeImpact; optional; warn once if
+         absent)
+
+  Notes:
+    - Load BEFORE crime-bootstrap.js (LOAD-TIME VERIFICATION) and
+      modals-crime.js (LOAD-TIME GUARD on the namespace).
+
+--------------------------------------------------------------------------------
+GROUP CR6 — CRIME VIEW MODELS
+--------------------------------------------------------------------------------
+
+  js/crime/crime-view-models.js
+    <- AFTER: js/crime/crime-constants.js   (LOAD-TIME GUARD)
+    <- after: js/core/time.js               (call-time —
+                                               getCurrentYear via
+                                               _currentYear; throws
+                                               if missing)
+
+  Notes:
+    - Load BEFORE modals-crime.js (LOAD-TIME GUARD on the
+      namespace).
+
+--------------------------------------------------------------------------------
+GROUP CR7 — CRIME UI STATS
+--------------------------------------------------------------------------------
+
+  js/crime/crime-ui-stats.js
+    <- after: js/core/formatting.js         (call-time, soft —
+                                               escapeHtml via
+                                               _require; formatYear
+                                               via _formatYear)
+    <- after: js/core/icons.js              (call-time — getIcon
+                                               via _getIcon)
+    <- after: js/core/accessors.js          (call-time, soft —
+                                               getCharacterById,
+                                               getPlaceById,
+                                               getPlaceName)
+    <- after: js/crime/crime-queries.js
+        (call-time — getLocationCrimeStats,
+                     getOverallCrimeStats via _getQueries)
+    <- after: js/crime/crime-constants.js
+        (call-time — VENDETTA_STATUS via _getConstants)
+    <- after: js/crime/modals-crime.js
+        (call-time — openCrimeDetailsModal,
+                     openVendettaDetailsModal,
+                     presentation formatters via _getModals)
+
+  Notes:
+    - No load-time guard block; every dependency is checked at
+      call time via _require.
+    - Load AFTER modals-crime.js.
+
+--------------------------------------------------------------------------------
+GROUP CR8 — CRIME MODALS
+--------------------------------------------------------------------------------
+
+  js/crime/modals-crime.js
+    <- AFTER: js/crime/crime-constants.js    (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-commands.js     (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-queries.js      (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-view-models.js  (LOAD-TIME GUARD)
+    <- AFTER: js/core/modals-core.js         (LOAD-TIME GUARD on
+                                                 openModal and
+                                                 closeTopModal;
+                                                 confirmDialog is
+                                                 call-time)
+    <- AFTER: js/core/formatting.js          (LOAD-TIME GUARD on
+                                                 escapeHtml)
+    <- AFTER: js/core/icons.js               (LOAD-TIME GUARD on
+                                                 getIcon)
+    <- AFTER: js/core/ui.js                  (LOAD-TIME GUARD on
+                                                 showToast)
+    <- AFTER: js/selectors/modals-char-selector.js
+        (LOAD-TIME GUARD on openCharacterSelector)
+    <- AFTER: js/selectors/modals-household-selector.js
+        (LOAD-TIME GUARD on openHouseholdSelector)
+    <- AFTER: js/selectors/locationDropdown.js
+        (LOAD-TIME GUARD on getFilteredLocationOptions)
+    <- AFTER: js/core/time.js                (LOAD-TIME GUARD on
+                                                 getCurrentYear)
+    <- AFTER: js/core/accessors.js           (LOAD-TIME GUARD on
+                                                 getCharacterById,
+                                                 getHouseholdById,
+                                                 getPlaceById)
+    <- after: js/crime/crime-state.js
+        (call-time — createVendetta via _submitVendetta;
+         documented exception, see HAZARDS §2)
+
+  Notes:
+    - Load BEFORE any dashboard that opens crime modals.
+    - Load BEFORE crime-ui-stats.js (which reads
+      CrimeModals.openCrimeDetailsModal and
+      CrimeModals.openVendettaDetailsModal).
+
+--------------------------------------------------------------------------------
+GROUP CR9 — CRIME BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/crime/crime-bootstrap.js
+    <- AFTER: every other js/crime/*.js module (except
+        vendetta-system.js, which is optional for boot):
+        CrimeConstants, CrimeState, CrimeLawIntegration,
+        CrimeQueries, CrimeCommands
+    <- AFTER: js/core/ids.js                (verification)
+    <- AFTER: js/core/time.js               (verification —
+                                                getCurrentYear)
+    <- AFTER: js/core/storage.js            (verification —
+                                                saveMasterData,
+                                                markDataDirty)
+    <- AFTER: js/character/character-lifecycle.js
+        (verification — killCharacter)
+    <- AFTER: js/events/eventLogger.js      (verification —
+                                                logEvent)
+    <- AFTER: js/core/randomness.js         (verification —
+                                                chance, pickRandom)
+    <- AFTER: js/character/character-queries.js
+        (verification — getCharacterById,
+                        getCurrentLocationId)
+    <- AFTER: js/character/character-commands.js
+        (verification — presence)
+    <- AFTER: js/households/household-queries.js
+        (verification — getHouseholdById)
+    <- AFTER: js/households/household-commands.js
+        (verification — applyPerpetratorCrime,
+                        applyVictimCrime,
+                        applyExecutionToHousehold)
+    <- AFTER: js/location/location-queries.js
+        (verification — getPlaceById)
+    <- AFTER: js/settlement/settlement-queries.js
+        (verification — getSettlementData)
+    <- AFTER: js/settlement/settlement-law-queries.js
+        (verification — getCivilLaws)
+    <- AFTER: js/settlement/settlement-religion-queries.js
+        (verification — getDominantReligion)
+    <- after: js/settlement/settlement-government-commands.js
+        (OPTIONAL verification — warn-only if absent; present-
+         but-missing-method is a hard failure)
+    <- AFTER: js/religion/religion-laws.js
+        (verification — getLawsByReligion)
+    <- after: js/core/accessors.js
+        (OPTIONAL verification — warn-only if
+         getLocationPopulationCount is absent)
+
+  Auto-init: if masterData.data exists at load, init() runs
+  immediately. Otherwise the loader calls
+  window.CrimeBootstrap.init() explicitly.
+
+  Notes:
+    - Load LAST in the crime group. Installs window.Crime as the
+      canonical namespace.
+    - Verifies SettlementLawQueries.getCivilLaws and
+      SettlementReligionQueries.getDominantReligion, NOT
+      SettlementQueries.getCivilLaws /
+      SettlementQueries.getDominantReligion. Prior revisions
+      verified the phantom surface and either failed boot or
+      silently passed against a shim.
+
+--------------------------------------------------------------------------------
+GROUP CR10 — CRIME COMPATIBILITY SHIM (OPTIONAL)
+--------------------------------------------------------------------------------
+
+  js/crime/vendetta-system.js
+    <- AFTER: js/crime/crime-constants.js    (LOAD-TIME GUARD)
+    <- AFTER: js/crime/crime-state.js        (LOAD-TIME GUARD +
+                                                 method checks)
+    <- AFTER: js/crime/crime-commands.js     (LOAD-TIME GUARD +
+                                                 method checks for
+                                                 escalateVendetta,
+                                                 createBloodFeud)
+    <- AFTER: js/crime/crime-queries.js      (LOAD-TIME GUARD +
+                                                 method check for
+                                                 getVendettaStats)
+
+  Notes:
+    - DEPRECATED. Load BEFORE any legacy caller that references
+      window.VendettaSystem.*.
+    - Load AFTER all canonical crime modules (State, Commands,
+      Queries, Constants).
+    - Not required by crime-bootstrap.js. Optional.
+    - The shim forwards CANONICAL structured results (NOT old
+      bare-object-or-null shape).
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list. Function calls are marked.
+
+  — Group C1: core constants —
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  — Group C2: core utilities —
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  — Group C3: core time —
+  js/core/time.js
+
+  — Group C4: core storage —
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                          (function call)
+  js/core/accessors.js
+
+  — Group C5: core UI primitives —
+  js/core/ui.js
+  js/core/modals-core.js
+
+  — Group R1: character prerequisites —
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+  js/character/character-lifecycle.js
+  js/character/family-queries.js
+  js/character/family-commands.js
+  js/relationships/relationship-queries.js
+
+  — Group R2: household prerequisites —
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+  js/households/household-queries.js
+  js/households/household-commands.js
+
+  — Group R3: location prerequisites —
+  js/location/location-state.js
+  js/location/location-hierarchy.js
+  js/location/location-queries.js
+  js/location/location-commands.js
+
+  — Group R4: settlement prerequisites —
+  js/settlement/settlement-fiscal-definitions.js
+  js/settlement/settlement-government-definitions.js
+  js/settlement/settlement-rank-definitions.js
+  js/settlement/settlement-law-definitions.js
+  js/settlement/settlement-finance-definitions.js
+  js/settlement/settlement-prosperity-definitions.js
+  js/settlement/settlement-feature-definitions.js
+  js/settlement/settlement-education-definitions.js
+  js/settlement/settlement-rank-rules.js
+  js/settlement/settlement-fiscal-rules.js
+  js/settlement/settlement-government-rules.js
+  js/settlement/settlement-feature-rules.js
+  js/settlement/settlement-law-rules.js
+  js/settlement/settlement-state.js
+  js/settlement/settlement-command-commit.js
+  js/settlement/settlement-queries.js
+  js/settlement/settlement-rank-queries.js
+  js/settlement/settlement-law-queries.js
+  js/settlement/settlement-religion-queries.js
+  js/settlement/settlement-government-commands.js
+  js/settlement/settlement-fiscal-commands.js
+  js/settlement/settlement-law-commands.js
+  js/settlement/settlement-rank-commands.js
+  js/settlement/settlement-specialization-commands.js
+  js/settlement/settlement-debt-commands.js
+  js/settlement/settlement-wealth-commands.js
+  js/settlement/settlement-feature-commands.js
+  js/settlement/settlement-view-models.js
+  js/settlement/settlement-ui-state.js
+
+  — Group R5: religion prerequisites —
+  js/religion/religion-constants.js
+  js/religion/religion-format.js
+  js/religion/religion-validation.js
+  js/religion/religion-state.js
+  js/religion/religion-queries.js
+  js/religion/religion-rules.js
+  js/religion/religion-commands.js
+  js/religion/religion-laws.js
+  js/religion/religion-inheritance.js
+  js/religion/religion-view-models.js
+  js/religion/religion-render.js
+  js/religion/religion-ui-state.js
+
+  — Group R6: selector prerequisites —
+  js/selectors/selector-base.js
+  js/selectors/locationDropdown.js
+  js/selectors/modals-char-selector.js
+  js/selectors/modals-household-selector.js
+
+  — Group CR1: crime constants —
+  js/crime/crime-constants.js
+
+  — Group CR2: crime state —
+  js/crime/crime-state.js
+
+  — Group CR3: crime law integration —
+  js/crime/crime-law-integration.js
+
+  — Group CR4: crime queries —
+  js/crime/crime-queries.js
+
+  — Group CR5: crime commands —
+  js/crime/crime-commands.js
+
+  — Group CR6: crime view models —
+  js/crime/crime-view-models.js
+
+  — Group CR8: crime modals —
+  js/crime/modals-crime.js
+
+  — Group CR7: crime UI stats —
+  js/crime/crime-ui-stats.js
+
+  — Group CR10: crime compatibility shim (optional) —
+  js/crime/vendetta-system.js
+
+  — Group CR9: crime bootstrap —
+  js/crime/crime-bootstrap.js
+
+  — Application bootstrap (function calls) —
+  window.CrimeBootstrap.init()                (if not auto-invoked)
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1.  crime-constants.js before every other crime module.
+     Failure without it: crime-state.js, crime-law-integration.js,
+     crime-queries.js, crime-commands.js, crime-view-models.js,
+     crime-bootstrap.js throw at load naming CrimeConstants.
+
+ 2.  crime-state.js before crime-queries.js, crime-commands.js,
+     crime-bootstrap.js, vendetta-system.js.
+     Failure without it: each throws at load on missing CrimeState
+     (queries, commands, bootstrap) or on missing individual
+     methods (vendetta-system.js).
+
+ 3.  crime-law-integration.js before crime-commands.js.
+     Failure without it: crime-commands.js throws at load
+     ("crime-commands.js requires CrimeLawIntegration").
+
+ 4.  crime-commands.js before crime-bootstrap.js and
+     vendetta-system.js and modals-crime.js.
+     Failure without it: each throws at load.
+
+ 5.  crime-queries.js before crime-bootstrap.js,
+     vendetta-system.js, crime-ui-stats.js, modals-crime.js.
+     Failure without it: each throws at load on the getVendettaStats
+     method check (vendetta-system.js) or the namespace / call-site
+     guard (others).
+
+ 6.  crime-view-models.js before modals-crime.js.
+     Failure without it: modals-crime.js throws at load
+     ("modals-crime.js requires CrimeViewModels").
+
+ 7.  modals-crime.js before crime-ui-stats.js.
+     Failure without it: crime-ui-stats.js's _getModals calls
+     throw when invoked; the module itself loads (no load-time
+     guard on CrimeModals), but the crime-list and vendetta-list
+     detail buttons fail at click time.
+
+ 8.  modals-core.js before modals-crime.js.
+     Failure without it: modals-crime.js throws at load on
+     openModal / closeTopModal.
+
+ 9.  formatting.js, icons.js, ui.js before modals-crime.js.
+     Failure without it: modals-crime.js throws at load on
+     escapeHtml / getIcon / showToast.
+
+ 10. selectors (modals-char-selector.js,
+     modals-household-selector.js, locationDropdown.js) before
+     modals-crime.js.
+     Failure without it: modals-crime.js throws at load on
+     openCharacterSelector / openHouseholdSelector /
+     getFilteredLocationOptions.
+
+ 11. character-lifecycle.js (window.killCharacter, two-argument
+     form) before crime-commands.js.
+     Failure without it: crime-commands.js throws at load
+     ("crime-commands.js requires killCharacter"). At runtime, if
+     the wrong form is loaded, triggerMurder/triggerExecution
+     fail with 'characterId is required.' and roll back.
+
+ 12. relationship-queries.js (getRelationshipsForCharacter,
+     endRelationship) before crime-commands.js.
+     Failure without it: crime-commands.js throws at load.
+
+ 13. household-commands.js (applyPerpetratorCrime,
+     applyVictimCrime, applyExecutionToHousehold) before
+     crime-commands.js.
+     Failure without it: crime-commands.js throws at load naming
+     the missing method.
+
+ 14. character-queries.js (getCharacterById,
+     getCurrentLocationId) before crime-commands.js and
+     crime-bootstrap.js.
+     Failure without it: both throw at load.
+
+ 15. household-queries.js (getHouseholdById) before
+     crime-state.js, crime-commands.js, and crime-bootstrap.js.
+     Failure without it: all three throw at load.
+
+ 16. SettlementLawQueries (getCivilLaws) and
+     SettlementReligionQueries (getDominantReligion) before
+     crime-bootstrap.js AND before the first call to
+     CrimeLawIntegration.evaluateAction that needs them.
+     Failure without them: bootstrap init() throws; runtime
+     evaluateAction throws if the caller resolves through them.
+
+ 17. ReligionLaws (getLawsByReligion) before crime-bootstrap.js
+     AND before the first call to CrimeLawIntegration that needs
+     religious laws.
+     Failure without it: bootstrap init() throws; runtime throws
+     if ReligionLaws and ReligionState are both missing.
+
+ 18. SettlementQueries (getSettlementData) before
+     crime-bootstrap.js AND before the first call to
+     CrimeLawIntegration that resolves settlement context.
+     Failure without it: bootstrap throws; runtime throws if both
+     SettlementState and window.getSettlementData are missing.
+
+ 19. SettlementGovernmentCommands — if present at bootstrap
+     verification, must expose recordCrimeImpact. Present-but-
+     missing-method is a hard failure, not an optional gap.
+     Failure without it: bootstrap init() throws.
+     Absent entirely: bootstrap warns once and continues.
+
+ 20. core/time.js (getCurrentYear) before crime-state.js,
+     crime-queries.js, crime-commands.js, modals-crime.js,
+     crime-bootstrap.js, crime-view-models.js (at first call to
+     _currentYear).
+     Failure without it: each throws at load (except
+     crime-view-models.js, which throws at the first modal-default
+     builder call).
+
+ 21. core/ids.js (generateId) before crime-state.js,
+     crime-commands.js, crime-bootstrap.js.
+     Failure without it: each throws at load.
+
+ 22. core/storage.js (markDataDirty) before crime-state.js.
+     Failure without it: crime-state.js throws at load.
+     core/storage.js (saveMasterData) before the first call to
+     CrimeCommands.persist.
+     Failure without it: persist returns { success: false, reason:
+     'saveMasterData unavailable' }.
+
+ 23. core/randomness.js (chance, pickRandom) before
+     crime-bootstrap.js.
+     Failure without it: bootstrap throws at load.
+     (Runtime fallbacks exist but are verified to never fire
+     under the documented order.)
+
+ 24. window.logEvent before crime-commands.js and
+     crime-bootstrap.js.
+     Failure without it: both throw at load.
+
+ 25. initializeStorage() before crime-bootstrap.js's hydrate path
+     (or first read).
+     Failure without it: CrimeState.hydrateFromMasterData throws
+     ("masterData.data required") at bootstrap init time.
+
+ 26. vendetta-system.js, if loaded, must load AFTER every
+     canonical crime module it forwards to.
+     Failure without it: vendetta-system.js throws at load naming
+     the first missing module or method.
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+ 1.  getCurrentYearSafe is PROHIBITED in crime.
+     Every crime module uses window.getCurrentYear. The deprecated
+     alias was migrated out in the v6.1 compatibility pass (see
+     crime-docs.txt §3). No crime module may read
+     getCurrentYearSafe; doing so is a regression.
+
+ 2.  window.CrimeState.createVendetta is called DIRECTLY from
+     modals-crime.js::_submitVendetta.
+     This is intentional per crime-docs.txt §9: CrimeCommands has
+     no household-level vendetta creation command, and inventing
+     one here would be the wrong layer. The modal collects
+     households, not characters, so createBloodFeud (which derives
+     households from characters) is not a fit. If CrimeCommands
+     later gains createVendettaForHouseholds, the modal must call
+     that instead. Do not "fix" this by routing through
+     createBloodFeud.
+
+ 3.  SettlementQueries.getCivilLaws and
+     SettlementQueries.getDominantReligion DO NOT EXIST.
+     Those methods belong to SettlementLawQueries and
+     SettlementReligionQueries respectively. Any resolver that
+     probes SettlementQueries for them will always fail. Prior
+     revisions of crime-law-integration.js had these dead probes;
+     they were removed. crime-bootstrap.js verifies the correct
+     surfaces. Do not reintroduce the dead probes.
+
+ 4.  _getDominantReligion has NO silent null fallback.
+     Prior versions returned null when neither
+     SettlementReligionQueries nor SettlementState provided the
+     method. In a theocracy that meant religious law was silently
+     skipped and a murder that violated religious law could be
+     recorded as lawful. crime-docs.txt §19 prohibits silent
+     failure. The current implementation throws. Do not add a
+     fallback.
+
+ 5.  DEATH SIGNATURE: killCharacter(characterId, deathData).
+     The two-argument form is the ONLY supported form. Prior
+     revisions of crime-commands.js called the pre-refactor
+     four-argument form killCharacter(character, year, cause,
+     options), which passed a character object in the characterId
+     slot and failed every invocation with 'characterId is
+     required.' The current crime-commands.js passes the correct
+     form at every call site:
+       - triggerMurder passes isMurder: true, killerId, and
+         (optional) murderMotive / murderMethod.
+       - triggerExecution passes isExecution: true,
+         executionReason, and (optional) executionMethod /
+         executionLocation.
+     mortality-rules.js::validateDeath requires killerId when
+     isMurder === true and executionReason when isExecution ===
+     true. Do not change these calls without checking that
+     contract.
+
+ 6.  PERSISTENCE uses Pattern A.
+     CrimeCommands.persist() inspects the boolean return value of
+     saveMasterData() and, on failure, reads getLastSaveError().
+     Pattern C (discard the return value, report success) is
+     banned. Prior revisions of persist() called saveMasterData()
+     inside a try/catch and returned { success: true }
+     unconditionally.
+
+ 7.  The commit tail does NOT save.
+     _commit(eventName, payload) calls:
+       State.hydrateFromMasterData(true)
+       window.markDataDirty()
+       State.publish(eventName, payload)
+       dispatchEvent(CustomEvent)
+     It does NOT call saveMasterData. Persistence is
+     CrimeCommands.persist(). The UI calls persist() exactly once
+     per user action.
+
+ 8.  CrimeState._markDirty MUST sync in-memory indexes to
+     canonical storage BEFORE calling markDataDirty.
+     Prior revisions did not, and the commit tail's
+     hydrateFromMasterData(true) rebuilt indexes from the
+     pre-mutation canonical arrays, silently discarding every
+     mutation. The _syncToCanonical helper closes this gap. Do
+     not remove it.
+
+ 9.  The commit tail's State.hydrateFromMasterData(true) call
+     relies on crime-state.js's _markDirty having already synced.
+     Do not call _commit without going through State mutations
+     first (which is impossible in the current code, but is a
+     hazard for future additions).
+
+ 10. Crime UI helpers must use the CANONICAL names.
+     - window.escapeHtml (NOT window._escapeHtml)
+     - window.showToast (NOT window._showToast)
+     - window.getIcon (NOT window._getIcon)
+     Prior revisions of crime-ui-stats.js used window._getIcon
+     (which does not exist); modals-crime.js used all three
+     deprecated names. Both files have been migrated.
+
+ 11. Modal infrastructure:
+     - window.openModal accepts titleHtml / contentHtml, NOT
+       title / content. Passing the deprecated keys renders with
+       the default title ("Modal") and an empty body.
+     - openModal returns { element, close }. Event delegation
+       attaches to result.element, NOT result.content.
+     - window.ModalsCore does not exist; use the direct globals
+       from modals-core.js.
+
+ 12. Vendor-system.js forwards STRUCTURED results.
+     The old VendettaSystem unwrapped CrimeState results into
+     bare objects (or null on failure). The current shim forwards
+     the canonical { success, data } / { success, reason, code }
+     shape. Callers that used `if (result === null)` must migrate
+     to `if (!result.success)`.
+
+ 13. CrimeStatsUI's render errors are logged, not swallowed.
+     Render errors go to console.error and return false. Prior
+     revisions of analogous modules silently swallowed render
+     errors; do not reintroduce that pattern.
+
+ 14. CrimeStatsUI's _renderRegistry preserves options across
+     refreshAll(). Every render call registers its container,
+     kind, and options. If a container is unmounted from the DOM,
+     call unmount(containerId) so refreshAll() does not attempt to
+     render into a stale element.
+
+ 15. SEVERITY BANDS and classifySeverity are the SINGLE source
+     of severity classification.
+     Every crime module that classifies a severity delegates to
+     CrimeConstants.classifySeverity. Do not re-derive the
+     thresholds anywhere.
+
+ 16. CONSEQUENCE EXECUTION is deliberately incomplete.
+     Only EXECUTION is handled. IMPRISONMENT, EXILE, FINE,
+     PENANCE, EXCOMMUNICATION, and OTHER all return { applied:
+     false, reason: 'no-handler' }. The caller is NEVER told a
+     consequence was applied that was not. Do not add silent
+     handlers that "apply" a consequence without a real domain
+     effect.
+
+ 17. Violation detection requires EXPLICIT opt-in.
+     A law only criminalises an action if it opts in via
+     crimeMapping.crimeType, crimeMapping.crimeTypes, or
+     law.violationCheck. Matching the law's `domain` against the
+     action's `domain` is NOT sufficient.
+
+ 18. Precedence applies INSIDE evaluateAction.
+     In a theocracy or useReligiousLawsAsCivil settlement,
+     religious violations take precedence and civil violations
+     are folded into them. Do not apply supremacy as a
+     post-process; it is part of evaluateAction's contract.
+
+ 19. crimes and vendettas live on masterData.data directly.
+     CrimeState owns the in-memory indexes; canonical arrays are
+     written through _syncToCanonical. Do not write to
+     masterData.data.crimes or masterData.data.vendettas from any
+     module other than CrimeState.
+
+ 20. Family / children / mortality / role / industry are NOT
+     dependencies of crime.
+     crime-docs.txt §1 states that crime does not own these data
+     and does not read them. Do not add new dependencies on these
+     domains without a documented reason.
+
+ 21. getLocationPopulationCount is [UNVERIFIED].
+     Used by crime-queries.js for burden metrics. Missing ->
+     crimeBurden / recentCrimeBurden are null (NOT 0).
+     crime-bootstrap.js warns once if absent. Do not add a
+     fabricated population fallback.
+
+ 22. crime-constants.js and crime-bootstrap.js declare
+     "LOCATION: js/core/crime/<file>" in their headers, but the
+     physical path is js/crime/<file>.
+     The js/core/crime/ path is pre-refactor and must not appear
+     in any HTML script tag. crime-docs.txt §18 calls this out.
+
+ 23. Randomness fallbacks exist but must never fire.
+     getRandomMurderReason falls back to 'Unspecified' if
+     window.pickRandom is missing. _randomExecutionMethod falls
+     back to { id: 'unknown', name: 'Unknown' }. The killerGotAway
+     roll falls back to Math.random() < 0.3 if window.chance is
+     missing. Under the documented full-app order these fallbacks
+     are unreachable because crime-bootstrap.js verifies chance
+     and pickRandom as LOAD-TIME GUARDS. Do not remove the
+     bootstrap checks while leaving the fallbacks; that would
+     make the fallbacks live.
+
+ 24. crime-state.js mutation primitives use a scoped recursion
+     guard (_mutatingState), scoped to State only.
+     The crime domain does NOT use a module-wide recursion guard
+     on queries, commands, or renderers. crime-docs.txt §16 calls
+     this out as policy.
+
+ 25. window.Crime namespace is installed by crime-bootstrap.js
+     only.
+     It is NOT installed at script load. Callers that reach for
+     window.Crime before init() runs get undefined. Use the
+     individual namespaces (CrimeConstants, CrimeState,
+     CrimeLawIntegration, CrimeQueries, CrimeCommands,
+     CrimeViewModels, CrimeStatsUI, CrimeModals) for pre-init
+     access.
+
+ 26. vendetta-system.js is deprecated.
+     New code must not use it. The shim must not become:
+       - a second storage layer,
+       - a second index set,
+       - a second VENDETTA_STATUS constant,
+       - a second createBloodFeud implementation,
+       - anything that writes to masterData.data.vendettas
+         directly.
+     If any of those reappear, the file has regressed.
+
+ 27. crime-bootstrap.js auto-init catches and logs init errors,
+     but does NOT throw them.
+     A page that loads the crime domain against a broken
+     dependency set fails with a console.error at load, and
+     window.Crime is not installed. Callers that need to gate on
+     crime availability must call window.CrimeBootstrap.init()
+     explicitly and catch the throw.
+
+ 28. Household side effects have a warn-once path only for
+     entire-module absence.
+     If HouseholdCommands is missing entirely, crime-commands.js's
+     LOAD-TIME GUARD throws. If HouseholdCommands is present but
+     missing one of the three apply* methods, the same load-time
+     guard throws. There is no warn-and-skip path for household
+     side effects. Only settlement side effects (via
+     SettlementGovernmentCommands.recordCrimeImpact) have a
+     warn-once-and-skip path.
+
+ 29. The auto-graduation analogue in crime is the escalation
+     retry path.
+     escalateVendetta without force requires the vendetta to have
+     reached the escalation threshold. Automatic escalation
+     already fires inside recordVendettaDeath. The explicit
+     escalateVendetta({ force: true }) requires a reason. The
+     non-force path is the retry path for a missed automatic
+     escalation.
+
+ 30. Crime modals do not use onMount to attach handlers for
+     repeated-open cases.
+     Each modal re-binds its handlers on every open (via the
+     callback parameter the core passes to onMount/onConfirm).
+     There is no module-level "already bound" state. Do not
+     introduce a module-wide binding cache; each open is a fresh
+     DOM subtree.
+
+ 31. crime-docs.txt §18 enumerates a mechanical completion
+     standard. Key points:
+       - No getCurrentYearSafe.
+       - No _escapeHtml, _showToast, _getIcon.
+       - No title:/content: in openModal calls.
+       - No result.content reads.
+       - No SettlementQueries.getDominantReligion /
+         SettlementQueries.getCivilLaws probes.
+       - No window.ModalsCore references.
+       - Every module's LOCATION header must read js/crime/<file>.
+     Any deviation is a regression, not a variant.
+
+ 32. The crime-bootstrap.js OPTIONAL block for
+     SettlementGovernmentCommands is present-but-missing-method
+     is a HARD failure; absent-entirely is a WARN.
+     This is intentional and matches crime-docs.txt §17's
+     dependency policy. Do not weaken the present-but-broken path
+     to a warn.
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
