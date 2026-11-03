@@ -48,20 +48,20 @@
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-    <!-- Main Panel (Flex Row: Content Left, Vertical Tabs Right) -->
+    <!-- Main Panel (Flex Column: Tabs Top, Content Bottom) -->
     <div class="main-panel">
         
-        <!-- Tab Content (Left) -->
-        <div class="tab-content-wrapper" id="panelContent">
-            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
-        </div>
-        
-        <!-- Vertical Tabs (Right) -->
-        <div class="panel-tabs-vertical" id="tabContainer">
+        <!-- Horizontal Tabs (Top) -->
+        <div class="panel-tabs" id="tabContainer">
             <button class="tab-btn active" data-tab="government" id="tabGovernment"></button>
             <button class="tab-btn" data-tab="governmentOverview" id="tabOverview"></button>
             <button class="tab-btn" data-tab="governmentTypes" id="tabTypes"></button>
             <button class="tab-btn" data-tab="governmentStructure" id="tabStructure"></button>
+        </div>
+        
+        <!-- Content Panel (Bottom) -->
+        <div class="tab-content-wrapper" id="panelContent">
+            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
         </div>
     </div>
 </div>
@@ -421,7 +421,6 @@
         var emptyState = document.getElementById('emptyStateText');
         if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
         
-        // Tab Button Text (Now vertical)
         var tabGovernment = document.getElementById('tabGovernment');
         if (tabGovernment) tabGovernment.innerHTML = iconWithText(ICONS.CROWN, ' Government');
         var tabOverview = document.getElementById('tabOverview');
@@ -699,8 +698,8 @@
             }
         }
 
-        // TARGETS VERTICAL TABS NOW
-        document.querySelectorAll('.panel-tabs-vertical .tab-btn').forEach(function(btn) {
+        // Target horizontal tabs
+        document.querySelectorAll('.panel-tabs .tab-btn').forEach(function(btn) {
             if (btn.dataset.tab === tabName) btn.classList.add('active');
             else btn.classList.remove('active');
         });
@@ -712,7 +711,7 @@
     // SETUP TABS
     // =============================================================================
     function setupTabs() {
-        var tabButtons = document.querySelectorAll('.panel-tabs-vertical .tab-btn');
+        var tabButtons = document.querySelectorAll('.panel-tabs .tab-btn');
         for (var i = 0; i < tabButtons.length; i++) {
             var btn = tabButtons[i];
             btn.onclick = null;
@@ -813,7 +812,7 @@
         initMobileSidebar();
 
         currentTab = 'government';
-        document.querySelectorAll('.panel-tabs-vertical .tab-btn').forEach(function(btn) {
+        document.querySelectorAll('.panel-tabs .tab-btn').forEach(function(btn) {
             if (btn.dataset.tab === 'government') btn.classList.add('active');
             else btn.classList.remove('active');
         });
