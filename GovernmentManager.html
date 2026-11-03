@@ -17,8 +17,7 @@
 
     <style>
         /* ============================================================
-           GOVERNMENT MANAGER — FULL INLINE CSS
-           (replaces css/gov-manager.css)
+           GOVERNMENT MANAGER — INLINE CSS
            ============================================================ */
 
         /* ---- App shell ---- */
@@ -85,9 +84,6 @@
         .theme-toggle__menu button:focus-visible {
             background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
-
-        /* ---- Panel-tabs hidden ---- */
-        .panel-tabs { display: none !important; }
 
         /* ---- Sub-tab strip ---- */
         .gov-subtabs {
@@ -216,82 +212,7 @@
         }
         .dept-budget-shortfall .dept-budget-value { color: var(--danger-lt); }
         .dept-budget-surplus .dept-budget-value { color: var(--ok); }
-
-        /* Positions */
-        .dept-positions { padding: 10px 14px; }
-        .dept-positions-header {
-            font-size: 0.62rem; font-weight: 600; color: var(--accent);
-            font-family: var(--f-display); letter-spacing: 0.05em;
-            text-transform: uppercase; margin-bottom: 6px; padding-bottom: 4px;
-            border-bottom: 1px solid var(--border-light);
-        }
-        .dept-positions-list { display: flex; flex-direction: column; gap: 6px; }
-        .dept-position {
-            padding: 6px 10px; background: var(--bg3); border-radius: var(--radius);
-            border-left: 3px solid var(--border); margin-bottom: 0;
-        }
-        .dept-position-header {
-            display: flex; justify-content: space-between; align-items: center;
-            flex-wrap: wrap; gap: 4px 8px;
-        }
-        .dept-position-name { font-size: 0.7rem; font-weight: 500; color: var(--text); }
-        .dept-position-status {
-            font-size: 0.5rem; padding: 2px 8px; border-radius: 10px;
-            font-family: var(--f-display); letter-spacing: 0.04em;
-            text-transform: uppercase; font-weight: 600;
-        }
-        .dept-position-status.filled { background: var(--accent-dim); color: var(--accent); }
-        .dept-position-status.vacant { background: var(--bg2); color: var(--dim); border: 1px solid var(--border); }
-
-        /* ---- Details tab fields ---- */
-        .gov-details-body { display: flex; flex-direction: column; gap: 14px; }
-        .gov-details-field {
-            display: flex; flex-direction: column; gap: 6px;
-            padding: 10px 12px; background: var(--bg2);
-            border: 1px solid var(--border); border-radius: var(--radius);
-        }
-        .gov-details-field > label {
-            font-size: 0.6rem; color: var(--dim);
-            text-transform: uppercase; letter-spacing: 0.06em;
-            font-family: var(--f-display); font-weight: 600;
-        }
-        .gov-details-value { font-size: 0.75rem; color: var(--text); line-height: 1.5; }
-        .gov-details-none { color: var(--tmut); font-style: italic; font-size: 0.65rem; }
-
-        .gov-leadership-section {
-            background: var(--bg2); border: 1px solid var(--border);
-            border-radius: var(--radius); padding: 10px 12px;
-        }
-        .gov-leadership-header {
-            display: flex; justify-content: space-between; align-items: center;
-            flex-wrap: wrap; gap: 8px; margin-bottom: 8px; padding-bottom: 6px;
-            border-bottom: 1px solid var(--border-light);
-        }
-        .gov-leadership-header > label {
-            font-size: 0.6rem; color: var(--dim);
-            text-transform: uppercase; letter-spacing: 0.06em;
-            font-family: var(--f-display); font-weight: 600;
-        }
-        .gov-leadership-value { display: flex; flex-direction: column; gap: 6px; }
-        .gov-leadership-empty { color: var(--tmut); font-style: italic; font-size: 0.65rem; padding: 6px 0; }
-
-        .gov-leader-item {
-            display: flex; justify-content: space-between; align-items: center;
-            flex-wrap: wrap; gap: 6px 12px; padding: 6px 10px;
-            background: var(--bg3); border-left: 3px solid var(--accent);
-            border-radius: var(--radius);
-        }
-        .gov-leader-info { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; flex: 1; min-width: 0; }
-        .gov-leader-name { font-size: 0.75rem; font-weight: 600; color: var(--text); }
-        .gov-leader-title { font-size: 0.6rem; color: var(--accent-light); font-style: italic; }
-        .gov-leader-status {
-            font-size: 0.5rem; padding: 2px 8px; border-radius: 10px;
-            font-family: var(--f-display); letter-spacing: 0.04em;
-            text-transform: uppercase; font-weight: 600;
-        }
-        .gov-leader-status.active { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
-        .gov-leader-status.ended { background: var(--bg2); color: var(--dim); border: 1px solid var(--border); }
-        .gov-leader-since, .gov-leader-period { font-size: 0.55rem; color: var(--dim); font-family: var(--f-mono); }
+        .dept-budget-unavailable .dept-budget-value { color: var(--dim); font-style: italic; }
 
         /* ---- Laws tab ---- */
         .law-list { display: flex; flex-direction: column; gap: 8px; }
@@ -304,7 +225,7 @@
         .law-name { font-size: 0.8rem; font-weight: 600; color: var(--accent); font-family: var(--f-display); }
         .law-status { font-size: 0.55rem; font-weight: 600; letter-spacing: 0.04em; font-family: var(--f-display); text-transform: uppercase; }
         .law-status.is-active { color: var(--ok); }
-        .law-status.is-inactive { color: var(--danger-lt); }
+        .law-status.is-inactive { color: var(--dim); }
         .law-actions, .law-section-body { display: flex; gap: 4px; }
         .law-description { font-size: 0.65rem; color: var(--text); line-height: 1.5; }
         .law-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.6rem; }
@@ -314,34 +235,83 @@
             background: var(--accent-dim); border-radius: 12px;
             font-family: var(--f-display); letter-spacing: 0.03em;
         }
-        .law-severity { font-weight: 600; font-size: 0.55rem; text-transform: uppercase; font-family: var(--f-display); }
-        .law-severity.is-minor { color: var(--ok); }
-        .law-severity.is-medium { color: var(--warning); }
-        .law-severity.is-major { color: var(--danger-lt); }
-        .law-severity.is-severe, .law-severity.is-capital { color: var(--danger); }
+        .law-domain {
+            display: inline-flex; align-items: center; gap: 4px;
+            color: var(--text); font-size: 0.55rem; padding: 2px 8px;
+            background: var(--bg3); border-radius: 12px;
+            font-family: var(--f-display); letter-spacing: 0.03em;
+        }
+        .law-severity {
+            font-weight: 600; font-size: 0.55rem;
+            text-transform: uppercase; font-family: var(--f-display);
+            padding: 2px 8px; border-radius: 12px;
+            background: var(--bg3);
+        }
         .law-punishment {
             display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
             padding: 6px 10px; background: var(--bg3);
             border-left: 3px solid var(--warning); border-radius: var(--radius);
-            font-size: 0.6rem;
+            font-size: 0.6rem; margin-top: 6px;
         }
-
-        /* ---- History tab ---- */
-        .gh-leaders-list { display: flex; flex-direction: column; gap: 8px; }
-        .gh-leader-card {
-            display: flex; gap: 12px; padding: 10px 12px;
-            background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+        .law-punishment-label {
+            font-weight: 600; color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.05em;
+            font-family: var(--f-display); font-size: 0.55rem;
         }
-        .gh-leader-number {
-            font-size: 1rem; font-weight: 700; color: var(--accent);
-            font-family: var(--f-display); min-width: 30px; text-align: center;
-            border-right: 1px solid var(--border-light); padding-right: 10px;
+        .law-punishment-type { display: inline-flex; align-items: center; gap: 4px; }
+        .law-punishment-desc { color: var(--text); }
+        .law-crime-type {
+            display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+            padding: 4px 10px; background: var(--bg3);
+            border-radius: var(--radius); font-size: 0.6rem; margin-top: 4px;
         }
-        .gh-leader-info { flex: 1; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-        .gh-leader-period { font-size: 0.6rem; color: var(--dim); font-family: var(--f-mono); }
-        .gh-officials-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px;
+        .law-crime-label {
+            font-weight: 600; color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.05em;
+            font-family: var(--f-display); font-size: 0.55rem;
         }
+        .law-notes {
+            font-size: 0.6rem; color: var(--dim); font-style: italic;
+            margin-top: 6px;
+        }
+        .law-meta-info {
+            display: flex; gap: 12px; flex-wrap: wrap;
+            font-size: 0.5rem; color: var(--tmut);
+            font-family: var(--f-mono); margin-top: 6px;
+            padding-top: 6px; border-top: 1px solid var(--border-light);
+        }
+        .law-section { margin-bottom: 16px; }
+        .law-section-header {
+            font-size: 0.65rem; font-weight: 600; color: var(--accent);
+            font-family: var(--f-display); letter-spacing: 0.05em;
+            text-transform: uppercase; margin-bottom: 6px; padding-bottom: 4px;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .law-edit-form { display: flex; flex-direction: column; gap: 4px; }
+        .law-edit-form .form-fieldset {
+            border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 10px 12px; margin: 0 0 12px 0;
+        }
+        .law-edit-form .form-fieldset legend {
+            font-size: 0.65rem; color: var(--accent);
+            font-family: var(--f-display); letter-spacing: 0.04em;
+            padding: 0 6px;
+        }
+        .law-checkbox-label {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.65rem; color: var(--text);
+            font-family: var(--f-body);
+        }
+        .law-checkbox-label input[type="checkbox"] {
+            accent-color: var(--accent);
+        }
+        .law-empty {
+            text-align: center; padding: 30px 20px;
+            background: var(--bg2); border: 1px dashed var(--border);
+            border-radius: var(--radius); color: var(--dim);
+            font-size: 0.75rem;
+        }
+        .law-empty p { margin: 0 0 10px 0; }
 
         /* ---- Economy tab ---- */
         .eco-stats-grid {
@@ -360,6 +330,77 @@
         .eco-stat-content { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
         .eco-stat-label { font-size: 0.6rem; color: var(--text); font-family: var(--f-display); letter-spacing: 0.03em; }
         .eco-stat-sub { font-size: 0.5rem; color: var(--dim); font-family: var(--f-mono); }
+
+        .eco-settlement-details h4 {
+            margin: 0 0 10px 0; font-size: 0.75rem; color: var(--accent);
+            font-family: var(--f-display); letter-spacing: 0.05em;
+            text-transform: uppercase;
+            padding-bottom: 4px; border-bottom: 1px solid var(--border-light);
+        }
+        .eco-prosperity, .eco-crime, .eco-justice, .eco-watch, .eco-salary-budget, .eco-religion {
+            display: flex; flex-wrap: wrap; align-items: center;
+            gap: 8px; padding: 8px 0;
+            border-bottom: 1px solid var(--border-light);
+        }
+        .eco-prosperity { flex-direction: column; align-items: stretch; }
+        .eco-prosperity-label, .eco-crime-label, .eco-justice-label,
+        .eco-watch-label, .eco-salary-label, .eco-religion-label {
+            font-size: 0.6rem; color: var(--dim);
+            text-transform: uppercase; letter-spacing: 0.05em;
+            font-family: var(--f-display); font-weight: 600;
+        }
+        .eco-prosperity-bar {
+            height: 8px; background: var(--bg3); border-radius: 4px;
+            overflow: hidden; margin: 4px 0;
+        }
+        .eco-prosperity-fill {
+            height: 100%; border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        .eco-prosperity-fill.is-ok { background: var(--ok); }
+        .eco-prosperity-fill.is-warning { background: var(--warning); }
+        .eco-prosperity-fill.is-danger { background: var(--danger-lt); }
+        .eco-prosperity-fill.is-danger-strong { background: var(--danger); }
+        .eco-prosperity-fill.is-unknown { background: var(--dim); width: 0; }
+        .eco-prosperity-value, .eco-crime-value, .eco-justice-value,
+        .eco-watch-value, .eco-salary-value, .eco-religion-value {
+            font-size: 0.7rem; color: var(--text);
+            font-family: var(--f-mono);
+        }
+        .eco-crime-value.is-ok, .eco-crime-value.is-ok .eco-crime-label { color: var(--ok); }
+        .eco-crime-value.is-warning { color: var(--warning); }
+        .eco-crime-value.is-danger { color: var(--danger-lt); }
+        .eco-crime-value.is-danger-strong { color: var(--danger); }
+        .eco-watch-size { color: var(--dim); font-size: 0.6rem; }
+        .eco-salary-value { color: var(--accent); }
+
+        .eco-integration-banner {
+            padding: 10px 14px; background: var(--accent-dim);
+            border-left: 3px solid var(--accent);
+            border-radius: var(--radius); margin-bottom: 12px;
+            font-size: 0.65rem; color: var(--text); line-height: 1.5;
+        }
+        .eco-integration-banner strong { color: var(--accent-light); }
+
+        .eco-edit-form { display: flex; flex-direction: column; gap: 4px; }
+        .eco-edit-warning {
+            padding: 8px 12px; background: var(--bg3);
+            border-left: 3px solid var(--warning);
+            border-radius: var(--radius); margin-bottom: 12px;
+            font-size: 0.6rem; color: var(--text); line-height: 1.5;
+        }
+        .eco-edit-warning p { margin: 0 0 4px 0; }
+        .eco-edit-warning p:last-child { margin-bottom: 0; }
+        .eco-watch-toggle {
+            display: flex; gap: 16px; flex-wrap: wrap;
+            padding: 4px 0;
+        }
+        .eco-watch-toggle label {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 0.65rem; color: var(--text);
+            font-family: var(--f-body); cursor: pointer;
+        }
+        .eco-watch-toggle input[type="radio"] { accent-color: var(--accent); }
 
         /* ---- Empty states ---- */
         .dept-empty, .law-empty, .gh-empty, .gov-details-empty, .eco-details-empty, .gh-details-empty {
@@ -436,7 +477,9 @@
     </div>
 </div>
 
-<!-- 1. Core Constants -->
+<!-- ================================================================
+     BLOCK 1 — CORE CONSTANTS
+     ================================================================ -->
 <script src="js/core/constants/constants.js"></script>
 <script src="js/core/constants/age-constants.js"></script>
 <script src="js/core/constants/character-constants.js"></script>
@@ -444,28 +487,44 @@
 <script src="js/core/constants/location-constants.js"></script>
 <script src="js/core/constants/relationship-constants.js"></script>
 
-<!-- 2. Core Utilities -->
+<!-- ================================================================
+     BLOCK 2 — CORE UTILITIES
+     ================================================================ -->
 <script src="js/core/formatting.js"></script>
 <script src="js/core/icons.js"></script>
 <script src="js/core/collections.js"></script>
 <script src="js/core/ids.js"></script>
 <script src="js/core/randomness.js"></script>
 
-<!-- 3. Core Time & Storage -->
+<!-- ================================================================
+     BLOCK 3 — CORE TIME
+     ================================================================ -->
 <script src="js/core/time.js"></script>
+
+<!-- ================================================================
+     BLOCK 4 — CORE STORAGE
+     ================================================================ -->
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
-    try { if (typeof window.initializeStorage === 'function') window.initializeStorage(); } catch(e) { console.error(e); }
+    (function () {
+        try {
+            if (typeof window.initializeStorage === 'function') window.initializeStorage();
+        } catch (e) { console.error('[boot] initializeStorage failed:', e); }
+    })();
 </script>
 <script src="js/core/accessors.js"></script>
 
-<!-- 4. Core Validation & World -->
+<!-- ================================================================
+     BLOCK 5 — CORE VALIDATION, WORLD, NAMES
+     ================================================================ -->
 <script src="js/core/validation.js"></script>
 <script src="js/core/world.js"></script>
 <script src="js/core/names.js"></script>
 
-<!-- 5. Core UI -->
+<!-- ================================================================
+     BLOCK 6 — CORE UI PRIMITIVES
+     ================================================================ -->
 <script src="js/core/ui.js"></script>
 <script src="js/core/ui-state.js"></script>
 <script src="js/core/modals-core.js"></script>
@@ -473,141 +532,62 @@
 <script src="js/core/collapsible.js"></script>
 <script src="js/core/exportUtils.js"></script>
 
-<!-- 6. Skill Taxonomy -->
+<!-- ================================================================
+     BLOCK 7 — SKILL TAXONOMY
+     ================================================================ -->
 <script src="js/roles/skill-utils.js"></script>
 
-<!-- 7. Role Constants -->
-<script src="js/roles/role-constants.js"></script>
-
-<!-- 8. Rank Dependencies -->
-<script src="js/ranks/rank-constants.js"></script>
-<script src="js/ranks/rank-rules.js"></script>
-
-<!-- 9. Name Dependencies -->
-<script src="js/names/name-queries.js"></script>
-<script src="js/names/name-rules.js"></script>
-
-<!-- 10. Feature State Modules -->
+<!-- ================================================================
+     BLOCK 8 — CHARACTER STATE
+     ================================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
-<script src="js/households/household-state.js"></script>
-<script src="js/location/location-ui-state.js"></script>
-<script src="js/roles/role-state.js"></script>
-<script src="js/ranks/rank-state.js"></script>
-<script src="js/names/names-state.js"></script>
-<script src="js/core/census-state.js"></script>
-<script src="js/core/matchmaker-state.js"></script>
-<script src="js/core/misc-state.js"></script>
 
-<!-- 11. State.js -->
-<script src="js/core/state.js"></script>
-
-<!-- 12. Character Domain -->
-<script src="js/character/character-factory.js"></script>
-<script src="js/character/character-creation-commands.js"></script>
-<script src="js/character/character-deletion-commands.js"></script>
+<!-- ================================================================
+     BLOCK 9 — CHARACTER COMMANDS & QUERIES
+     ================================================================ -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
-<script src="js/character/family-rules.js"></script>
-<script src="js/character/family-queries.js"></script>
-<script src="js/character/family-commands.js"></script>
-<script src="js/character/mortality-rules.js"></script>
-<script src="js/character/mortality-queries.js"></script>
-<script src="js/character/character-lifecycle.js"></script>
-<script src="js/character/character-ui-list.js"></script>
-<script src="js/character/modals-character.js"></script>
-<script src="js/character/modals-death.js"></script>
 
-<!-- 13. Rank Chain -->
+<!-- ================================================================
+     BLOCK 10 — ROLES (state + queries + commands)
+     ================================================================ -->
+<script src="js/roles/role-constants.js"></script>
+<script src="js/roles/role-state.js"></script>
+<script src="js/roles/role-queries.js"></script>
+<script src="js/roles/role-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 11 — RANK SUBSYSTEM
+     ================================================================ -->
+<script src="js/ranks/rank-constants.js"></script>
+<script src="js/ranks/rank-rules.js"></script>
+<script src="js/ranks/rank-state.js"></script>
 <script src="js/ranks/rank-queries.js"></script>
 <script src="js/ranks/rank-assignment.js"></script>
 <script src="js/ranks/rank-commands.js"></script>
-<script src="js/ranks/rank-issues.js"></script>
-<script src="js/ranks/rank-ui-list.js"></script>
-<script src="js/ranks/modals-rank.js"></script>
-<script src="js/ranks/rank-bootstrap.js"></script>
 
-<!-- 14. Role Chain -->
-<script src="js/roles/role-queries.js"></script>
-<script src="js/roles/role-commands.js"></script>
-<script src="js/roles/modals-roles.js"></script>
+<!-- ================================================================
+     BLOCK 12 — RELIGION SUBSYSTEM
+     ================================================================ -->
+<script src="js/religion/religion-constants.js"></script>
+<script src="js/religion/religion-format.js"></script>
+<script src="js/religion/religion-validation.js"></script>
+<script src="js/religion/religion-state.js"></script>
+<script src="js/religion/religion-queries.js"></script>
+<script src="js/religion/religion-rules.js"></script>
+<script src="js/religion/religion-commands.js"></script>
+<script src="js/religion/religion-laws.js"></script>
+<script src="js/religion/religion-inheritance.js"></script>
+<script src="js/religion/religion-view-models.js"></script>
+<script src="js/religion/religion-render.js"></script>
+<script src="js/religion/religion-ui-state.js"></script>
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
 
-<!-- 15. Name Chain -->
-<script src="js/names/name-commands.js"></script>
-
-<!-- 16. Households -->
-<script src="js/households/household-constants.js"></script>
-<script src="js/households/household-rules.js"></script>
-<script src="js/households/household-queries.js"></script>
-<script src="js/households/household-commands.js"></script>
-
-<!-- 17. Location Domain -->
-<script src="js/location/location-state.js"></script>
-<script src="js/location/location-hierarchy.js"></script>
-<script src="js/location/location-commands.js"></script>
-<script src="js/location/location-queries.js"></script>
-<script src="js/location/location-movement.js"></script>
-<script src="js/location/location-view-models.js"></script>
-<script src="js/location/location-ui-list.js"></script>
-<script src="js/location/location-presentation.js"></script>
-<script src="js/location/modals-location-helper.js"></script>
-<script src="js/location/modals-location.js"></script>
-<script src="js/location/modals-moves.js"></script>
-<script src="js/location/location-bootstrap.js"></script>
-
-<!-- 18. Settlement -->
-<script src="js/settlement/settlement-fiscal-definitions.js"></script>
-<script src="js/settlement/settlement-government-definitions.js"></script>
-<script src="js/settlement/settlement-rank-definitions.js"></script>
-<script src="js/settlement/settlement-law-definitions.js"></script>
-<script src="js/settlement/settlement-finance-definitions.js"></script>
-<script src="js/settlement/settlement-prosperity-definitions.js"></script>
-<script src="js/settlement/settlement-feature-definitions.js"></script>
-<script src="js/settlement/settlement-education-definitions.js"></script>
-<script src="js/settlement/settlement-rank-rules.js"></script>
-<script src="js/settlement/settlement-fiscal-rules.js"></script>
-<script src="js/settlement/settlement-government-rules.js"></script>
-<script src="js/settlement/settlement-feature-rules.js"></script>
-<script src="js/settlement/settlement-law-rules.js"></script>
-<script src="js/settlement/settlement-state.js"></script>
-<script src="js/settlement/settlement-command-commit.js"></script>
-<script src="js/settlement/settlement-rank-queries.js"></script>
-<script src="js/settlement/settlement-queries.js"></script>
-<script src="js/settlement/settlement-feature-queries.js"></script>
-<script src="js/settlement/settlement-law-queries.js"></script>
-<script src="js/settlement/settlement-education-queries.js"></script>
-<script src="js/settlement/settlement-religion-queries.js"></script>
-<script src="js/settlement/settlement-employment-queries.js"></script>
-<script src="js/settlement/settlement-economy-queries.js"></script>
-<script src="js/settlement/settlement-crime-queries.js"></script>
-<script src="js/settlement/settlement-prosperity-queries.js"></script>
-<script src="js/settlement/settlement-feature-commands.js"></script>
-<script src="js/settlement/settlement-government-commands.js"></script>
-<script src="js/settlement/settlement-fiscal-commands.js"></script>
-<script src="js/settlement/settlement-law-commands.js"></script>
-<script src="js/settlement/settlement-wealth-commands.js"></script>
-<script src="js/settlement/settlement-debt-commands.js"></script>
-<script src="js/settlement/settlement-rank-commands.js"></script>
-<script src="js/settlement/settlement-specialization-commands.js"></script>
-<script src="js/settlement/settlement-factory.js"></script>
-<script src="js/settlement/settlement-annual-processor.js"></script>
-<script src="js/settlement/settlement-view-models.js"></script>
-<script src="js/settlement/settlement-ui-state.js"></script>
-
-<!-- 18a. Selectors -->
-<script src="js/selectors/selector-base.js"></script>
-<script src="js/selectors/locationDropdown.js"></script>
-<script>
-    if (typeof window.getFilteredLocationOptions !== 'function') {
-        window.getFilteredLocationOptions = function (selectedId) {
-            return window.buildLocationDropdown ? window.buildLocationDropdown(selectedId, null, true) : '<option value="">All locations</option>';
-        };
-    }
-</script>
-<script src="js/selectors/modals-char-selector.js"></script>
-<script src="js/selectors/modals-household-selector.js"></script>
-
-<!-- 18b. Industry Chain -->
+<!-- ================================================================
+     BLOCK 13 — INDUSTRY SUBSYSTEM
+     ================================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
 <script src="js/industry/industry-type-defaults.js"></script>
@@ -619,13 +599,105 @@
 <script src="js/industry/industry-type-commands.js"></script>
 <script src="js/industry/industry-commands.js"></script>
 <script src="js/industry/industry-queries.js"></script>
-<script src="js/industry/industry-processor.js"></script>
-<script src="js/industry/industry-view-models.js"></script>
-<script src="js/industry/industry-ui-list.js"></script>
-<script src="js/industry/modals-industry.js"></script>
-<script src="js/industry/industry-bootstrap.js"></script>
 
-<!-- 19. Government Subsystem -->
+<!-- ================================================================
+     BLOCK 14 — HOUSEHOLD SUBSYSTEM
+     ================================================================ -->
+<script src="js/households/household-constants.js"></script>
+<script src="js/households/household-rules.js"></script>
+<script src="js/households/household-state.js"></script>
+<script src="js/households/household-queries.js"></script>
+<script src="js/households/household-commands.js"></script>
+
+<!-- ================================================================
+     BLOCK 15 — LOCATION SUBSYSTEM
+     (Moved before Settlement — Settlement query modules hard-guard
+      on LocationQueries; Location has no Settlement dependency.)
+     ================================================================ -->
+<script src="js/location/location-state.js"></script>
+<script src="js/location/location-hierarchy.js"></script>
+<script src="js/location/location-commands.js"></script>
+<script src="js/location/location-queries.js"></script>
+<script src="js/location/location-movement.js"></script>
+<script src="js/location/location-bootstrap.js"></script>
+
+<!-- PlaceQueries façade (settlement factory + view models + modals) -->
+<script>
+    (function () {
+        'use strict';
+        if (!window.LocationState || typeof window.LocationState.getPlaceById !== 'function') {
+            throw new Error('place-queries.js shim: location-state.js must load first.');
+        }
+        window.PlaceQueries = {
+            getPlaceById: function (id) {
+                return window.LocationState.getPlaceById(id);
+            },
+            getPlaceSummaries: function () {
+                return (window.LocationQueries && typeof window.LocationQueries.getPlaceSummaries === 'function')
+                    ? window.LocationQueries.getPlaceSummaries()
+                    : [];
+            }
+        };
+    })();
+</script>
+
+<!-- ================================================================
+     BLOCK 16 — SETTLEMENT SUBSYSTEM
+     ================================================================ -->
+<!-- Definitions -->
+<script src="js/settlement/settlement-fiscal-definitions.js"></script>
+<script src="js/settlement/settlement-government-definitions.js"></script>
+<script src="js/settlement/settlement-rank-definitions.js"></script>
+<script src="js/settlement/settlement-law-definitions.js"></script>
+<script src="js/settlement/settlement-finance-definitions.js"></script>
+<script src="js/settlement/settlement-prosperity-definitions.js"></script>
+<script src="js/settlement/settlement-feature-definitions.js"></script>
+<script src="js/settlement/settlement-education-definitions.js"></script>
+
+<!-- Rules -->
+<script src="js/settlement/settlement-rank-rules.js"></script>
+<script src="js/settlement/settlement-fiscal-rules.js"></script>
+<script src="js/settlement/settlement-government-rules.js"></script>
+<script src="js/settlement/settlement-feature-rules.js"></script>
+<script src="js/settlement/settlement-law-rules.js"></script>
+
+<!-- State + commit -->
+<script src="js/settlement/settlement-state.js"></script>
+<script src="js/settlement/settlement-command-commit.js"></script>
+
+<!-- Queries -->
+<script src="js/settlement/settlement-rank-queries.js"></script>
+<script src="js/settlement/settlement-queries.js"></script>
+<script src="js/settlement/settlement-feature-queries.js"></script>
+<script src="js/settlement/settlement-law-queries.js"></script>
+<script src="js/settlement/settlement-education-queries.js"></script>
+<script src="js/settlement/settlement-religion-queries.js"></script>
+<script src="js/settlement/settlement-employment-queries.js"></script>
+<script src="js/settlement/settlement-economy-queries.js"></script>
+<script src="js/settlement/settlement-crime-queries.js"></script>
+<script src="js/settlement/settlement-prosperity-queries.js"></script>
+
+<!-- Commands -->
+<script src="js/settlement/settlement-feature-commands.js"></script>
+<script src="js/settlement/settlement-government-commands.js"></script>
+<script src="js/settlement/settlement-fiscal-commands.js"></script>
+<script src="js/settlement/settlement-law-commands.js"></script>
+<script src="js/settlement/settlement-wealth-commands.js"></script>
+<script src="js/settlement/settlement-debt-commands.js"></script>
+<script src="js/settlement/settlement-rank-commands.js"></script>
+<script src="js/settlement/settlement-specialization-commands.js"></script>
+
+<!-- Factory + annual processor -->
+<script src="js/settlement/settlement-factory.js"></script>
+<script src="js/settlement/settlement-annual-processor.js"></script>
+
+<!-- View models + UI state -->
+<script src="js/settlement/settlement-view-models.js"></script>
+<script src="js/settlement/settlement-ui-state.js"></script>
+
+<!-- ================================================================
+     BLOCK 17 — GOVERNMENT SUBSYSTEM
+     ================================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
 <script src="js/government/government-rules.js"></script>
@@ -640,15 +712,58 @@
 <script src="js/government/modals-government-positions.js"></script>
 <script src="js/government/modals-government-assign.js"></script>
 <script src="js/government/modals-government-economy.js"></script>
+<script src="js/government/settlement-law-formatters.js"></script>
 
-<!-- 20. Government Tabs -->
+<!-- ================================================================
+     BLOCK 18 — CHARACTER LIFECYCLE
+     ================================================================ -->
+<script src="js/character/character-lifecycle.js"></script>
+
+<!-- ================================================================
+     BLOCK 19 — SELECTORS
+     ================================================================ -->
+<script src="js/selectors/selector-base.js"></script>
+<script src="js/selectors/locationDropdown.js"></script>
+<script>
+    if (typeof window.getFilteredLocationOptions !== 'function') {
+        window.getFilteredLocationOptions = function (selectedId) {
+            if (typeof window.buildLocationDropdown === 'function') {
+                return window.buildLocationDropdown(selectedId, null, true);
+            }
+            return '<option value="">All locations</option>';
+        };
+    }
+</script>
+<script src="js/selectors/modals-char-selector.js"></script>
+
+<!-- ================================================================
+     BLOCK 20 — CHARACTER UI MODALS
+     ================================================================ -->
+<script src="js/character/character-ui-list.js"></script>
+<script src="js/character/modals-character.js"></script>
+<script src="js/character/modals-death.js"></script>
+
+<!-- ================================================================
+     BLOCK 21 — SETTLEMENT UI (modals + list)
+     ================================================================ -->
+<script src="js/settlement/settlement-tabs.js"></script>
+<script src="js/settlement/settlement-ui-list.js"></script>
+<script src="js/settlement/modals-settlement-core.js"></script>
+<script src="js/settlement/modals-settlement-economy.js"></script>
+<script src="js/settlement/modals-settlement-roles.js"></script>
+
+<!-- ================================================================
+     BLOCK 22 — GOVERNMENT TABS
+     ================================================================ -->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
 <script src="js/tabs/government-history-tab.js"></script>
 <script src="js/tabs/government-civil-laws-tab.js"></script>
 <script src="js/tabs/government-economy-tab.js"></script>
 
-<!-- SUB-TAB HOST -->
+<!-- ================================================================
+     SUB-TAB HOST
+     ================================================================ -->
 <script>
     (function () {
         'use strict';
@@ -696,6 +811,9 @@
     })();
 </script>
 
+<!-- ================================================================
+     MANAGER INIT
+     ================================================================ -->
 <script>
 (function() {
     'use strict';
@@ -822,7 +940,13 @@
         if (isInitialized) return; isInitialized = true;
         setupUIText();
         if (typeof window.loadMasterData === 'function') window.loadMasterData();
-        if (window.GovernmentBootstrap) window.GovernmentBootstrap.init();
+        if (window.GovernmentBootstrap) {
+            try {
+                window.GovernmentBootstrap.init();
+            } catch (e) {
+                console.error('GovernmentBootstrap.init failed:', e);
+            }
+        }
         setTimeout(function() {
             setupLocationTree();
             setupTopBarActions();
@@ -835,6 +959,9 @@
 })();
 </script>
 
+<!-- ================================================================
+     THEME SWITCHER
+     ================================================================ -->
 <script>
 (function () {
     'use strict';
