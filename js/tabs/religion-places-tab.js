@@ -2,53 +2,105 @@
  * =============================================================================
  * STILL WATERS - RELIGION PLACES TAB (js/tabs/religion-places-tab.js)
  * =============================================================================
- * 
- * A modular tab for managing places of worship within a religion.
- * 
+ *
+ * LOCATION: js/tabs/religion-places-tab.js
+ *
+ * A TabManager-rendered tab for managing a religion's places of worship.
+ *
  * FEATURES:
- *   - View all places of worship in a religion
- *   - Add new place with name, type, location, tithe, clergy
- *   - Edit existing place
- *   - Remove place with confirmation
- *   - Filter places by type, location, status
- *   - Search places by name
- *   - Sort places by name, type, or founded year
- *   - View place details with clergy, followers, income
- *   - Collect tithes for a place
- * 
- * DEPENDENCIES:
- *   - ReligionState, ReligionQueries, ReligionCommands
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - locationDropdown.js (getFilteredLocationOptions)
- * 
- * ICON POLICY: Uses icons.js via _getIcon() - NO EMOJIS
- * 
+ *   - List places with filters (search, type, status)
+ *   - Sort by name, type, founded year
+ *   - Add place (modal, requires location)
+ *   - Edit place (modal, gated by PARTIAL note — see below)
+ *   - Remove place (confirm + deletePlaceOfWorship)
+ *   - Collect tithes (calls RC.collectTithes; returns amount)
+ *
+ * REGISTRATION (TabManager):
+ *   TabManager.register('religion', 'places', renderAdapter)
+ *
+ *   renderAdapter(container, context) → renderPlacesTab(container, context.religion)
+ *
+ * PLACES ARE PARTIAL (see religion-commands.js §13 and religion-docs.txt
+ * §7 "Place of worship" deferral):
+ *   - createPlaceOfWorship writes place ids into religion.placesOfWorship
+ *     and RETURNS a place record, but the place record itself is not
+ *     canonically stored yet.
+ *   - updatePlaceOfWorship is a documented no-op stub: it re-commits the
+ *     unchanged religion and returns success without applying updates.
+ *   - getPlaceOfWorship (ReligionQueries) reads through
+ *     ReligionState.getPlaceOfWorshipById, which indexes only
+ *     { religionId, religionName } per place id — the rest of the record
+ *     is not persisted yet.
+ *
+ *   This tab therefore:
+ *     - Creates places through ReligionCommands (working).
+ *     - Deletes places through ReligionCommands (working — removes the id
+ *       from religion.placesOfWorship).
+ *     - Gates Edit behind PLACES_EDITABLE = false with a visible "partial"
+ *       note, because updatePlaceOfWorship is a stub and calling it would
+ *       toast success while changing nothing. Better to hide the button
+ *       than to lie. Flip PLACES_EDITABLE to true when the canonical
+ *       place store lands.
+ *     - Renders whatever the query layer actually returns; when place data
+ *       is only { religionId, religionName }, the card shows the id as the
+ *       display name (that is the truth of the current shape, not a
+ *       fabricated label).
+ *
+ * DEPENDENCIES (resolved at call time — no load-time guards):
+ *   - TabManager            (js/core/tab-manager.js)
+ *   - ReligionQueries       (js/religion/religion-queries.js)
+ *   - ReligionCommands      (js/religion/religion-commands.js)
+ *   - ReligionFormat        (js/religion/religion-format.js) — for
+ *                            getWorshipTypeName; falls back to raw type
+ *   - formatting.js         (escapeHtml)
+ *   - icons.js              (Icons — chrome icons via _getIcon; no emoji)
+ *   - ui.js                 (showToast)
+ *   - modals-core.js        (openModal, closeTopModal, confirmDialog)
+ *   - locationDropdown.js   (getFilteredLocationOptions — optional;
+ *                            the modal has a fallback that reads
+ *                            accessors.getPlaces())
+ *   - accessors.js          (getPlaceById, getPlaceName, getPlaces)
+ *
+ * ICON POLICY: no emojis. The worship-type emoji map from the original
+ * (🏛 ⛪ ⛩ 🕌 🕍 🏯 🌳) is removed. Places are rendered with their
+ * display name and type as text. If you later add per-type icons, register
+ * them in icons.js and call _getIcon('WORSHIP_' + type) with the CIRCLE
+ * fallback. Do not reintroduce a local emoji map.
+ *
+ * INLINE STYLES: none. All classes are in css/religion-tabs.css.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
+
+    // Feature gate: set true when ReligionCommands.updatePlaceOfWorship
+    // stops being a stub. See PLACES ARE PARTIAL in the header.
+    var PLACES_EDITABLE = false;
 
     // =========================================================================
     // 1. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     function _getIcon(name) {
         if (window.Icons && window.Icons[name]) return window.Icons[name];
-        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
         return '';
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') window._showToast(msg, type);
-        else if (typeof window.showToast === 'function') window.showToast(msg, type);
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
     function _openModal(options) {
@@ -56,22 +108,12 @@
         return null;
     }
 
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
-    }
-
     function _confirmDialog(message, title, onConfirm) {
         if (typeof window.confirmDialog === 'function') {
             window.confirmDialog(message, title, onConfirm);
-        } else if (typeof window._confirmDialog === 'function') {
-            window._confirmDialog(message, title, onConfirm);
-        } else if (confirm(message)) {
+        } else if (typeof confirm === 'function' && confirm(message)) {
             onConfirm();
         }
-    }
-
-    function _getReligionState() {
-        return typeof window.ReligionState !== 'undefined' ? window.ReligionState : null;
     }
 
     function _getReligionQueries() {
@@ -82,26 +124,21 @@
         return typeof window.ReligionCommands !== 'undefined' ? window.ReligionCommands : null;
     }
 
-    function _getPlacesOfWorshipByReligion(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getPlacesOfWorshipByReligion === 'function') {
-            return window.ReligionQueries.getPlacesOfWorshipByReligion(religionId);
-        }
-        return [];
+    function _getReligionFormat() {
+        return typeof window.ReligionFormat !== 'undefined' ? window.ReligionFormat : null;
     }
 
     function _getPlaceName(id) {
         if (typeof window.getPlaceName === 'function') return window.getPlaceName(id);
         if (typeof window.getPlaceById === 'function') {
-            var place = window.getPlaceById(id);
-            if (place) return place.displayName;
+            var p = window.getPlaceById(id);
+            if (p) return p.displayName || p.name || id;
         }
-        return 'Unknown';
+        return id || '—';
     }
 
     function _getPlaces() {
-        if (typeof window.getPlaces === 'function') return window.getPlaces();
-        return [];
+        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
     }
 
     function _getLocationOptions(selectedId) {
@@ -111,772 +148,842 @@
         var places = _getPlaces();
         var html = '<option value="">— Select a location —</option>';
         for (var i = 0; i < places.length; i++) {
-            var selected = (selectedId === places[i].id) ? 'selected' : '';
-            html += '<option value="' + places[i].id + '" ' + selected + '>' + _escapeHtml(places[i].displayName) + '</option>';
+            var p = places[i];
+            if (!p || !p.id) continue;
+            var sel = (selectedId === p.id) ? ' selected' : '';
+            html += '<option value="' + _escapeHtml(p.id) + '"' + sel + '>' +
+                _escapeHtml(p.displayName || p.name || p.id) + '</option>';
         }
         return html;
     }
 
-    function _getCharacterName(id) {
-        if (typeof window.getCharacterFullNameById === 'function') {
-            return window.getCharacterFullNameById(id);
+    function _worshipTypeLabel(typeId) {
+        var fmt = _getReligionFormat();
+        if (fmt && typeof fmt.getWorshipTypeName === 'function') {
+            return fmt.getWorshipTypeName(typeId);
         }
-        if (typeof window.getCharacterById === 'function') {
-            var char = window.getCharacterById(id);
-            if (char) {
-                return char.name + (char.surname ? ' ' + char.surname : '');
-            }
-        }
-        return 'Unknown';
+        return typeId || '';
     }
 
-    function _getWorshipTypeName(type) {
-        if (typeof window.getWorshipTypeName === 'function') {
-            return window.getWorshipTypeName(type);
-        }
-        var names = {
-            'temple': 'Temple',
-            'church': 'Church',
-            'shrine': 'Shrine',
-            'mosque': 'Mosque',
-            'synagogue': 'Synagogue',
-            'monastery': 'Monastery',
-            'grove': 'Sacred Grove'
-        };
-        return names[type] || type;
-    }
+    // =========================================================================
+    // 2. TAB-LOCAL UI STATE
+    // =========================================================================
 
-    function _getWorshipTypeIcon(type) {
-        var icons = {
-            'temple': '🏛',
-            'church': '⛪',
-            'shrine': '⛩',
-            'mosque': '🕌',
-            'synagogue': '🕍',
-            'monastery': '🏯',
-            'grove': '🌳'
-        };
-        return icons[type] || '📍';
-    }
-
-    function _getFollowerCount(religionId) {
-        if (typeof window.ReligionQueries !== 'undefined' &&
-            typeof window.ReligionQueries.getFollowerCount === 'function') {
-            return window.ReligionQueries.getFollowerCount(religionId);
-        }
-        return 0;
-    }
-
-    var _placeState = {
-        searchTerm: '',
-        typeFilter: 'all',
-        statusFilter: 'all',
+    var _state = {
+        search: '',
+        type: 'all',
+        status: 'all',
         sortBy: 'name'
     };
 
+    function _resetState() {
+        _state.search = '';
+        _state.type = 'all';
+        _state.status = 'all';
+        _state.sortBy = 'name';
+    }
+
     // =========================================================================
-    // 2. RENDER FUNCTION
+    // 3. RENDER
     // =========================================================================
 
     function renderPlacesTab(container, religion) {
-        if (!religion) {
-            container.innerHTML = '<div style="padding:20px;color:var(--dim);">No religion loaded</div>';
+        if (!container) return;
+
+        if (!religion || typeof religion !== 'object' || !religion.id) {
+            container.innerHTML =
+                '<div class="rt-empty">Select a religion to view its places of worship.</div>';
             return;
         }
 
-        var RS = _getReligionState();
         var RQ = _getReligionQueries();
         var RC = _getReligionCommands();
 
-        if (!RS || !RQ || !RC) {
-            container.innerHTML = '<div style="padding:20px;color:var(--danger);">Religion system not available</div>';
+        if (!RQ || !RC) {
+            container.innerHTML =
+                '<div class="rt-unavailable">Religion system not available.</div>';
             return;
         }
 
-        var places = _getPlacesOfWorshipByReligion(religion.id);
-        var isDeprecated = religion.isDeprecated || false;
-        var followerCount = _getFollowerCount(religion.id);
+        _resetState();
 
-        var locationIcon = _getIcon('LOCATION');
-        var plusIcon = _getIcon('PLUS');
-        var searchIcon = _getIcon('SEARCH');
-        var editIcon = _getIcon('EDIT');
-        var trashIcon = _getIcon('TRASH');
-        var coinIcon = _getIcon('COIN') || '💰';
+        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
+        var isDeprecated = religion.isDeprecated === true;
 
-        // Apply filters and sorting
-        var filtered = filterPlaces(places);
-
-        // Count by type for stats
-        var typeCounts = {};
+        // Filter dropdown values by whatever the current place shape
+        // carries. When places are only { religionId, religionName } (see
+        // PLACES ARE PARTIAL), type/status are undefined and those
+        // filters behave as no-ops — the card shows the id and the
+        // source location is hidden, but no filter lies about hidden
+        // data.
+        var typeSet = Object.create(null);
         for (var i = 0; i < places.length; i++) {
-            var type = places[i].type || 'temple';
-            if (!typeCounts[type]) typeCounts[type] = 0;
-            typeCounts[type]++;
+            var p = places[i];
+            if (!p || typeof p !== 'object') continue;
+            if (typeof p.type === 'string' && p.type.length > 0) {
+                typeSet[p.type] = true;
+            }
+        }
+        var typeKeys = Object.keys(typeSet).sort();
+        var typeOptions = '<option value="all">All Types</option>';
+        for (var t = 0; t < typeKeys.length; t++) {
+            var tv = typeKeys[t];
+            typeOptions += '<option value="' + _escapeHtml(tv) + '">' +
+                _escapeHtml(_worshipTypeLabel(tv)) + '</option>';
         }
 
-        var html = 
-            '<div class="religion-places-tab" style="padding:4px;">' +
+        var filtered = _filterPlaces(places);
 
-            // Header
-            '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--bg2);border-radius:6px;margin-bottom:12px;">' +
-            '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
-            '<span style="font-size:0.7rem;font-weight:bold;color:var(--accent);">' + locationIcon + ' Places of Worship</span>' +
-            '<span style="font-size:0.55rem;color:var(--dim);">(' + places.length + ')</span>' +
-            (followerCount > 0 ? '<span style="font-size:0.5rem;color:var(--dim);">👤 ' + followerCount + ' followers</span>' : '') +
-            '</div>' +
-            (!isDeprecated ? '<button id="addPlaceBtn" class="btn primary small" style="padding:4px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">' + plusIcon + ' Add Place</button>' : '') +
-            '</div>' +
+        var html =
+            '<div class="rt-tab">' +
 
-            // Filters
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;padding:4px 0 8px 0;">' +
-            '<div style="flex:1;min-width:100px;">' +
-            '<input type="text" id="placesSearchInput" placeholder="Search places..." value="' + _escapeHtml(_placeState.searchTerm) + '" style="width:100%;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.55rem;">' +
-            '</div>' +
-            '<select id="placesTypeFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            '<option value="all" ' + (_placeState.typeFilter === 'all' ? 'selected' : '') + '>All Types</option>' +
-            '<option value="temple" ' + (_placeState.typeFilter === 'temple' ? 'selected' : '') + '>Temples</option>' +
-            '<option value="church" ' + (_placeState.typeFilter === 'church' ? 'selected' : '') + '>Churches</option>' +
-            '<option value="shrine" ' + (_placeState.typeFilter === 'shrine' ? 'selected' : '') + '>Shrines</option>' +
-            '<option value="mosque" ' + (_placeState.typeFilter === 'mosque' ? 'selected' : '') + '>Mosques</option>' +
-            '<option value="synagogue" ' + (_placeState.typeFilter === 'synagogue' ? 'selected' : '') + '>Synagogues</option>' +
-            '<option value="monastery" ' + (_placeState.typeFilter === 'monastery' ? 'selected' : '') + '>Monasteries</option>' +
-            '<option value="grove" ' + (_placeState.typeFilter === 'grove' ? 'selected' : '') + '>Sacred Groves</option>' +
-            '</select>' +
-            '<select id="placesStatusFilter" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            '<option value="all" ' + (_placeState.statusFilter === 'all' ? 'selected' : '') + '>All Status</option>' +
-            '<option value="active" ' + (_placeState.statusFilter === 'active' ? 'selected' : '') + '>Active</option>' +
-            '<option value="inactive" ' + (_placeState.statusFilter === 'inactive' ? 'selected' : '') + '>Inactive</option>' +
-            '</select>' +
-            '<select id="placesSortBy" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.5rem;">' +
-            '<option value="name" ' + (_placeState.sortBy === 'name' ? 'selected' : '') + '>Sort: Name</option>' +
-            '<option value="type" ' + (_placeState.sortBy === 'type' ? 'selected' : '') + '>Sort: Type</option>' +
-            '<option value="founded" ' + (_placeState.sortBy === 'founded' ? 'selected' : '') + '>Sort: Founded</option>' +
-            '</select>' +
-            '<button id="clearPlacesFilters" class="btn small" style="padding:4px 8px;font-size:0.45rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">Clear</button>' +
+            // ---- Header ----
+            '<div class="rt-tab__header">' +
+              '<div class="rt-tab__header-title">Places of Worship' +
+                '<span class="rt-tab__header-count">(' + places.length + ')</span>' +
+              '</div>' +
+              '<div class="rt-tab__header-actions">' +
+                (!isDeprecated
+                  ? '<button type="button" class="rt-btn rt-btn--primary add-place-btn">Add Place</button>'
+                  : '') +
+              '</div>' +
             '</div>' +
 
-            // Places list
-            (filtered.length > 0 ?
-                renderPlaceList(filtered, religion) :
-                '<div style="padding:20px;text-align:center;color:var(--dim);font-size:0.6rem;">' + locationIcon + ' No places of worship found' +
-                (places.length > 0 ? ' matching your filters' : ' in this religion') +
+            // ---- Partial note ----
+            ((!PLACES_EDITABLE && places.length > 0)
+              ? '<div class="rt-place-partial-note">' +
+                  'Place records are not fully persisted yet — editing is ' +
+                  'disabled until the canonical place store lands. ' +
+                  'Adding and removing places works.' +
                 '</div>'
-            ) +
+              : '') +
+
+            // ---- Filters ----
+            '<div class="rt-tab__filters">' +
+              '<div class="rt-search">' +
+                '<input type="text" class="places-search"' +
+                  ' placeholder="Search places..."' +
+                  ' value="' + _escapeHtml(_state.search) + '">' +
+              '</div>' +
+              '<select class="places-type-filter">' + typeOptions + '</select>' +
+              '<select class="places-status-filter">' +
+                '<option value="all">All Status</option>' +
+                '<option value="active">Active</option>' +
+                '<option value="inactive">Inactive</option>' +
+              '</select>' +
+              '<select class="places-sort-by">' +
+                '<option value="name">Sort: Name</option>' +
+                '<option value="type">Sort: Type</option>' +
+                '<option value="founded">Sort: Founded</option>' +
+              '</select>' +
+              '<button type="button" class="rt-clear clear-places-filters">Clear</button>' +
+            '</div>' +
+
+            // ---- List ----
+            (filtered.length > 0
+              ? _renderList(filtered, religion)
+              : _renderEmpty(places.length > 0)) +
 
             '</div>';
 
         container.innerHTML = html;
 
-        attachPlacesTabHandlers(container, religion);
+        _syncFilterSelects(container);
+        _attachHandlers(container, religion);
+    }
+
+    function _syncFilterSelects(container) {
+        var map = [
+            ['.places-type-filter', _state.type],
+            ['.places-status-filter', _state.status],
+            ['.places-sort-by', _state.sortBy]
+        ];
+        for (var i = 0; i < map.length; i++) {
+            var el = container.querySelector(map[i][0]);
+            if (el) el.value = map[i][1];
+        }
+    }
+
+    function _renderEmpty(hadPlaces) {
+        var msg = hadPlaces
+            ? 'No places match your filters.'
+            : 'This religion has no places of worship yet.';
+        var hint = hadPlaces
+            ? '<span class="rt-empty__sub">Adjust the filters above.</span>'
+            : '';
+        return '<div class="rt-empty">' + msg + hint + '</div>';
     }
 
     // =========================================================================
-    // 3. FILTER PLACES
+    // 4. FILTER / SORT
     // =========================================================================
 
-    function filterPlaces(places) {
-        var search = _placeState.searchTerm.toLowerCase();
-        var type = _placeState.typeFilter;
-        var status = _placeState.statusFilter;
-        var sortBy = _placeState.sortBy;
+    function _filterPlaces(places) {
+        var search = _state.search ? _state.search.toLowerCase() : '';
+        var type = _state.type;
+        var status = _state.status;
+        var sortBy = _state.sortBy;
 
-        var result = places.slice();
+        var out = [];
+        for (var i = 0; i < places.length; i++) {
+            var p = places[i];
+            if (!p || typeof p !== 'object') continue;
 
-        // Search filter
-        if (search) {
-            result = result.filter(function(p) {
-                var name = (p.name || '').toLowerCase();
-                var locName = (p.locationName || '').toLowerCase();
-                return name.indexOf(search) !== -1 || locName.indexOf(search) !== -1;
-            });
+            // Display name for a place is derived at render time from
+            // whatever the record carries. Searching matches name,
+            // locationName, and the id, so a partially-populated record
+            // is still findable.
+            if (search) {
+                var hay = String(
+                    (p.name || '') + ' ' +
+                    (p.locationName || '') + ' ' +
+                    (p.id || '')
+                ).toLowerCase();
+                if (hay.indexOf(search) === -1) continue;
+            }
+
+            if (type !== 'all' && p.type !== type) continue;
+
+            if (status === 'active' && p.isActive === false) continue;
+            if (status === 'inactive' && p.isActive !== false) continue;
+
+            out.push(p);
         }
 
-        // Type filter
-        if (type !== 'all') {
-            result = result.filter(function(p) { return (p.type || 'temple') === type; });
-        }
-
-        // Status filter
-        if (status === 'active') {
-            result = result.filter(function(p) { return p.isActive !== false; });
-        } else if (status === 'inactive') {
-            result = result.filter(function(p) { return p.isActive === false; });
-        }
-
-        // Sort
         if (sortBy === 'name') {
-            result.sort(function(a, b) {
-                return (a.name || '').localeCompare(b.name || '');
+            out.sort(function (a, b) {
+                return _placeDisplayName(a).localeCompare(_placeDisplayName(b));
             });
         } else if (sortBy === 'type') {
-            result.sort(function(a, b) {
-                return (a.type || 'temple').localeCompare(b.type || 'temple');
+            out.sort(function (a, b) {
+                var at = String(a.type || '');
+                var bt = String(b.type || '');
+                if (at !== bt) return at.localeCompare(bt);
+                return _placeDisplayName(a).localeCompare(_placeDisplayName(b));
             });
         } else if (sortBy === 'founded') {
-            result.sort(function(a, b) {
-                return (a.foundedYear || 0) - (b.foundedYear || 0);
+            out.sort(function (a, b) {
+                var ay = (typeof a.foundedYear === 'number') ? a.foundedYear : -Infinity;
+                var by = (typeof b.foundedYear === 'number') ? b.foundedYear : -Infinity;
+                return ay - by;
+            });
+        } else {
+            out.sort(function (a, b) {
+                return _placeDisplayName(a).localeCompare(_placeDisplayName(b));
             });
         }
 
-        return result;
+        return out;
+    }
+
+    /**
+     * Display name for a place record. Prefers name, then locationName,
+     * then the id. The id path is what a partially-persisted record shows
+     * (see PLACES ARE PARTIAL). The label is a presentation fallback, not
+     * a domain default — the domain has not stored a name, so the id is
+     * the only stable identifier we have.
+     */
+    function _placeDisplayName(place) {
+        if (!place) return '';
+        if (typeof place.name === 'string' && place.name.length > 0) {
+            return place.name;
+        }
+        if (typeof place.locationName === 'string' && place.locationName.length > 0) {
+            return place.locationName;
+        }
+        if (typeof place.id === 'string' && place.id.length > 0) {
+            return place.id;
+        }
+        return '';
     }
 
     // =========================================================================
-    // 4. RENDER PLACE LIST
+    // 5. LIST
     // =========================================================================
 
-    function renderPlaceList(places, religion) {
-        var editIcon = _getIcon('EDIT');
-        var trashIcon = _getIcon('TRASH');
-        var locationIcon = _getIcon('LOCATION');
-        var coinIcon = _getIcon('COIN') || '💰';
-        var checkIcon = _getIcon('CHECK_SIMPLE');
-        var crossIcon = _getIcon('X_HEAVY');
-
-        var isDeprecated = religion.isDeprecated || false;
-        var followerCount = _getFollowerCount(religion.id);
-
-        var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:400px;overflow-y:auto;padding-right:4px;">';
+    function _renderList(places, religion) {
+        var isDeprecated = religion.isDeprecated === true;
+        var html = '<div class="rt-tab__body rt-tab__body--grid">';
 
         for (var i = 0; i < places.length; i++) {
-            var place = places[i];
-            var typeName = _getWorshipTypeName(place.type || 'temple');
-            var typeIcon = _getWorshipTypeIcon(place.type || 'temple');
-            var locationName = place.locationName || _getPlaceName(place.locationId) || 'Unknown';
-            var isActive = place.isActive !== false;
-            var headClergyName = place.headClergyId ? _getCharacterName(place.headClergyId) : 'None';
-            var income = place.baseTithe ? (place.baseTithe * followerCount) : 0;
+            var p = places[i];
+            if (!p || typeof p !== 'object') continue;
 
-            // Calculate if this place has clergy
-            var hasClergy = (place.clergy && place.clergy.length > 0);
+            var displayName = _placeDisplayName(p);
+            var typeLabel = p.type ? _worshipTypeLabel(p.type) : '—';
+            var locationName = p.locationName
+                || (p.locationId ? _getPlaceName(p.locationId) : '—');
+            var isActive = p.isActive !== false;
+
+            var foundedYear = (typeof p.foundedYear === 'number') ? String(p.foundedYear) : null;
+            var headClergyId = p.headClergyId || null;
+            var clergyCount = Array.isArray(p.clergy) ? p.clergy.length : 0;
+
+            var cardClass = 'rt-place-card';
+            if (!isActive) cardClass += ' rt-place-card--inactive';
 
             html +=
-                '<div class="place-card" data-place-id="' + place.id + '" style="' +
-                'background:var(--bg2);border:1px solid var(--border-light);border-radius:6px;' +
-                'padding:10px 12px;' +
-                'border-left:3px solid ' + (isActive ? 'var(--success)' : 'var(--dim)') + ';' +
-                '">' +
-                '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
-                '<div style="flex:1;min-width:0;">' +
-                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-                '<span style="font-size:1rem;">' + typeIcon + '</span>' +
-                '<span style="font-size:0.75rem;font-weight:bold;">' + _escapeHtml(place.name) + '</span>' +
-                (isActive ? 
-                    '<span style="font-size:0.45rem;padding:1px 6px;background:rgba(74,158,106,0.2);border:1px solid #4a9e6a;border-radius:8px;color:#4a9e6a;">' + checkIcon + ' Active</span>' :
-                    '<span style="font-size:0.45rem;padding:1px 6px;background:rgba(181,74,74,0.2);border:1px solid #b54a4a;border-radius:8px;color:#b54a4a;">' + crossIcon + ' Inactive</span>'
-                ) +
-                '</div>' +
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:0.5rem;color:var(--dim);">' +
-                '<span>◈ ' + _escapeHtml(typeName) + '</span>' +
-                '<span>' + locationIcon + ' ' + _escapeHtml(locationName) + '</span>' +
-                (place.foundedYear ? '<span>◈ Founded ' + place.foundedYear + '</span>' : '') +
-                (place.producesIncome !== false ? '<span>' + coinIcon + ' ' + income + ' tithes/year</span>' : '') +
-                '</div>' +
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px;font-size:0.45rem;color:var(--dim);">' +
-                '<span>◈ Head: ' + _escapeHtml(headClergyName) + '</span>' +
-                (hasClergy ? '<span>◈ ' + place.clergy.length + ' clergy</span>' : '') +
-                (place.wealth ? '<span>◈ Wealth: ' + place.wealth + 'g</span>' : '') +
-                '</div>' +
-                (place.notes ? '<div style="font-size:0.45rem;color:var(--dim);margin-top:2px;">' + _escapeHtml(place.notes) + '</div>' : '') +
-                '</div>' +
-                (isDeprecated ? '' :
-                    '<div style="display:flex;gap:4px;flex-shrink:0;">' +
-                    '<button class="collect-tithes-btn" data-place-id="' + place.id + '" style="background:transparent;border:none;color:var(--accent);cursor:pointer;font-size:0.6rem;padding:2px 4px;" title="Collect Tithes">' + coinIcon + '</button>' +
-                    '<button class="edit-place-btn" data-place-id="' + place.id + '" style="background:transparent;border:none;color:var(--accent);cursor:pointer;font-size:0.6rem;padding:2px 4px;" title="Edit">' + editIcon + '</button>' +
-                    '<button class="delete-place-btn" data-place-id="' + place.id + '" style="background:transparent;border:none;color:var(--danger);cursor:pointer;font-size:0.6rem;padding:2px 4px;" title="Delete">' + trashIcon + '</button>' +
-                    '</div>'
-                ) +
-                '</div>' +
+                '<div class="' + cardClass + '" data-place-id="' + _escapeHtml(p.id) + '">' +
+                  '<div class="rt-place-card__header">' +
+                    '<div>' +
+                      '<div class="rt-place-card__title-row">' +
+                        '<span class="rt-place-card__name">' +
+                          _escapeHtml(displayName) +
+                        '</span>' +
+                        (isActive
+                          ? '<span class="rt-status rt-status--active">Active</span>'
+                          : '<span class="rt-status rt-status--deprecated">Inactive</span>') +
+                      '</div>' +
+                      '<div class="rt-place-card__meta">' +
+                        '<span>' + _escapeHtml(typeLabel) + '</span>' +
+                        '<span>' + _escapeHtml(locationName) + '</span>' +
+                        (foundedYear
+                          ? '<span>Founded ' + _escapeHtml(foundedYear) + '</span>'
+                          : '') +
+                      '</div>' +
+                    '</div>' +
+                    (isDeprecated
+                      ? ''
+                      : '<div class="rt-place-card__actions">' +
+                          '<button type="button" class="rt-btn rt-btn--icon collect-tithes-btn"' +
+                            ' data-place-id="' + _escapeHtml(p.id) + '"' +
+                            ' title="Collect tithes">Tithes</button>' +
+                          (PLACES_EDITABLE
+                            ? '<button type="button" class="rt-btn rt-btn--icon edit-place-btn"' +
+                                ' data-place-id="' + _escapeHtml(p.id) + '"' +
+                                ' title="Edit">Edit</button>'
+                            : '') +
+                          '<button type="button" class="rt-btn rt-btn--icon rt-btn--danger delete-place-btn"' +
+                            ' data-place-id="' + _escapeHtml(p.id) + '"' +
+                            ' title="Delete">Delete</button>' +
+                        '</div>') +
+                  '</div>' +
+                  '<div class="rt-place-card__sub">' +
+                    (headClergyId
+                      ? '<span>Head clergy: ' + _escapeHtml(headClergyId) + '</span>'
+                      : '') +
+                    (clergyCount > 0
+                      ? '<span>' + clergyCount + ' clergy</span>'
+                      : '') +
+                    (typeof p.wealth === 'number'
+                      ? '<span>Wealth: ' + p.wealth + '</span>'
+                      : '') +
+                  '</div>' +
+                  (p.notes
+                    ? '<div class="rt-place-card__notes">' + _escapeHtml(p.notes) + '</div>'
+                    : '') +
                 '</div>';
         }
 
         html += '</div>';
-
         return html;
     }
 
     // =========================================================================
-    // 5. EVENT HANDLERS
+    // 6. HANDLERS
     // =========================================================================
 
-    function attachPlacesTabHandlers(container, religion) {
+    function _attachHandlers(container, religion) {
         var RC = _getReligionCommands();
-
         if (!RC) return;
 
-        // Search
-        var searchInput = document.getElementById('placesSearchInput');
-        if (searchInput) {
-            searchInput._searchTimeout = null;
-            searchInput.oninput = function() {
-                if (searchInput._searchTimeout) {
-                    clearTimeout(searchInput._searchTimeout);
-                }
-                searchInput._searchTimeout = setTimeout(function() {
-                    _placeState.searchTerm = searchInput.value;
-                    renderPlacesTab(container, religion);
-                }, 300);
-            };
+        function rerender() {
+            renderPlacesTab(container, religion);
         }
 
-        // Type filter
-        var typeFilter = document.getElementById('placesTypeFilter');
-        if (typeFilter) {
-            typeFilter.onchange = function() {
-                _placeState.typeFilter = this.value;
-                renderPlacesTab(container, religion);
-            };
+        // ---- Search (debounced) ----
+        var search = container.querySelector('.places-search');
+        if (search) {
+            var timer = null;
+            search.addEventListener('input', function () {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(function () {
+                    timer = null;
+                    _state.search = search.value || '';
+                    _applyFiltersInPlace(container, religion);
+                }, 200);
+            });
         }
 
-        // Status filter
-        var statusFilter = document.getElementById('placesStatusFilter');
-        if (statusFilter) {
-            statusFilter.onchange = function() {
-                _placeState.statusFilter = this.value;
-                renderPlacesTab(container, religion);
-            };
+        var typeSel = container.querySelector('.places-type-filter');
+        if (typeSel) {
+            typeSel.addEventListener('change', function () {
+                _state.type = typeSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
         }
 
-        // Sort by
-        var sortBy = document.getElementById('placesSortBy');
-        if (sortBy) {
-            sortBy.onchange = function() {
-                _placeState.sortBy = this.value;
-                renderPlacesTab(container, religion);
-            };
+        var statusSel = container.querySelector('.places-status-filter');
+        if (statusSel) {
+            statusSel.addEventListener('change', function () {
+                _state.status = statusSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
         }
 
-        // Clear filters
-        var clearBtn = document.getElementById('clearPlacesFilters');
+        var sortSel = container.querySelector('.places-sort-by');
+        if (sortSel) {
+            sortSel.addEventListener('change', function () {
+                _state.sortBy = sortSel.value;
+                _applyFiltersInPlace(container, religion);
+            });
+        }
+
+        var clearBtn = container.querySelector('.clear-places-filters');
         if (clearBtn) {
-            clearBtn.onclick = function() {
-                _placeState.searchTerm = '';
-                _placeState.typeFilter = 'all';
-                _placeState.statusFilter = 'all';
-                _placeState.sortBy = 'name';
-                renderPlacesTab(container, religion);
-            };
+            clearBtn.addEventListener('click', function () {
+                _resetState();
+                rerender();
+            });
         }
 
-        // Add place button
-        var addBtn = document.getElementById('addPlaceBtn');
+        // ---- Add place ----
+        var addBtn = container.querySelector('.add-place-btn');
         if (addBtn) {
-            addBtn.onclick = function() {
-                openAddPlaceModal(religion, function() {
+            addBtn.addEventListener('click', function () {
+                _openAddPlace(religion, rerender);
+            });
+        }
+
+        // ---- Row actions (delegated) ----
+        _attachRowActions(container, religion);
+    }
+
+    function _applyFiltersInPlace(container, religion) {
+        var RQ = _getReligionQueries();
+        if (!RQ) return;
+        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
+        var filtered = _filterPlaces(places);
+
+        var existing = container.querySelector('.rt-tab__body');
+        var empty = container.querySelector('.rt-empty');
+        var newHtml = filtered.length > 0
+            ? _renderList(filtered, religion)
+            : _renderEmpty(places.length > 0);
+
+        if (existing) {
+            var tmp = document.createElement('div');
+            tmp.innerHTML = newHtml;
+            var fresh = tmp.firstChild;
+            existing.parentNode.replaceChild(fresh, existing);
+        } else if (empty) {
+            var tmp2 = document.createElement('div');
+            tmp2.innerHTML = newHtml;
+            var fresh2 = tmp2.firstChild;
+            empty.parentNode.replaceChild(fresh2, empty);
+        }
+
+        _attachRowActions(container, religion);
+    }
+
+    function _attachRowActions(container, religion) {
+        var RC = _getReligionCommands();
+        if (!RC) return;
+        var body = container.querySelector('.rt-tab__body');
+        if (!body) return;
+        if (body.__rtHandled) return;
+        body.__rtHandled = true;
+
+        body.addEventListener('click', function (e) {
+            var target = e.target;
+            if (!target || typeof target.closest !== 'function') return;
+
+            var collectBtn = target.closest('.collect-tithes-btn');
+            if (collectBtn) {
+                e.preventDefault();
+                var cid = collectBtn.getAttribute('data-place-id');
+                if (cid) _collectTithes(cid, religion, function () {
                     renderPlacesTab(container, religion);
                 });
-            };
-        }
+                return;
+            }
 
-        // Collect tithes buttons
-        var collectBtns = container.querySelectorAll('.collect-tithes-btn');
-        for (var i = 0; i < collectBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var placeId = this.dataset.placeId;
-                    collectTithes(placeId, religion, function() {
+            var editBtn = target.closest('.edit-place-btn');
+            if (editBtn) {
+                e.preventDefault();
+                if (!PLACES_EDITABLE) {
+                    _showToast(
+                        'Editing places is disabled until the canonical ' +
+                        'place store lands.',
+                        'info'
+                    );
+                    return;
+                }
+                var eid = editBtn.getAttribute('data-place-id');
+                if (eid) {
+                    _openEditPlace(religion, eid, function () {
                         renderPlacesTab(container, religion);
                     });
-                };
-            })(collectBtns[i]);
-        }
+                }
+                return;
+            }
 
-        // Edit place buttons
-        var editBtns = container.querySelectorAll('.edit-place-btn');
-        for (var i = 0; i < editBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var placeId = this.dataset.placeId;
-                    openEditPlaceModal(placeId, religion, function() {
+            var delBtn = target.closest('.delete-place-btn');
+            if (delBtn) {
+                e.preventDefault();
+                var did = delBtn.getAttribute('data-place-id');
+                if (did) {
+                    _confirmDeletePlace(religion, did, function () {
                         renderPlacesTab(container, religion);
                     });
-                };
-            })(editBtns[i]);
-        }
-
-        // Delete place buttons
-        var deleteBtns = container.querySelectorAll('.delete-place-btn');
-        for (var i = 0; i < deleteBtns.length; i++) {
-            (function(btn) {
-                btn.onclick = function() {
-                    var placeId = this.dataset.placeId;
-                    _confirmDialog('Remove this place of worship?', 'Delete Place', function() {
-                        var result = RC.deletePlaceOfWorship(placeId);
-                        if (result.success) {
-                            _showToast('Place of worship removed', 'info');
-                            renderPlacesTab(container, religion);
-                        } else {
-                            _showToast('Failed to remove place: ' + result.reason, 'error');
-                        }
-                    });
-                };
-            })(deleteBtns[i]);
-        }
+                }
+            }
+        });
     }
 
     // =========================================================================
-    // 6. COLLECT TITHES
+    // 7. ADD / EDIT / DELETE / TITHES
     // =========================================================================
 
-    function collectTithes(placeId, religion, onSuccess) {
+    function _openAddPlace(religion, onDone) {
         var RC = _getReligionCommands();
-
         if (!RC) {
             _showToast('ReligionCommands not available', 'error');
             return;
         }
 
-        var result = RC.collectTithes(placeId);
-        if (result.success) {
-            var amount = result.data ? result.data.amount : 0;
-            _showToast('Collected ' + amount + ' gold in tithes', 'success');
-            if (onSuccess) onSuccess();
-        } else {
-            _showToast('Failed to collect tithes: ' + result.reason, 'error');
-        }
-    }
-
-    // =========================================================================
-    // 7. ADD PLACE MODAL
-    // =========================================================================
-
-    function openAddPlaceModal(religion, onSuccess) {
-        var RC = _getReligionCommands();
-
-        if (!RC) {
-            _showToast('ReligionCommands not available', 'error');
-            return;
+        var enums = null;
+        if (typeof window.ReligionConstants !== 'undefined'
+            && window.ReligionConstants
+            && window.ReligionConstants.WORSHIP_TYPES) {
+            enums = window.ReligionConstants.WORSHIP_TYPES;
         }
 
-        var worshipTypes = window.WORSHIP_TYPES || {
-            TEMPLE: 'temple',
-            CHURCH: 'church',
-            SHRINE: 'shrine',
-            MOSQUE: 'mosque',
-            SYNAGOGUE: 'synagogue',
-            MONASTERY: 'monastery',
-            GROVE: 'grove'
-        };
-
-        var typeOptions = '';
-        for (var key in worshipTypes) {
-            if (worshipTypes.hasOwnProperty(key)) {
-                var val = worshipTypes[key];
-                var label = val.charAt(0).toUpperCase() + val.slice(1);
-                typeOptions += '<option value="' + val + '" ' + (val === 'temple' ? 'selected' : '') + '>' + label + '</option>';
+        var typeOpts = '<option value="temple">Temple</option>';
+        if (enums) {
+            typeOpts = '';
+            for (var k in enums) {
+                if (!Object.prototype.hasOwnProperty.call(enums, k)) continue;
+                var v = enums[k];
+                if (typeof v !== 'string' || v.length === 0) continue;
+                var label = _worshipTypeLabel(v) || (v.charAt(0).toUpperCase() + v.slice(1));
+                var sel = (v === 'temple') ? ' selected' : '';
+                typeOpts += '<option value="' + _escapeHtml(v) + '"' + sel + '>' +
+                    _escapeHtml(label) + '</option>';
             }
         }
 
-        var locationOptions = _getLocationOptions(null);
+        var locationOpts = _getLocationOptions(null);
 
-        var content = 
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Add a place of worship to <strong>' + _escapeHtml(religion.displayName || religion.name) + '</strong></p>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
-            '<input type="text" id="placeName" placeholder="e.g., The Great Temple" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-            '<select id="placeType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            typeOptions +
-            '</select>' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
-            '<select id="placeLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            locationOptions +
-            '</select>' +
-            '</div>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Head Clergy</label>' +
-            '<input type="text" id="placeHeadClergy" placeholder="Character ID" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
-            '<input type="number" id="placeFoundedYear" value="1250" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '</div>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
-            '<input type="number" id="placeTithe" value="1" min="0" step="0.5" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Initial Wealth</label>' +
-            '<input type="number" id="placeWealth" value="0" min="0" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="placeProducesIncome" checked style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="placeNotes" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-
+        var content =
+            '<div class="rt-form">' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="placeName">Place Name *</label>' +
+                  '<input type="text" id="placeName" placeholder="e.g., The Great Temple">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="placeType">Type</label>' +
+                  '<select id="placeType">' + typeOpts + '</select>' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__label" for="placeLocation">Location *</label>' +
+                '<select id="placeLocation">' + locationOpts + '</select>' +
+              '</div>' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="placeTithe">Base Tithe (per follower)</label>' +
+                  '<input type="number" id="placeTithe" value="1" min="0" step="0.5">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="placeFoundedYear">Founded Year</label>' +
+                  '<input type="number" id="placeFoundedYear" value="1250">' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__checkbox">' +
+                  '<input type="checkbox" id="placeProducesIncome" checked>' +
+                  '<span>Produces income (collects tithes)</span>' +
+                '</label>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__label" for="placeNotes">Notes</label>' +
+                '<input type="text" id="placeNotes" placeholder="Additional notes...">' +
+              '</div>' +
+              '<div class="rt-form__partial-note">' +
+                'Note: place records are not yet fully persisted. The new ' +
+                'place will be linked to this religion, but its details ' +
+                '(type, tithe, founded year) are held in-memory until the ' +
+                'canonical place store lands.' +
+              '</div>' +
             '</div>';
 
         _openModal({
-            title: 'Add Place of Worship',
-            content: content,
+            titleHtml: 'Add Place of Worship',
+            contentHtml: content,
             confirmText: 'Add Place',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('placeName').value.trim();
+            onConfirm: function (root) {
+                var nameInput = root.querySelector('#placeName');
+                var name = nameInput ? nameInput.value.trim() : '';
                 if (!name) {
                     _showToast('Place name is required', 'error');
                     return false;
                 }
 
-                var locationId = document.getElementById('placeLocation').value;
+                var locSel = root.querySelector('#placeLocation');
+                var locationId = locSel ? locSel.value : '';
                 if (!locationId) {
                     _showToast('Please select a location', 'error');
                     return false;
                 }
+
+                var titheInput = root.querySelector('#placeTithe');
+                var titheVal = titheInput ? parseFloat(titheInput.value) : 1;
+                if (Number.isNaN(titheVal)) titheVal = 1;
+
+                var foundedInput = root.querySelector('#placeFoundedYear');
+                var foundedVal = foundedInput ? parseInt(foundedInput.value, 10) : 1250;
+                if (Number.isNaN(foundedVal)) foundedVal = 1250;
+
+                var incomeEl = root.querySelector('#placeProducesIncome');
 
                 var data = {
                     name: name,
                     religionId: religion.id,
                     locationId: locationId,
                     locationName: _getPlaceName(locationId),
-                    type: document.getElementById('placeType').value,
-                    headClergyId: document.getElementById('placeHeadClergy').value.trim() || null,
-                    foundedYear: parseInt(document.getElementById('placeFoundedYear').value) || 1250,
-                    baseTithe: parseFloat(document.getElementById('placeTithe').value) || 1,
-                    wealth: parseInt(document.getElementById('placeWealth').value) || 0,
-                    producesIncome: document.getElementById('placeProducesIncome').checked,
-                    notes: document.getElementById('placeNotes').value.trim()
+                    type: _readVal(root, '#placeType') || 'temple',
+                    baseTithe: titheVal,
+                    foundedYear: foundedVal,
+                    producesIncome: incomeEl ? incomeEl.checked === true : true,
+                    notes: _readVal(root, '#placeNotes')
                 };
 
                 var result = RC.createPlaceOfWorship(data);
-                if (result.success) {
-                    _showToast('Place of worship created: ' + result.data.name, 'success');
-                    _closeTopModal();
-                    if (onSuccess) onSuccess(result.data);
+                if (result && result.success) {
+                    _showToast(
+                        'Place created: ' + (result.data && result.data.name
+                            ? result.data.name
+                            : name),
+                        'success'
+                    );
+                    if (typeof onDone === 'function') onDone();
                     return true;
-                } else {
-                    _showToast('Failed to create place: ' + result.reason, 'error');
-                    return false;
                 }
+                _showToast(
+                    'Failed to create place: ' +
+                    (result && result.reason ? result.reason : 'unknown'),
+                    'error'
+                );
+                return false;
             }
         });
     }
 
-    // =========================================================================
-    // 8. EDIT PLACE MODAL
-    // =========================================================================
-
-    function openEditPlaceModal(placeId, religion, onSuccess) {
+    function _openEditPlace(religion, placeId, onDone) {
+        // Reached only when PLACES_EDITABLE is true. Kept complete so
+        // flipping the flag is the only change needed to activate it.
+        // updatePlaceOfWorship is currently a stub; when it becomes real,
+        // the modal wiring below is already correct.
         var RC = _getReligionCommands();
-
-        if (!RC) {
-            _showToast('ReligionCommands not available', 'error');
+        var RQ = _getReligionQueries();
+        if (!RC || !RQ) {
+            _showToast('Religion system not available', 'error');
             return;
         }
 
-        // Find the place
-        var places = _getPlacesOfWorshipByReligion(religion.id);
+        var places = RQ.getPlacesOfWorshipByReligion(religion.id) || [];
         var place = null;
         for (var i = 0; i < places.length; i++) {
-            if (places[i].id === placeId) {
-                place = places[i];
-                break;
-            }
+            if (places[i] && places[i].id === placeId) { place = places[i]; break; }
         }
-
         if (!place) {
             _showToast('Place not found', 'error');
             return;
         }
 
-        var worshipTypes = window.WORSHIP_TYPES || {
-            TEMPLE: 'temple',
-            CHURCH: 'church',
-            SHRINE: 'shrine',
-            MOSQUE: 'mosque',
-            SYNAGOGUE: 'synagogue',
-            MONASTERY: 'monastery',
-            GROVE: 'grove'
-        };
+        var nameVal = place.name || '';
+        var locationVal = place.locationId || '';
+        var typeVal = place.type || 'temple';
+        var titheVal = (typeof place.baseTithe === 'number') ? String(place.baseTithe) : '1';
+        var foundedVal = (typeof place.foundedYear === 'number') ? String(place.foundedYear) : '';
+        var producesIncome = place.producesIncome !== false;
+        var notesVal = place.notes || '';
 
-        var typeOptions = '';
-        for (var key in worshipTypes) {
-            if (worshipTypes.hasOwnProperty(key)) {
-                var val = worshipTypes[key];
-                var label = val.charAt(0).toUpperCase() + val.slice(1);
-                var selected = (place.type === val) ? 'selected' : '';
-                typeOptions += '<option value="' + val + '" ' + selected + '>' + label + '</option>';
-            }
-        }
-
-        var locationOptions = _getLocationOptions(place.locationId);
-
-        var content = 
-            '<div style="display:flex;flex-direction:column;gap:12px;">' +
-            '<p style="font-size:0.7rem;">Edit <strong>' + _escapeHtml(place.name) + '</strong></p>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Place Name *</label>' +
-            '<input type="text" id="editPlaceName" value="' + _escapeHtml(place.name) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Type</label>' +
-            '<select id="editPlaceType" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            typeOptions +
-            '</select>' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Location</label>' +
-            '<select id="editPlaceLocation" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            locationOptions +
-            '</select>' +
-            '</div>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Head Clergy</label>' +
-            '<input type="text" id="editPlaceHeadClergy" value="' + _escapeHtml(place.headClergyId || '') + '" placeholder="Character ID" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Founded Year</label>' +
-            '<input type="number" id="editPlaceFoundedYear" value="' + (place.foundedYear || 1250) + '" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '</div>' +
-
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Base Tithe (per follower)</label>' +
-            '<input type="number" id="editPlaceTithe" value="' + (place.baseTithe || 1) + '" min="0" step="0.5" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Wealth</label>' +
-            '<input type="number" id="editPlaceWealth" value="' + (place.wealth || 0) + '" min="0" style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="editPlaceProducesIncome" ' + (place.producesIncome !== false ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Produces Income (Collects Tithes)</label>' +
-            '</div>' +
-
-            '<div class="form-group" style="display:flex;align-items:center;gap:8px;">' +
-            '<input type="checkbox" id="editPlaceIsActive" ' + (place.isActive !== false ? 'checked' : '') + ' style="width:16px;height:16px;">' +
-            '<label style="font-size:0.65rem;color:var(--dim);cursor:pointer;">Is Active</label>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="font-size:0.65rem;color:var(--dim);display:block;margin-bottom:4px;">Notes</label>' +
-            '<input type="text" id="editPlaceNotes" value="' + _escapeHtml(place.notes || '') + '" placeholder="Additional notes..." style="width:100%;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.65rem;">' +
-            '</div>' +
-
+        var content =
+            '<div class="rt-form">' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editPlaceName">Place Name *</label>' +
+                  '<input type="text" id="editPlaceName" value="' +
+                    _escapeHtml(nameVal) + '">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editPlaceType">Type</label>' +
+                  '<input type="text" id="editPlaceType" value="' +
+                    _escapeHtml(typeVal) + '">' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__label" for="editPlaceLocation">Location</label>' +
+                '<select id="editPlaceLocation">' +
+                  _getLocationOptions(locationVal) +
+                '</select>' +
+              '</div>' +
+              '<div class="rt-form__grid-2">' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editPlaceTithe">Base Tithe</label>' +
+                  '<input type="number" id="editPlaceTithe" value="' +
+                    _escapeHtml(titheVal) + '" min="0" step="0.5">' +
+                '</div>' +
+                '<div class="rt-form__group">' +
+                  '<label class="rt-form__label" for="editPlaceFoundedYear">Founded Year</label>' +
+                  '<input type="number" id="editPlaceFoundedYear" value="' +
+                    _escapeHtml(foundedVal) + '">' +
+                '</div>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__checkbox">' +
+                  '<input type="checkbox" id="editPlaceProducesIncome"' +
+                    (producesIncome ? ' checked' : '') + '>' +
+                  '<span>Produces income</span>' +
+                '</label>' +
+              '</div>' +
+              '<div class="rt-form__group">' +
+                '<label class="rt-form__label" for="editPlaceNotes">Notes</label>' +
+                '<input type="text" id="editPlaceNotes" value="' +
+                  _escapeHtml(notesVal) + '">' +
+              '</div>' +
             '</div>';
 
         _openModal({
-            title: 'Edit Place of Worship',
-            content: content,
+            titleHtml: 'Edit Place of Worship',
+            contentHtml: content,
             confirmText: 'Save',
             cancelText: 'Cancel',
-            onConfirm: function() {
-                var name = document.getElementById('editPlaceName').value.trim();
+            onConfirm: function (root) {
+                var nameInput = root.querySelector('#editPlaceName');
+                var name = nameInput ? nameInput.value.trim() : '';
                 if (!name) {
                     _showToast('Place name is required', 'error');
                     return false;
                 }
 
-                var locationId = document.getElementById('editPlaceLocation').value;
-                if (!locationId) {
-                    _showToast('Please select a location', 'error');
-                    return false;
-                }
-
                 var updates = {
                     name: name,
-                    locationId: locationId,
-                    locationName: _getPlaceName(locationId),
-                    type: document.getElementById('editPlaceType').value,
-                    headClergyId: document.getElementById('editPlaceHeadClergy').value.trim() || null,
-                    foundedYear: parseInt(document.getElementById('editPlaceFoundedYear').value) || 1250,
-                    baseTithe: parseFloat(document.getElementById('editPlaceTithe').value) || 1,
-                    wealth: parseInt(document.getElementById('editPlaceWealth').value) || 0,
-                    producesIncome: document.getElementById('editPlaceProducesIncome').checked,
-                    isActive: document.getElementById('editPlaceIsActive').checked,
-                    notes: document.getElementById('editPlaceNotes').value.trim()
+                    type: _readVal(root, '#editPlaceType') || 'temple',
+                    locationId: _readVal(root, '#editPlaceLocation') || null,
+                    baseTithe: parseFloat(_readVal(root, '#editPlaceTithe')) || 1,
+                    foundedYear: parseInt(_readVal(root, '#editPlaceFoundedYear'), 10) || 1250,
+                    producesIncome: (root.querySelector('#editPlaceProducesIncome') || {}).checked === true,
+                    notes: _readVal(root, '#editPlaceNotes')
                 };
 
                 var result = RC.updatePlaceOfWorship(placeId, updates);
-                if (result.success) {
+                if (result && result.success) {
                     _showToast('Place updated', 'success');
-                    _closeTopModal();
-                    if (onSuccess) onSuccess(result.data);
+                    if (typeof onDone === 'function') onDone();
                     return true;
-                } else {
-                    _showToast('Failed to update place: ' + result.reason, 'error');
-                    return false;
                 }
+                _showToast(
+                    'Failed to update place: ' +
+                    (result && result.reason ? result.reason : 'unknown'),
+                    'error'
+                );
+                return false;
             }
         });
     }
 
+    function _confirmDeletePlace(religion, placeId, onDone) {
+        var RC = _getReligionCommands();
+        if (!RC) return;
+
+        var RQ = _getReligionQueries();
+        var places = RQ ? (RQ.getPlacesOfWorshipByReligion(religion.id) || []) : [];
+        var place = null;
+        for (var i = 0; i < places.length; i++) {
+            if (places[i] && places[i].id === placeId) { place = places[i]; break; }
+        }
+        var displayName = place ? _placeDisplayName(place) : placeId;
+
+        _confirmDialog(
+            'Remove "' + displayName + '" from this religion?',
+            'Delete Place of Worship',
+            function () {
+                var result = RC.deletePlaceOfWorship(placeId);
+                if (result && result.success) {
+                    _showToast('Place removed', 'info');
+                    if (typeof onDone === 'function') onDone();
+                } else {
+                    _showToast(
+                        'Failed to remove place: ' +
+                        (result && result.reason ? result.reason : 'unknown'),
+                        'error'
+                    );
+                }
+            }
+        );
+    }
+
+    function _collectTithes(placeId, religion, onDone) {
+        var RC = _getReligionCommands();
+        if (!RC) {
+            _showToast('ReligionCommands not available', 'error');
+            return;
+        }
+
+        var result = RC.collectTithes(placeId);
+        if (result && result.success) {
+            var amount = result.data && typeof result.data.amount === 'number'
+                ? result.data.amount
+                : 0;
+            _showToast(
+                'Collected ' + amount + ' gold in tithes',
+                'success'
+            );
+            if (typeof onDone === 'function') onDone();
+        } else {
+            _showToast(
+                'Failed to collect tithes: ' +
+                (result && result.reason ? result.reason : 'unknown'),
+                'error'
+            );
+        }
+    }
+
     // =========================================================================
-    // 9. TAB DEFINITION
+    // 8. SMALL HELPERS
     // =========================================================================
 
-    var ReligionPlacesTab = {
-        label: 'Places',
-        icon: 'LOCATION',
+    function _readVal(root, selector) {
+        var el = root ? root.querySelector(selector) : null;
+        return el ? el.value : '';
+    }
+
+    // =========================================================================
+    // 9. TABMANAGER ADAPTER + REGISTRATION
+    // =========================================================================
+
+    function renderAdapter(container, context) {
+        var religion = (context && context.religion) ? context.religion : null;
+        renderPlacesTab(container, religion);
+    }
+
+    if (typeof window.TabManager !== 'undefined' && window.TabManager) {
+        window.TabManager.register('religion', 'places', renderAdapter);
+    } else if (typeof console !== 'undefined' && console.warn) {
+        console.warn(
+            'religion-places-tab.js: TabManager is not loaded; the places ' +
+            'tab was not registered. Load tab-manager.js first.'
+        );
+    }
+
+    // =========================================================================
+    // 10. EXPORTS
+    // =========================================================================
+
+    window.ReligionPlacesTab = {
+        id: 'places',
         render: renderPlacesTab,
-        save: function(religion) {
-            return religion;
-        },
-        validate: function(religion) {
-            return { valid: true };
-        }
+        renderAdapter: renderAdapter,
+        // Exposed for the editor host to check whether editing is live.
+        isEditable: function () { return PLACES_EDITABLE === true; }
     };
 
-    // =========================================================================
-    // 10. REGISTER FUNCTION
-    // =========================================================================
-
-    function registerReligionPlacesTab() {
-        if (typeof window.ReligionEditorTabs === 'undefined') {
-            return false;
-        }
-
-        var result = window.ReligionEditorTabs.registerTab('places', ReligionPlacesTab);
-        return result;
-    }
-
-    // =========================================================================
-    // 11. EXPORTS
-    // =========================================================================
-
-    window.ReligionPlacesTab = ReligionPlacesTab;
-    window.registerReligionPlacesTab = registerReligionPlacesTab;
-
-    if (typeof window.ReligionEditorTabs !== 'undefined') {
-        registerReligionPlacesTab();
-    }
-
     if (typeof module !== 'undefined' && module.exports) {
-        module.exports = {
-            ReligionPlacesTab: ReligionPlacesTab,
-            registerReligionPlacesTab: registerReligionPlacesTab
-        };
+        module.exports = { ReligionPlacesTab: window.ReligionPlacesTab };
     }
-
 })();
