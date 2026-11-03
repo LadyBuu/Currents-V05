@@ -1,80 +1,2244 @@
-# Industry & Enterprise System
+================================================================================
+STILL WATERS — INDUSTRY SUBSYSTEM DOCUMENTATION AND LOAD ORDER
+================================================================================
 
-**Location:** `js/core/industry/`
-**Version:** 3.0
-**Updated:** 2026-10-22
+Scope of this document:
+  - Every industry file provided in this batch (16 files):
+      js/core/industry/industry-constants.js
+      js/core/industry/industry-economics.js
+      js/core/industry/industry-rules.js
+      js/core/industry/industry-type-defaults.js
+      js/core/industry/industry-state.js
+      js/core/industry/industry-type-init.js
+      js/core/industry/industry-type-commands.js
+      js/core/industry/industry-types.js
+      js/core/industry/industry-migration.js
+      js/core/industry/industry-commands.js
+      js/core/industry/industry-queries.js
+      js/core/industry/industry-processor.js
+      js/core/industry/industry-view-models.js
+      js/core/industry/industry-ui-list.js
+      js/core/industry/modals-industry.js
+      js/core/industry/industry-bootstrap.js
+  - Every core, character, household, and place file the industry
+    subsystem depends on, at LOAD time (module-level guards) or at CALL
+    time (typeof-guarded lookups), and how each is used.
+  - The dependency graph across industry layers.
+  - The cross-domain contract (industry -> household).
+  - Cross-references to the existing subsystem docs:
+      stillwaters-docs.txt (core)
+      character-doc.txt (character)
+      household-doc.txt (household)
 
----
+Anything not provable from the supplied files is marked [UNVERIFIED].
+The industry doc (industry-doc.txt) is referenced for narrative; where
+it conflicts with the supplied code, the code wins and the conflict is
+noted in PART 7 HAZARDS.
 
-## 1. Ownership Contract
 
-The industry domain owns four classes of record and one cross-domain
-relationship. Everything else it consumes.
+================================================================================
+PART 1 — FILE INVENTORY AND LAYERS
+================================================================================
 
-### Owns
+The industry subsystem sits ABOVE the character, household, place,
+storage, and time domains. It orchestrates them; it does not own them.
 
-| Record | Stored in | Owner module | Authority |
-|---|---|---|---|
-| Enterprise | `masterData.data.enterprises[]` | `IndustryCommands` | sole writer |
-| Enterprise type | `masterData.data.enterpriseTypes[]` | `IndustryTypeCommands` | sole writer |
-| Enterprise in-memory catalogue | `IndustryState` | `IndustryState` | sole writer (via `_` primitives) |
-| Enterprise type in-memory catalogue | `IndustryState` | `IndustryState` | sole writer (via `_` primitives) |
+  CONSTANTS (leaf)
+    js/core/industry/industry-constants.js
 
-### Consumes (read-only)
+  DEFAULTS (pure data, leaf)
+    js/core/industry/industry-type-defaults.js
 
-| Data | Via | Notes |
-|---|---|---|
-| Character record | `getCharacterById` | owner lookup, worker lookup |
-| Household record | `getHouseholdById` | owner lookup, cross-domain write routing |
-| Place record | `getPlaceById` | location lookup, settlement/state owner lookup |
-| Current year | `getCurrentYear` | founded year, processing year |
-| ID generation | `generateId` | new enterprise, new type |
-| Persistence | `saveMasterData`, `markDataDirty` | commands own persistence |
+  ECONOMICS (pure calculations, leaf)
+    js/core/industry/industry-economics.js
 
-### Cross-domain writes
+  RULES (pure policy; reads constants + economics at call time)
+    js/core/industry/industry-rules.js
 
-| Effect | Routed through | Notes |
-|---|---|---|
-| Add enterprise to household reverse-index | `HouseholdCommands.addEnterpriseToHousehold` | when `ownerType === 'household'` on create |
-| Remove enterprise from household reverse-index | `HouseholdCommands.removeEnterpriseFromHousehold` | on delete, demolish |
-| Adjust household wealth | `HouseholdCommands.updateHousehold(householdId, { wealth })` | annual processing household transfer |
+  STATE (in-memory canonical catalogue; depends on storage + constants)
+    js/core/industry/industry-state.js
 
-Industry NEVER writes to household records, character records, or place records directly. The household reverse-index (`household.enterprises[]`) is the only household-owned field industry mutates, and it is done via `HouseholdCommands`, never by reaching into the record.
+  TYPE INIT (seed defaults into masterData)
+    js/core/industry/industry-type-init.js
 
----
+  TYPE COMMANDS (write boundary for the type registry)
+    js/core/industry/industry-type-commands.js
 
-## 2. Load Order
+  TYPES (read-only facade over the type registry)
+    js/core/industry/industry-types.js
 
-Every script tag in an HTML file that uses the industry domain must appear in this order. The bootstrap's load-time verification refuses to run if any required module is missing.
+  MIGRATION (pre-hydration canonicalisation)
+    js/core/industry/industry-migration.js
 
-```html
-<!-- Core -->
-<script src="js/core/time.js"></script>
-<script src="js/core/ids.js"></script>
-<script src="js/core/storage.js"></script>
-<script src="js/core/accessors.js"></script>
-<script src="js/core/icons.js"></script>
-<script src="js/core/formatting.js"></script>
-<script src="js/core/modals-core.js"></script>
+  COMMANDS (the single enterprise write boundary)
+    js/core/industry/industry-commands.js
 
-<!-- Cross-domain (before industry) -->
-<script src="js/core/character/character-commands.js"></script>
-<script src="js/systems/household/household-commands.js"></script>
+  QUERIES (semantic reads over state + cross-domain accessors)
+    js/core/industry/industry-queries.js
 
-<!-- Industry (this exact order) -->
-<script src="js/core/industry/industry-constants.js"></script>
-<script src="js/core/industry/industry-economics.js"></script>
-<script src="js/core/industry/industry-rules.js"></script>
-<script src="js/core/industry/industry-type-defaults.js"></script>
-<script src="js/core/industry/industry-state.js"></script>
-<script src="js/core/industry/industry-type-init.js"></script>
-<script src="js/core/industry/industry-type-commands.js"></script>
-<script src="js/core/industry/industry-types.js"></script>
-<script src="js/core/industry/industry-migration.js"></script>
-<script src="js/core/industry/industry-commands.js"></script>
-<script src="js/core/industry/industry-queries.js"></script>
-<script src="js/core/industry/industry-processor.js"></script>
-<script src="js/core/industry/industry-view-models.js"></script>
-<script src="js/core/industry/industry-ui-list.js"></script>
-<script src="js/core/industry/modals-industry.js"></script>
-<script src="js/core/industry/industry-bootstrap.js"></script>
+  PROCESSOR (annual processing orchestration)
+    js/core/industry/industry-processor.js
+
+  VIEW MODELS (presentation preparation)
+    js/core/industry/industry-view-models.js
+
+  UI LIST (DOM renderers over view models)
+    js/core/industry/industry-ui-list.js
+
+  MODALS (input gathering + command invocation)
+    js/core/industry/modals-industry.js
+
+  BOOTSTRAP (verification + migration + seeding + hydration + diagnostics)
+    js/core/industry/industry-bootstrap.js
+
+Layer ordering (dependency direction):
+
+  constants, defaults, economics
+      |
+      v
+  rules
+      |
+      v
+  state  ->  migration, type-init, types
+      |
+      v
+  type-commands
+      |
+      v
+  commands
+      |
+      v
+  queries
+      |
+      v
+  processor, view-models
+      |
+      v
+  ui-list, modals
+      |
+      v
+  bootstrap
+
+bootstrap loads LAST among industry files and verifies every layer
+above it. modals-industry.js depends on the command / query /
+view-model / processor namespaces directly (not on bootstrap), so the
+documented HTML load order places modals-industry.js BEFORE
+industry-bootstrap.js.
+
+
+================================================================================
+PART 2 — DEPENDENCIES
+================================================================================
+
+Terminology:
+  REQUIRED (load-time)  — a module-level guard throws if the
+                          dependency is missing when this file loads.
+  REQUIRED (call-time)  — a function throws/refuses if the dependency
+                          is missing when invoked; the module loads
+                          without it.
+  OPTIONAL              — the module checks and falls back.
+
+Cross-domain references are labelled with their subsystem:
+  [core]        js/core/...
+  [character]   js/character/...
+  [household]   js/households/...
+  [settlement]  js/settlement/...
+  [time]        js/core/time.js
+  [storage]     js/core/storage.js
+  [accessors]   js/core/accessors.js
+  [ids]         js/core/ids.js
+  [formatting]  js/core/formatting.js
+  [icons]       js/core/icons.js
+  [modals]      js/core/modals-core.js
+  [ui]          js/core/ui.js
+  [selector]    js/selectors/...
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS — industry-constants.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-constants.js
+    Owns: window.IndustryConstants.
+
+    Exports (frozen):
+      Economic thresholds: DEBT_INTEREST_RATE, BANKRUPTCY_THRESHOLD,
+        REBUILD_WEALTH_FRACTION, REBUILD_WEALTH_MINIMUM.
+      Status vocabulary: STATUS, PROCESSABLE_STATUSES,
+        WORKER_BLOCKED_STATUSES, FINANCIALS_FROZEN_STATUSES.
+      Ownership vocabulary: OWNERSHIP_TYPE, VALID_OWNERSHIP_TYPES,
+        OWNER_TYPE, VALID_OWNER_TYPES, PLACE_OWNER_TYPES,
+        HOUSEHOLD_OWNER_TYPES.
+      Derived-field classification: DERIVED_FIELDS, DERIVED_FIELDS_MAP.
+      Canonical shape: CANONICAL_ENTERPRISE_FIELDS,
+        CANONICAL_ENTERPRISE_FIELDS_MAP.
+      Domain-owned field map: DOMAIN_OWNED_ENTERPRISE_FIELDS.
+      Type resolution: UNKNOWN_TYPE_CATEGORY.
+      Migration error vocabulary: MIGRATION_ERROR.
+      Processing caps: MAX_HISTORY_ENTRIES, ABSOLUTE_MAX_WORKERS.
+      Event names: EVENT.
+      Result shape literals: RESULT_SHAPE.
+
+    Load-time dependencies: NONE. Attaches its export to window only.
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] industry-rules.js             (call-time via
+                                            _requireConstants)
+      [load] industry-state.js             (HARD)
+      [load] industry-type-init.js         (HARD)
+      [load] industry-migration.js         (HARD)
+      [load] industry-commands.js          (HARD)
+      [load] industry-bootstrap.js         (indirect, via every
+                                            module above)
+
+    Contracts:
+      - Everything is frozen. Mutation is a bug.
+      - String values are the canonical stored values. Do not alias.
+      - Arrays are frozen. Iteration is fine; mutation is not.
+      - Maps that need O(1) lookup are frozen objects with boolean
+        `true` values.
+      - CANONICAL_ENTERPRISE_FIELDS_MAP is the allowlist used by
+        validateEnterprise to reject unknown fields (except tombstone
+        fields, permitted only when status === 'demolished').
+      - DOMAIN_OWNED_ENTERPRISE_FIELDS is currently empty. It exists
+        so that when a cross-domain field is added, the rejection path
+        is already wired up and consistent with household-commands.js.
+      - UNKNOWN_TYPE_CATEGORY is a RESOLUTION fallback used by
+        queries and integrity diagnostics, NOT a stored value.
+      - Semantics for typeId null vs missing are distinguished by
+        queries: both resolve to null metadata; the difference is
+        visible only in the integrity diagnostic.
+
+--------------------------------------------------------------------------------
+2.2 DEFAULTS — industry-type-defaults.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-type-defaults.js
+    Owns: window.IndustryTypeDefaults.
+      - Seven built-in enterprise types: hut_workshop, small_workshop,
+        town_workshop, manufactory, factory, industrial_complex,
+        grand_industry.
+      - get() returns a deep copy so callers cannot mutate the
+        canonical defaults.
+
+    Load-time dependencies: NONE.
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] industry-type-init.js         (HARD)
+      [load] industry-bootstrap.js         (indirect, via
+                                            IndustryTypeInit)
+
+    Contracts:
+      - Pure data. No functions in the default records. No deps.
+      - Used only during explicit initialization.
+      - Never returned by queries as a fallback.
+
+--------------------------------------------------------------------------------
+2.3 ECONOMICS — industry-economics.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-economics.js
+    Owns: window.IndustryEconomics.
+      - calculateTotalWages(enterprise)
+      - calculateAnnualProfit(enterprise)
+      - calculateDebtInterest(debt, years)
+      - resolveYearsToProcess(enterprise, currentYear)
+      - calculateAnnualTransition(enterprise, currentYear, options)
+      - DEBT_INTEREST_RATE (exported constant, mirrors the value in
+        constants; the constants module is authoritative)
+
+    Load-time dependencies: NONE.
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] industry-rules.js             (call-time via
+                                            _requireEconomics;
+                                            used only by
+                                            validateAnnualTransition
+                                            Result for coherence
+                                            checks, no arithmetic
+                                            is re-performed)
+      [load] industry-processor.js         (HARD)
+      [load] industry-bootstrap.js         (indirect, via the
+                                            namespace)
+
+    Contracts:
+      - Pure. No state. No commands. No persistence. No DOM.
+      - Deterministic: same input -> same output.
+      - calculateTotalWages throws if enterprise.wages is missing.
+      - calculateAnnualProfit throws if enterprise.income or
+        enterprise.expenses is missing.
+      - calculateDebtInterest returns 0 for non-positive debt or
+        years. Simple interest, floored.
+      - calculateAnnualTransition accepts options.iterative. When
+        true, _calculateIterative runs (currently delegates to
+        _calculateLinear; the API shape is stable so year-by-year
+        logic can be swapped in later without touching callers).
+      - historyEntries is always an array (empty when
+        yearsProcessed === 0).
+      - Bankruptcy flips only 'active' -> 'bankrupt'; other statuses
+        pass through unchanged.
+      - No fallback when bankruptcyThreshold is omitted: defaults to
+        -100 (matches IndustryConstants.BANKRUPTCY_THRESHOLD, but the
+        value is hard-coded here — see HAZARDS §10).
+
+--------------------------------------------------------------------------------
+2.4 RULES — industry-rules.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-rules.js
+    Owns: window.IndustryRules.
+      - applyEnterpriseDefaults(raw, typeDefaults)
+      - applyEnterpriseTypeDefaults(raw)
+      - validateEnterprise, validateEnterprisePatch
+      - validateCreateInput, validateUpdateInput
+      - validateEnterpriseType, validateEnterpriseTypePatch
+      - validateAnnualTransitionResult
+      - canApplyOwnershipChange
+
+    Load-time dependencies: NONE. Both window.IndustryConstants and
+      window.IndustryEconomics are read at CALL time via
+      _requireConstants / _requireEconomics.
+
+    Call-time dependencies:
+      window.IndustryConstants     — throws if missing.
+      window.IndustryEconomics     — throws if missing.
+      window.isValidYear           — optional, used by
+                                     _isValidYearOrMissing; falls
+                                     back to a finite-integer check
+                                     when absent.
+
+    Consumed by:
+      [load] industry-migration.js         (HARD)
+      [load] industry-type-commands.js     (HARD)
+      [load] industry-commands.js          (HARD)
+      [load] industry-bootstrap.js         (indirect, via every
+                                            module above)
+
+    Contracts:
+      - Pure policy. No state. No persistence. No events. No
+        randomness.
+      - Every validator returns { valid: boolean, errors: string[] }.
+      - applyEnterpriseDefaults preserves every field on the input
+        (including unknown fields) so validation can reject them with
+        a clear reason.
+      - applyEnterpriseDefaults does NOT assign id, createdAt, or
+        updatedAt — the command layer does.
+      - applyEnterpriseDefaults does NOT fabricate financial defaults
+        — "income: 0" and "income: undefined" mean different things
+        to the annual processor.
+      - applyEnterpriseDefaults is idempotent.
+      - validateEnterprise rejects derived fields, domain-owned
+        fields, and unknown fields not in
+        CANONICAL_ENTERPRISE_FIELDS_MAP (except tombstone fields when
+        status === 'demolished').
+      - validateEnterprise does NOT check cross-record references.
+        Those belong to IndustryState.validateIntegrity.
+      - validateAnnualTransitionResult is a SHAPE / COHERENCE check,
+        not a re-computation. It verifies totalProfit ===
+        netProfit * yearsProcessed and that the transition reported
+        ok === true.
+      - canApplyOwnershipChange rejects a flip to 'public' unless
+        ownerType is 'settlement' or 'state'.
+      - When window.isValidYear is absent, _isValidYearOrMissing
+        falls back to a finite-integer check. The caller's load order
+        guarantees time.js.
+
+--------------------------------------------------------------------------------
+2.5 STATE — industry-state.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-state.js
+    Owns: window.IndustryState.
+      - In-memory canonical enterprises[] and enterpriseTypes[].
+      - Derived indexes: byId, byOwner, byLocation, byStatus, byType,
+        byOwnershipType, typesById, typesByCategory.
+      - Subscription notification.
+      - Hydration and diagnostics.
+      - All _-prefixed mutation primitives used by IndustryCommands,
+        IndustryTypeCommands, and IndustryBootstrap.
+
+    Load-time dependencies:
+      window.IndustryConstants    — HARD.
+      window.masterData           — HARD at hydrate time, not load
+                                    time.
+      window.markDataDirty        — HARD at first mutation, not load
+                                    time.
+
+    Call-time dependencies (optional, used by validateIntegrity only):
+      window.getCharacterById     — if present, character reference
+                                    checks run.
+      window.getPlaceById         — if present, place reference checks
+                                    run.
+      window.getHouseholdById     — if present, household reference
+                                    checks run.
+      window.masterData.data
+        .households               — read directly (not via accessor)
+                                    for the household reverse-index
+                                    cross-check.
+
+      Absent accessors cause the corresponding checks to be skipped;
+      their names appear in checksSkipped.
+
+    Consumed by:
+      [load] industry-type-commands.js     (HARD)
+      [load] industry-types.js             (HARD)
+      [load] industry-commands.js          (HARD)
+      [load] industry-queries.js           (HARD)
+      [load] industry-bootstrap.js         (indirect)
+
+    Contracts:
+      - Public reads return CLONES. Container array and object fields
+        on each record are copied.
+      - Authorised mutation code calls _getEnterpriseCanonical(id) /
+        _getEnterpriseTypeCanonical(id) for a live reference.
+        Reserved for commands and bootstrap.
+      - Duplicate ids fail hydration loudly.
+      - Unknown fields on a record are preserved (forward
+        compatibility).
+      - Every mutation writes the in-memory arrays back into
+        masterData.data.enterprises / .enterpriseTypes, then calls
+        markDataDirty(). Storage decides when to flush.
+      - _syncToMasterData does NOT invalidate the accessor cache —
+        the accessors do not cache enterprises or enterprise types.
+        IF A FUTURE REVISION ADDS AN ACCESSOR FOR ENTERPRISES OR
+        ENTERPRISE TYPES, _syncToMasterData MUST GAIN AN
+        invalidateAccessorCaches() CALL, with the same try/catch
+        pattern used by household-commands.js. Do not add it now.
+      - validateIntegrity() returns { valid, errors, checksSkipped }.
+        valid: true means "no integrity issues were detected by the
+        checks that could run" — NOT "all checks ran and passed". A
+        caller that needs to distinguish the two must inspect
+        checksSkipped.
+      - validateIntegrity() cross-checks the household reverse
+        index. For every household in masterData.data.households,
+        each enterprises[] entry must:
+        (a) be a non-empty string id;
+        (b) resolve to an existing enterprise in this catalogue;
+        (c) have that enterprise's ownerType === 'household' and
+            ownerId === household.id.
+      - The reverse-index check is ONE-DIRECTIONAL (households ->
+        enterprises). The reverse direction (enterprise.ownerId ->
+        household.enterprises[]) is covered by the enterprise-side
+        ownerType household + ownerId check.
+      - Rehydration is driven by the masterDataUpdated listener.
+      - _markDirty calls markDataDirty() but never saveMasterData().
+
+--------------------------------------------------------------------------------
+2.6 TYPE INIT — industry-type-init.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-type-init.js
+    Owns: window.IndustryTypeInit (and the legacy alias
+      window.IndustryTypeInitialization).
+      - ensureEnterpriseTypesInitialized() seeds
+        masterData.data.enterpriseTypes from
+        IndustryTypeDefaults.get() when empty; returns
+        { seeded, count }.
+
+    Load-time dependencies:
+      window.IndustryTypeDefaults — HARD.
+      window.IndustryConstants    — HARD.
+
+    Call-time dependencies:
+      window.masterData           — throws if absent.
+
+    Consumed by:
+      [load] industry-bootstrap.js         (HARD)
+
+    Contracts:
+      - Idempotent: calling twice has no additional effect.
+      - Does NOT mutate IndustryState. Bootstrap hydrates after this
+        runs.
+      - Does NOT save. Bootstrap calls saveMasterData if a seed
+        occurred.
+      - Does NOT validate type records (defaults are pre-validated
+        data).
+      - If masterData.data.enterpriseTypes is already populated,
+        returns { seeded: false, count: N }.
+      - If masterData.data.enterpriseTypes is present but not an
+        array, it is replaced with the defaults (matching the prior
+        "empty -> seed" behaviour). This differs from
+        industry-migration.js's refusal to coerce a
+        present-but-non-array enterprises array. See HAZARDS §9.
+
+--------------------------------------------------------------------------------
+2.7 TYPE COMMANDS — industry-type-commands.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-type-commands.js
+    Owns: window.IndustryTypeCommands.
+      - persist()  (the only saveMasterData call site in the type
+                    registry domain)
+      - createEnterpriseType(data)
+      - updateEnterpriseType(typeId, updates)
+      - deleteEnterpriseType(typeId)
+
+    Load-time dependencies:
+      window.IndustryState        — HARD.
+      window.IndustryRules        — HARD.
+      window.generateId           — HARD (ids.js).
+      window.saveMasterData       — HARD (storage.js).
+
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] industry-bootstrap.js         (HARD)
+      [load] modals-industry.js            (HARD)
+
+    Contracts:
+      - Every command returns { success: true, ... } or
+        { success: false, reason }.
+      - Commands do NOT save. Callers call persist() once per batch.
+      - deleteEnterpriseType refuses if any enterprise references the
+        type; the caller must reassign first.
+      - Field allowlist for updateEnterpriseType:
+        name, category, baseIncome, baseExpenses, baseWages,
+        baseWorkers, baseCost, maxWorkers, description.
+      - _DOMAIN_OWNED_TYPE_FIELDS rejects `id` with a dedicated
+        message.
+      - createEnterpriseType runs applyEnterpriseTypeDefaults +
+        validateEnterpriseType before handing the record to
+        IndustryState._addEnterpriseType.
+
+--------------------------------------------------------------------------------
+2.8 TYPES — industry-types.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-types.js
+    Owns: window.IndustryTypes.
+      - getEnterpriseTypes()
+      - getEnterpriseTypeById(typeId)
+      - getEnterpriseTypesByCategory(category)
+      - getEnterpriseCategories()   grouped by category; category
+                                    keys sorted alphabetically; type
+                                    order within a category follows
+                                    registry order.
+
+    Load-time dependencies:
+      window.IndustryState        — HARD.
+
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] industry-queries.js           (HARD)
+      [load] industry-view-models.js       (HARD)
+      [load] modals-industry.js            (HARD)
+
+    Contracts:
+      - Read-only facade. The distinction from
+        IndustryState.getEnterpriseType is that State exposes the
+        raw catalogue accessors; this module exposes the query
+        surface used by UI, modals, and diagnostics. It exists so the
+        UI has a stable name to depend on that isn't "reach into
+        State".
+      - Never mutates.
+      - Returns clones (via IndustryState).
+
+--------------------------------------------------------------------------------
+2.9 MIGRATION — industry-migration.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-migration.js
+    Owns: window.IndustryMigration.
+      - migrateEnterprisesToCanonicalShape() derives ownershipType
+        from legacy isPublic, strips derived fields, validates each
+        record, reports per-record failures.
+
+    Load-time dependencies:
+      window.IndustryConstants    — HARD.
+      window.IndustryRules        — HARD.
+      window.saveMasterData       — HARD (storage.js).
+      window.markDataDirty        — HARD (storage.js).
+
+    Call-time dependencies:
+      window.masterData           — throws if absent.
+      window.IndustryState
+        .hydrateFromMasterData    — optional; if present and
+                                    changed > 0, migration
+                                    re-hydrates state before
+                                    saving.
+
+    Consumed by:
+      [load] industry-bootstrap.js         (HARD)
+
+    Contracts:
+      - Idempotent. On a clean save: { ok: true, migrated: N,
+        changed: 0, errors: [] } with zero side effects.
+      - masterData.data.enterprises must be an array or absent. The
+        three cases are:
+          absent (undefined / null)   -> coerced to [] and written
+                                         back to masterData.
+                                         Legitimate "fresh install"
+                                         case.
+          array                       -> returned as-is.
+          present-but-non-array       -> REFUSED. Returns
+                                         { ok: false, migrated: 0,
+                                           changed: 0, errors:
+                                           [{ index: -1, ... }] }
+                                         WITHOUT touching masterData,
+                                         WITHOUT saving, and WITHOUT
+                                         calling saveMasterData.
+                                         Nothing is coerced to []
+                                         and nothing is discarded.
+      - Rationale (verbatim from the module header): prior revisions
+        coerced any non-array value to []. The bootstrap path was
+        already safe (it verifies canonical shape and throws before
+        migration runs), but a direct caller of
+        migrateEnterprisesToCanonicalShape() would silently lose a
+        corrupted enterprises array. The refusal closes that hazard
+        at the migration boundary, not at the bootstrap boundary.
+      - A record with a missing typeId is a MIGRATION ERROR, not an
+        invitation to invent 'other'.
+      - Failed records are LEFT IN PLACE (not deleted); they remain
+        in the canonical array so the bootstrap integrity diagnostic
+        and any future repair tool can see them.
+      - ok is true when every record migrated cleanly and the
+        collection shape was valid; ok is false when the collection
+        shape was invalid, at least one record failed validation, or
+        the post-migration save failed.
+      - Side effects: markDataDirty() and saveMasterData() are called
+        only when changed > 0.
+      - If IndustryState is loaded and changed > 0,
+        hydrateFromMasterData() is invoked BEFORE saveMasterData so
+        already-hydrated state reflects the migrated records.
+      - Does NOT publish events or notify subscribers.
+
+--------------------------------------------------------------------------------
+2.10 COMMANDS — industry-commands.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-commands.js
+    Owns: window.IndustryCommands.
+      - persist()  (the only saveMasterData call site in the
+                    enterprise domain)
+      - createEnterprise, updateEnterprise, deleteEnterprise
+      - addWorkerToEnterprise, removeWorkerFromEnterprise,
+        setWorkerWage
+      - updateEnterpriseWealth, updateEnterpriseDebt
+      - applyAnnualProcessing
+      - createPublicEnterprise, convertEnterpriseToPublic
+      - demolishEnterprise, rebuildEnterprise
+
+    Load-time dependencies:
+      window.IndustryState        — HARD.
+      window.IndustryRules        — HARD.
+      window.IndustryConstants    — HARD.
+      window.generateId           — HARD (ids.js).
+      window.saveMasterData       — HARD (storage.js).
+      window.getCurrentYear       — HARD (time.js).
+      window.getCharacterById     — HARD (accessors.js).
+      window.getPlaceById         — HARD (accessors.js).
+
+    Call-time dependencies:
+      window.HouseholdCommands.addEnterpriseToHousehold         [household]
+      window.HouseholdCommands.removeEnterpriseFromHousehold    [household]
+      window.HouseholdCommands.updateHousehold                  [household]
+      window.getHouseholdById                                   [accessors]
+      All four are verified by _requireHouseholdCommands at call
+      time, not load time. IndustryCommands' createEnterprise,
+      updateEnterprise, deleteEnterprise, demolishEnterprise,
+      rebuildEnterprise, and _applyHouseholdTransfer all touch
+      households when ownerType === 'household'. The bootstrap
+      verifies HouseholdCommands as a HARD cross-domain
+      prerequisite; see §2.16.
+
+    Consumed by:
+      [load] industry-processor.js         (HARD)
+      [load] modals-industry.js            (HARD)
+      [load] industry-bootstrap.js         (indirect)
+
+    Contracts:
+      - Every command returns { success: true, ... } or
+        { success: false, reason }.
+      - Commands do NOT save. Every command mutates in-memory state
+        and returns. The caller calls IndustryCommands.persist() once
+        per batch, after every command in the batch has succeeded.
+      - Commands compose freely. There is no _processingCommand
+        guard.
+      - createEnterprise: validates input via
+        RULES.validateCreateInput, resolves type defaults via
+        IndustryState, applies RULES.applyEnterpriseDefaults,
+        stamps id / timestamps, validates, calls
+        IndustryState._addEnterprise, then registers with the
+        household (if applicable). On household registration
+        failure, the enterprise is rolled back via
+        IndustryState._removeEnterprise (wrapped in try/catch so
+        a rollback failure does not mask the original error).
+      - updateEnterprise: validates the update shape, enforces the
+        field allowlist (_ALLOWED_UPDATE_FIELDS), enforces the
+        frozen-status financial guard, then updates the industry
+        record. If ownership changes, _reconcileHouseholdOwnership
+        runs and, on failure, rolls back the industry record's
+        owner fields and returns a structured failure.
+      - workerList and workerWages are NOT in the update allowlist.
+        Callers must use addWorkerToEnterprise /
+        removeWorkerFromEnterprise / setWorkerWage.
+      - wealth and debt are rejected while status is in
+        FINANCIALS_FROZEN_STATUSES, and the single-call combination
+        { status: 'demolished', wealth } / { status: 'demolished',
+        debt } is rejected. Callers use updateEnterpriseWealth /
+        updateEnterpriseDebt.
+      - deleteEnterprise unregisters from the household first
+        (when applicable), then removes the enterprise. On
+        unregistration failure, returns the failure without
+        deleting.
+      - applyAnnualProcessing applies the household transfer FIRST
+        (when applicable), then updates the enterprise. On
+        household-transfer failure, the enterprise is untouched.
+      - _applyHouseholdTransfer writes only `wealth`, not `notes`.
+        Prior revisions wrote notes based on a potentially stale
+        read, overwriting concurrent household note edits. The
+        reason goes into the industry event payload and the
+        household eventLog entry written by
+        HouseholdCommands.updateHousehold.
+      - _reconcileHouseholdOwnership on owner change:
+        (1) if the enterprise was previously household-owned,
+            remove it from the previous household;
+        (2) if the enterprise is now household-owned, add it to
+            the new household.
+        On any failure in (1) or (2), the industry record is
+        restored to its prior owner shape. If (2) fails after (1)
+        succeeded, the source-side removal is rolled back
+        (best-effort). The caller sees a structured failure and
+        nothing is committed.
+      - persist(): calls window.saveMasterData(); returns
+        { success: true } on success, { success: false, reason } on
+        failure or throw.
+
+    CROSS-DOMAIN WRITE CONTRACT (from the module header):
+
+      household.enterprises[]  — reverse index
+        addEnterpriseToHousehold / removeEnterpriseFromHousehold.
+        Called from createEnterprise, deleteEnterprise,
+        rebuildEnterprise, demolishEnterprise, and updateEnterprise
+        (on owner change, via the C2 reconciliation path). Both the
+        source and target household are updated so the reverse index
+        stays in sync with the canonical enterprise.ownerType /
+        ownerId.
+
+      household.wealth  — annual processing transfer
+        HouseholdCommands.updateHousehold({ wealth }).
+        Called from applyAnnualProcessing when the enterprise is
+        household-owned. Wealth is the only household field this
+        path writes; notes / name / location / status / members are
+        left untouched.
+
+      Industry does NOT write:
+        household.notes          (prior revisions wrote this on
+                                  transfer; removed because it
+                                  clobbered concurrent household
+                                  note edits based on a stale read)
+        household.name / locationId / locationName / status /
+        members / departments / residence fields.
+        Any character-record field.
+        Any place-record field.
+
+    REVERSE-INDEX RECONCILIATION (updateEnterprise path):
+
+      updateEnterprise now reconciles the household reverse index
+      when ownerType / ownerId change. Prior revisions changed the
+      enterprise record's owner fields but left household A's
+      enterprises[] still listing the enterprise and household B's
+      enterprises[] missing it, producing a silent reverse-index
+      desync on both sides.
+
+      _reconcileHouseholdOwnership runs AFTER
+      IS._updateEnterprise succeeds and BEFORE _commit. It rolls
+      back the industry record (and, for the target side, the source
+      removal) on any cross-domain failure.
+
+      Idempotency: if the previous and next (ownerType, ownerId) are
+      identical, _reconcileHouseholdOwnership is a no-op.
+
+--------------------------------------------------------------------------------
+2.11 QUERIES — industry-queries.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-queries.js
+    Owns: window.IndustryQueries.
+      - getEnterprise, getAllEnterprises
+      - getEnterprisesByOwner, getEnterprisesByLocation,
+        getEnterprisesByCategory, getEnterprisesByStatus,
+        getStateEnterprises
+      - getEnterprisesByOwnershipType, getPublicEnterprises,
+        getPrivateEnterprises, getEnterpriseOwnershipType
+      - getEnterpriseWorkers
+      - getEnterpriseSummary, getOwnerEnterprisesSummary,
+        getLocationEnterprisesSummary
+      - searchEnterprises
+      - getEnterpriseStatistics
+      - resolveTypeMetadata, resolveIsPublic, resolveWorkerCount
+
+    Load-time dependencies:
+      window.IndustryState        — HARD.
+      window.IndustryTypes        — HARD.
+      window.getCharacterById     — HARD (accessors.js).
+      window.getPlaceById         — HARD (accessors.js).
+      window.getHouseholdById     — HARD (accessors.js).
+
+    Call-time dependencies: NONE beyond the load-time guards.
+
+    Consumed by:
+      [load] industry-processor.js         (HARD)
+      [load] industry-view-models.js       (HARD)
+      [load] modals-industry.js            (HARD)
+      [load] industry-bootstrap.js         (indirect)
+
+    Contracts:
+      - Read-only. No recursion guards (composition is expected). No
+        fabricated dependency fallbacks. No domain defaults (missing
+        data stays missing). No silent catches.
+      - resolveTypeMetadata returns { typeName: null, category:
+        null } when typeId is missing or points at a broken
+        reference.
+      - resolveIsPublic(enterprise) is ownershipType === 'public'.
+      - resolveWorkerCount(enterprise) is workerList.length (0 when
+        workerList is not an array).
+      - getEnterpriseSummary resolves typeName, category, ownerName,
+        locationName, workerCount on read. It does NOT write
+        anything back to the enterprise.
+      - _resolveOwnerName routes through getCharacterById,
+        getHouseholdById, or getPlaceById based on ownerType.
+      - getEnterpriseStatistics tallies:
+        total, byStatus, byCategory, byOwnerType, byOwnershipType,
+        totalWealth, totalDebt, totalWorkers, profitable,
+        unprofitable, neutral, publicCount, privateCount,
+        unknownOwnershipCount, brokenTypeReferences.
+
+--------------------------------------------------------------------------------
+2.12 PROCESSOR — industry-processor.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-processor.js
+    Owns: window.IndustryProcessor.
+      - processAnnualEnterprise(enterpriseId, options)
+      - processAllEnterprises(options)
+
+    Load-time dependencies:
+      window.IndustryQueries      — HARD.
+      window.IndustryCommands     — HARD.
+      window.IndustryEconomics    — HARD.
+      window.getCurrentYear       — HARD (time.js).
+
+    Call-time dependencies: NONE beyond the load-time guards.
+
+    Consumed by:
+      [load] modals-industry.js            (HARD)
+      [load] industry-bootstrap.js         (indirect)
+
+    Contracts:
+      - PERSISTENCE MODEL:
+          processAnnualEnterprise(id)
+            Single-enterprise entry. Persists once at the end.
+            Shape a details-modal "Process Year" button wants.
+          processAnnualEnterprise(id, { persist: false })
+            Same computation, no persist. Used by
+            processAllEnterprises to coalesce one save across the
+            batch.
+          processAllEnterprises()
+            Batch entry. Calls processAnnualEnterprise(id,
+            { persist: false }) for each eligible enterprise, then
+            persists once at the end. One save, one flush, one
+            write.
+
+      - ELIGIBILITY: only status === 'active' enterprises process.
+        Bankrupt, closed, inactive, and demolished enterprises are
+        skipped.
+      - yearsProcessed === 0 short-circuits with
+        { success: true, skipped: true, ... } and issues no command,
+        no persist.
+      - Household transfer routing: when enterprise.ownerType ===
+        'household' && enterprise.ownerId, the processor sets
+        householdId, householdTransfer (transition.totalProfit), and
+        householdReason on the payload passed to
+        IndustryCommands.applyAnnualProcessing.
+      - processAllEnterprises is per-enterprise non-fatal: one
+        failed enterprise does not prevent the rest of the batch
+        from running. A failure in the FINAL persist is reported at
+        the batch level.
+      - Every entry point returns a structured result. It never
+        throws for a domain error. Programming errors (missing
+        dependency, invalid argument type where the caller is
+        expected to have validated) throw at load or at call,
+        matching the rest of the domain.
+
+--------------------------------------------------------------------------------
+2.13 VIEW MODELS — industry-view-models.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-view-models.js
+    Owns: window.IndustryViewModels.
+      - ABSENT (the presentation glyph for a missing value)
+      - buildListRow, buildListRows
+      - buildCard
+      - buildTableRow
+      - buildDetails, buildWorkerManagement
+      - buildOwnerField, buildTypeOption, buildTypeOptions,
+        buildCategoryOptions
+
+    Load-time dependencies:
+      window.IndustryQueries      — HARD.
+      window.IndustryTypes        — HARD.
+
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] industry-ui-list.js           (HARD — used for the
+                                            ABSENT glyph)
+      [load] modals-industry.js            (HARD)
+
+    Contracts:
+      - No state access. No mutations. No persistence.
+      - Consumes IndustryQueries + IndustryTypes only.
+      - Returns plain objects suitable for rendering.
+      - Presentation defaults (absent owner, empty list) live here.
+      - Domain defaults (missing status) do NOT live here. If the
+        domain value is missing, it is presented as absent.
+      - ABSENT is a single glyph (\u2014). Change it here if a
+        different glyph is wanted.
+      - buildTypeOptions exists specifically so modals-industry.js
+        can populate the type select (the modal calls
+        viewModels.buildTypeOptions(allTypes)).
+      - buildTableRow throws on an unknown column name (programming
+        error, not a domain error).
+
+--------------------------------------------------------------------------------
+2.14 UI LIST — industry-ui-list.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-ui-list.js
+    Owns: window.IndustryUI.
+      - renderEnterpriseList(containerId, rows, options)
+      - renderEnterpriseCard(viewModel)
+      - renderEnterpriseTable(rows, options)
+
+    Load-time dependencies:
+      window.IndustryViewModels   — HARD (used for the ABSENT
+                                    glyph, if a renderer needs to
+                                    distinguish an absent value
+                                    from an empty string).
+
+    Call-time dependencies:
+      window.escapeHtml or window._escapeHtml
+        (formatting.js)            — required by _requireEscapeHtml;
+                                    throws if neither is present.
+
+    Consumed by: any dashboard or page that renders industry UI.
+
+    Contracts:
+      - No domain queries. No interpretation. No defaults.
+      - Accepts prepared ViewModel rows. Emits HTML and wires DOM
+        events. Nothing else.
+      - Event handlers are wired EXACTLY ONCE per container. A
+        WeakMap keyed by the container holds the current onSelect
+        callback so re-renders can swap the callback without
+        re-wiring the listener.
+      - No inline styles. No emojis. Icons only via window.Icons if
+        used. None of the renderers today require an icon.
+      - renderEnterpriseList wires delegation on the FIRST call
+        only. Subsequent calls update state.onSelect.
+      - renderEnterpriseTable supports a column set with per-column
+        { text, className } cells. Unknown columns throw.
+
+--------------------------------------------------------------------------------
+2.15 MODALS — modals-industry.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/modals-industry.js
+    Owns: window.IndustryModals (namespace) plus flat legacy aliases.
+      - openCreateEnterpriseModal
+      - openEditEnterpriseModal
+      - openEnterpriseDetailsModal
+      - openManageWorkersModal
+      - openManageEnterpriseTypesModal
+      - openCreateEnterpriseTypeModal
+      - openEditEnterpriseTypeModal
+      - openEnterpriseListModal
+
+    Load-time dependencies:
+      window.IndustryCommands     — HARD.
+      window.IndustryQueries      — HARD.
+      window.IndustryTypes        — HARD.
+      window.IndustryTypeCommands — HARD.
+      window.IndustryViewModels   — HARD.
+      window.IndustryProcessor    — HARD.
+      window.openModal            — HARD (modals-core.js).
+      window.closeTopModal        — HARD (modals-core.js).
+      window.escapeHtml or
+      window._escapeHtml          — HARD (formatting.js).
+      window._showToast or
+      window.showToast            — HARD (ui.js).
+      window.openCharacterSelector or
+      window.openUnifiedCharacterSelector — HARD (selector).
+      window.openHouseholdSelector — HARD (selector).
+      window.buildLocationDropdown — HARD (selector/locationDropdown).
+      window.getCurrentYear       — HARD (time.js).
+
+    Call-time dependencies:
+      window.confirmDialog        — optional; falls back to
+                                    window.confirm.
+
+    Consumed by: any dashboard or page that opens industry modals.
+
+    Contracts:
+      - Modals gather input, call Commands, render ViewModels.
+      - Modals do NOT persist. Commands own persist; modals invoke it
+        ONCE per successful batch, in the onConfirm handler, after
+        every command in that handler has succeeded.
+      - Modals do NOT decide presentation. ViewModels do.
+      - Modals do NOT fabricate dependencies. Missing deps fail at
+        load.
+      - Toasts shown here based on command results.
+      - No icons in confirm/cancel buttons.
+      - DOM SCOPING (C4): every DOM lookup in this file is scoped to
+        the modal's own root element via _root(handle) / _byId(handle,
+        id) / _query(handle, selector). Prior revisions used
+        document.getElementById for every field access, which
+        produced cross-modal field collisions when two modals were
+        open at once.
+      - _afterRender(handle, fn) re-resolves the root at deferred
+        time, so a modal that was closed before the deferred callback
+        fires is a no-op.
+      - _closeThen(fn) closes the top modal, then defers fn to the
+        next tick. Matches modals-helper.js::closeThen.
+      - PERSISTENCE CONTRACT: every onConfirm handler that invokes a
+        mutating command calls IndustryCommands.persist() (or
+        IndustryTypeCommands.persist()) once, after all mutations in
+        that batch have succeeded. If persist fails, the modal shows
+        an error and stays open so the user can retry, but the
+        in-memory state is already mutated.
+
+--------------------------------------------------------------------------------
+2.16 BOOTSTRAP — industry-bootstrap.js
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-bootstrap.js
+    Owns: window.IndustryBootstrap.
+      - init()
+      - reinit()
+
+    Load-time dependencies: NONE (the module parses regardless).
+      The REQUIRED_MODULES list is checked at call time by init().
+
+    init() REQUIRED modules (verified at call time, throws on any
+    missing):
+      IndustryConstants, IndustryRules, IndustryEconomics,
+      IndustryState, IndustryTypeDefaults, IndustryTypeInit,
+      IndustryTypeCommands, IndustryTypes, IndustryMigration,
+      IndustryCommands, IndustryQueries, IndustryProcessor,
+      IndustryViewModels.
+
+    init() REQUIRED globals:
+      generateId, markDataDirty, saveMasterData, getCurrentYear,
+      getCharacterById, getPlaceById, getHouseholdById.
+
+    init() REQUIRED cross-domain (HouseholdCommands methods):
+      addEnterpriseToHousehold, removeEnterpriseFromHousehold,
+      updateHousehold.
+      HouseholdCommands itself is verified at the namespace level
+      first.
+
+    Canonical shape verification:
+      masterData.data.enterprises must be an array or absent.
+      masterData.data.enterpriseTypes must be an array or absent.
+      A present-but-non-array value is a HARD FAILURE at init (throws
+      before migration can run). See VERIFICATION-BEFORE-MIGRATION
+      ORDERING below.
+
+    VERIFICATION-BEFORE-MIGRATION ORDERING:
+
+      init() runs _runVerification() (which includes
+      _verifyCanonicalShape) and then _throwOnFatal() BEFORE
+      migration runs. This ordering is the reason
+      industry-migration.js's internal coercion of a non-array
+      masterData.data.enterprises to [] cannot discard corrupted
+      data at bootstrap time:
+
+        - If masterData.data.enterprises is non-array,
+          _verifyCanonicalShape reports it, _throwOnFatal throws,
+          and migration never runs.
+        - If migration runs, masterData.data.enterprises is
+          guaranteed to be an array (or undefined, which migration's
+          _requireEnterprisesArray coerces to [] — the legitimate
+          "fresh install" case).
+
+      The coercion in industry-migration.js::_requireEnterprisesArray
+      is therefore a LEGITIMATE default for the "absent" case, but
+      would be a silent-data-loss hazard for the
+      "present-but-non-array" case if migration were called directly
+      (bypassing the bootstrap).
+
+    INITIALISATION CONTRACT:
+
+      init() is idempotent. Calling it twice returns
+      { success: true, alreadyInitialized: true, lastResult } on the
+      second call. The auto-init at the bottom of the file runs if
+      masterData is already present at load time. If the loader has
+      not run yet, the loader calls init() explicitly.
+
+      init() steps:
+        1. Verification (throws on any missing).
+        2. Migration (idempotent; persists its own changes when it
+           makes any).
+        3. Type seeding (idempotent; persists when it seeds).
+        4. Hydration (IndustryState.hydrateFromMasterData).
+        5. Integrity diagnostics (warn only, do not throw).
+        6. Expose window.Industry as a frozen namespace.
+
+      ORDERING GUARANTEE:
+        Step 1 runs _verifyCanonicalShape() and _throwOnFatal()
+        BEFORE step 2. A non-array masterData.data.enterprises (or
+        enterpriseTypes) is rejected before migration can reach it.
+
+    _lastResult.integrity.checksSkipped carries through from
+      IndustryState.validateIntegrity(). Existing callers that read
+      .integrity.valid and .integrity.errorCount are unchanged; the
+      new field is additive.
+
+    reinit() forces re-verification, re-migration, and re-hydration.
+      Intended for test fixtures and repair flows where the caller
+      knows masterData has been replaced out-of-band. Normal
+      production flow does not need this — IndustryState listens for
+      masterDataUpdated and re-hydrates on its own.
+
+    ICON POLICY: No emojis. No icons.
+
+    This file does NOT:
+      - mutate enterprise or type records directly
+      - persist (migration persists its own changes; type seeding
+        persists its own changes; nothing else here writes)
+      - toast or render
+
+    Consumed by: the application bootstrap, which either relies on
+      the auto-init or calls init() explicitly after storage.js runs.
+
+    Exposes: window.Industry (frozen) with:
+      Constants, Rules, Economics,
+      State, Types, TypeInit, TypeCommands,
+      Commands, Queries, Processor,
+      Migration, ViewModels.
+
+
+================================================================================
+PART 3 — CROSS-DOMAIN DEPENDENCIES
+================================================================================
+
+Legend:
+  core          js/core/... files
+  char          js/character/... files
+  hh            js/households/... files
+  settle        js/settlement/... files
+
+--------------------------------------------------------------------------------
+3.1 CORE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+    Provides: getCurrentYear, isValidYear.
+    Used by:
+      [load] industry-commands.js         (HARD — getCurrentYear)
+      [load] industry-processor.js        (HARD — getCurrentYear)
+      [load] modals-industry.js           (HARD — getCurrentYear)
+      [call] industry-rules.js            (optional, isValidYear;
+                                            falls back to a finite-
+                                            integer check)
+
+  js/core/ids.js
+    Provides: generateId.
+    Used by:
+      [load] industry-commands.js         (HARD)
+      [load] industry-type-commands.js    (HARD)
+      [call] industry-bootstrap.js        (verification)
+
+  js/core/storage.js
+    Provides: saveMasterData, markDataDirty, masterData.
+    Used by:
+      [load] industry-migration.js        (HARD — both)
+      [load] industry-commands.js         (HARD — saveMasterData)
+      [load] industry-type-commands.js    (HARD — saveMasterData)
+      [call] industry-state.js            (masterData, markDataDirty
+                                            at call time)
+      [call] industry-type-init.js        (masterData at call time)
+      [call] industry-bootstrap.js        (saveMasterData,
+                                            markDataDirty,
+                                            masterData at call time)
+
+  js/core/accessors.js
+    Provides: getCharacterById, getPlaceById, getHouseholdById.
+    Used by:
+      [load] industry-commands.js         (HARD — getCharacterById,
+                                            getPlaceById; the
+                                            household accessor is
+                                            verified via
+                                            _requireHouseholdCommands
+                                            at call time)
+      [load] industry-queries.js          (HARD — all three)
+      [call] industry-state.js            (validateIntegrity only;
+                                            absent accessors cause
+                                            the corresponding checks
+                                            to be skipped and recorded
+                                            in checksSkipped)
+      [call] industry-bootstrap.js        (verification)
+
+  js/core/formatting.js
+    Provides: escapeHtml.
+    Used by:
+      [load] industry-ui-list.js          (call-time via
+                                            _requireEscapeHtml)
+      [load] modals-industry.js           (HARD — escapeHtml or
+                                            _escapeHtml)
+
+  js/core/icons.js
+    Provides: Icons.
+    Used by: NOTHING in the industry subsystem. No industry module
+      emits icons.
+
+  js/core/modals-core.js
+    Provides: openModal, closeTopModal, confirmDialog.
+    Used by:
+      [load] modals-industry.js           (HARD — openModal,
+                                            closeTopModal;
+                                            confirmDialog is
+                                            call-time soft, falling
+                                            back to window.confirm
+                                            if missing)
+
+  js/core/ui.js
+    Provides: _showToast / showToast.
+    Used by:
+      [load] modals-industry.js           (HARD — one or the
+                                            other)
+
+  js/core/collections.js
+  js/core/validation.js
+  js/core/integrity.js
+  js/core/maintenance.js
+  js/core/ui-state.js
+  js/core/responsive.js
+  js/core/ui/collapsible.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+  js/core/randomness.js
+  js/core/world.js
+  js/core/names.js
+    Used by: NONE of the industry files provided in this batch.
+    In particular:
+      - Industry does NOT use randomness.js. All randomness in the
+        domain is delegated to a caller-supplied roll (there is none
+        today; annual processing is deterministic).
+      - Industry does NOT use world.js. Owner resolution for
+        settlement / state owners goes through getPlaceById
+        (accessors.js).
+      - Industry does NOT use names.js. Enterprise names are
+        user-supplied, not generated.
+
+--------------------------------------------------------------------------------
+3.2 CHARACTER DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  window.getCharacterById
+    Used by:
+      [load] industry-commands.js         (createEnterprise,
+                                            updateEnterprise owner
+                                            reference validation)
+      [load] industry-queries.js          (getEnterpriseWorkers,
+                                            _resolveOwnerName,
+                                            getEnterpriseSummary)
+      [call] industry-state.js            (validateIntegrity only)
+
+  Individual CharacterCommands / CharacterQueries methods are NOT
+    used by any industry file in this batch. The only character-side
+    surface is the getCharacterById accessor.
+
+--------------------------------------------------------------------------------
+3.3 HOUSEHOLD DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  window.HouseholdCommands.addEnterpriseToHousehold
+  window.HouseholdCommands.removeEnterpriseFromHousehold
+  window.HouseholdCommands.updateHousehold
+    Used by:
+      [call] industry-commands.js         (via
+                                            _registerWithHousehold,
+                                            _unregisterFromHousehold,
+                                            _applyHouseholdTransfer,
+                                            _reconcileHouseholdOwnership)
+      [call] industry-bootstrap.js        (verification — HARD;
+                                            missing is a load-time
+                                            failure at init)
+
+    Cross-domain write contract:
+      household.enterprises[]  — reverse index
+        Maintained via addEnterpriseToHousehold /
+        removeEnterpriseFromHousehold.
+      household.wealth         — annual processing transfer
+        Maintained via updateHousehold({ wealth }).
+
+  window.getHouseholdById
+    Used by:
+      [call] industry-commands.js         (via
+                                            _requireHouseholdCommands,
+                                            _applyHouseholdTransfer,
+                                            updateEnterprise owner
+                                            validation)
+      [load] industry-queries.js          (HARD — _resolveOwnerName)
+      [call] industry-state.js            (validateIntegrity only)
+      [call] industry-bootstrap.js        (verification)
+
+  Household module methods NOT used by industry:
+    - household-queries.js is NOT loaded by any industry file. The
+      only household reads go through getHouseholdById (which lives
+      in accessors.js, not household-queries.js; see household-doc
+      §MODULE RESPONSIBILITIES).
+    - household-economy.js is NOT loaded.
+    - household-assignment.js is NOT loaded.
+    - household-servant.js is NOT loaded.
+    - residence-system.js is NOT loaded.
+    - household-bootstrap.js is NOT loaded.
+
+  HOUSEHOLD REVERSE INDEX CONTRACT:
+
+    The reverse index is co-owned:
+      - household.enterprises[] is owned by the household domain
+        (structurally), written only via HouseholdCommands.
+      - enterprise.ownerType / ownerId is owned by the industry
+        domain (structurally), written only via IndustryCommands.
+
+    The two are kept in sync by IndustryCommands on every path that
+    changes ownership or existence:
+      createEnterprise       -> addEnterpriseToHousehold
+      updateEnterprise       -> _reconcileHouseholdOwnership
+                                (remove from prior + add to next)
+      deleteEnterprise       -> removeEnterpriseFromHousehold
+      demolishEnterprise     -> removeEnterpriseFromHousehold
+      rebuildEnterprise      -> addEnterpriseToHousehold (if the
+                                demolition record had a household
+                                owner)
+
+    industry-state.js::validateIntegrity cross-checks the index
+    one-directionally (households -> enterprises). The reverse
+    direction is covered by the enterprise-side ownerType household
+    check combined with the household-side check.
+
+--------------------------------------------------------------------------------
+3.4 PLACE DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  window.getPlaceById
+    Used by:
+      [load] industry-commands.js         (createEnterprise,
+                                            updateEnterprise
+                                            settlement/state owner
+                                            reference validation;
+                                            locationId validation;
+                                            createPublicEnterprise;
+                                            convertEnterpriseToPublic)
+      [load] industry-queries.js          (_resolveOwnerName,
+                                            _resolveLocationName)
+      [call] industry-state.js            (validateIntegrity only)
+
+  window.getPlaceById is the ONLY place-side dependency. The
+    industry subsystem does not read place hierarchy, location
+    scope, or world.js.
+
+--------------------------------------------------------------------------------
+3.5 SETTLEMENT DEPENDENCIES
+--------------------------------------------------------------------------------
+
+  NONE. The industry subsystem does not read settlement records
+    directly. Settlement-owned enterprises are resolved via
+    ownerType 'settlement' + ownerId (place id) and routed through
+    getPlaceById. Settlement wealth does NOT flow through
+    HouseholdCommands in this batch; public enterprises are not yet
+    integrated with settlement treasury writes.
+
+
+================================================================================
+PART 4 — LOAD ORDER
+================================================================================
+
+The order below is derived from:
+  (a) module-level guard blocks in the supplied files,
+  (b) call-time window.X lookups in code,
+  (c) the canonical core / character / household load orders from
+      the respective subsystem docs,
+  (d) industry-bootstrap.js's REQUIRED_MODULES / REQUIRED_GLOBALS /
+      REQUIRED_HOUSEHOLD_METHODS lists (which throw if any required
+      item is missing at init time).
+
+Group labels:
+  C1..C4   core prerequisites.
+  R1..R2   character and household prerequisites.
+  I1..I6   industry subsystem.
+
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - No industry file reads these directly. They load first because
+      the industry subsystem sits above storage, and storage loads
+      after these.
+
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES
+--------------------------------------------------------------------------------
+
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: escapeHtml required at call time by
+      industry-ui-list.js; required at load by modals-industry.js.
+    - icons.js: not used by industry, but core group loads it first
+      anyway.
+    - ids.js: generateId required at load by industry-commands.js
+      and industry-type-commands.js; verified by
+      industry-bootstrap.js.
+    - randomness.js: not used by industry.
+    - collections.js: not used by industry.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - getCurrentYear required at load by industry-commands.js,
+      industry-processor.js, and modals-industry.js.
+    - isValidYear used at call time by industry-rules.js
+      (_isValidYearOrMissing); when absent, falls back to a finite-
+      integer check.
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  Notes:
+    - storage.js provides saveMasterData (HARD load-time guard of
+      industry-migration.js, industry-commands.js,
+      industry-type-commands.js) and markDataDirty (HARD load-time
+      guard of industry-migration.js; used at call time by
+      industry-state.js).
+    - accessors.js provides getCharacterById (HARD load-time guard
+      of industry-commands.js and industry-queries.js), getPlaceById
+      (HARD load-time guard of industry-commands.js and
+      industry-queries.js), and getHouseholdById (HARD load-time
+      guard of industry-queries.js; verified at call time by
+      industry-commands.js and industry-bootstrap.js).
+    - initializeStorage() MUST run before any industry hydrate.
+      IndustryBootstrap.init() runs the hydrate, but the underlying
+      masterData must exist.
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/ui/collapsible.js
+  js/core/responsive.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+
+  Notes:
+    - ui.js provides _showToast / showToast (HARD load-time guard of
+      modals-industry.js).
+    - modals-core.js provides openModal, closeTopModal (HARD
+      load-time guards of modals-industry.js) and confirmDialog
+      (call-time soft of modals-industry.js).
+    - The rest load first because the household subsystem loads them
+      and the industry subsystem loads after the household subsystem.
+
+--------------------------------------------------------------------------------
+GROUP R1 — HOUSEHOLD PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  js/households/household-queries.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/character/character-queries.js
+
+  js/households/household-commands.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/households/household-queries.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/time.js
+
+  Notes:
+    - household-commands.js provides addEnterpriseToHousehold,
+      removeEnterpriseFromHousehold, updateHousehold. These are
+      verified as HARD cross-domain prerequisites by
+      industry-bootstrap.js.
+    - The industry subsystem loads AFTER household-commands.js
+      because industry-commands.js and industry-bootstrap.js both
+      require HouseholdCommands.
+
+--------------------------------------------------------------------------------
+GROUP R2 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+    <- AFTER: js/core/accessors.js
+
+  js/character/character-commands.js
+  js/character/character-queries.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+
+  Notes:
+    - character-queries.js provides the projection-returning
+      getCharacterById under the documented load order. Industry
+      reads only id, name, surname off it — all base scalar fields
+      guaranteed by the projection.
+    - character-commands.js is required indirectly via
+      household-commands.js (household-commands.js loads after it).
+
+--------------------------------------------------------------------------------
+GROUP I1 — INDUSTRY CONSTANTS, DEFAULTS, ECONOMICS
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-constants.js
+  js/core/industry/industry-economics.js
+  js/core/industry/industry-type-defaults.js
+
+  Notes:
+    - Order within this block is unimportant.
+    - industry-economics.js is a load-time guard target of
+      industry-processor.js and a call-time dependency of
+      industry-rules.js.
+    - industry-type-defaults.js is a load-time guard target of
+      industry-type-init.js.
+
+--------------------------------------------------------------------------------
+GROUP I2 — INDUSTRY RULES
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-rules.js
+
+  Notes:
+    - Load-time guard target of industry-migration.js,
+      industry-type-commands.js, and industry-commands.js.
+    - Depends on industry-constants.js and industry-economics.js at
+      CALL time (via _requireConstants / _requireEconomics), not at
+      load time. Loading rules before economics would break the first
+      validateAnnualTransitionResult call, not the module parse. Group
+      I1 ensures economics is loaded first.
+
+--------------------------------------------------------------------------------
+GROUP I3 — INDUSTRY STATE AND PRE-HYDRATION MODULES
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-state.js
+    <- AFTER: js/core/industry/industry-constants.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  js/core/industry/industry-type-init.js
+    <- AFTER: js/core/industry/industry-type-defaults.js
+    <- AFTER: js/core/industry/industry-constants.js
+
+  js/core/industry/industry-types.js
+    <- AFTER: js/core/industry/industry-state.js
+
+  js/core/industry/industry-migration.js
+    <- AFTER: js/core/industry/industry-constants.js
+    <- AFTER: js/core/industry/industry-rules.js
+    <- AFTER: js/core/storage.js
+
+  Notes:
+    - industry-state.js is loaded before any consumer. Hydration is
+      explicit (IndustryBootstrap.init calls
+      hydrateFromMasterData).
+    - industry-type-init.js is loaded after type-defaults.js.
+    - industry-types.js is a thin facade over state; it loads
+      before industry-queries.js and industry-view-models.js.
+    - industry-migration.js loads after rules; it does not require
+      IndustryState at load time (the optional re-hydration call is
+      typeof-guarded).
+
+--------------------------------------------------------------------------------
+GROUP I4 — INDUSTRY TYPE COMMANDS
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-type-commands.js
+    <- AFTER: js/core/industry/industry-state.js
+    <- AFTER: js/core/industry/industry-rules.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+
+  Notes:
+    - Load before modals-industry.js (which hard-guards on the
+      namespace at load time).
+    - Load before industry-bootstrap.js (which verifies the namespace
+      at init time).
+
+--------------------------------------------------------------------------------
+GROUP I5 — INDUSTRY COMMANDS, QUERIES, PROCESSOR
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-commands.js
+    <- AFTER: js/core/industry/industry-state.js
+    <- AFTER: js/core/industry/industry-rules.js
+    <- AFTER: js/core/industry/industry-constants.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/accessors.js
+    <- after: js/households/household-commands.js
+        (call-time — verified at load by
+         industry-bootstrap.js, not by industry-commands.js)
+
+  js/core/industry/industry-queries.js
+    <- AFTER: js/core/industry/industry-state.js
+    <- AFTER: js/core/industry/industry-types.js
+    <- AFTER: js/core/accessors.js
+
+  js/core/industry/industry-processor.js
+    <- AFTER: js/core/industry/industry-queries.js
+    <- AFTER: js/core/industry/industry-commands.js
+    <- AFTER: js/core/industry/industry-economics.js
+    <- AFTER: js/core/time.js
+
+  Notes:
+    - industry-commands.js is loaded BEFORE industry-queries.js is
+      strictly required, but industry-processor.js requires BOTH,
+      so both precede processor. There is no load-time dependency
+      from queries to commands (queries reads state directly).
+    - modals-industry.js requires IndustryCommands,
+      IndustryQueries, and IndustryProcessor at load time.
+
+--------------------------------------------------------------------------------
+GROUP I6 — INDUSTRY VIEW MODELS, UI, MODALS
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-view-models.js
+    <- AFTER: js/core/industry/industry-queries.js
+    <- AFTER: js/core/industry/industry-types.js
+
+  js/core/industry/industry-ui-list.js
+    <- AFTER: js/core/industry/industry-view-models.js
+    <- AFTER: js/core/formatting.js
+        (call-time — escapeHtml via _requireEscapeHtml)
+
+  js/core/industry/modals-industry.js
+    <- AFTER: js/core/industry/industry-commands.js
+    <- AFTER: js/core/industry/industry-queries.js
+    <- AFTER: js/core/industry/industry-types.js
+    <- AFTER: js/core/industry/industry-type-commands.js
+    <- AFTER: js/core/industry/industry-view-models.js
+    <- AFTER: js/core/industry/industry-processor.js
+    <- AFTER: js/core/modals-core.js
+        (HARD — openModal, closeTopModal)
+    <- AFTER: js/core/formatting.js
+        (HARD — escapeHtml)
+    <- AFTER: js/core/ui.js
+        (HARD — _showToast or showToast)
+    <- AFTER: js/selectors/modals-char-selector.js
+        (HARD — openCharacterSelector or
+         openUnifiedCharacterSelector)
+    <- AFTER: js/selectors/modals-household-selector.js
+        (HARD — openHouseholdSelector)
+    <- AFTER: js/selectors/locationDropdown.js
+        (HARD — buildLocationDropdown)
+    <- AFTER: js/core/time.js
+        (HARD — getCurrentYear)
+
+  Notes:
+    - modals-industry.js is above bootstrap in the dependency graph
+      ONLY for namespace access; it imports the command / query /
+      view-model / processor namespaces directly, not bootstrap. The
+      documented HTML load order places modals-industry.js BEFORE
+      industry-bootstrap.js.
+    - industry-ui-list.js is not required by modals-industry.js; it
+      is a separate renderer for dashboards that build list / table
+      views outside the modal flow.
+
+--------------------------------------------------------------------------------
+GROUP I7 — INDUSTRY BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-bootstrap.js
+    <- AFTER: every other js/core/industry/*.js file (verified at
+               call time; missing module -> hard throw at init)
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/households/household-commands.js
+    <- AFTER: js/character/character-queries.js
+        (indirectly — via HouseholdCommands, which loads after
+         character-commands.js and character-queries.js)
+
+  Auto-init: if masterData.data exists at load time, init() runs
+  immediately. The loader calls init() explicitly otherwise.
+
+  Idempotent. init() returns
+    { success: true, alreadyInitialized: true, lastResult } on the
+    second call.
+
+
+================================================================================
+PART 5 — FLAT LOAD SEQUENCE
+================================================================================
+
+A single ordered list, ready to paste into a page. Function calls are
+marked.
+
+  -- Group C1: core constants --
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
+
+  -- Group C2: core utilities --
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  -- Group C3: core time --
+  js/core/time.js
+
+  -- Group C4: core storage --
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                          (function call)
+  js/core/accessors.js
+
+  -- Group C5: core UI primitives --
+  js/core/ui.js
+  js/core/modals-core.js
+  js/core/ui/collapsible.js
+  js/core/responsive.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+
+  -- Group R1: household prerequisites --
+  js/households/household-constants.js
+  js/households/household-rules.js
+  js/households/household-state.js
+  js/households/household-queries.js
+  js/households/household-commands.js
+
+  -- Group R2: character prerequisites --
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+
+  -- Group I1: industry constants, defaults, economics --
+  js/core/industry/industry-constants.js
+  js/core/industry/industry-economics.js
+  js/core/industry/industry-type-defaults.js
+
+  -- Group I2: industry rules --
+  js/core/industry/industry-rules.js
+
+  -- Group I3: industry state and pre-hydration --
+  js/core/industry/industry-state.js
+  js/core/industry/industry-type-init.js
+  js/core/industry/industry-types.js
+  js/core/industry/industry-migration.js
+
+  -- Group I4: industry type commands --
+  js/core/industry/industry-type-commands.js
+
+  -- Group I5: industry commands, queries, processor --
+  js/core/industry/industry-commands.js
+  js/core/industry/industry-queries.js
+  js/core/industry/industry-processor.js
+
+  -- Group I6: industry view models, UI, modals --
+  js/core/industry/industry-view-models.js
+  js/core/industry/industry-ui-list.js
+  js/core/industry/modals-industry.js
+
+  -- Group I7: industry bootstrap --
+  js/core/industry/industry-bootstrap.js
+
+  -- Application bootstrap (function calls) --
+  window.IndustryBootstrap.init()             (if not auto-invoked)
+    Idempotent. Verifies dependencies, migrates enterprises,
+    seeds types, hydrates IndustryState, and exposes
+    window.Industry.
+
+  window.IndustryBootstrap.reinit()           (optional; test /
+                                              repair flows only)
+
+
+================================================================================
+PART 6 — LOAD-ORDER INVARIANTS
+================================================================================
+
+Each invariant names the failure mode it prevents.
+
+ 1.  time.js before industry-commands.js, industry-processor.js, and
+     modals-industry.js.
+     Failure without it: each throws at load with "requires time.js
+     (getCurrentYear)".
+
+ 2.  ids.js before industry-commands.js and
+     industry-type-commands.js.
+     Failure without it: each throws at load with "requires ids.js
+     (generateId)".
+
+ 3.  storage.js before industry-migration.js, industry-commands.js,
+     industry-type-commands.js.
+     Failure without it: each throws at load with "requires
+     storage.js (saveMasterData)" (and, for industry-migration.js,
+     "requires storage.js (markDataDirty)").
+
+ 4.  initializeStorage() before any IndustryState.hydrateFromMasterData
+     call.
+     Failure without it: IndustryBootstrap.init() throws
+     "industry-state.js: window.masterData is not initialised.
+     storage.js must load and run before
+     IndustryState.hydrateFromMasterData."
+
+ 5.  accessors.js before industry-commands.js and
+     industry-queries.js.
+     Failure without it:
+       industry-commands.js throws at load with "requires
+       accessors.js (getCharacterById)" or "(getPlaceById)".
+       industry-queries.js throws at load with "requires
+       accessors.js (getCharacterById)", "(getPlaceById)", or
+       "(getHouseholdById)".
+
+ 6.  household-commands.js before IndustryBootstrap.init() runs.
+     Failure without it: init() throws at load via
+     _throwOnFatal with "HouseholdCommands.addEnterpriseToHousehold"
+     (or remove / update) listed in
+     "Missing HouseholdCommands members". Not a load-time throw;
+     it surfaces as an init() failure.
+
+ 7.  industry-constants.js before industry-state.js,
+     industry-type-init.js, industry-migration.js,
+     industry-commands.js.
+     Failure without it: each throws at load with "requires
+     industry-constants.js to load first."
+
+ 8.  industry-economics.js before industry-processor.js.
+     Failure without it: industry-processor.js throws at load with
+     "requires industry-economics.js to load first."
+     industry-rules.js loads without it, but
+     validateAnnualTransitionResult throws at first call.
+
+ 9.  industry-rules.js before industry-migration.js,
+     industry-type-commands.js, industry-commands.js.
+     Failure without it: each throws at load with "requires
+     industry-rules.js to load first."
+
+10.  industry-state.js before industry-type-commands.js,
+     industry-types.js, industry-commands.js, industry-queries.js.
+     Failure without it: each throws at load with "requires
+     industry-state.js to load first."
+
+11.  industry-types.js before industry-queries.js and
+     industry-view-models.js.
+     Failure without it: each throws at load with "requires
+     industry-types.js to load first."
+
+12.  industry-commands.js, industry-queries.js,
+     industry-economics.js before industry-processor.js.
+     Failure without any: industry-processor.js throws at load
+     naming the first missing module.
+
+13.  industry-commands.js, industry-queries.js, industry-types.js,
+     industry-type-commands.js, industry-view-models.js,
+     industry-processor.js, and every core UI / formatting / modal
+     dependency before modals-industry.js.
+     Failure without any: modals-industry.js throws at load naming
+     the missing module or method.
+
+14.  industry-view-models.js before industry-ui-list.js.
+     Failure without it: industry-ui-list.js throws at load with
+     "requires industry-view-models.js to load first."
+
+15.  Every other js/core/industry/*.js file, storage.js,
+     accessors.js, ids.js, time.js, and household-commands.js before
+     IndustryBootstrap.init() runs.
+     Failure without any: init() throws at load via _throwOnFatal
+     listing every missing module, global, or household method.
+
+16.  industry-bootstrap.js loads LAST among industry files.
+     Failure without it: the bootstrap's load-time verification
+     cannot see the modules it verifies, so init() throws even
+     though every module is loaded by the time commands are
+     invoked.
+
+17.  initializeStorage() runs BEFORE any industry file that
+     references masterData at call time
+     (industry-state.js, industry-type-init.js,
+     industry-migration.js, industry-commands.js,
+     industry-type-commands.js).
+     Failure without it: the corresponding call throws at first
+     use.
+
+
+================================================================================
+PART 7 — KNOWN HAZARDS
+================================================================================
+
+  1.  industry-doc.txt is partially out of date.
+
+      §1 Ownership Contract states that
+      "household.enterprises[] is the only household-owned field
+      industry mutates, and it is done via HouseholdCommands".
+
+      That is false in two ways:
+
+        (a) industry also writes household.wealth via
+            HouseholdCommands.updateHousehold during annual
+            processing household transfer;
+
+        (b) prior revisions of industry-commands.js also wrote
+            household.notes on that path, removed because it
+            clobbered concurrent household note edits based on a
+            stale read of the household record.
+
+      The industry-bootstrap.js header documents the corrected
+      contract in its CROSS-DOMAIN CONTRACT section. Use the
+      bootstrap header as authoritative; the industry-doc.txt §1
+      paragraph is stale. Update the doc before citing it as
+      authoritative.
+
+  2.  RESULT SHAPE DIVERGENCE across types and enterprises.
+
+      IndustryCommands returns { success, reason?, ... }.
+      IndustryTypeCommands returns { success, reason?, ... }.
+      IndustryProcessor returns structured results per entry point
+      (see §2.12).
+      IndustryMigration returns { ok, migrated, changed, errors }.
+
+      These are not uniform. IndustryMigration uses `ok`, not
+      `success`, matching the household-migration convention. Do
+      not unify without auditing every caller.
+
+  3.  HOUSEHOLD REVERSE INDEX CROSS-CHECK IS ONE-DIRECTIONAL.
+
+      industry-state.js::validateIntegrity walks
+      masterData.data.households -> enterprises[]. It does not walk
+      enterprises -> household.enterprises[]. The reverse direction
+      is covered by the enterprise-side ownerType household + ownerId
+      check combined with the household-side check just described.
+      A desync where the enterprise points at the correct household
+      but the household does not list the enterprise IS caught
+      (household-side check); a desync where the household lists the
+      enterprise but the enterprise points at a DIFFERENT household
+      is caught (household-side check (c)); a desync where the
+      household does not list the enterprise and the enterprise
+      points at a DIFFERENT household is only caught by the
+      enterprise-side check (which does not look at
+      household.enterprises[]). That case is rare and is a
+      pre-existing desync class, not one produced by any current
+      write path.
+
+  4.  MIGRATION IS NOT A REPAIR TOOL.
+
+      industry-migration.js migrates. It does not repair broken
+      typeId references (a record whose typeId points at a missing
+      type is a MIGRATION ERROR, not an invitation to invent
+      'other'). The bootstrap integrity diagnostic reports the
+      broken reference; a repair tool must fix it.
+
+  5.  TYPE SEEDING AND MIGRATION RACE.
+
+      init() calls IndustryTypeInit.ensureEnterpriseTypesInitialized()
+      after migration. If migration changed the enterprises array,
+      hydration runs inside migration (before type seeding). Type
+      seeding then populates masterData.data.enterpriseTypes.
+      Because migration re-hydrates before type seeding, the
+      initial hydration sees the enterprise records but not the
+      freshly-seeded type records. The bootstrap then calls
+      hydrateFromMasterData again (step 4) with the post-seeding
+      type array. This is intentional and idempotent, but a future
+      revision that removes the second hydrateFromMasterData call
+      would leave the state missing the seeded types until the next
+      masterDataUpdated event.
+
+  6.  NO CROSS-DOMAIN ATOMICITY FOR OWNERSHIP.
+
+      updateEnterprise reconciles the household reverse index on
+      owner change. On reconciliation failure, it rolls back the
+      industry record. There is no transaction spanning the
+      household and industry domains; the rollback is the only
+      consistency mechanism.
+
+  7.  MUTATION PRIMITIVES ARE INTERNAL.
+
+      IndustryState exposes _addEnterprise, _updateEnterprise,
+      _removeEnterprise, _addEnterpriseType, _updateEnterpriseType,
+      _removeEnterpriseType, and the _get*Canonical accessors.
+      These are reserved for IndustryCommands,
+      IndustryTypeCommands, and IndustryBootstrap. Calling them
+      from queries, UI, or cross-domain consumers bypasses
+      validation, event publication, and cross-domain
+      reconciliation.
+
+  8.  AUTO-INIT AT LOAD TIME.
+
+      industry-bootstrap.js runs init() at load if
+      masterData.data exists. The try/catch wraps auto-init so a
+      broken dependency surfaces as a console error rather than an
+      uncaught exception at load time. The loader's explicit init()
+      call will still throw on failure. Do not rely on auto-init
+      in production — call init() explicitly after storage.js has
+      run and after initializeStorage() has completed.
+
+  9.  PRESENT-BUT-NON-ARRAY enterpriseTypes IS COERCED.
+
+      industry-type-init.js replaces a present-but-non-array
+      masterData.data.enterpriseTypes with the defaults.
+      industry-migration.js REFUSES to coerce a present-but-non-array
+      masterData.data.enterprises. The asymmetry is documented
+      in the industry-migration.js header but not in
+      industry-type-init.js. A corruption of enterpriseTypes is
+      therefore silently overwritten with defaults at bootstrap,
+      whereas the same corruption of enterprises is a hard failure.
+      The rationale (defaults are pre-validated data; nothing is
+      discarded that was not already unusable) is defensible but is
+      an inconsistency a future maintainer should be aware of.
+
+  10. INDUSTRY-ECONOMICS DUPLICATES DEBT_INTEREST_RATE.
+
+      industry-constants.js::DEBT_INTEREST_RATE is the canonical
+      constant. industry-economics.js independently declares
+      var DEBT_INTEREST_RATE = 0.05 at module scope and exports it.
+      The two are equal today; a change to one without the other
+      would silently desynchronise them. The household subsystem's
+      v6.0 consolidation removed a similar duplication; the same
+      pattern is still present here.
+
+  11. INDUSTRY-ECONOMICS DUPLICATES BANKRUPTCY_THRESHOLD.
+
+      industry-constants.js::BANKRUPTCY_THRESHOLD = -100 is
+      canonical. _calculateLinear accepts a bankruptcyThreshold
+      option, and the fallback is the literal -100. Same hazard as
+      §10.
+
+  12. IDEMPOTENCY OF BUILT-IN TYPE IDS.
+
+      IndustryTypeDefaults.get() returns records with fixed ids
+      (e.g. 'hut_workshop'). If the enterpriseTypes collection is
+      seeded, edited, deleted, and reseeded, the fixed ids survive
+      across reseeds. If a future revision adds ID generation for
+      built-in types, all default ids must remain stable to preserve
+      enterprise typeId references.
+
+  13. PROCESSOR VS. SINGLE-ENTERPRISE PERSISTENCE.
+
+      processAnnualEnterprise(id) persists once at the end of a
+      successful run. processAnnualEnterprise(id, { persist: false })
+      does not. processAllEnterprises persists once at the end of
+      the batch. A batch caller that invokes processAnnualEnterprise
+      without the persist:false option will produce one save per
+      enterprise. The processor's default is persist:true; the
+      batch caller must pass persist:false explicitly.
+
+  14. HOUSEHOLD TRANSFER REASON IS EVENT-ONLY.
+
+      _applyHouseholdTransfer passes the reason to
+      HouseholdCommands.updateHousehold, which writes it to the
+      household eventLog entry. The household.notes field is NOT
+      touched (removed in M5). Any future maintainer who wants the
+      reason visible outside the event log must update both
+      industry-commands.js and this documentation.
+
+  15. MODALS-INDUSTRY PERSISTENCE ON FAILURE.
+
+      Every onConfirm handler that mutates calls persist() once
+      after success. If persist fails, the modal shows an error and
+      stays open. The in-memory state is already mutated; the user
+      can retry from a command, but the modal cannot roll back.
+      This matches the processor's persistence model and the
+      household subsystem's v6.0 fix pattern.
+
+  16. MODALS-INDUSTRY DOM SCOPING.
+
+      Every DOM lookup is scoped to the modal's own root element.
+      A null handle produces a null return; a caller that then
+      dereferences null sees a clear TypeError instead of a silent
+      wrong-modal mutation. Do not reintroduce document.getElementById
+      in this file.
+
+  17. INDUSTRY-QUERIES IS A READ FACADE, NOT A DOMAIN BOUNDARY.
+
+      getEnterpriseWorkers, getEnterpriseSummary, and
+      getOwnerEnterprisesSummary all read through IndustryState and
+      cross-domain accessors. They return cloned data. A caller
+      that wants to mutate must use IndustryCommands. Reads never
+      persist.
+
+  18. VIEW MODELS DO NOT FABRICATE DOMAIN DEFAULTS.
+
+      buildCard, buildDetails, and buildWorkerManagement present a
+      missing value as the ABSENT glyph (\u2014), never as a
+      fabricated domain value (no "0" for a missing wealth, no
+      "Unknown" for a missing status). This is the same principle
+      the household subsystem applies in
+      household-view-models.js.
+
+  19. VIEW MODELS AND QUERIES BOTH RESOLVE OWNER NAMES.
+
+      IndustryQueries._resolveOwnerName and
+      IndustryViewModels._stringOrAbsent both participate in owner
+      display. The query layer resolves the raw owner name;
+      the view-model layer formats it (presentation-safe) and
+      substitutes ABSENT for an empty string. Do not move owner
+      resolution into the view-model layer; that would couple
+      presentation to accessors.
+
+  20. UI LIST RENDERER DOES NOT ESCAPE THE CONTAINER ID.
+
+      renderEnterpriseList calls _resolveContainer(containerId). A
+      string containerId is passed to document.getElementById. An
+      Element container is used directly. There is no HTML injection
+      path through the container id; the ids are developer-supplied.
+
+  21. NO ICON POLICY VIOLATIONS.
+
+      No industry module emits emojis or inline SVG. modals-industry.js
+      uses no icons in confirm/cancel buttons. industry-ui-list.js
+      emits no icons. If a future revision needs an icon, it must go
+      through window.Icons via the modals-core _getIcon contract, not
+      an inline SVG or an emoji.
+
+  22. ANNUAL PROCESSING IS DETERMINISTIC TODAY.
+
+      No industry file uses randomness.js, Math.random, or
+      window.Random. Every annual transition is computed from the
+      enterprise record and the current year. A future revision
+      that introduces economic randomness (e.g. random events) must
+      introduce a caller-supplied roll source, matching the
+      household subsystem's v6.0 fix, not Math.random.
+
+  23. UNKNOWN FIELDS ON ENTERPRISE RECORDS.
+
+      validateEnterprise rejects unknown fields. Every stored
+      enterprise must have exactly the fields in
+      CANONICAL_ENTERPRISE_FIELDS, plus tombstone fields when
+      demolished. A future cross-domain field must be added to
+      CANONICAL_ENTERPRISE_FIELDS (and, if it is domain-owned,
+      DOMAIN_OWNED_ENTERPRISE_FIELDS) before any record carrying it
+      can pass validation.
+
+  24. HISTORY CAPS ARE ENFORCED AT VALIDATE, NOT AT APPEND.
+
+      validateEnterprise checks history.length <= MAX_HISTORY_ENTRIES.
+      The command layer appends history entries WITHOUT enforcing
+      the cap. A record whose history exceeds the cap is rejected at
+      validate time, not at append time. The cleanup path (dropping
+      older entries) is not implemented in this batch. A future
+      revision that adds a history cleanup should drop the OLDEST
+      entries first, never the newest.
+
+  25. ABSOLUTE_MAX_WORKERS IS NOT ENFORCED AT APPEND.
+
+      addWorkerToEnterprise checks against enterprise.maxWorkers.
+      validateEnterprise additionally checks maxWorkers against
+      IndustryConstants.ABSOLUTE_MAX_WORKERS. A record whose
+      maxWorkers is set above ABSOLUTE_MAX_WORKERS is rejected at
+      validate time; the command layer's allowlist accepts the
+      value and relies on the validation pass to reject it.
+
+  26. MODALS-INDUSTRY CLOSE / REOPEN ROUTING.
+
+      Details -> Edit, Details -> Manage Workers, and Manage
+      Enterprise Types -> Edit / Create Type transitions route
+      through _closeThen, matching modals-helper.js::closeThen.
+      There is one tick of teardown between closing the current
+      modal and opening the next. A future revision that opens the
+      next modal synchronously will produce a double-stack of modal
+      roots.
+
+  27. TYPE DELETION REQUIRES REASSIGNMENT.
+
+      deleteEnterpriseType refuses if any enterprise references the
+      type. The caller must reassign enterprises first. There is no
+      bulk-reassign command in this batch. A future UI should offer
+      a reassignment flow before offering the delete.
+
+  28. BOOTSTRAP VERIFIES A SPECIFIC HOUSEHOLD SURFACE.
+
+      The verification covers addEnterpriseToHousehold,
+      removeEnterpriseFromHousehold, and updateHousehold. A future
+      household-commands revision that renames, merges, or removes
+      any of these three methods will break industry bootstrap at
+      init time. Coordinate the rename across both subsystems.
+
+  29. INDUSTRY DOES NOT USE household-queries.js OR
+      household-economy.js.
+
+      Household reads go through getHouseholdById (accessors.js).
+      Household economy integration (salary, tuition, government
+      funding) is not wired into industry in this batch.
+      Settlement-owned enterprise treasury routing is not
+      implemented.
+
+  30. ANNUAL PROCESSING SKIPS 'inactive', 'closed', 'bankrupt',
+      AND 'demolished' ENTERPRISES.
+
+      Only status === 'active' enterprises process.
+      IndustryProcessor's _isEligibleForProcessing is the sole gate.
+      A caller that wants to process a bankrupt enterprise must
+      change status to 'active' first.
+
+  31. HOUSEHOLD OWNER ID IS STRING-ONLY.
+
+      enterprise.ownerId is validated as a non-empty string when
+      ownerType is character / household / settlement / state.
+      Non-string ids are coerced to null by the state normaliser
+      and fail validation. This matches the accessors.js contract
+      ("only string IDs are indexed").
+
+
+================================================================================
+END OF DOCUMENT
+================================================================================
