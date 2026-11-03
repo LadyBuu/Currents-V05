@@ -3,7 +3,7 @@
  * STILL WATERS - RANK ASSIGNMENT (rank-assignment.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-assignment.js
+ * LOCATION: js/ranks/rank-assignment.js
  *
  * Numbering arithmetic and inheritance-source resolution for the rank
  * domain.
