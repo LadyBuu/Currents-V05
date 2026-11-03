@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title><!-- PAGE TITLE --></title>
+    <title><!-- EDIT: PAGE TITLE --></title>
+
+    <link rel="icon" href="data:,">
 
     <script src="js/core/theme-boot.js"></script>
 
@@ -46,24 +48,101 @@
         }
 
         .tab-content-wrapper {
-            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 16px;
+            flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+            padding: 20px 24px;
+        }
+
+        /* ---- Sidebar tree — indent + expand/collapse ---- */
+        .place-list .location-tree-children,
+        .locations-sidebar .location-tree-children {
+            margin-left: 0 !important;
+            padding-left: 16px !important;
+            border-left: 1px solid var(--border-light) !important;
+        }
+        .place-list .location-tree-children .location-tree-children,
+        .locations-sidebar .location-tree-children .location-tree-children {
+            padding-left: 16px !important;
+        }
+        .place-list .location-tree-children,
+        .locations-sidebar .location-tree-children {
+            display: none;
+        }
+        .place-list .location-tree-children.is-expanded,
+        .locations-sidebar .location-tree-children.is-expanded {
+            display: block;
         }
 
         /* ---- Topbar buttons ---- */
         .tb-btn {
-            display: inline-flex; align-items: center; gap: 4px;
-            padding: 5px 12px; background: var(--bg2);
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 6px 14px; background: var(--bg2);
             border: 1px solid var(--border); border-radius: var(--radius);
-            color: var(--text); font-family: var(--f-body); font-size: 0.65rem;
-            font-weight: 500; cursor: pointer;
+            color: var(--text); font-family: var(--f-body); font-size: 0.7rem;
+            font-weight: 500; cursor: pointer; line-height: 1.2;
+            flex-shrink: 0;
             transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
         }
         .tb-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent-light); }
         .tb-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
         .tb-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
 
+        /* ---- Year input (topbar) ----
+           flex-shrink: 0 on the group and every child so the control
+           never collapses into the Import button. */
+        .year-input {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 3px 10px; background: var(--bg);
+            border: 1px solid var(--border); border-radius: var(--radius);
+            font-family: var(--f-body); font-size: 0.7rem; line-height: 1.2;
+            flex-shrink: 0;
+            flex-grow: 0;
+            min-width: max-content;
+            max-width: 260px;
+            margin-right: 6px;
+        }
+        .year-input label {
+            font-family: var(--f-display); font-size: 0.55rem;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: var(--dim); white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .year-input input {
+            width: 64px; min-width: 52px;
+            padding: 3px 6px;
+            background: transparent; border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px); color: var(--text);
+            font-family: var(--f-mono); font-size: 0.7rem; text-align: right;
+            flex-shrink: 0;
+        }
+        .year-input input:focus {
+            outline: none; border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-soft);
+        }
+        .year-input input::-webkit-outer-spin-button,
+        .year-input input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0;
+        }
+        .year-input input[type=number] { -moz-appearance: textfield; }
+        .year-input .set-btn {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: calc(var(--radius) - 1px);
+            padding: 3px 10px;
+            font-size: 0.65rem;
+            font-weight: 500;
+            color: var(--text);
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+        .year-input .set-btn:hover {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent-light);
+        }
+
         /* ---- Theme toggle ---- */
-        .theme-toggle { position: relative; display: inline-flex; }
+        .theme-toggle { position: relative; display: inline-flex; flex-shrink: 0; }
         .theme-toggle__btn { gap: 6px; }
         .theme-toggle__menu {
             position: absolute; top: calc(100% + 4px); right: 0; z-index: 9999;
@@ -85,47 +164,98 @@
             background: var(--accent-dim); color: var(--accent-light); outline: none;
         }
 
-        /* ---- Panel tabs ---- */
-        .panel-tabs {
-            display: none !important;
-        }
-
         /* ---- Sub-tab strip ---- */
         .manager-subtabs {
-            position: sticky; top: 0; background: var(--bg); z-index: 10;
-            display: flex; gap: 2px; padding: 0 4px; margin-bottom: 14px;
-            border-bottom: 1px solid var(--border); flex-wrap: wrap;
+            position: sticky; top: 0;
+            display: flex; align-items: stretch;
+            gap: 4px;
+            padding: 8px 4px 0;
+            margin: -20px -24px 20px;
+            padding-left: 24px;
+            padding-right: 24px;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            z-index: 10;
         }
-        .manager-subtab {
-            display: inline-flex; align-items: center; gap: 6px;
-            padding: 6px 14px; background: transparent;
-            border: 1px solid transparent; border-bottom: 2px solid transparent;
-            border-radius: 4px 4px 0 0; font-family: var(--f-display);
-            font-size: 0.68rem; letter-spacing: 0.05em; color: var(--dim);
-            cursor: pointer;
-            transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
-        }
-        .manager-subtab:hover { color: var(--accent-light); background: var(--accent-dim); }
-        .manager-subtab.active {
-            color: var(--accent); border-bottom-color: var(--accent);
-            background: var(--accent-dim); font-weight: 600;
-        }
-        .manager-subtab-icon { display: inline-flex; width: 1em; height: 1em; align-items: center; justify-content: center; color: currentColor; }
-        .manager-subtab-icon svg { width: 100%; height: 100%; fill: currentColor; }
-        .manager-subpanel { min-height: 200px; }
 
-        /* ---- Empty state ---- */
+        .manager-subtab {
+            position: relative;
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 12px 18px 11px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-bottom: none;
+            border-radius: 6px 6px 0 0;
+            color: var(--dim);
+            font-family: var(--f-display);
+            font-size: 0.78rem;
+            font-weight: 500;
+            letter-spacing: 0.06em;
+            line-height: 1.15;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: color 0.15s ease, background-color 0.15s ease;
+        }
+        .manager-subtab::after {
+            content: '';
+            position: absolute; left: 0; right: 0; bottom: -1px;
+            height: 2px;
+            background: transparent;
+            border-radius: 2px 2px 0 0;
+            transition: background-color 0.15s ease;
+        }
+        .manager-subtab:hover {
+            color: var(--accent-light);
+            background: var(--accent-dim);
+        }
+        .manager-subtab:hover::after {
+            background: var(--accent);
+            opacity: 0.35;
+        }
+        .manager-subtab.active {
+            color: var(--accent);
+            background: var(--bg2);
+            border-color: var(--border);
+            border-bottom-color: transparent;
+            font-weight: 600;
+        }
+        .manager-subtab.active::after {
+            background: var(--accent);
+            opacity: 1;
+        }
+
+        .manager-subtab-icon {
+            display: inline-flex;
+            width: 16px; height: 16px;
+            align-items: center; justify-content: center;
+            color: currentColor;
+            flex-shrink: 0;
+            opacity: 0.9;
+        }
+        .manager-subtab-icon svg {
+            width: 100%; height: 100%;
+            fill: currentColor;
+        }
+
+        .manager-subpanel {
+            min-height: 200px;
+            padding-top: 4px;
+        }
+
+        /* ---- Empty / loading states ---- */
         .empty-state {
-            padding: 40px 20px;
+            padding: 48px 24px;
             text-align: center;
             color: var(--dim);
-            font-size: 0.85rem;
+            font-size: 0.88rem;
+            line-height: 1.6;
         }
         .loading {
-            padding: 20px;
+            padding: 24px;
             text-align: center;
             color: var(--tmut);
-            font-size: 0.8rem;
+            font-size: 0.85rem;
             animation: pulse 1.5s ease-in-out infinite;
         }
         @keyframes pulse {
@@ -150,13 +280,21 @@
                 transition: transform 0.3s ease; box-shadow: none;
             }
             .locations-sidebar.visible { transform: translateX(0); }
-            .manager-subtabs { flex-wrap: wrap; }
-            .manager-subtab { flex: 1 1 100%; border-bottom: 1px solid var(--border); }
+            .tab-content-wrapper { padding: 16px; }
+            .manager-subtabs {
+                margin: -16px -16px 16px;
+                padding-left: 16px;
+                padding-right: 16px;
+            }
+            .manager-subtab {
+                flex: 1 1 auto;
+                min-width: 0;
+                padding: 10px 14px;
+                font-size: 0.72rem;
+            }
+            .year-input label { display: none; }
+            .year-input input { width: 52px; min-width: 44px; }
         }
-
-        /* ---- No shadows/blurs (mobile) ---- */
-        .toast { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-        .modal-container { box-shadow: none !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
     </style>
 </head>
 <body>
@@ -169,6 +307,13 @@
     </button>
     <div class="title" id="managerTitle"></div>
     <div class="spacer"></div>
+
+    <div class="year-input">
+        <label for="yearInput">Year</label>
+        <input type="number" id="yearInput" min="1" step="1">
+        <button id="setYearBtn" class="set-btn" type="button">Set</button>
+    </div>
+
     <button id="importBtn" class="tb-btn" type="button"></button>
     <button id="exportBtn" class="tb-btn primary" type="button"></button>
     <button id="refreshBtn" class="tb-btn" type="button"></button>
@@ -258,19 +403,37 @@
 <script src="js/roles/skill-utils.js"></script>
 
 <!-- ================================================================
-     BLOCK 8 — CHARACTER STATE
+     BLOCK 8 — CHARACTER PURE POLICY
+     ================================================================ -->
+<script src="js/character/family-rules.js"></script>
+<script src="js/character/children-rules.js"></script>
+<script src="js/character/mortality-rules.js"></script>
+
+<!-- ================================================================
+     BLOCK 9 — CHARACTER STATE
      ================================================================ -->
 <script src="js/character/character-state.js"></script>
 <script src="js/character/family-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 9 — CHARACTER COMMANDS & QUERIES
+     BLOCK 10 — CHARACTER COMMANDS & QUERIES
      ================================================================ -->
 <script src="js/character/character-commands.js"></script>
 <script src="js/character/character-queries.js"></script>
+<script src="js/character/family-queries.js"></script>
+<script src="js/character/family-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 10 — ROLES
+     BLOCK 11 — CHARACTER FACTORY & CREATION
+     ================================================================ -->
+<script src="js/character/character-factory.js"></script>
+<script src="js/character/character-creation-commands.js"></script>
+<script src="js/character/character-deletion-commands.js"></script>
+<script src="js/character/mortality-queries.js"></script>
+<script src="js/character/mortality-statistics.js"></script>
+
+<!-- ================================================================
+     BLOCK 12 — ROLES
      ================================================================ -->
 <script src="js/roles/role-constants.js"></script>
 <script src="js/roles/role-state.js"></script>
@@ -278,7 +441,7 @@
 <script src="js/roles/role-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 11 — RANKS
+     BLOCK 13 — RANKS
      ================================================================ -->
 <script src="js/ranks/rank-constants.js"></script>
 <script src="js/ranks/rank-rules.js"></script>
@@ -288,7 +451,7 @@
 <script src="js/ranks/rank-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 12 — RELIGION
+     BLOCK 14 — RELIGION
      ================================================================ -->
 <script src="js/religion/religion-constants.js"></script>
 <script src="js/religion/religion-format.js"></script>
@@ -302,11 +465,9 @@
 <script src="js/religion/religion-view-models.js"></script>
 <script src="js/religion/religion-render.js"></script>
 <script src="js/religion/religion-ui-state.js"></script>
-<script src="js/religion/modals-religion.js"></script>
-<script src="js/religion/religion-bootstrap.js"></script>
 
 <!-- ================================================================
-     BLOCK 13 — INDUSTRY
+     BLOCK 15 — INDUSTRY
      ================================================================ -->
 <script src="js/industry/industry-constants.js"></script>
 <script src="js/industry/industry-economics.js"></script>
@@ -321,7 +482,7 @@
 <script src="js/industry/industry-queries.js"></script>
 
 <!-- ================================================================
-     BLOCK 14 — HOUSEHOLDS
+     BLOCK 16 — HOUSEHOLDS
      ================================================================ -->
 <script src="js/households/household-constants.js"></script>
 <script src="js/households/household-rules.js"></script>
@@ -330,16 +491,19 @@
 <script src="js/households/household-commands.js"></script>
 
 <!-- ================================================================
-     BLOCK 15 — LOCATION
+     BLOCK 17 — LOCATION
      ================================================================ -->
 <script src="js/location/location-state.js"></script>
 <script src="js/location/location-hierarchy.js"></script>
 <script src="js/location/location-commands.js"></script>
 <script src="js/location/location-queries.js"></script>
 <script src="js/location/location-movement.js"></script>
+<script src="js/location/location-view-models.js"></script>
+<script src="js/location/location-ui-state.js"></script>
+<script src="js/location/location-ui-list.js"></script>
 <script src="js/location/location-bootstrap.js"></script>
 
-<!-- PlaceQueries façade (consumed by settlement factory + view models) -->
+<!-- PlaceQueries façade (settlement factory + view models + modals) -->
 <script>
     (function () {
         'use strict';
@@ -360,9 +524,8 @@
 </script>
 
 <!-- ================================================================
-     BLOCK 16 — SETTLEMENT
+     BLOCK 18 — SETTLEMENT
      ================================================================ -->
-<!-- Definitions -->
 <script src="js/settlement/settlement-fiscal-definitions.js"></script>
 <script src="js/settlement/settlement-government-definitions.js"></script>
 <script src="js/settlement/settlement-rank-definitions.js"></script>
@@ -372,18 +535,15 @@
 <script src="js/settlement/settlement-feature-definitions.js"></script>
 <script src="js/settlement/settlement-education-definitions.js"></script>
 
-<!-- Rules -->
 <script src="js/settlement/settlement-rank-rules.js"></script>
 <script src="js/settlement/settlement-fiscal-rules.js"></script>
 <script src="js/settlement/settlement-government-rules.js"></script>
 <script src="js/settlement/settlement-feature-rules.js"></script>
 <script src="js/settlement/settlement-law-rules.js"></script>
 
-<!-- State + commit -->
 <script src="js/settlement/settlement-state.js"></script>
 <script src="js/settlement/settlement-command-commit.js"></script>
 
-<!-- Queries -->
 <script src="js/settlement/settlement-rank-queries.js"></script>
 <script src="js/settlement/settlement-queries.js"></script>
 <script src="js/settlement/settlement-feature-queries.js"></script>
@@ -395,7 +555,6 @@
 <script src="js/settlement/settlement-crime-queries.js"></script>
 <script src="js/settlement/settlement-prosperity-queries.js"></script>
 
-<!-- Commands -->
 <script src="js/settlement/settlement-feature-commands.js"></script>
 <script src="js/settlement/settlement-government-commands.js"></script>
 <script src="js/settlement/settlement-fiscal-commands.js"></script>
@@ -405,16 +564,14 @@
 <script src="js/settlement/settlement-rank-commands.js"></script>
 <script src="js/settlement/settlement-specialization-commands.js"></script>
 
-<!-- Factory + annual processor -->
 <script src="js/settlement/settlement-factory.js"></script>
 <script src="js/settlement/settlement-annual-processor.js"></script>
 
-<!-- View models + UI state -->
 <script src="js/settlement/settlement-view-models.js"></script>
 <script src="js/settlement/settlement-ui-state.js"></script>
 
 <!-- ================================================================
-     BLOCK 17 — GOVERNMENT
+     BLOCK 19 — GOVERNMENT
      ================================================================ -->
 <script src="js/government/government-constants.js"></script>
 <script src="js/government/government-state.js"></script>
@@ -433,12 +590,12 @@
 <script src="js/government/settlement-law-formatters.js"></script>
 
 <!-- ================================================================
-     BLOCK 18 — CHARACTER LIFECYCLE
+     BLOCK 20 — CHARACTER LIFECYCLE
      ================================================================ -->
 <script src="js/character/character-lifecycle.js"></script>
 
 <!-- ================================================================
-     BLOCK 19 — SELECTORS
+     BLOCK 21 — SELECTORS
      ================================================================ -->
 <script src="js/selectors/selector-base.js"></script>
 <script src="js/selectors/locationDropdown.js"></script>
@@ -455,14 +612,20 @@
 <script src="js/selectors/modals-char-selector.js"></script>
 
 <!-- ================================================================
-     BLOCK 20 — CHARACTER UI MODALS
+     BLOCK 22 — RELIGION MODALS
+     ================================================================ -->
+<script src="js/religion/modals-religion.js"></script>
+<script src="js/religion/religion-bootstrap.js"></script>
+
+<!-- ================================================================
+     BLOCK 23 — CHARACTER UI MODALS
      ================================================================ -->
 <script src="js/character/character-ui-list.js"></script>
 <script src="js/character/modals-character.js"></script>
 <script src="js/character/modals-death.js"></script>
 
 <!-- ================================================================
-     BLOCK 21 — SETTLEMENT UI
+     BLOCK 24 — SETTLEMENT UI
      ================================================================ -->
 <script src="js/settlement/settlement-tabs.js"></script>
 <script src="js/settlement/settlement-ui-list.js"></script>
@@ -471,34 +634,50 @@
 <script src="js/settlement/modals-settlement-roles.js"></script>
 
 <!-- ================================================================
-     BLOCK 22 — PAGE-SPECIFIC TABS
-     (EDIT ME: replace with the tabs this manager page needs.)
-     Every tab script here must be safe to load given Blocks 1–21.
+     BLOCK 25 — PAGE-SPECIFIC TABS
+     EDIT ME: replace with the tabs this manager page needs.
+     Every tab script must be safe to load given Blocks 1–24.
+
      Example for the Government Manager:
          <script src="js/tabs/government-details-tab.js"></script>
          <script src="js/tabs/government-departments-tab.js"></script>
          <script src="js/tabs/government-history-tab.js"></script>
          <script src="js/tabs/government-civil-laws-tab.js"></script>
          <script src="js/tabs/government-economy-tab.js"></script>
+
+     Example for the Location Manager:
+         <script src="js/tabs/location-tab.js"></script>
+         <script src="js/tabs/location-type-manager-tab.js"></script>
+
+     Example for the Settlement Manager:
+         <script src="js/tabs/settlement-overview-tab.js"></script>
+         <script src="js/tabs/settlement-economy-tab.js"></script>
+         <script src="js/tabs/settlement-industry-tab.js"></script>
+         <script src="js/tabs/settlement-education-tab.js"></script>
+         <script src="js/tabs/settlement-religion-tab.js"></script>
+         <script src="js/tabs/settlement-roles-tab.js"></script>
+         <script src="js/tabs/settlement-history-tab.js"></script>
+         <script src="js/tabs/settlement-residence-tab.js"></script>
+         <script src="js/tabs/settlement-features-tab.js"></script>
+         <script src="js/tabs/government-civil-laws-tab.js"></script>
      ================================================================ -->
 <!-- EDIT: TAB SCRIPTS GO HERE -->
 
 
 <!-- ================================================================
      SUB-TAB HOST
-     (EDIT ME: replace with the page's sub-tab definitions.)
+     EDIT ME: replace SUBTABS with the page's tab definitions.
      Each entry: { id, label, icon, render(containerId, entityId) }.
-     The host renders the tab strip and delegates to the active
-     tab's render function. The render function is looked up on
-     window by the id of the module it dispatches to.
+     The host renders the strip and dispatches to the active tab's
+     render function.
      ================================================================ -->
 <script>
     (function () {
         'use strict';
         var SUBTABS = [
             // EDIT: replace with this page's tabs.
-            // { id: 'details', label: 'Details', icon: 'CROWN',
-            //   render: function (c, p) { if (window.SomeDetailsTab) window.SomeDetailsTab.render(c, p); } }
+            // { id: 'overview', label: 'Overview', icon: 'CROWN',
+            //   render: function (c, p) { if (window.OverviewTab) window.OverviewTab.render(c, p); } }
         ];
         var _activeSubtabId = SUBTABS.length > 0 ? SUBTABS[0].id : null;
 
@@ -560,18 +739,18 @@
 
 <!-- ================================================================
      MANAGER INIT
-     (EDIT ME: page-specific title, sidebar source, tab trigger.)
+     EDIT ME: page-specific title, sidebar source, bootstrap.
      ================================================================ -->
 <script>
 (function () {
     'use strict';
 
-    // EDIT: replace with this page's icon name, title, and sidebar
-    // heading. The icon name is looked up on window.Icons.
+    // EDIT: replace with this page's icons, titles, and bootstrap.
     var PAGE_ICON = 'CROWN';
     var PAGE_TITLE = 'MANAGER';
     var SIDEBAR_ICON = 'LOCATION';
     var SIDEBAR_TITLE = 'ITEMS';
+    var BOOTSTRAP = null;  // EDIT: set to e.g. window.GovernmentBootstrap
 
     var currentEntityId = null;
     var isInitialized = false;
@@ -600,10 +779,93 @@
         if (emptyState) emptyState.textContent = 'Select an item from the sidebar';
     }
 
+    // ---- Set Year control ---------------------------------------------
+    function setupYearControl() {
+        var input = document.getElementById('yearInput');
+        var btn = document.getElementById('setYearBtn');
+        if (!input || !btn) return;
+
+        function syncFromCanonical() {
+            try {
+                var y = (typeof window.getCurrentYear === 'function')
+                    ? window.getCurrentYear()
+                    : (window.masterData && window.masterData.data
+                        ? window.masterData.data.currentYear
+                        : null);
+                if (typeof y === 'number' && isFinite(y)) {
+                    input.value = String(y);
+                }
+            } catch (e) { /* ignore */ }
+        }
+        syncFromCanonical();
+
+        function applyYear() {
+            var raw = input.value;
+            var y = parseInt(raw, 10);
+            if (!isFinite(y)) {
+                showToast('Enter a valid year', 'error');
+                return;
+            }
+            if (typeof window.isValidYear === 'function' && window.isValidYear(y) !== true) {
+                showToast('Year out of range', 'error');
+                return;
+            }
+
+            var applied = false;
+
+            if (typeof window.setCurrentYear === 'function') {
+                try {
+                    var result = window.setCurrentYear(y);
+                    if (result === false) {
+                        showToast('Could not set year', 'error');
+                        return;
+                    }
+                    applied = true;
+                } catch (e) {
+                    showToast('Set year failed: ' + (e.message || 'unknown'), 'error');
+                    return;
+                }
+            }
+
+            if (!applied) {
+                if (!window.masterData || !window.masterData.data) {
+                    showToast('Storage not initialized', 'error');
+                    return;
+                }
+                window.masterData.data.currentYear = y;
+                if (typeof window.markDataDirty === 'function') {
+                    try { window.markDataDirty(); } catch (e) { /* ignore */ }
+                }
+                if (typeof window.saveMasterData === 'function') {
+                    try { window.saveMasterData(); } catch (e) { /* ignore */ }
+                }
+                applied = true;
+            }
+
+            if (applied) {
+                showToast('Year set to ' + y, 'success');
+                syncFromCanonical();
+                if (typeof window.renderManagerTab === 'function' && currentEntityId) {
+                    try { window.renderManagerTab('panelContent', currentEntityId); }
+                    catch (e) { /* ignore */ }
+                }
+                if (window.LocationUI && typeof window.LocationUI.renderLocationList === 'function') {
+                    try { setupSidebar(); } catch (e) { /* ignore */ }
+                }
+            }
+        }
+
+        btn.addEventListener('click', applyYear);
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyYear();
+            }
+        });
+    }
+
     // EDIT: replace with this page's sidebar data source. The default
-    // renders the location tree via LocationUI. If this manager is
-    // keyed on something else (households, religions, ranks, etc.),
-    // swap this implementation.
+    // renders the location tree via LocationUI.
     function setupSidebar() {
         var container = document.getElementById('placeList');
         if (!container) return;
@@ -626,7 +888,32 @@
             } catch (e) { console.error(e); }
         }
 
-        container.innerHTML = '<div class="empty-state">No items found</div>';
+        var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+        if (places && places.length > 0) {
+            var html = '<div class="place-tree">';
+            for (var i = 0; i < places.length; i++) {
+                var p = places[i];
+                var sel = (p.id === currentEntityId);
+                html += '<div class="place-item' + (sel ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (sel ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
+            }
+            html += '</div>';
+            container.innerHTML = html;
+            var items = container.querySelectorAll('.place-item');
+            for (var j = 0; j < items.length; j++) {
+                (function (item) {
+                    item.addEventListener('click', function () {
+                        var placeId = this.dataset.placeId;
+                        if (placeId) {
+                            currentEntityId = placeId;
+                            renderTab();
+                            if (window.innerWidth <= 768) closeSidebar();
+                        }
+                    });
+                })(items[j]);
+            }
+        } else {
+            container.innerHTML = '<div class="empty-state">No items found</div>';
+        }
     }
 
     function closeSidebar() {
@@ -646,12 +933,22 @@
         else openSidebar();
     }
 
-    // EDIT: replace with this page's default-selection logic and tab
-    // render trigger. The default selects the first non-root location
-    // and calls window.renderManagerTab.
     function renderTab() {
         var panel = document.getElementById('panelContent');
         if (!panel) return;
+
+        if (!currentEntityId) {
+            var places = (typeof window.getPlaces === 'function') ? window.getPlaces() : [];
+            if (places && places.length > 0) {
+                for (var i = 0; i < places.length; i++) {
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
+                        currentEntityId = places[i].id;
+                        break;
+                    }
+                }
+                if (!currentEntityId && places.length > 0) currentEntityId = places[0].id;
+            }
+        }
 
         if (!currentEntityId) {
             panel.innerHTML = '<div class="empty-state">Select an item from the sidebar</div>';
@@ -668,8 +965,17 @@
         if (importBtn) importBtn.onclick = function () {
             if (typeof window.importData !== 'function') { showToast('Import not available', 'error'); return; }
             window.importData()
-                .then(function () { setupSidebar(); renderTab(); showToast('Import successful', 'success'); })
-                .catch(function (err) { showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error'); });
+                .then(function () {
+                    if (BOOTSTRAP && BOOTSTRAP.reinit) {
+                        try { BOOTSTRAP.reinit(); } catch (e) { /* ignore */ }
+                    }
+                    setupSidebar();
+                    renderTab();
+                    showToast('Import successful', 'success');
+                })
+                .catch(function (err) {
+                    showToast('Import failed: ' + (err && err.message ? err.message : 'unknown'), 'error');
+                });
         };
 
         var exportBtn = document.getElementById('exportBtn');
@@ -694,9 +1000,15 @@
 
         if (typeof window.loadMasterData === 'function') window.loadMasterData();
 
+        if (BOOTSTRAP && typeof BOOTSTRAP.init === 'function') {
+            try { BOOTSTRAP.init(); }
+            catch (e) { console.error('Bootstrap init failed:', e); }
+        }
+
         setTimeout(function () {
             setupSidebar();
             setupTopBarActions();
+            setupYearControl();
             renderTab();
 
             var menuToggle = document.getElementById('menuToggle');
