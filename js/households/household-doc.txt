@@ -1,1328 +1,2865 @@
-# HOUSEHOLD & RESIDENCE SYSTEM - ARCHITECTURE DOCUMENTATION
-
-Version: 6.1 (post-consolidation)
-Supersedes: v6.0 (post-consolidation), v5.0 (post-refactor), v4.0
-
 ================================================================================
-SYSTEM OVERVIEW
+STILL WATERS — HOUSEHOLD SUBSYSTEM DOCUMENTATION AND LOAD ORDER
 ================================================================================
 
-The Household & Residence System manages household structures, family
-units, staff, departments, residence ownership and occupancy, rental
-contracts, and integration with enterprises, character, family,
-relationship, and industry domains.
+Scope of this document:
+  - Every household file provided in this batch (24 files):
+      js/households/household-constants.js
+      js/households/household-rules.js
+      js/households/household-view-models.js
+      js/households/household-orchestration.js
+      js/households/household-state.js
+      js/households/household-queries.js
+      js/households/household-commands.js
+      js/households/household-economy.js
+      js/households/household-assignment.js
+      js/households/household-servant.js
+      js/households/residence-system.js
+      js/households/household-bootstrap.js
+      js/households/household-ui-list.js
+      js/households/modals-helper.js
+      js/households/modals-household.js
+      js/households/modals-household-economy.js
+      js/households/modals-household-snapshot.js
+      js/households/modals-household-staff.js
+      js/households/modals-residence.js
+      js/households/modals-residence-owner.js
+      js/households/modals-residence-rental.js
+      js/households/modals-residence-staff.js
+      js/households/modals-residence-vacancy.js       (compatibility shim)
+      js/households/modals-residence-history.js       (compatibility shim)
+      js/households/modals-residence-snapshot.js      (deprecated stub)
+      js/households/modals-assign-staff.js            (compatibility shim)
+  - The HOUSEHOLD ↔ INDUSTRY contract, in both directions.
+  - Every core, character, industry, relationship, and place file the
+    household subsystem depends on, at LOAD time (module-level guards)
+    or at CALL time (typeof-guarded lookups), and how each is used.
+  - The load order across all household files, plus the invariants that
+    ordering enforces.
+  - Known hazards and behavioral contracts.
 
-The v5.0 refactor established clear ownership boundaries, removed
-global processing mutexes, eliminated fabricated domain defaults, and
-routed all mutations through explicit command layers.
+Cross-references:
+  - household-doc.txt (narrative architecture doc, v6.1)
+  - character-doc.txt (character subsystem)
+  - stillwaters-docs.txt (core)
+  - industry docs (industry-constants, industry-state, industry-commands,
+    industry-queries, industry-migration, industry-bootstrap)
 
-The v6.0 revision consolidated three latent bugs the v5.0 refactor
-left behind:
+This document is derived strictly from the supplied files. Anything not
+provable from the code is marked [UNVERIFIED]. Where household-doc.txt
+diverges from the supplied code, the code wins and the divergence is
+noted in PART 8 HAZARDS.
 
-  1. Constant and rule duplication. The economy and servant modules
-     carried private copies of the economic catalogs and quality
-     thresholds. Those copies were removed; every household module now
-     reads from household-constants.js (catalogs) and household-rules.js
-     (pure policy).
-
-  2. Reverse-index corruption. household.residenceId and
-     residence.units[].householdId are two views of the same fact. When
-     a mutation on one side fails to update the other, the divergence
-     survived indefinitely with no signal. Reverse-index failures are
-     now hard failures (reverseIndexFailed:true on the result, plus a
-     damageHistory entry on the residence), and household-state.js
-     diagnostics cross-check both sides.
-
-  3. Multi-year simulation clock drift. HouseholdEconomy.processAnnualEconomy
-     and CharacterLifecycle.advanceMortality both used wall-clock "now"
-     for year-tagged accounting, so a 5-year advance produced 5 ledger
-     entries all tagged with the same year. Both now accept an explicit
-     year and propagate it through every calculation.
-
-This v6.1 revision closes three latent bugs the v6.0 consolidation
-left behind:
-
-  4. Residence inline catalog duplication. residence-system.js still
-     carried inline copies of RESIDENCE_TYPES, RESIDENCE_STATUS,
-     RENTAL_STATUS, RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER, and the
-     history-cap thresholds, even though the same values lived in
-     household-constants.js. Those inline copies were removed;
-     HouseholdConstants is now a HARD load-time dependency of
-     residence-system.js, and every residence catalog read goes through
-     it. A divergence between the two copies (e.g. increasing
-     ESTATE.capacity in constants.js while residence-system.js still
-     used the old value) is now structurally impossible.
-
-  5. Storage schema household collections. household-bootstrap.js's
-     canonical verification requires masterData.data.households,
-     masterData.data.householdPositions, and
-     masterData.data.householdAssignments to all be arrays at load
-     time. Prior revisions of storage-schema.js declared only
-     `households`. Every fresh install and every save that predated
-     the household subdomain therefore threw at household bootstrap
-     with "householdPositions must be an array". Both auxiliary
-     collections are now declared in the factory and in the
-     normalization pass. The fix is additive and defaults safely for
-     old saves.
-
-  6. household-commands.js load-time optional dependency flags.
-     `_residenceSystemPresent` and `_industryCommandsPresent` were
-     frozen at load. The documented HTML load order places
-     residence-system.js AFTER household-commands.js, so the flag
-     froze to false. Every deleteHousehold call that touched a
-     residence returned RESIDENCE_SYSTEM_UNAVAILABLE — even though
-     ResidenceSystem was loaded by the time the command ran. The flags
-     are now call-time helpers (_residenceSystemAvailable,
-     _industryCommandsAvailable) that resolve the optional dependency
-     at command time. Load-order changes in either direction no longer
-     affect behaviour.
 
 ================================================================================
-KEY DESIGN PRINCIPLES
+PART 1 — LAYER STACK AND FILE CLASSIFICATION
 ================================================================================
 
-1. SINGLE RESPONSIBILITY PER LAYER
+The household subsystem sits above the character, industry, place,
+relationship, storage, and time domains. It orchestrates them; it does
+not own them.
 
-   Each layer owns exactly one kind of operation:
+  CONSTANTS (leaf)
+    js/households/household-constants.js
 
-     Constants    → canonical catalogs, thresholds, multipliers
-     Rules        → pure policy and calculation (no I/O, no state)
-     View Models  → presentation defaults, form helpers, color helpers
-     Orchestration→ shared result/dispatch/finish helpers for
-                    multi-command coordinators
-     State        → canonical storage, indexes, cache, subscriptions
-     Queries      → semantic reads returning defensive snapshots
-     Commands     → canonical mutations, transaction boundary, persistence
-     Assignment   → cross-operation orchestration (newborn, spouse,
-                    inheritance, cadet, merge, split)
-     Servant      → service-relationship orchestration
-     Economy      → wealth / debt / resource accounting, rent, trade
-     Residence    → residence CRUD, units, occupancy, rental, staff
-     Bootstrap    → load-time verification + hydration + diagnostics
-     UI           → rendering, input collection, presentation, toasts
+  RULES (pure policy; depends on constants)
+    js/households/household-rules.js
 
-2. NO DUPLICATED CATALOGS OR RULES
+  VIEW MODELS (presentation defaults; no domain state)
+    js/households/household-view-models.js
 
-   Before v6.0, ECONOMIC_TIERS / INCOME_SOURCES / EXPENSE_CATEGORIES /
-   ECONOMIC_EVENTS / SERVICE_TYPES / SERVICE_QUALITY /
-   SERVICE_QUALITY_ORDER existed in three places:
-     - household-constants.js (canonical)
-     - household-economy.js and household-servant.js (private copies)
-     - household-rules.js (inline fallbacks)
+  ORCHESTRATION (shared result/dispatch/finish helpers)
+    js/households/household-orchestration.js
 
-   After v6.0 there is exactly one copy of each economic/service
-   catalog, in household-constants.js. household-rules.js consumes
-   it; household-economy.js and household-servant.js import it.
+  STATE (canonical in-memory store for households/positions/assignments)
+    js/households/household-state.js
 
-   Before v6.1, the residence catalogs (RESIDENCE_TYPES /
-   RESIDENCE_STATUS / RENTAL_STATUS / RESIDENCE_CONDITIONS /
-   CONDITION_MULTIPLIER) and the history-cap thresholds were
-   duplicated between household-constants.js and residence-system.js.
-   After v6.1, residence-system.js reads them from HouseholdConstants;
-   the inline copies are gone.
+  QUERIES (semantic reads; defensive snapshots)
+    js/households/household-queries.js
 
-   The rule: every catalog has exactly one canonical home. Domain
-   modules that need a catalog either consume HouseholdConstants
-   directly or a domain-specific Rules module that consumes
-   HouseholdConstants. No module carries a private copy.
+  COMMANDS (single write boundary for household data)
+    js/households/household-commands.js
 
-3. NO GLOBAL PROCESSING MUTEXES
+  ECONOMY (pure calcs + patch-then-commit mutations)
+    js/households/household-economy.js
 
-   The pre-refactor system used `_processingX` boolean flags across
-   modules. These broke legitimate composition: a command that
-   internally called another command would find itself locked out.
+  ASSIGNMENT (cross-operation orchestration: newborn, marriage,
+              inheritance, cadet, merge, split, auto-succession)
+    js/households/household-assignment.js
 
-   All such guards have been removed. Commands compose freely.
+  SERVANT (service-relationship orchestration)
+    js/households/household-servant.js
 
-4. NO FABRICATED DOMAIN DEFAULTS
+  RESIDENCE (residence domain: canonical storage, units, occupancy,
+             rental, staff, rehabilitation, demolition)
+    js/households/residence-system.js
 
-   Missing infrastructure is never converted into valid-looking domain
-   data. No magic 1250 year. No silent empty array in place of a
-   missing collection. No fabricated {mother: null, father: null} in
-   place of a missing parent.
+  BOOTSTRAP (verification + hydration + diagnostics + namespace)
+    js/households/household-bootstrap.js
 
-   Required dependencies fail loudly. Empty results are only returned
-   when the domain fact is genuinely empty.
+  UI LIST (renderers over HouseholdQueries)
+    js/households/household-ui-list.js
 
-5. NO LIVE RECORD LEAKS
+  MODAL HELPERS (shared DOM scope, persist, escape, toast, role helpers,
+                 staff-candidate renderers)
+    js/households/modals-helper.js
 
-   Public queries return defensive snapshots, not live canonical
-   objects. Callers cannot mutate domain state without going through
-   commands.
+  MODALS
+    js/households/modals-household.js
+    js/households/modals-household-economy.js
+    js/households/modals-household-snapshot.js
+    js/households/modals-household-staff.js
+    js/households/modals-residence.js
+    js/households/modals-residence-owner.js
+    js/households/modals-residence-rental.js
+    js/households/modals-residence-staff.js
 
-6. ONE PERSISTENCE BOUNDARY PER LOGICAL OPERATION
+  COMPATIBILITY SHIMS (do not own behavior; verify canonical modules)
+    js/households/modals-assign-staff.js
+    js/households/modals-residence-history.js
+    js/households/modals-residence-vacancy.js
+    js/households/modals-residence-snapshot.js    (deprecated stub)
 
-   Each command performs exactly one commit. Helper functions that
-   touch the canonical record do NOT persist; the top-level command
-   does, once.
+Dependency direction:
 
-   Orchestrators (assignment, servant) end with a single _finish call
-   that dispatches the event and persists the household system.
-   Servant additionally persists the relationship system, since
-   service-relationship writes live there.
+  constants
+      |
+      v
+  rules
+      |
+      v
+  view-models, orchestration
+      |
+      v
+  state  ->  queries, commands
+      |
+      v
+  economy, assignment, servant
+      |
+      v
+  residence-system
+      |
+      v
+  bootstrap
+      |
+      v
+  ui-list, modals-helper, modals-*
+      |
+      v
+  shims
 
-7. STRUCTURED COMMAND RESULTS
-
-   Every command returns:
-     { success: true, data: ... }
-   or:
-     { success: false, code: 'SOME_CODE', reason: 'human message',
-       partial: true (when partial mutation occurred),
-       ...extra fields }
-
-   No more boolean `success` returns mixed with object returns.
-
-8. REVERSE-INDEX DISCIPLINE
-
-   The household↔residence relationship is two views of one fact:
-
-     household.residenceId          (household-owned reverse index)
-     household.residenceUnitNumber  (household-owned reverse index)
-     residence.units[].householdId  (canonical occupancy)
-
-   ResidenceSystem is the single authority that mutates unit occupancy.
-   It calls HouseholdCommands.associateWithResidence /
-   disassociateFromResidence to keep the reverse index in step.
-
-   When the reverse-index update fails:
-     - the residence mutation still succeeds (canonical occupancy is
-       what it is),
-     - the result carries reverseIndexFailed:true and the specific
-       failures list,
-     - a reverse_index_failure entry is appended to the residence's
-       damageHistory (persistent audit trail).
-
-   household-state.js's _diagnostics.getIntegrityReport() cross-checks
-   both directions:
-     - householdsWithMissingResidence: household.residenceId points
-       at a residence that no longer exists
-     - residencesWithOrphanHouseholdOccupancy: residence unit still
-       names a householdId that no longer exists
-     - residenceReverseIndexAvailable: false if the check couldn't run
-       (ResidenceSystem not loaded and canonical residences not yet
-       populated)
-
-9. CALL-TIME OPTIONAL DEPENDENCIES
-
-   Optional cross-domain dependencies (ResidenceSystem, IndustryCommands,
-   RelationshipCommands) are resolved at CALL time, not load time.
-   A load-time presence flag freezes to whatever the state was when
-   household-commands.js parsed. Under the documented HTML load order,
-   that is BEFORE ResidenceSystem loads, so the flag freezes to false
-   and every residence-touching command fails even though the module
-   is loaded by the time the command runs.
-
-   Call-time resolution (via _residenceSystemAvailable() and friends)
-   makes the flag's answer depend on the state at command time, which
-   is the only semantic that makes sense for an optional dependency.
 
 ================================================================================
-LAYER ARCHITECTURE
+PART 2 — DEPENDENCIES
 ================================================================================
 
-                              UI LAYER
-        ┌──────────────────────────────────────────────────┐
-        │  modals-*.js, household-ui-list.js               │
-        │  • Render projections                            │
-        │  • Collect user input                            │
-        │  • Call Queries for reads                        │
-        │  • Call Commands for writes                      │
-        │  • Own: toasts, icons, CSS, modal lifecycle      │
-        └──────────────────────┬───────────────────────────┘
-                               │
-              ┌────────────────┴────────────────┐
-              │                                 │
-              ▼                                 ▼
-      ┌──────────────┐                 ┌──────────────┐
-      │   QUERIES    │                 │   COMMANDS   │
-      │              │                 │              │
-      │ Semantic     │                 │ Validate     │
-      │ reads        │                 │ Mutate       │
-      │ Defensive    │                 │ Persist once │
-      │ snapshots    │                 │ Notify once  │
-      └───────┬──────┘                 └───────┬──────┘
-              │                                │
-              ▼                                ▼
-      ┌──────────────┐                 ┌──────────────┐
-      │    RULES     │                 │   CONSTANTS  │
-      │   (pure)     │◄────────────────┤  (frozen)    │
-      └──────────────┘                 └──────────────┘
-              │
-              ▼
-      ┌──────────────┐
-      │    STATE     │
-      │              │
-      │  Storage     │
-      │  Indexes     │
-      │  Cache       │
-      │  Subscribers │
-      │  UI state    │
-      └──────────────┘
-              ▲
-              │
-      ┌──────────────┐
-      │ ORCHESTRATION│  (shared result/dispatch/finish helpers)
-      └──────────────┘
-              ▲
-              │
-      ┌──────────────┐
-      │  ASSIGNMENT  │  (multi-command coordinators)
-      │   SERVANT    │
-      │   ECONOMY    │
-      └──────────────┘
+Terminology:
+  REQUIRED (load-time)   module-level guard throws if missing at load.
+  REQUIRED (call-time)   function throws/refuses if missing at call.
+  OPTIONAL               module checks and falls back.
+
+Cross-domain references:
+  [core]         js/core/...
+  [character]    js/character/...
+  [household]    js/households/...
+  [industry]     js/core/industry/...  (or per industry-doc path)
+  [relationship] js/relationships/...
+  [time]         js/core/time.js
+  [storage]      js/core/storage.js
+  [accessors]    js/core/accessors.js
+  [ids]          js/core/ids.js
+  [random]       js/core/randomness.js
+  [formatting]   js/core/formatting.js
+  [icons]        js/core/icons.js
+  [ui]           js/core/ui.js
+  [modals]       js/core/modals-core.js
+  [selector]     js/selectors/...
+
+
+--------------------------------------------------------------------------------
+2.1 CONSTANTS — household-constants.js
+--------------------------------------------------------------------------------
+
+  js/households/household-constants.js
+    Owns: window.HouseholdConstants (deeply frozen).
+
+    Exports:
+      ECONOMIC_TIERS, ECONOMIC_TIER_ORDER
+      INCOME_SOURCES, EXPENSE_CATEGORIES
+      ECONOMIC_EVENTS, ECONOMIC_EVENT_IDS, getEconomicEventDelta
+      SERVICE_TYPES, SERVICE_STATUS, SERVICE_QUALITY,
+      SERVICE_QUALITY_ORDER, SERVICE_CONTRACT_TERMS
+      RESIDENCE_TYPES, RESIDENCE_STATUS, RENTAL_STATUS,
+      RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER
+      THRESHOLDS  (BANKRUPTCY, DEBT_INTEREST_RATE, all history caps,
+                   HEIR_MIN_AGE, HEIR_MAX_AGE, DEFAULT_ESTIMATED_VALUE,
+                   DEFAULT_MAX_UNITS, DEFAULT_UNIT_COUNT_DIVISOR,
+                   MAX_DEFAULT_UNIT_COUNT)
+      Lookup helpers: getEconomicTierById, getIncomeSourceById,
+      getExpenseCategoryById, getEconomicEventById, getServiceTypeById,
+      getServiceQualityById, getServiceContractTermById,
+      getResidenceTypeById, getResidenceConditionById,
+      getConditionMultiplier
+
+    Load-time dependencies: NONE.
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] household-rules.js            (HARD — HouseholdConstants
+                                            with required sub-catalogs)
+      [load] household-economy.js          (HARD — THRESHOLDS and
+                                            getEconomicEventDelta)
+      [load] household-servant.js          (HARD — SERVICE_TYPES,
+                                            SERVICE_QUALITY_ORDER)
+      [load] residence-system.js           (HARD — all residence
+                                            catalogs + THRESHOLDS)
+      [load] household-bootstrap.js        (HARD — ECONOMIC_TIERS,
+                                            SERVICE_QUALITY_ORDER,
+                                            getEconomicEventDelta)
+
+    Flat legacy aliases (guarded with typeof-undefined): ECONOMIC_TIERS,
+      INCOME_SOURCES, EXPENSE_CATEGORIES, ECONOMIC_EVENTS, SERVICE_TYPES,
+      SERVICE_STATUS, SERVICE_QUALITY, SERVICE_QUALITY_ORDER,
+      SERVICE_CONTRACT_TERMS, RESIDENCE_TYPES, RESIDENCE_STATUS,
+      RENTAL_STATUS, RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER.
+
+    Contracts:
+      - Deeply frozen. Mutation throws in strict mode.
+      - No catalog holds a function (except getEconomicEventDelta).
+      - No Math.random anywhere. Randomness enters via
+        getEconomicEventDelta(eventId, randomFn).
+      - The delta is uniformly distributed over [minDelta, maxDelta],
+        floored to the bounds. A draw outside [0, 1) throws.
+
+
+--------------------------------------------------------------------------------
+2.2 RULES — household-rules.js
+--------------------------------------------------------------------------------
+
+  js/households/household-rules.js
+    Owns: window.HouseholdRules.
+
+    Exports (grouped):
+      Succession: pickSuccessor, deriveDeprecationSuccessor,
+                  applyHeadChange  (the ONE mutating rules function)
+      Economy:    getEconomicTier, netAnnualChange,
+                  calculateAnnualDebtInterest, evaluateBankruptcy,
+                  calculateEnterpriseNet
+      Service:    calculateServiceQuality, calculateRecommendation
+      Residence:  calculateRepairCost, calculateRehabilitatedValue,
+                  calculateOccupiedUnitCount, calculateVacantUnitCount,
+                  isResidenceVacant, calculateUnitStats
+      Heirs:      filterEligibleHeirs
+      Status:     calculateHouseholdStatus, isHouseholdVacant
+      Demographics: calculateDemographics
+
+    Load-time dependencies:
+      window.HouseholdConstants           — HARD. Verifies ECONOMIC_TIERS,
+                                            ECONOMIC_TIER_ORDER,
+                                            SERVICE_QUALITY_ORDER,
+                                            RESIDENCE_CONDITIONS,
+                                            CONDITION_MULTIPLIER,
+                                            THRESHOLDS are present.
+
+    Call-time dependencies: NONE.
+
+    Consumed by:
+      [load] household-commands.js         (HARD — pickSuccessor,
+                                            applyHeadChange,
+                                            isHouseholdVacant)
+      [load] household-queries.js          (HARD — calculateHouseholdStatus,
+                                            calculateDemographics,
+                                            filterEligibleHeirs)
+      [load] household-economy.js          (HARD — getEconomicTier,
+                                            netAnnualChange,
+                                            calculateAnnualDebtInterest,
+                                            evaluateBankruptcy,
+                                            calculateEnterpriseNet)
+      [load] household-servant.js          (HARD — calculateServiceQuality,
+                                            calculateRecommendation)
+      [load] household-bootstrap.js        (HARD — 16 required methods)
+      [load] residence-system.js           (indirect — uses its own
+                                            residence calculations inline,
+                                            see §2.11)
+
+    Contracts:
+      - PURE (except applyHeadChange, explicitly labelled).
+      - Never persists, never generates randomness, never reads state.
+      - Rules functions that need character data take a
+        getCharacterById callback — the module does not read accessors.
+      - No fallbacks to inline catalogs. Missing constants throw at load.
+
+
+--------------------------------------------------------------------------------
+2.3 VIEW MODELS — household-view-models.js
+--------------------------------------------------------------------------------
+
+  js/households/household-view-models.js
+    Owns: window.HouseholdViewModels.
+
+    Exports:
+      DEFAULT_SKILL_LEVEL (= 10)
+      DEFAULT_INITIAL_WEALTH (= 0)
+      DEFAULT_INITIAL_REPUTATION (= 10)
+      DEFAULT_INITIAL_RENT (= 50)
+      DEFAULT_UNIT_COUNT (= 3)
+      DEFAULT_MAX_UNITS (= 20)
+      resolveInitialBuiltYear
+      getHouseholdStatusOptions, getHouseholdFilterStatusOptions,
+      getVacancyReasonOptions, getRentalEndReasonOptions,
+      getDemolitionReasonOptions, getResidenceConditionOptions,
+      getResidenceTypeOptions
+      getStatusBadge, getMemberBadge
+      getWealthColor, getDebtColor, getNetChangeColor, getProfitColor,
+      getUnitOccupancyColor
+      getViewModeLabel, getUnitStatusLabel, getResidenceStatusLabel
+
+    Load-time dependencies: NONE.
+    Call-time dependencies: household-constants.js (OPTIONAL — falls
+      back to inline defaults that match the current catalog exactly).
+
+    Consumed by:
+      [load] household-bootstrap.js        (HARD — 4 required methods)
+      [load] modals-household.js           (HARD)
+      [load] modals-household-economy.js   (HARD)
+      [load] modals-household-snapshot.js  (HARD)
+      [load] modals-household-staff.js     (HARD)
+      [load] modals-residence.js           (HARD)
+      [load] modals-residence-owner.js     (HARD)
+      [load] modals-residence-rental.js    (HARD)
+      [load] modals-residence-staff.js     (HARD)
+
+    Contracts:
+      - Pure presentation. No DOM. No side effects. No state.
+      - Returned strings are HTML-unsafe; callers must escape with
+        HouseholdModals.esc before inserting into HTML.
+      - Inline defaults match the current HouseholdConstants catalogs
+        exactly. These are for isolation testing; the fallbacks will
+        be removed once constants are guaranteed.
+
+
+--------------------------------------------------------------------------------
+2.4 ORCHESTRATION — household-orchestration.js
+--------------------------------------------------------------------------------
+
+  js/households/household-orchestration.js
+    Owns: window.HouseholdOrchestration.
+
+    Exports:
+      ok, fail             (result builders)
+      resolveYear          (year resolution)
+      dispatch             (CustomEvent dispatch, never throws)
+      finish               (dispatch + persist once)
+      hasId, isPlainObject, isFiniteNumber   (validators)
+
+    Load-time dependencies:
+      window.getCurrentYearSafe OR window.getCurrentYear
+                           — HARD. At least one must be a function.
+
+    Call-time dependencies:
+      window.HouseholdCommands.persist
+                           — finish returns a structured failure if
+                             absent, does not throw.
+
+    Consumed by:
+      [load] household-assignment.js       (HARD — six required methods)
+      [load] household-servant.js          (HARD — six required methods)
+      [load] household-bootstrap.js        (HARD — six required methods)
+
+    Contracts:
+      - finish dispatches BEFORE persisting. Subscribers see post-
+        mutation in-memory state. A subscriber that triggers further
+        writes gets those included in the same save.
+      - household-servant.js wraps finish with its own _finish that
+        additionally persists the relationship system.
+      - resolveYear prefers getCurrentYearSafe (the deprecated alias in
+        time.js), falls back to getCurrentYear. The household subsystem's
+        eventual migration off the alias is a one-line change here.
+
+
+--------------------------------------------------------------------------------
+2.5 STATE — household-state.js
+--------------------------------------------------------------------------------
+
+  js/households/household-state.js
+    Owns: window.HouseholdState.
+
+    Exports (public):
+      subscribe, invalidateCache, refresh, hydrateFromMasterData
+      markDirty, hasDirty, clearDirty, publish
+      getUIState, setUIState, updateUIState
+      selectedHouseholdId (get/set, facade compat)
+      setSelectedHousehold, hasSelectedHousehold, reset
+      __owner  (= 'households/household-state.js'  — collision guard)
+
+    Exports (internal, HouseholdState._internal):
+      replaceHouseholds, replaceHouseholdPositions,
+      replaceHouseholdAssignments
+      getHouseholdRecord, getAllHouseholdRecords
+      getPositionRecord, getAllPositionRecords
+      getAssignmentRecord, getAllAssignmentRecords
+      getHouseholdCanonical, getPositionCanonical,
+      getAssignmentCanonical (deprecated aliases)
+      loadData (deprecated alias for hydrateFromMasterData)
+
+    Exports (diagnostics):
+      HouseholdState._diagnostics.getIntegrityReport
+
+    Load-time dependencies:
+      window.masterData                   — HARD (via _getMasterData at
+                                            first use).
+      window.markDataDirty                — called at first mutation.
+
+    Optional dependencies (checked at diagnostics time):
+      window.ResidenceSystem              — used by
+                                            _checkResidenceReverseIndex
+                                            if present; otherwise reads
+                                            masterData.data.residences
+                                            directly.
+      No dependency on IndustryState.     The enterprise reverse-index
+                                            cross-check reads
+                                            masterData.data.enterprises
+                                            directly so the diagnostics
+                                            work when the industry domain
+                                            is not loaded.
+
+    Consumed by:
+      [load] household-queries.js          (HARD — full _internal surface)
+      [load] household-commands.js         (HARD — full _internal surface)
+      [load] household-bootstrap.js        (HARD — full _internal surface,
+                                            seven public methods)
+      [load] household-ui-list.js          (HARD — subscribe)
+
+    Contracts:
+      - Public reads return defensive snapshots.
+      - Authorized mutation goes through _internal primitives; the
+        calling command commits via markDirty + publish.
+      - duplicate ids at hydrate throws.
+      - integrity report has both reverse-index cross-checks:
+          household.residenceId  <-> residence.units[].householdId
+          household.enterprises[] <-> enterprise.ownerId
+        Both are one-directional walks that surface ALL drift classes;
+        see PART 4 for the full reverse-index contract.
+      - The accessor cache does NOT require invalidation here. The
+        accessors do not cache households. If a future revision adds
+        a household accessor to accessors.js, this module's _sync
+        path must gain an invalidateAccessorCaches() call (mirrors the
+        contract already documented in character-state.js and
+        household-commands.js).
+      - Windows.HouseholdState collision guard: refuses to load if
+        another module already claimed the namespace. The historical
+        js/core/household-state.js UI shim must be deleted, not loaded
+        alongside this file.
+
+
+--------------------------------------------------------------------------------
+2.6 QUERIES — household-queries.js
+--------------------------------------------------------------------------------
+
+  js/households/household-queries.js
+    Owns: window.HouseholdQueries.
+
+    Exports (grouped):
+      Lookups: getHousehold, getAllHouseholds,
+               getHouseholdsByLocation, getHouseholdsByStatus,
+               getHouseholdsByMember, getHouseholdsHeadedBy,
+               getCharacterHousehold
+      Status:  getHouseholdStatus, getHouseholdStatuses (batch)
+      Members: getHouseholdMembers, getHouseholdHead, getDemographics
+      Name:    getHouseholdNamePeriods
+      Snapshot: getHouseholdSnapshot, getCharacterHouseholdSnapshot
+      Departments: getHouseholdDepartments, getHouseholdDepartment,
+                   getHouseholdMembersByDepartment
+      Positions: getHouseholdPosition, getHouseholdPositions
+      Assignments: getHouseholdAssignment, getAssignmentsForPosition,
+                   getAssignmentsForCharacter, getAssignmentsForHousehold
+      Staff:   getHouseholdStaff, getUnassignedHouseholdStaff
+      Enterprises: getHouseholdEnterprises,
+                   getHouseholdEnterpriseSummaries,
+                   getHouseholdEnterpriseStats,
+                   getHouseholdEnterpriseValue
+      Heirs:   getHouseholdHeirs
+      Composite: getHouseholdDetails
+      Stats:   getStatistics
+
+    Load-time dependencies:
+      window.HouseholdState               — HARD (requires _internal
+                                            methods)
+      window.HouseholdRules               — HARD (calculateHouseholdStatus,
+                                            calculateDemographics,
+                                            filterEligibleHeirs)
+      window.getCharacterById             — HARD
+      window.getCharacters                — HARD
+      window.getCurrentYear               — HARD
+      window.calculateAge                 — HARD
+      window.FamilyQueries                — HARD (five methods)
+      window.IndustryState                — OPTIONAL at call time.
+                                            getHouseholdEnterprises
+                                            throws ONLY when the
+                                            household has enterprises.
+      window.IndustryQueries              — OPTIONAL at call time.
+                                            getHouseholdEnterpriseSummaries
+                                            throws ONLY when the
+                                            household has enterprises
+                                            AND IndustryQueries is
+                                            missing.
+
+    Consumed by:
+      [load] household-commands.js         (HARD — many methods,
+                                            used indirectly in
+                                            household-commands
+                                            getHousehold lookups)
+      [load] household-economy.js          (HARD — getHousehold,
+                                            getHouseholdEnterpriseSummaries)
+      [load] household-assignment.js       (HARD — eight methods)
+      [load] household-servant.js          (HARD — two methods)
+      [load] household-bootstrap.js        (HARD — seven methods)
+      [load] household-ui-list.js          (HARD — six methods)
+      [load] modals-* (all)                (HARD — various)
+
+    Contracts:
+      - Reads return defensive snapshots or projections, never live
+        canonical records.
+      - Historical queries accept explicit referenceYear.
+      - "Household has enterprises but Industry is not loaded" throws.
+        Empty households return [].
+      - getHouseholdsHeadedBy deduplicates by household id (a corrupt
+        duplicate head entry would otherwise produce double-processing).
+      - The diagnostics in HouseholdState._diagnostics are the canonical
+        integrity inspection path, not these queries.
+
+
+--------------------------------------------------------------------------------
+2.7 COMMANDS — household-commands.js
+--------------------------------------------------------------------------------
+
+  js/households/household-commands.js
+    Owns: window.HouseholdCommands.
+
+    Exports:
+      persist  (the ONLY saveMasterData call site in the household domain)
+      Household lifecycle: createHousehold, deleteHousehold
+      Fields: updateHousehold, setStatus, recordEvent
+      Members: addMember, removeMember, updateMember, transferMember
+      Head: setHead (single-commit), autoAssignHead
+      Departments: addDepartment, removeDepartment, updateDepartment
+      Name periods: editNamePeriod, deleteNamePeriod
+      Residence reverse index: associateWithResidence,
+                               disassociateFromResidence
+      Enterprise reverse index: setHouseholdEnterprises,
+                                addEnterpriseToHousehold,
+                                removeEnterpriseFromHousehold
+      Positions: createPosition, updatePosition, deletePosition
+      Assignments: assignCharacterToPosition, endAssignment,
+                   deleteAssignment, bulkAssign
+      Repair: repairMemberships
+      Cross-domain cleanup: removeCharacterReferences,
+                            clearLocationReferences
+
+    Load-time dependencies:
+      window.HouseholdState               — HARD (full _internal surface)
+      window.HouseholdRules               — HARD (pickSuccessor,
+                                            applyHeadChange,
+                                            isHouseholdVacant)
+      window.CharacterCommands.updateCharacterFields
+                                          — HARD
+      window.generateId                   — HARD
+      window.getCurrentYear               — HARD
+      window.saveMasterData               — HARD
+
+    Call-time dependencies:
+      window.getCharacterById             — via window accessor (checked
+                                            at first mutation; helper
+                                            _getCharacterById prefers
+                                            CharacterState.getCharacter
+                                            when present)
+      window.IndustryCommands             — OPTIONAL. Resolved via
+                                            _industryCommandsAvailable()
+                                            at call time. Used by
+                                            HouseholdAssignment, not by
+                                            this file directly, but the
+                                            presence helper lives here.
+      window.ResidenceSystem              — OPTIONAL. Resolved via
+                                            _residenceSystemAvailable()
+                                            at call time. deleteHousehold
+                                            returns
+                                            RESIDENCE_SYSTEM_UNAVAILABLE
+                                            if the household occupies a
+                                            residence but
+                                            ResidenceSystem is not
+                                            loaded.
+      window.CharacterCommands.addProfession
+                                          — required for the
+                                            addRoleIfMissing option on
+                                            assignCharacterToPosition /
+                                            bulkAssign.
+      window.getRoleById                  — optional, used by
+                                            _addMissingRole to look up
+                                            the role's display name.
+
+    Consumed by:
+      [load] household-economy.js          (HARD — updateHousehold,
+                                            recordEvent, setStatus,
+                                            persist)
+      [load] household-assignment.js       (HARD — ten required methods)
+      [load] household-servant.js          (HARD — addMember,
+                                            removeMember, updateMember)
+      [load] household-bootstrap.js        (HARD — 30+ required methods)
+      [load] modals-* (all)                (HARD — persist is the
+                                            persistence boundary every
+                                            modal calls)
+      [load] residence-system.js           (call-time — via
+                                            HouseholdCommands
+                                            availability helpers)
+      [load] household-ui-list.js          (indirect — via
+                                            HouseholdCommands in
+                                            backend operations)
+
+    Contracts:
+      - _commit is the single mutation boundary:
+          hydrateFromMasterData
+          markDataDirty
+          invalidateAccessorCaches    <-- added in latest revision
+          publish
+          dispatch CustomEvent
+      - persist is the single saveMasterData call site.
+      - setHead is single-commit. If the character is not a member,
+        _addMemberRecord runs inline (no commit), then the head change
+        commits once. addedInline: true on the result.
+      - assignCharacterToPosition and bulkAssign honor addRoleIfMissing:
+        when true and the role is missing, CharacterCommands.addProfession
+        is called BEFORE assignment. If it fails, the assignment is
+        REFUSED with code ROLE_ADD_FAILED. When false/absent, the
+        assignment proceeds and result.data.roleWarning carries the
+        missing role indication.
+      - removeCharacterReferences and clearLocationReferences are cross-
+        domain sweeps: ONE commit for the whole sweep, counts nested
+        under result.data (matches the _ok convention), idempotent,
+        no persist (caller's orchestration owns the batch).
+      - Cross-domain presence checks are CALL-TIME via
+        _residenceSystemAvailable / _industryCommandsAvailable. See the
+        module header for the historical bug this fixes.
+      - ACCOUNT OF ACCESSOR CACHE INVALIDATION: prior to this revision,
+        the household domain never invalidated the accessor cache, so
+        industry-queries._resolveOwnerName could return a stale
+        household name after a rename. _commit now invalidates at every
+        mutation boundary.
+
+
+--------------------------------------------------------------------------------
+2.8 ECONOMY — household-economy.js
+--------------------------------------------------------------------------------
+
+  js/households/household-economy.js
+    Owns: window.HouseholdEconomy.
+
+    Exports:
+      Constant re-exports (for compat): ECONOMIC_TIERS, INCOME_SOURCES,
+      EXPENSE_CATEGORIES, ECONOMIC_EVENTS, BANKRUPTCY_THRESHOLD
+      Pure calcs: getEconomicTier, getHouseholdWealth,
+                  getHouseholdDebt, getHouseholdResources,
+                  calculateRentIncome, calculateRentExpenses,
+                  calculateEnterpriseNet, calculateAnnualIncome,
+                  calculateAnnualExpenses, computeNetAnnualChange,
+                  isBankrupt
+      Mutations: updateHouseholdWealth, modifyHouseholdDebt,
+                 updateHouseholdResources
+      Salary/tuition/school: receiveSalary, getSalaryIncome,
+                             getTotalSalariesReceived,
+                             trackTuitionExpense, getTuitionExpenses,
+                             receiveSchoolProfit, getSchoolProfits
+      Trade: executeTrade, getTradePartners
+      Events: triggerEconomicEvent, applyRandomEconomicEvent
+      Annual: processAnnualEconomy, consumeAnnualFood
+      Bankruptcy: handleBankruptcy
+
+    Load-time dependencies:
+      window.HouseholdConstants           — HARD (THRESHOLDS.BANKRUPTCY,
+                                            getEconomicEventDelta)
+      window.HouseholdRules               — HARD (five methods)
+      window.HouseholdCommands            — HARD (updateHousehold,
+                                            recordEvent, setStatus,
+                                            persist)
+      window.HouseholdQueries             — HARD (getHousehold,
+                                            getHouseholdEnterpriseSummaries)
+      window.getCurrentYearSafe           — HARD (year fallback)
+      window.getCharacterById             — HARD
+      window.random                       — HARD
+
+    Call-time dependencies:
+      window.ResidenceSystem              — OPTIONAL. calculateRentIncome
+                                            and calculateRentExpenses
+                                            return 0 when absent.
+      window.HouseholdState._internal.getHouseholdRecord
+                                          — required for most mutations.
+                                            Available through
+                                            HouseholdState which IS a
+                                            hard dep.
+
+    Consumed by:
+      [load] modals-household-economy.js   (HARD — many methods)
+      [load] household-bootstrap.js        (HARD — 11 methods)
+      [call] CharacterLifecycle (indirectly, via salary paths — not a
+                                  direct dependency)
+
+    Contracts:
+      - _applyMutation is the ONLY mutation primitive. It:
+          1. reads the canonical record via HouseholdState._internal
+          2. runs a PURE projection function that returns a patch
+          3. applies the patch via HouseholdCommands.updateHousehold
+          4. persists ONCE via HouseholdCommands.persist
+      - No direct HouseholdState._internal.replaceHouseholds calls.
+      - Mutator that returns { __abort: true, code, reason } surfaces as
+        a structured failure.
+      - RANDOMNESS: no Math.random anywhere. Economic-event deltas come
+        from HouseholdConstants.getEconomicEventDelta(eventId, randomFn).
+        A missing random source throws.
+      - CLOCK: every calculation that depends on "now" accepts
+        options.year. Multi-year simulation drivers call
+        processAnnualEconomy(householdId, { year: y }) per simulated
+        year so accounting tags the simulated year, not wall-clock now.
+
+
+--------------------------------------------------------------------------------
+2.9 ASSIGNMENT — household-assignment.js
+--------------------------------------------------------------------------------
+
+  js/households/household-assignment.js
+    Owns: window.HouseholdAssignment.
+
+    Exports:
+      assignNewbornToHousehold
+      assignToSpouseHousehold
+      processHouseholdInheritanceOnDeath
+      transferHouseholdToHeir
+      getHouseholdHeirs  (passthrough to HouseholdQueries)
+      transferCharacterToHousehold
+      createCadetBranch
+      mergeHouseholds
+      splitHousehold
+      autoAssignHouseholdHead
+
+    Load-time dependencies:
+      window.HouseholdOrchestration       — HARD (six methods: ok, fail,
+                                            resolveYear, dispatch,
+                                            finish, hasId)
+      window.HouseholdCommands            — HARD (ten methods:
+                                            addMember, transferMember,
+                                            removeMember, setHead,
+                                            setStatus, createHousehold,
+                                            updateHousehold, recordEvent,
+                                            setHouseholdEnterprises,
+                                            deleteHousehold)
+      window.HouseholdQueries             — HARD (eight methods)
+      window.getCharacterById             — HARD
+
+    Call-time dependencies:
+      window.IndustryCommands.updateEnterprise
+                                          — REQUIRED when enterprises
+                                            need transferring; absence
+                                            is a HARD failure with
+                                            industryAvailable: false,
+                                            hardFailure: true.
+      window.logEvent                     — optional.
+
+    Consumed by:
+      [load] household-bootstrap.js        (HARD — 10 required methods)
+
+    Contracts:
+      - Orchestrator, not a mutator. Reads via HouseholdQueries, writes
+        via HouseholdCommands, coordinates IndustryCommands for
+        enterprise ownership transfer.
+      - Every orchestration ends with HouseholdOrchestration.finish()
+        (dispatch + persist once). Compound operations (merge, split,
+        cadet) batch their member transfers and persist once at the end.
+      - ENTERPRISE TRANSFER: missing IndustryCommands when there ARE
+        enterprises to transfer is a HARD failure. The household-side
+        changes already applied are NOT rolled back (they are legitimate
+        and standalone); the result reports partial: true.
+      - CADET BRANCH: the head is explicitly removed from the parent
+        BEFORE transferring the remaining members. If head removal
+        fails, the cadet is rolled back (new household deleted) and the
+        orchestration fails. This fixes the pre-v6.0 bug where the head
+        was left as a member of both households.
+      - SPLIT: same head-removal pattern as cadet branch.
+      - MERGE: enterprise transfer failures surface as
+        enterpriseFailed: true, partial: true. The absorbed household is
+        marked deprecated.
+      - The inheritance loop processes each household as its own
+        orchestration (each persists once). A failed household reports
+        partial: true; the loop continues to the next household.
+
+
+--------------------------------------------------------------------------------
+2.10 SERVANT — household-servant.js
+--------------------------------------------------------------------------------
+
+  js/households/household-servant.js
+    Owns: window.HouseholdServant.
+
+    Exports:
+      Constant re-exports (SERVICE_TYPES, SERVICE_STATUS,
+      SERVICE_QUALITY, SERVICE_QUALITY_ORDER, SERVICE_CONTRACT_TERMS)
+      Pure calcs: calculateServiceQuality, calculateRecommendation
+      Commands: createServiceRelationship, terminateService,
+                promoteServant, adjustServantWages,
+                recordEmployerSatisfaction, updateServiceQuality
+      Queries: getServiceBetween, getServants, getEmployer,
+               getActiveService, getServiceHistory, getServiceQuality,
+               generateServiceReference, getStaffByDepartment
+      Household integration: assignServantToDepartment,
+                             transferServantToHousehold
+
+    Load-time dependencies:
+      window.HouseholdConstants           — HARD (SERVICE_TYPES,
+                                            SERVICE_QUALITY_ORDER)
+      window.HouseholdRules               — HARD (calculateServiceQuality,
+                                            calculateRecommendation)
+      window.HouseholdOrchestration       — HARD (six methods)
+      window.HouseholdCommands            — HARD (addMember, removeMember,
+                                            updateMember)
+      window.HouseholdQueries             — HARD (getCharacterHousehold,
+                                            getHouseholdStaff)
+      window.getCharacterById             — HARD
+      Relationship system                 — HARD (six methods:
+                                            createRelationship,
+                                            endRelationship,
+                                            updateRelationship,
+                                            getRelationshipBetween,
+                                            getRelationshipsForCharacter,
+                                            getRelationshipById)
+
+    Call-time dependencies:
+      window.RelationshipCommands.persist OR
+      window.RelationshipSystem.persist   — OPTIONAL. Missing both
+                                            produces relationshipPersisted
+                                            false without throwing.
+      window.modifyTrust                  — OPTIONAL, best-effort
+      window.modifyLoyalty                — OPTIONAL, best-effort
+      window.logEvent                     — optional.
+
+    Consumed by:
+      [load] household-bootstrap.js        (HARD — 8 required methods)
+
+    Contracts:
+      - ORCHESTRATES between relationship domain (canonical service
+        relationship) and HouseholdCommands (household membership).
+      - _finish wraps HouseholdOrchestration.finish with a subsequent
+        relationship-system persist. If household saves but relationship
+        fails, the result is failure with partial: true and both
+        householdPersisted and relationshipPersisted carry the truth.
+      - Service relationships carry type: 'service' and a metadata
+        contract documented in the header.
+      - Randomness: none. Satisfaction values come from caller input.
+      - transferServantToHousehold: NEW service is created FIRST, then
+        OLD service is terminated. If termination fails, the new service
+        is best-effort rolled back. Rollback failure is logged but does
+        not change the reported result.
+
+    FLAT LEGACY ALIASES (guarded): SERVICE_TYPES, SERVICE_STATUS,
+      SERVICE_QUALITY, SERVICE_QUALITY_ORDER, SERVICE_CONTRACT_TERMS.
+      All point at the SAME frozen HouseholdConstants objects — no
+      divergence risk.
+
+
+--------------------------------------------------------------------------------
+2.11 RESIDENCE — residence-system.js
+--------------------------------------------------------------------------------
+
+  js/households/residence-system.js
+    Owns: window.ResidenceSystem.
+
+    Exports:
+      Constant re-exports (RESIDENCE_TYPES, RESIDENCE_STATUS,
+      RENTAL_STATUS, getResidenceTypes, getResidenceConditions)
+      Persistence: persist, hydrateFromMasterData
+      CRUD: createResidence, updateResidence, deleteResidence
+      Units: addUnit, removeUnit, assignHouseholdToUnit,
+             markUnitVacant, demolishUnit
+      Vacancy: markResidenceVacant, assignHouseholdToVacantResidence
+      Name: updateResidenceName
+      Rental: setResidenceOwner, getResidenceOwner, setResidenceRenter,
+              getResidenceRenter, endResidenceRental, updateResidenceRent,
+              recordRentPayment
+      Staff: addStaffPosition, updateStaffPosition, removeStaffPosition,
+             assignCharacterToStaffPosition, endStaffAssignment,
+             deleteStaffAssignment
+      Rehab/Demolition: calculateRepairCost, rehabilitateResidence,
+                        demolishResidence
+      Queries: getResidence, getAllResidences, getResidencesByLocation,
+               getResidencesByOwner, getResidencesByRenter,
+               getResidencesByHousehold, getUnits, getUnit,
+               getVacantUnits, getOccupiedUnits, getVacantResidences,
+               getUnitStats, getResidenceHistory, getResidenceTimeline,
+               getResidenceNameHistory, getResidenceAssociationHistory,
+               getResidenceRentalHistory, getRentPayments,
+               getTotalRentIncome, getTotalRentExpenses,
+               getStaffPositions, getStaffAssignments,
+               getResidenceRecommendations, getResidenceStatistics
+      Integration: getHouseholdUnits
+      Diagnostics: _diagnostics
+
+    Load-time dependencies:
+      window.getCurrentYear               — HARD
+      window.getCharacterById             — HARD
+      window.getPlaceById                 — HARD
+      window.generateId                   — HARD
+      window.saveMasterData               — HARD
+      window.HouseholdConstants           — HARD (all residence catalogs +
+                                            history-cap THRESHOLDS)
+
+    Call-time dependencies:
+      window.HouseholdCommands            — OPTIONAL, via
+                                            _householdCommandsAvailable().
+                                            Commands that need the reverse
+                                            index return structured
+                                            failure if absent.
+      window.HouseholdQueries             — OPTIONAL, via
+                                            _householdQueriesAvailable().
+                                            Household existence checks
+                                            skip when absent.
+
+    Consumed by:
+      [load] household-bootstrap.js        (HARD — 28 required methods)
+      [call] household-commands.js         (via
+                                            _residenceSystemAvailable();
+                                            deleteHousehold needs it)
+      [load] modals-residence.js           (HARD — many methods)
+      [load] modals-residence-owner.js     (HARD)
+      [load] modals-residence-rental.js    (HARD)
+      [load] modals-residence-staff.js     (HARD)
+
+    Contracts:
+      - _commit: hydrate, markDirty, invalidateAccessorCaches, dispatch.
+        persist is the ONLY save call site.
+      - Cross-domain calls into HouseholdCommands mark household state
+        dirty. The subsequent ResidenceSystem.persist() flushes both
+        residences and households in one masterData save. Do NOT call
+        HouseholdCommands.persist() after a residence operation.
+      - Duplicate-id detection on hydrate throws by default.
+        _diagnostics.getIntegrityReport inspects without throwing.
+      - REVERSE-INDEX FAILURE POLICY:
+          reverseIndexFailed: true is a HARD field.
+          The failure is recorded in the residence's damageHistory as a
+          reverse_index_failure entry (persistent audit trail).
+          The unit-side canonical occupancy is STILL cleared; only the
+          household-side reverse index may be stale.
+      - UNIFIED VACANCY ACCOUNTING: deleteResidence (force path),
+        markResidenceVacant, and demolishResidence all write a
+        vacancyHistory entry. Prior versions diverged in what they
+        recorded; vacancyHistory is now the single complete record.
+      - YEAR RESOLUTION: migrated to getCurrentYear (the canonical
+        function in time.js). The deprecated getCurrentYearSafe alias
+        is no longer used by this module.
+      - _pushHistory now accepts an optional explicit year parameter.
+        _pushTimeline already did. Multi-year simulation drivers pass
+        the simulated year; callers with no explicit year fall back to
+        getCurrentYear().
+
+    FLAT LEGACY ALIASES (guarded): SERVICE_* handled by servant. The
+      residence catalogs are exported directly through the namespace.
+      window.ResidenceSystem.RESIDENCE_TYPES is the SAME frozen object
+      as window.HouseholdConstants.RESIDENCE_TYPES. No divergence risk.
+
+
+--------------------------------------------------------------------------------
+2.12 BOOTSTRAP — household-bootstrap.js
+--------------------------------------------------------------------------------
+
+  js/households/household-bootstrap.js
+    Owns: window.HouseholdBootstrap and window.Household (namespace).
+
+    Exports:
+      HouseholdBootstrap.init(), HouseholdBootstrap.isInitialized()
+      window.Household — consolidated namespace (Constants, Rules,
+      ViewModels, Orchestration, State, Queries, Commands, Economy,
+      Assignment, Servant, Residence, Modals, _diagnostics)
+
+    Load-time dependencies: NONE — verification runs at init() time.
+
+    Verified at init (throws on missing):
+      HouseholdConstants (with sub-catalog checks)
+      HouseholdRules (16 methods)
+      HouseholdViewModels (4 methods)
+      HouseholdOrchestration (6 methods)
+      HouseholdState (+ full _internal surface)
+      HouseholdQueries (7 methods)
+      HouseholdCommands (30 methods)
+      HouseholdEconomy (11 methods)
+      HouseholdAssignment (10 methods)
+      HouseholdServant (8 methods)
+      ResidenceSystem (28 methods)
+
+    Cross-domain verification (all REQUIRED):
+      getCharacterById, generateId, getCurrentYearSafe,
+      getPlaceById, saveMasterData
+      CharacterCommands.updateCharacterFields
+      CharacterQueries.getCharacterById
+      createRelationship, endRelationship, updateRelationship,
+      getRelationshipBetween, getRelationshipsForCharacter,
+      getRelationshipById
+
+    Cross-domain verification (OPTIONAL):
+      markDataDirty                      — warns if absent.
+      IndustryCommands.updateEnterprise  — optional; presence recorded
+                                            in dependencies.
+      IndustryQueries.getEnterpriseSummary
+                                          — optional; presence recorded.
+      HouseholdModals (full surface)      — verified if present;
+                                            presence recorded.
+
+    Canonical data verification:
+      masterData.data.households must be an array.
+      masterData.data.householdPositions must be an array.
+      masterData.data.householdAssignments must be an array.
+      masterData.data.residences must be an array.
+
+    Consumed by: the application bootstrap (auto-init at load if
+      masterData exists; loader calls init() explicitly otherwise).
+
+    Contracts:
+      - init() is idempotent: { success: true,
+        alreadyInitialized: true, bootstrappedAt } on second call.
+      - Throws on missing modules/methods/globals or non-array canonical
+        collections.
+      - Warns (does not throw) on integrity issues (duplicate ids,
+        orphan refs, reverse-index drift).
+      - Returns { success, dependencies, hydration, integrityIssues,
+        integritySummary } on success.
+      - `integritySummary` carries explicit counts so callers do not
+        need to parse the full report:
+          householdsWithMissingResidence
+          residencesWithOrphanHouseholdOccupancy
+          residenceReverseIndexAvailable
+      - The enterprise reverse-index cross-check is NOT performed by
+        the bootstrap. It lives in HouseholdState._diagnostics. The
+        bootstrap's integrity log reflects the household-side and
+        residence-side drift it can compute directly. See PART 4 for
+        the full picture.
+      - Auto-init at load wraps init() in try/catch so a broken
+        dependency surfaces as a console.error, not an uncaught load-
+        time exception. Explicit init() still throws.
+      - Listens for masterDataUpdated and re-hydrates without
+        re-verifying.
+
+
+--------------------------------------------------------------------------------
+2.13 UI LIST — household-ui-list.js
+--------------------------------------------------------------------------------
+
+  js/households/household-ui-list.js
+    Owns: flat globals mountHouseholdList, unmountHouseholdList,
+      refreshHouseholdList, selectHousehold, getSelectedHouseholdId,
+      renderHouseholdPositionList, renderHouseholdStaffList
+
+    Load-time dependencies:
+      window.HouseholdQueries             — HARD (6 methods)
+      window.HouseholdState.subscribe     — HARD
+      window.getPlaceById                 — HARD
+      window.getPlaces                    — HARD
+
+    Call-time dependencies:
+      window._escapeHtml or escapeHtml
+                                          — optional; local fallback
+      window._getIcon or window.Icons     — optional; local fallback
+      localStorage                        — optional; preferences
+                                            degrade to in-memory.
+
+    Consumed by: any page that mounts the household list panel.
+
+    Contracts:
+      - No HouseholdState reach-around. Reads go through
+        HouseholdQueries.
+      - Status filter uses HouseholdQueries.getHouseholdStatus. Not
+        reimplemented here.
+      - Storage key 'household_list_state_v6'. Preferences are validated
+        against VALID_STATUS_FILTERS on read.
+      - Subscribes to HouseholdState on mount; unsubscribes on unmount.
+      - Subscriber re-render is coalesced via a 16ms setTimeout.
+      - Search input is debounced 250ms; focus is restored after render.
+      - No toasts on errors — logs to console, shows an error string in
+        the container.
+      - Icon lookups route through _getIcon with a CIRCLE fallback; no
+        emojis.
+
+
+--------------------------------------------------------------------------------
+2.14 MODALS HELPER — modals-helper.js
+--------------------------------------------------------------------------------
+
+  js/households/modals-helper.js
+    Owns: window.HouseholdModals.
+
+    Exports:
+      DOM scope:      rootFrom
+      Persist:        persistOrFail, persistResidenceOrFail,
+                      reportFailure, showSuccess, showWarning,
+                      showInfo, showError
+      Escape:         esc
+      Input parsing:  readValue, readInt, readIntOrNull, readChecked
+      On-open wiring: onOpen
+      Year/close:     currentYear, closeThen, confirmDialog
+      Roles:          getRoleById, getAllRoles, buildRoleOptions
+      Staff list:     renderStaffCandidates, wireStaffCandidateSelection,
+                      buildRecentAssignmentHistory
+      Validation:     hasId, isFiniteNumber
+
+    Load-time dependencies:
+      window.escapeHtml OR window._escapeHtml
+                                          — HARD
+      window.showToast OR window._showToast
+                                          — HARD
+
+    Call-time dependencies:
+      window.HouseholdCommands.persist    — for persistOrFail
+      window.ResidenceSystem.persist      — for persistResidenceOrFail
+      window.confirmDialog, window._confirmDialog
+                                          — preferred for confirmDialog;
+                                            falls back to window.confirm
+      window.RoleState.getAllRoles, window.RoleQueries.getAllRoles,
+      window.getRoleById, window.RoleQueries.getRoleById
+                                          — for getRoleById / getAllRoles
+      window.getCurrentYearSafe           — for currentYear
+      window.closeTopModal                — for closeThen
+      window.Icons                        — for buildRoleOptions icon
+      window.openCharacterSelector        — modal-specific; not called
+                                            by modals-helper
+
+    Consumed by (HARD):
+      [load] modals-household.js
+      [load] modals-household-economy.js
+      [load] modals-household-snapshot.js
+      [load] modals-household-staff.js
+      [load] modals-residence.js
+      [load] modals-residence-owner.js
+      [load] modals-residence-rental.js
+      [load] modals-residence-staff.js
+      [load] household-bootstrap.js       — via
+                                            _checkOptionalModule
+
+    Contracts:
+      - rootFrom(handle) returns handle.element or null. NEVER returns
+        document.body. A null return is a caller bug (openModal's return
+        value was not captured) and makes the bug visible (the caller
+        crashes with a clear null dereference).
+      - persistOrFail / persistResidenceOrFail return { ok, reason }.
+        They show an error toast on failure.
+      - currentYear delegates to getCurrentYearSafe (the deprecated
+        alias in time.js). The household modal subsystem is the last
+        major consumer of the alias. Deleting the alias from time.js
+        will make this helper return null without warning. Migration
+        plan: switch currentYear to prefer getCurrentYear, dropping
+        back to getCurrentYearSafe only if the canonical is absent —
+        this is the same pattern used in household-orchestration.js.
+      - buildRoleOptions prepends the empty option ("No role required"
+        by default). The selected role's option carries its icon (from
+        window.Icons) as HTML prefix. Consumers that do NOT want the
+        icon can post-process.
+      - renderStaffCandidates consumes a NORMALIZED candidate shape:
+          { characterId, displayName, age, hasRole, skillLevel }
+        Two consumers (household-staff and residence-staff) project
+        their domain-specific candidate objects to this shape. The
+        shared renderer is text-first; no icons are inserted by the
+        renderer.
+      - wireStaffCandidateSelection wires click handlers on
+        .staff-candidate. The onSelectOther callback is invoked when
+        the [data-action="select-other"] button is clicked. The button
+        must exist in the modal HTML for the callback to fire.
+      - buildRecentAssignmentHistory sorts by startYear descending,
+        slices to limit (default 5), and renders. resolveRoleName and
+        resolveName are optional callbacks; the household staff modal
+        passes label resolvers that read characterName + title, and
+        the residence staff modal passes a resolver that reads
+        characterName. The single implementation supports both.
+
+
+--------------------------------------------------------------------------------
+2.15 MODALS — one per modality
+--------------------------------------------------------------------------------
+
+Each modal file follows the same pattern:
+
+  Load-time dependencies:
+    window.HouseholdQueries     — HARD (the subset the modal needs)
+    window.HouseholdCommands    — HARD (subset)
+    window.HouseholdModals      — HARD (the shared helper surface)
+    window.HouseholdViewModels  — HARD
+    window.openModal / closeTopModal
+                                — HARD
+    window.escapeHtml OR _escapeHtml
+                                — used by HouseholdModals; not
+                                  re-checked here
+    window._showToast or showToast
+                                — used by HouseholdModals
+    window.getCurrentYearSafe OR getCurrentYear
+                                — used by currentYear
+
+  Call-time dependencies:
+    window.ResidenceSystem      — modals-residence, modals-residence-*
+    window.IndustryCommands, window.IndustryQueries, window.IndustryState,
+    window.openEnterpriseListModal, window.openEnterpriseDetailsModal,
+    window.openCreateEnterpriseModal
+                                — modals-household (only if the
+                                  enterprise actions are clicked; fail
+                                  with a toast if missing)
+    window.openHouseholdSelector
+                                — modals-residence, modals-residence-owner,
+                                  modals-residence-rental (assignment /
+                                  renter flows)
+    window.openCharacterSelector
+                                — modals-household (head picker),
+                                  modals-household-staff, modals-residence-staff
+    window.openDeleteRoleModal  — not used by any of these files
+    window.logEvent             — optional
+    window.getRoleById, window.RoleQueries, window.RoleState
+                                — via HouseholdModals.getRoleById
+
+  Per-file summary:
+
+    modals-household.js
+      Owns: openCreateHouseholdModal, openEditHouseholdModal,
+            openDeleteHouseholdModal, openHouseholdDetailsModal
+      Persist: HouseholdCommands.persist via _persistOrFail
+      RETRY IDEMPOTENCY: create and edit modals carry a mutation-succeeded
+      flag. On retry after a persist failure, the command layer is
+      SKIPPED and only the persist is retried. Prevents duplicate
+      households (create) and double-application of the same update
+      (edit). See RETRY IDEMPOTENCY in the file header.
+      Actions in details modal: edit, delete, manage members,
+      manage departments, process economy, per-enterprise view,
+      create enterprise (delegates to IndustryCommands).
+
+    modals-household-economy.js
+      Owns: openHouseholdEconomicSummaryModal, openHouseholdWealthModal,
+            openHouseholdResourcesModal, openHouseholdIncomeModal,
+            openHouseholdExpensesModal, openHouseholdAnnualProcessingModal,
+            openHouseholdEconomicEventsModal, openHouseholdTradeModal
+      Persist: NONE — economy commands persist themselves internally.
+      The modal just displays results.
+
+    modals-household-snapshot.js
+      Owns: openViewHouseholdHistoryModal, openEditNamePeriodModal,
+            openDeleteNamePeriodModal, openHouseholdSnapshotModal,
+            openCharacterHouseholdSnapshotModal
+      Persist: edit-name-period and delete-name-period keep the modal
+      OPEN on persist failure (return false from onConfirm). This is
+      the destructive-mutation contract.
+
+    modals-household-staff.js
+      Owns: openCreateHouseholdPositionModal, openEditHouseholdPositionModal,
+            openDeleteHouseholdPositionModal, openViewHouseholdPositionsModal,
+            openViewStaffAssignmentsModal, openStaffManagementModal,
+            openAssignStaffToHouseholdPositionModal,
+            openRemoveHouseholdAssignmentModal,
+            openHouseholdAssignmentHistoryModal,
+            openBulkHouseholdAssignModal
+      Delegates: candidate rendering to
+      HouseholdModals.renderStaffCandidates; candidate wiring to
+      HouseholdModals.wireStaffCandidateSelection; recent history to
+      HouseholdModals.buildRecentAssignmentHistory; role options to
+      HouseholdModals.buildRoleOptions.
+      ADD-ROLE-IF-MISSING: the assign modal has a checkbox. When
+      checked, addRoleIfMissing: true is passed. When unchecked, the
+      modal shows a warning if the result carries roleWarning.
+      BULK ASSIGN: always passes addRoleIfMissing: true. Per-entry
+      failures surface in result.data.failed with code ROLE_ADD_FAILED.
+
+    modals-residence.js
+      Owns: the full residence modal surface, consolidated from the
+            prior modals-residence / modals-residence-vacancy /
+            modals-residence-history trio.
+      Persist: ResidenceSystem.persist via persistResidenceOrFail.
+      CROSS-DOMAIN: assignment and vacancy commands also mark
+      household state dirty. The subsequent ResidenceSystem.persist()
+      flushes both.
+
+    modals-residence-owner.js
+      Owns: openResidenceOwnerDetailsModal,
+            openManageOwnedPropertiesModal,
+            openTransferOwnershipModal,
+            openOwnerStatsModal
+      Persist: setResidenceOwner + persistResidenceOrFail.
+
+    modals-residence-rental.js
+      Owns: openSetResidenceOwnerModal, openSetResidenceRenterModal,
+            openUpdateRentModal, openEndRentalModal,
+            openResidenceRentalHistoryModal,
+            openHouseholdRentalSummaryModal, openRentPaymentModal,
+            openResidenceRentalDetailsModal
+      Persist: per-command persistResidenceOrFail.
+
+    modals-residence-staff.js
+      Owns: openCreateResidenceStaffPositionModal,
+            openEditResidenceStaffPositionModal,
+            openDeleteResidenceStaffPositionModal,
+            openAssignResidenceStaffModal,
+            openViewResidenceStaffPositionsModal,
+            openViewResidenceStaffAssignmentsModal,
+            openResidenceStaffManagementModal
+      Delegates: same helpers as modals-household-staff. Note that the
+      residence staff commands do NOT support addRoleIfMissing; the
+      modal does NOT expose the checkbox and reports the outcome
+      without granting roles.
+
+
+--------------------------------------------------------------------------------
+2.16 SHIMS
+--------------------------------------------------------------------------------
+
+The four shim files do not own behavior. Each verifies its canonical
+owner loaded first and either throws or warns, then exposes a diagnostic
+namespace:
+
+  modals-assign-staff.js
+    Canonical: modals-household-staff.js.
+    Checks: five functions (openAssignStaffToHouseholdPositionModal,
+            openRemoveHouseholdAssignmentModal,
+            openHouseholdAssignmentHistoryModal,
+            openBulkHouseholdAssignModal,
+            openViewHouseholdStaffAssignmentsModal).
+    Behavior: throws if none are present; warns if some are missing.
+
+  modals-residence-history.js
+    Canonical: modals-residence.js.
+    Checks: four functions (openResidenceHistoryModal,
+            openResidenceNameHistoryModal,
+            openResidenceTimelineModal,
+            openResidenceAssociationHistoryModal).
+
+  modals-residence-vacancy.js
+    Canonical: modals-residence.js.
+    Checks: eleven functions spanning vacancy, units, rehabilitation,
+            demolition, and heir finder.
+
+  modals-residence-snapshot.js
+    Canonical: modals-household-snapshot.js.
+    Status: DEPRECATED. The functions this file used to define
+            (openViewHouseholdHistoryModal etc.) are canonical in
+            modals-household-snapshot.js. This file throws if the
+            canonical is missing, warns in every build, and exposes
+            window.ResidenceSnapshotModalsDeprecated with a message
+            instructing the caller to delete the script tag.
+
+The presence of these shims indicates that index.html still loads them.
+They should be removed once the load order is confirmed and external
+callers are audited.
+
 
 ================================================================================
-MODULE RESPONSIBILITIES
+PART 3 — THE HOUSEHOLD ↔ INDUSTRY CONTRACT
 ================================================================================
 
-household-constants.js
-──────────────────────
-OWNER OF:
-  • Economic catalogs: ECONOMIC_TIERS, ECONOMIC_TIER_ORDER,
-    INCOME_SOURCES, EXPENSE_CATEGORIES, ECONOMIC_EVENTS,
-    ECONOMIC_EVENT_IDS
-  • Service catalogs: SERVICE_TYPES, SERVICE_STATUS, SERVICE_QUALITY,
-    SERVICE_QUALITY_ORDER, SERVICE_CONTRACT_TERMS
-  • Residence catalogs: RESIDENCE_TYPES, RESIDENCE_STATUS,
-    RENTAL_STATUS, RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER
-  • THRESHOLDS (bankruptcy, interest, history caps, default values)
-  • getEconomicEventDelta(eventId, randomFn) — pure delta calculator
-    that takes a caller-supplied random source
-  • Lookup helpers (getEconomicTierById, getServiceTypeById, etc.)
+The two domains meet at exactly TWO facts, both of which the household
+domain owns structurally and the industry domain owns canonically.
 
-PROPERTIES:
-  • Every catalog is deeply frozen.
-  • No catalog holds a function (ECONOMIC_EVENTS uses minDelta /
-    maxDelta bounds; the draw comes from the caller).
-  • No Math.random() anywhere.
+FACT 1: HOUSEHOLD REVERSE INDEX → ENTERPRISES
+---------------------------------------------
 
-household-rules.js
-──────────────────
-OWNER OF (pure calculations only):
-  • Succession: pickSuccessor, deriveDeprecationSuccessor,
-    applyHeadChange (the one mutating rules function)
-  • Economy: getEconomicTier, netAnnualChange,
-    calculateAnnualDebtInterest, evaluateBankruptcy,
-    calculateEnterpriseNet
-  • Service: calculateServiceQuality, calculateRecommendation
-  • Residence: calculateRepairCost, calculateRehabilitatedValue,
-    calculateOccupiedUnitCount, calculateVacantUnitCount,
-    isResidenceVacant, calculateUnitStats
-  • Household: calculateHouseholdStatus, isHouseholdVacant
-  • Heirs: filterEligibleHeirs
-  • Demographics: calculateDemographics
+  household.enterprises[]   — canonical facts live in Industry
+                              (enterprise.ownerType / ownerId)
+  enterprise.ownerType / ownerId  — canonical, written ONLY by
+                                    IndustryCommands
 
-PROPERTIES:
-  • No fallbacks to inline catalogs. Every catalog read delegates to
-    HouseholdConstants. Missing constants throw at load.
-  • No state access. No persistence. No randomness (callers pass rolls).
-  • The one mutating function (applyHeadChange) is documented.
+  STRUCTURAL OWNERSHIP:
+    Household domain: household.enterprises[] is a REVERSE INDEX into
+                      the canonical enterprise ownership.
+    Industry domain:  enterprise.ownerType / ownerId is the CANONICAL
+                      relationship.
 
-household-view-models.js
-────────────────────────
-OWNER OF (presentation defaults only):
-  • Form defaults: DEFAULT_SKILL_LEVEL, DEFAULT_INITIAL_WEALTH,
-    DEFAULT_INITIAL_REPUTATION, DEFAULT_INITIAL_RENT,
-    DEFAULT_UNIT_COUNT, DEFAULT_MAX_UNITS
-  • Option list builders (return <option> inner HTML):
-    getHouseholdStatusOptions, getHouseholdFilterStatusOptions,
-    getVacancyReasonOptions, getRentalEndReasonOptions,
-    getDemolitionReasonOptions, getResidenceConditionOptions,
-    getResidenceTypeOptions
-  • Status badges: getStatusBadge, getMemberBadge
-  • Color helpers: getWealthColor, getDebtColor, getNetChangeColor,
-    getProfitColor, getUnitOccupancyColor
-  • Label helpers: getViewModeLabel, getUnitStatusLabel,
-    getResidenceStatusLabel
+  WRITE RULES:
+    Only HouseholdCommands writes household.enterprises[]. Specifically:
+      setHouseholdEnterprises
+      addEnterpriseToHousehold
+      removeEnterpriseFromHousehold
+    These are called by IndustryCommands on every path that changes
+    ownership or existence:
+      createEnterprise        -> addEnterpriseToHousehold
+      updateEnterprise        -> _reconcileHouseholdOwnership
+                                 (remove from prior + add to next)
+      deleteEnterprise        -> removeEnterpriseFromHousehold
+      demolishEnterprise      -> removeEnterpriseFromHousehold
+      rebuildEnterprise       -> addEnterpriseToHousehold (if the
+                                 demolition record had a household
+                                 owner)
+    Household domain code NEVER writes enterprise.ownerType / ownerId.
+    Industry domain code NEVER writes household.enterprises[] directly;
+    it calls HouseholdCommands.
 
-PROPERTIES:
-  • Pure. No DOM. No side effects.
-  • Constants (ECONOMIC_TIERS, RESIDENCE_TYPES) come from
-    household-constants.js when available; inline defaults match
-    exactly for isolation-test scenarios.
+  THE HANDSHAKE:
+    1. Industry commits enterprise.ownerType / ownerId on its side.
+    2. Industry calls HouseholdCommands.addEnterpriseToHousehold (or
+       remove) to sync the reverse index.
+    3. If the industry-side mutation succeeds but the household-side
+       sync fails, IndustryCommands ROLLS BACK the industry mutation
+       (createEnterprise) or surfaces a structured failure
+       (updateEnterprise via _reconcileHouseholdOwnership).
+    4. HouseholdCommands does NOT write enterprise.ownerType / ownerId
+       directly.
 
-household-orchestration.js
-──────────────────────────
-PURPOSE:
-  Shared helpers for multi-command orchestrators (assignment,
-  servant). Not a domain module; owns no state, no policy, no catalogs.
+  THE RECONCILIATION PATH (updateEnterprise, C2):
+    On an enterprise owner change, IndustryCommands calls
+    _reconcileHouseholdOwnership(current, nextOwnerType, nextOwnerId,
+    year), which:
+      1. If wasHouseholdOwned: removes from the PRIOR household.
+      2. If isHouseholdOwned: adds to the NEXT household.
+      3. On failure: rolls back the industry owner fields to their
+         prior values, then attempts to roll back the household-side
+         removal (best-effort).
+    Idempotency: if the previous and next (ownerType, ownerId) are
+    identical, this is a no-op.
 
-PROVIDES:
-  • Result builders: ok(data), fail(code, reason, extra)
-  • Year resolution: resolveYear(value) → number|null
-  • Event dispatch: dispatch(eventName, payload) — never throws
-  • Batch close: finish(eventName, payload) — dispatches then
-    persists the household system once
-  • Small validators: hasId, isPlainObject, isFiniteNumber
+  INTEGRITY DIAGNOSTICS:
 
-CONTRACT:
-  • finish dispatches BEFORE persist. Subscribers observe the
-    post-mutation in-memory state; a subscriber that triggers further
-    writes gets those included in the same save.
-  • finish does NOT persist the relationship system. Servant wraps
-    finish with its own _finish that adds the relationship persist.
+    industry-state.js::validateIntegrity
+      walks masterData.data.households -> enterprises[]. For each
+      household's enterprises[] entry, requires:
+        (a) non-empty string id
+        (b) resolves to an existing enterprise
+        (c) enterprise.ownerType === 'household'
+        (d) enterprise.ownerId === household.id
+      This catches: malformed entries, dangling ids, cross-owner
+      entries, and entries whose enterprise has moved to another
+      household.
 
-household-state.js
-──────────────────
-OWNER OF:
-  • Canonical household/position/assignment arrays
-  • Indexes (byId, byLocation, byStatus, byMember)
-  • Cache rebuild
-  • Loading/hydration from masterData (schema shape only)
-  • Subscriptions
-  • Ephemeral UI state
+    household-state.js::_diagnostics.getIntegrityReport
+      performs the SYMMETRIC check, but reads
+      masterData.data.enterprises and masterData.data.households
+      DIRECTLY, without depending on IndustryState. It works when the
+      industry domain is not loaded (a household-only page or a
+      reduced test harness). Reports:
+        householdsWithOrphanEnterpriseRef
+        enterprisesOrphanedFromHousehold
+        enterpriseReverseIndexAvailable
 
-PUBLIC API (deliberately tiny):
-  HouseholdState.subscribe(cb)
-  HouseholdState.invalidateCache()
-  HouseholdState.refresh()
-  HouseholdState.hydrateFromMasterData()
-  HouseholdState.markDirty() / hasDirty() / clearDirty()
-  HouseholdState.publish(eventType, payload)
-  HouseholdState.getUIState() / setUIState() / updateUIState()
+      The two checks are INTENTIONALLY REDUNDANT. Each domain's
+      bootstrap reports on the collection it owns. Neither waits for
+      the other.
 
-INTERNAL API (HouseholdState._internal):
-  Only HouseholdCommands and HouseholdQueries should call these.
-  getHouseholdRecord(id)         — live canonical record
-  getAllHouseholdRecords(opts)   — live array
-  getPositionRecord(id)
-  getAllPositionRecords()
-  getAssignmentRecord(id)
-  getAllAssignmentRecords()
-  replaceHouseholds(arr)         — persistence + notify
-  replaceHouseholdPositions(arr)
-  replaceHouseholdAssignments(arr)
+  BOOTSTRAP VERIFICATION:
 
-DIAGNOSTICS:
+    household-bootstrap.js's _verifyCrossDomain includes
+    IndustryCommands.updateEnterprise and
+    IndustryQueries.getEnterpriseSummary as OPTIONAL module checks. If
+    present, the full surface must be present (missing method is a
+    hard throw). If absent entirely, the dependency is recorded as
+    false in Household.dependencies.industryCommandsPresent /
+    industryQueriesPresent, and downstream code (economy's
+    calculateEnterpriseNet, queries' getHouseholdEnterprises) fails or
+    returns 0 per its own contract.
+
+FACT 2: HOUSEHOLD WEALTH → ANNUAL PROCESSING TRANSFER
+-----------------------------------------------------
+
+  household.wealth           — canonical household fact
+  IndustryCommands.applyAnnualProcessing
+                             — writes household.wealth via
+                               HouseholdCommands.updateHousehold
+
+  STRUCTURAL OWNERSHIP:
+    Household domain: household.wealth is a canonical household fact.
+    Industry domain:  the annual processing transfer computes the
+                      amount and calls HouseholdCommands.
+
+  WRITE RULES:
+    Only HouseholdCommands.updateHousehold writes household.wealth.
+    Industry NEVER reaches into a household record directly; it passes
+    the new wealth value through HouseholdCommands.updateHousehold.
+
+  WHEN IT HAPPENS:
+    IndustryProcessor.processAnnualEnterprise calls
+    IndustryCommands.applyAnnualProcessing with
+    householdId / householdTransfer / householdReason when the
+    enterprise.ownerType === 'household'. applyAnnualProcessing calls
+    _applyHouseholdTransfer, which:
+      1. Reads the current household.wealth via getHouseholdById.
+      2. Computes newWealth = currentWealth + amount.
+      3. Calls HouseholdCommands.updateHousehold(householdId,
+         { wealth: newWealth }).
+    If the household write fails, the enterprise is untouched.
+
+  WHAT INDUSTRY DOES NOT WRITE:
+    household.notes          — prior revisions wrote this on transfer;
+                               removed (M5) because it clobbered
+                               concurrent household note edits based
+                               on a stale read.
+    household.name / locationId / locationName / status / members /
+    departments / residence fields.
+
+  PERSISTENCE:
+    _applyHouseholdTransfer does NOT call HouseholdCommands.persist()
+    or IndustryCommands.persist(). The caller's orchestration
+    (IndustryProcessor.processAnnualEnterprise with default
+    shouldPersist=true) calls IndustryCommands.persist() once at the
+    end.
+
+CROSS-DOMAIN VISIBILITY SUMMARY
+-------------------------------
+
+  From the INDUSTRY domain's perspective, these HOUSEHOLD methods must
+  be present:
+
+    HouseholdCommands.addEnterpriseToHousehold
+    HouseholdCommands.removeEnterpriseFromHousehold
+    HouseholdCommands.updateHousehold
+    window.getHouseholdById
+
+  Verified HARD at industry-bootstrap.init() time. Missing -> throw.
+
+  From the HOUSEHOLD domain's perspective, these INDUSTRY methods are
+  used:
+
+    IndustryCommands.updateEnterprise       (assignment enterprise
+                                             transfers, C2
+                                             reconciliation)
+    IndustryQueries.getEnterpriseSummary    (calculateEnterpriseNet,
+                                             getHouseholdEnterpriseStats,
+                                             getHouseholdEnterpriseValue,
+                                             getHouseholdDetails)
+    IndustryState.getEnterprise             (getHouseholdEnterprises)
+
+  All three are OPTIONAL. The household domain returns 0 or [] when
+  the household has no enterprises. It throws when the household HAS
+  enterprises and the industry query surface is missing. See the
+  individual API contracts in §2.6 and §2.8.
+
+  From the HOUSEHOLD domain's perspective, the following INDUSTRY
+  writes are visible (via the reverse index):
+
+    household.enterprises[]                 — one direction
+    household.wealth                        — no, industry writes it
+                                              via HouseholdCommands, and
+                                              the reverse index does
+                                              not track it.
+
+  From the INDUSTRY domain's perspective, the following HOUSEHOLD
+  facts are visible (via reverse index or accessors):
+
+    household.name                          — read via
+                                              getHouseholdById
+    household.enterprises[]                 — one direction
+    household.wealth                        — read via getHouseholdById
+    household.id                            — for
+                                              enterprise.ownerId
+
+WHAT THE HOUSEHOLD DOMAIN DOES NOT WRITE TO INDUSTRY
+----------------------------------------------------
+
+  household-commands.js never touches enterprise.ownerType or
+  enterprise.ownerId. It writes household.enterprises[] only. The
+  canonical enterprise ownership is IndustryCommands' job.
+
+  Even the reverse-index write is CALLED by the industry domain (via
+  HouseholdCommands.addEnterpriseToHousehold). Household code never
+  spontaneously decides to change an enterprise's owner.
+
+WHAT THE INDUSTRY DOMAIN DOES NOT WRITE TO HOUSEHOLD
+----------------------------------------------------
+
+  industry-commands.js never touches household.notes, household.name,
+  household.locationId, household.locationName, household.status,
+  household.members, household.departments, or any residence field.
+
+  It writes household.wealth (via HouseholdCommands.updateHousehold)
+  and household.enterprises[] (via
+  HouseholdCommands.addEnterpriseToHousehold /
+  removeEnterpriseFromHousehold). Both are documented in the
+  industry-commands.js header and the industry-bootstrap.js header.
+
+
+================================================================================
+PART 4 — DIAGNOSTICS AND INTEGRITY REPORTS
+================================================================================
+
+Three independent diagnostics report on the household domain's data
+integrity. They are intentionally redundant — each domain's bootstrap
+reports on the collection it owns.
+
+HOUSEHOLD-STATE DIAGNOSTICS
+---------------------------
+
   HouseholdState._diagnostics.getIntegrityReport() returns:
-    {
-      ok,
-      duplicates: { households, positions, assignments },
-      duplicateHouseholdHeads,
-      householdsWithMissingResidence,
-      residencesWithOrphanHouseholdOccupancy,
-      residenceReverseIndexAvailable,
-      counts: { households, positions, assignments }
-    }
-
-  The reverse-index fields are the v6.0 addition. Non-throwing;
-  safe at any time.
-
-household-queries.js
-────────────────────
-OWNER OF:
-  • All semantic household reads
-  • All defensive snapshot projections
-  • Heir discovery (getHouseholdHeirs)
-  • Households-headed-by queries
-  • Composite detail projections
-
-CONTRACT:
-  • Returns projections/snapshots, never live records
-  • No mutations
-  • No `_processing` guard (queries compose)
-  • Required dependencies fail loudly
-  • Historical queries accept explicit referenceYear
-
-KEY FUNCTIONS:
-  getHousehold(id) / getAllHouseholds(opts)
-  getHouseholdsByLocation / ByStatus / ByMember / HeadedBy
-  getCharacterHousehold(characterId)   — canonical current-household
-  getHouseholdMembers(id, opts)
-  getHouseholdHead(id) / getHouseholdStatus(id)
-  getHouseholdStatuses(ids)            — batch
-  getDemographics(id, opts)
-  getHouseholdPositions / getHouseholdAssignments
-  getHouseholdEnterpriseSummaries / Stats / Value
-  getHouseholdHeirs(householdId, deceasedId, opts)
-  getHouseholdDetails(id)              — composite
-  getStatistics(opts)
-  getHouseholdNamePeriods(id)
-  getHouseholdSnapshot(id, year, mode)
-  getCharacterHouseholdSnapshot(characterId, mode)
-
-household-commands.js
-─────────────────────
-OWNER OF:
-  • All canonical household mutations
-  • Persistence boundary via HouseholdCommands.persist()
-  • Cross-command composition
-
-CONTRACT:
-  • Every command: validate, mutate, commit once, return structured result
-  • No `_processingCommand` guard
-  • No toasts, no icons, no UI concerns
-  • No cross-domain canonical mutation (delegates to CharacterCommands,
-    IndustryCommands, ResidenceSystem)
-
-OPTIONAL DEPENDENCY RESOLUTION (v6.1):
-  ResidenceSystem and IndustryCommands are resolved at CALL time via
-  _residenceSystemAvailable() and _industryCommandsAvailable(), not
-  at load time. Load-time flags freeze to whatever the state was when
-  household-commands.js parsed, which is BEFORE ResidenceSystem loads
-  under the documented HTML order. Prior revisions therefore failed
-  every deleteHousehold call that touched a residence with
-  RESIDENCE_SYSTEM_UNAVAILABLE. See KEY DESIGN PRINCIPLES #9.
-
-KEY FUNCTIONS:
-  createHousehold(data) / deleteHousehold(id, opts) /
-  updateHousehold(id, updates) / setStatus(id, status, opts) /
-  recordEvent(id, event)
-
-  addMember / removeMember / updateMember / transferMember
-
-  setHead(householdId, characterId, opts)   — SINGLE-COMMIT CONTRACT
-
-    Prior versions called addMember internally when the character
-    wasn't a member, producing two commits (one for the add, one for
-    the head change) for what is one logical operation. Now setHead
-    creates the member record inline (no commit) and commits once
-    with event 'householdHeadSet'. The result carries addedInline:true
-    when a new member record was created as part of the call.
-
-  autoAssignHead(householdId, opts)
-
-  addDepartment / removeDepartment / updateDepartment
-  editNamePeriod / deleteNamePeriod
-
-  associateWithResidence / disassociateFromResidence
-
-  setHouseholdEnterprises / addEnterpriseToHousehold /
-  removeEnterpriseFromHousehold
-
-  createPosition / updatePosition / deletePosition
-  assignCharacterToPosition(positionId, characterId, opts)   — SUPPORTS
-    addRoleIfMissing
-  endAssignment / deleteAssignment / bulkAssign
-
-  repairMemberships(opts)
-
-ADD-ROLE-IF-MISSING CONTRACT (Prompt 33):
-
-  assignCharacterToPosition and bulkAssign accept
-  options.addRoleIfMissing. When true and the position requires a role
-  the character lacks, the profession is added via
-  CharacterCommands.addProfession before assignment. If the
-  profession cannot be added, the assignment is REFUSED with code
-  ROLE_ADD_FAILED (the caller asked for the role to be added; silently
-  skipping would produce an assignment whose precondition was not met).
-
-  When addRoleIfMissing is false/absent, the assignment proceeds. The
-  result carries roleWarning when a required role is missing but the
-  caller opted out of auto-adding.
-
-CROSS-DOMAIN CLEANUP CONTRACT:
-
-  removeCharacterReferences(characterId) and
-  clearLocationReferences(locationId) are cross-domain sweep hooks
-  dispatched by character-deletion-commands.js and
-  location-commands.js respectively. Both:
-
-    • Return { success: true, data: { ... } } with counts and the
-      affected-records list nested under `data`, matching the _ok
-      convention used elsewhere in this module.
-    • Emit exactly ONE commit for the whole sweep (event
-      'householdReferencesRemoved' or 'householdsLocationCleared'),
-      not one per affected household.
-    • Do NOT persist. The calling orchestration owns the batch
-      persistence boundary.
-    • Are idempotent. Re-running against an already-cleaned target
-      returns success with count: 0 and does not commit.
-
-  The `data` nesting matters: location-commands.js reads
-  result.data.clearedCount when it reports household reconciliation
-  status. Prior revisions of this module returned the count at the
-  top level, so deletePlace's cleanup report silently reported
-  clearedCount: 0 for every cascade. The nesting is now explicit at
-  both ends of the contract.
-
-household-economy.js
-────────────────────
-OWNER OF:
-  • Pure economic calculations (delegating to HouseholdRules for the
-    thresholds; reading HouseholdConstants for the catalogs)
-  • Wealth/debt/resource mutation via HouseholdCommands.updateHousehold
-    with real patch objects
-  • Annual economy processing
-  • Trade
-  • Bankruptcy
-
-PERSIST CONTRACT:
-  • _applyMutation is the ONLY place this module mutates a household.
-    It runs a pure projection function (mutator) to build a patch,
-    applies the patch via HouseholdCommands.updateHousehold, then
-    persists via HouseholdCommands.persist.
-  • One _applyMutation = one commit + one persist.
-  • The prior version mutated the live record directly and used
-    updateHousehold(id, {}) as a "touch" hack. That is gone.
-
-CLOCK CONTRACT:
-  • Every calculation accepts options.year. When omitted, the fallback
-    is getCurrentYearSafe().
-  • processAnnualEconomy(householdId, { year }) applies annual income
-    and expenses against the specified year.
-  • This is required so a multi-year simulation driver can call
-    processAnnualEconomy(householdId, { year: y }) for each simulated
-    year without every entry collapsing onto wall-clock now.
-
-RANDOMNESS:
-  • No Math.random anywhere. Event deltas come from
-    HouseholdConstants.getEconomicEventDelta(eventId, randomFn).
-  • randomFn is options.random (caller-supplied) or window.random
-    (from randomness.js). Missing both throws — silent fallback to
-    Math.random would break seeded reproducibility.
-
-PURE CALCULATIONS:
-  getEconomicTier / getHouseholdWealth / getHouseholdDebt /
-  getHouseholdResources
-  calculateRentIncome / calculateRentExpenses / calculateEnterpriseNet
-  calculateAnnualIncome(householdId, opts)
-  calculateAnnualExpenses(householdId, opts)
-  computeNetAnnualChange(householdId, opts)
-  isBankrupt(householdId)
-
-MUTATIONS:
-  updateHouseholdWealth(householdId, delta, reason, opts)
-  modifyHouseholdDebt(householdId, delta, opts)
-  updateHouseholdResources(householdId, resourceType, delta, opts)
-  receiveSalary(householdId, characterId, roleId, salary, year)
-  trackTuitionExpense(householdId, tuition, institutionId, studentId, year)
-  receiveSchoolProfit(householdId, amount, institutionId, year)
-  executeTrade(sourceId, targetId, trade, opts)
-  triggerEconomicEvent(householdId, eventId, opts)
-  applyRandomEconomicEvent(householdId, opts)
-  processAnnualEconomy(householdId, opts)      — one patch per year
-  consumeAnnualFood(householdId, opts)
-  handleBankruptcy(householdId, opts)
-
-household-assignment.js
-───────────────────────
-OWNER OF:
-  • Cross-operation orchestration
-  • Newborn assignment
-  • Spouse assignment
-  • Inheritance (with enterprise transfer)
-  • Transfers
-  • Cadet branch creation
-  • Household merge
-  • Household split
-  • Auto-succession after death
-
-CONTRACT:
-  • Thin orchestrator: reads via Queries, writes via Commands
-  • Uses HouseholdOrchestration.ok / fail / resolveYear / finish
-  • No direct state mutation
-  • No `_processingAssignment` guard
-  • No toasts
-  • Partial failures reported explicitly (partial: true)
-
-ENTERPRISE TRANSFER:
-  • Hard-fails when IndustryCommands is missing AND the household
-    actually has enterprises to transfer. Returns
-    industryAvailable:false, hardFailure:true.
-  • Succeeds trivially when there's nothing to transfer (no enterprises
-    to move → no failure).
-
-CADET BRANCH (REVISED):
-  • Removes the head from the parent BEFORE transferring the rest,
-    fixing a bug where the head was left as a member of both parent
-    and new household. If removal fails, the new household is rolled
-    back via deleteHousehold(removeFromCharacters: true).
-
-KEY FUNCTIONS:
-  assignNewbornToHousehold(childId, motherId, fatherId, opts)
-  assignToSpouseHousehold(characterId, spouseId, opts)
-  processHouseholdInheritanceOnDeath(characterId, opts)
-  transferHouseholdToHeir(householdId, heirId, opts)
-  getHouseholdHeirs(householdId, deceasedId, opts)  — passthrough
-  transferCharacterToHousehold(characterId, targetId, opts)
-  createCadetBranch(parentId, name, memberIds, opts)
-  mergeHouseholds(id1, id2, survivorId, opts)
-  splitHousehold(id, name, memberIds, opts)
-  autoAssignHouseholdHead(id, deceasedId, opts)
-
-household-servant.js
-────────────────────
-OWNER OF:
-  • Service relationship orchestration
-  • Master-servant lifecycle
-  • Promotion, wage adjustment, satisfaction tracking
-  • Service reference generation
-
-OWNERSHIP MODEL:
-  • Canonical service relationship is owned by the Relationship
-    system (createRelationship / endRelationship / updateRelationship)
-  • Household membership is owned by HouseholdCommands
-  • This module ORCHESTRATES between them
-
-PERSIST CONTRACT:
-  • _finish wraps HouseholdOrchestration.finish (dispatch + persist
-    household) with a subsequent relationship-system persist.
-  • The result carries:
-      householdPersisted,
-      relationshipPersisted,
-      relationshipPersistAttempted,
-      relationshipPersistReason
-  • If household persist succeeds but relationship persist fails,
-    returns success:false, partial:true.
-
-CONSTANTS:
-  • SERVICE_TYPES / SERVICE_STATUS / SERVICE_QUALITY /
-    SERVICE_QUALITY_ORDER / SERVICE_CONTRACT_TERMS come from
-    HouseholdConstants.
-  • The prior version re-exported window.SERVICE_TYPES = SERVICE_TYPES
-    unconditionally, silently replacing the frozen constants catalog
-    with a mutable copy. That overwrite is gone — the aliases are
-    guarded by `if (typeof window.X === 'undefined')` so the frozen
-    catalog always wins.
-
-PURE CALCULATIONS:
-  calculateServiceQuality / calculateRecommendation  — delegate to
-    HouseholdRules
-
-KEY FUNCTIONS:
-  createServiceRelationship(employerId, servantId, opts)
-  terminateService(employerId, servantId, opts)
-  promoteServant(employerId, servantId, newTypeId, opts)
-  adjustServantWages(employerId, servantId, newWage, reason, opts)
-  recordEmployerSatisfaction(relationshipId, satisfaction, reason, opts)
-  updateServiceQuality(relationshipId)
-  getServiceBetween / getServants / getEmployer / getActiveService
-  getServiceHistory / getServiceQuality / generateServiceReference
-  getStaffByDepartment(employerId, departmentId)
-  assignServantToDepartment(employerId, servantId, departmentId, opts)
-  transferServantToHousehold(currentEmployerId, servantId,
-                              newEmployerId, opts)
-
-residence-system.js
-───────────────────
-OWNER OF:
-  • Canonical residence storage
-  • Residence CRUD
-  • Unit management
-  • Occupancy (canonical: unit.householdId)
-  • Vacancy
-  • Residence history, timeline, name history, association history
-  • Residence staff positions and assignments
-  • Rental contracts (owner, renter, rent, payments)
-  • Rehabilitation, demolition
-
-FROZEN DOMAIN CONTRACT:
-
-  CANONICAL OCCUPANCY:
-    unit.householdId               ← CANONICAL
-    residence.units[]              ← CANONICAL COLLECTION
-    residence.isVacant             ← DERIVED from units
-    residence.occupiedUnits        ← DERIVED from units
-    residence.vacantUnits          ← DERIVED from units
-    residence.householdId          ← REMOVED (was ambiguous for multi-unit)
-
-  REVERSE INDEX:
-    household.residenceId          ← maintained by HouseholdCommands
-    household.residenceUnitNumber  ← maintained by HouseholdCommands
-    (ResidenceSystem calls HouseholdCommands when occupancy changes)
-
-  CONSTANTS SOURCING (v6.1):
-    RESIDENCE_TYPES, RESIDENCE_STATUS, RENTAL_STATUS,
-    RESIDENCE_CONDITIONS, CONDITION_MULTIPLIER, and the history-cap
-    thresholds (MAX_TIMELINE_ENTRIES, MAX_HISTORY_ENTRIES,
-    MAX_RENTAL_HISTORY, MAX_RENT_PAYMENTS) all come from
-    HouseholdConstants. HouseholdConstants is a HARD load-time
-    dependency of this module. The inline copies that lived here
-    through v6.0 are gone. A consumer reading
-    window.ResidenceSystem.RESIDENCE_TYPES and a consumer reading
-    window.HouseholdConstants.RESIDENCE_TYPES see the SAME frozen
-    catalog. See KEY DESIGN PRINCIPLES #2.
-
-REVERSE-INDEX FAILURE POLICY (REVISED v6.0):
-  • When _disassociateHouseholdFromUnit's reverse-index call fails,
-    the result carries reverseIndexFailed:true (hard field, not
-    advisory warning) and reverseIndexFailures list.
-  • A reverse_index_failure entry is appended to the residence's
-    damageHistory — persistent audit trail.
-  • The unit-side canonical occupancy (householdId, isVacant) is
-    STILL cleared. Only the household-side reverse index may be stale.
-
-UNIFIED VACANCY ACCOUNTING (v6.0):
-  • deleteResidence (force path), markResidenceVacant, and
-    demolishResidence all cause every occupied unit to become vacant.
-  • Every path now writes a vacancyHistory entry. (Prior versions:
-    only markResidenceVacant did.)
-
-CONTRACT:
-  • No `_processingResidence` guard
-  • No `_processingAssignment` guard
-  • No `1250` fallback
-  • No toasts, no confirm() dialogs
-  • Every mutation returns structured result
-
-KEY FUNCTION GROUPS:
-
-  CRUD:
-    createResidence(name, locationId, typeId, opts)
-    updateResidence(residenceId, updates)
-    deleteResidence(residenceId, opts)
-
-  Units:
-    addUnit / removeUnit / assignHouseholdToUnit /
-    markUnitVacant / demolishUnit
-
-  Vacancy:
-    getVacantResidences(locationId)
-    markResidenceVacant(residenceId, reason, year)
-    getResidenceVacancyDetails(residenceId)
-    assignHouseholdToVacantResidence(residenceId, householdId,
-                                      householdName, year, opts)
-
-  Name:
-    updateResidenceName(residenceId, newName, opts)
-
-  Rental:
-    setResidenceOwner / getResidenceOwner
-    setResidenceRenter / getResidenceRenter
-    endResidenceRental / updateResidenceRent / recordRentPayment
-
-  Staff:
-    addStaffPosition / updateStaffPosition / removeStaffPosition /
-    assignCharacterToStaffPosition / endStaffAssignment /
-    deleteStaffAssignment
-
-  Rehabilitation/Demolition:
-    calculateRepairCost(residenceId, targetCondition)
-    rehabilitateResidence(residenceId, targetCondition, year)
-    demolishResidence(residenceId, reason, year, opts)
-
-  Queries:
-    getResidence / getAllResidences / getResidencesByLocation /
-    getResidencesByOwner / getResidencesByRenter /
-    getResidencesByHousehold
-    getUnits / getUnit / getVacantUnits / getOccupiedUnits
-    getUnitStats / getResidenceHistory / getResidenceTimeline /
-    getResidenceNameHistory / getResidenceAssociationHistory
-    getResidenceRentalHistory / getRentPayments
-    getTotalRentIncome / getTotalRentExpenses
-    getStaffPositions / getStaffAssignments
-    getResidenceRecommendations / getResidenceStatistics
-    getHouseholdUnits
-
-household-bootstrap.js
-──────────────────────
-OWNER OF:
-  • Load-time verification of the household module set
-  • Cross-domain dependency verification
-  • Canonical data verification
-  • Hydration orchestration (HouseholdState + ResidenceSystem)
-  • Integrity report log (warn-only)
-  • window.Household consolidated namespace
-
-CONTRACT:
-  • Throws on missing required modules, methods, or globals.
-  • Warns (does not throw) on integrity issues in canonical data.
-  • Idempotent: init() returns { success:true, alreadyInitialized:true }
-    on subsequent calls.
-  • Auto-inits when masterData is present at load; listeners for
-    masterDataUpdated re-hydrate.
-
-VERIFIED MODULE SURFACE:
-  • HouseholdConstants (catalogs, getEconomicEventDelta)
-  • HouseholdRules (16 pure functions)
-  • HouseholdViewModels (4 presentation helpers)
-  • HouseholdOrchestration (ok, fail, resolveYear, dispatch, finish, hasId)
-  • HouseholdState + _internal
-  • HouseholdQueries (7 entry points)
-  • HouseholdCommands (30+ functions)
-  • HouseholdEconomy (11 functions)
-  • HouseholdAssignment (10 functions)
-  • HouseholdServant (8 functions)
-  • ResidenceSystem (28 functions)
-  • HouseholdModals (OPTIONAL — verified if present)
-
-CANONICAL DATA VERIFICATION (v6.1):
-  _verifyCanonical() requires masterData.data.households,
-  masterData.data.householdPositions, and
-  masterData.data.householdAssignments to all be arrays. Prior
-  revisions of storage-schema.js declared only `households`, which
-  made this verification fail on every fresh install and every save
-  that predated the household subdomain. The schema now declares all
-  three; see STORAGE SCHEMA in §[PERSISTENCE].
-
-INTEGRITY REPORT (v6.0):
-  init() returns integritySummary with:
-    householdsWithMissingResidence (count),
-    residencesWithOrphanHouseholdOccupancy (count),
-    residenceReverseIndexAvailable (boolean)
-
-  These are the reverse-index drift signals documented in §8 above.
-  No repair at bootstrap; repairs are a user-initiated action.
+
+    ok: boolean
+    duplicates: { households, positions, assignments }
+    duplicateHouseholdHeads: [{id, name, headCount}]
+    householdsWithMissingResidence: [{householdId, householdName,
+                                       residenceId}]
+    residencesWithOrphanHouseholdOccupancy: [{residenceId,
+                                              residenceName,
+                                              unitNumber,
+                                              householdId}]
+    residenceReverseIndexAvailable: boolean
+
+    householdsWithOrphanEnterpriseRef: [{householdId, householdName,
+                                         enterpriseId, index, reason,
+                                         actualOwnerId?}]
+    enterprisesOrphanedFromHousehold: [{enterpriseId, enterpriseName,
+                                        ownerId}]
+    enterpriseReverseIndexAvailable: boolean
+
+    counts: { households, positions, assignments }
+
+  The residence reverse-index check runs when ResidenceSystem is
+  present OR when masterData.data.residences is an array. The
+  enterprise reverse-index check runs when masterData.data.enterprises
+  and masterData.data.households are both arrays. Neither requires the
+  other domain's namespace.
+
+  `ok` is true only if every list is empty AND both reverse-index
+  checks ran. A caller that needs to distinguish "no issues" from "no
+  issues I could check" must inspect the two `available` flags.
+
+RESIDENCE DIAGNOSTICS
+---------------------
+
+  ResidenceSystem._diagnostics.getIntegrityReport() returns:
+
+    ok: boolean
+    duplicates: [{index, id, reason}]
+    count: number
+
+  It detects duplicate residence ids only. Reverse-index failures are
+  reported via damageHistory entries on individual residences (see
+  §2.11 REVERSE-INDEX FAILURE POLICY) rather than through this report.
+
+INDUSTRY DIAGNOSTICS
+--------------------
+
+  IndustryState.validateIntegrity() returns:
+
+    valid: boolean
+    errors: string[]
+    checksSkipped: string[]
+
+  It walks households -> enterprises[] (one direction) and reports
+  broken enterprise references. It requires getCharacterById,
+  getPlaceById, and getHouseholdById for full reference checking;
+  absent accessors cause the corresponding checks to be skipped and
+  reported in checksSkipped.
+
+BOOTSTRAP SUMMARY
+-----------------
+
+  HouseholdBootstrap.init() runs HouseholdState._diagnostics and logs
+  integrity warnings. It also returns an `integritySummary` with the
+  two residence-side counts and residenceReverseIndexAvailable. It does
+  NOT run the enterprise reverse-index check directly; that lives on
+  HouseholdState._diagnostics and on IndustryState.validateIntegrity.
+
+  A complete audit run:
+    1. HouseholdBootstrap.init()  -> residence-side drift
+    2. HouseholdState._diagnostics.getIntegrityReport()  -> both sides
+    3. IndustryBootstrap.init()   -> industry-side integrity via
+                                     IndustryState.validateIntegrity
+
+  The three are independent. A household-only page runs only (1) and
+  (2) and still detects enterprise reverse-index drift via (2)'s
+  direct read of masterData.data.enterprises.
+
 
 ================================================================================
-CROSS-DOMAIN INTEGRATION
+PART 5 — LOAD ORDER
 ================================================================================
 
-Household ↔ Character:
-  • character.household / character.householdId  — reverse index
-  • character.householdHistory[]                 — full history
-  • household.members[]                          — canonical membership
-  • Updates flow through HouseholdCommands.addMember/removeMember
+Derived from:
+  (a) module-level guard blocks;
+  (b) call-time window.X lookups in code;
+  (c) the bootstrap's _verifyHouseholdModules /
+      _verifyCrossDomain / _verifyCanonical lists;
+  (d) the canonical core / character / industry load orders from the
+      respective subsystem docs.
 
-Household ↔ Residence (CRITICAL):
-  • CANONICAL: unit.householdId
-  • Household reverse index maintained by HouseholdCommands
-  • ResidenceSystem.assignHouseholdToUnit() updates both sides
-  • markResidenceVacant() disassociates every affected household
-  • Reverse-index failures are hard (reverseIndexFailed) and
-    persistent (damageHistory)
-  • HouseholdState._diagnostics cross-checks both directions
+The household subsystem MUST load AFTER every cross-domain prerequisite
+it verifies. The bootstrap's HARD guards throw if any prerequisite is
+missing.
 
-Household ↔ Industry (Enterprise ownership):
-  • CANONICAL: enterprise.ownerId / enterprise.ownerType
-  • Household maintains enterprises[] as a REVERSE INDEX
-  • Updates flow through IndustryCommands.updateEnterprise()
-  • HouseholdCommands does NOT own enterprise ownership
-  • HouseholdAssignment hard-fails enterprise transfer if
-    IndustryCommands is unavailable AND the household has enterprises
+--------------------------------------------------------------------------------
+GROUP C1 — CORE CONSTANTS (leaf)
+--------------------------------------------------------------------------------
 
-Household ↔ Economy (Government salaries, taxes):
-  • Government salary → HouseholdEconomy.receiveSalary()
-  • Salaries stored in economy.salaryIncome + salaryIncomeHistory
-  • Wealth updated via HouseholdCommands.updateHousehold
-  • Taxes flow through HouseholdEconomy.updateHouseholdWealth()
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
 
-Household ↔ Servant (Master-servant relationships):
-  • Canonical relationship owned by Relationship system
-  • Household membership owned by HouseholdCommands
-  • HouseholdServant orchestrates between them
-  • Persists BOTH domains; result reports both save outcomes
+  Notes:
+    - Order within this block is unimportant.
+    - No household file reads these directly except transitively via
+      accessors and the character domain.
 
-Household ↔ Family (Parentage, kinship):
-  • Parentage canonical: FamilyState.parentChildEdges
-  • Household ↔ Family interaction is READ-ONLY in the household
-    domain (queries via FamilyQueries)
+--------------------------------------------------------------------------------
+GROUP C2 — CORE UTILITIES (leaf)
+--------------------------------------------------------------------------------
 
-Residence ↔ Rental (Rent income/expenses):
-  • residence.ownerId/renterId/rentAmount         — canonical contract
-  • residence.rentalHistory/rentPayments          — canonical history
-  • HouseholdEconomy.calculateRentIncome/Expenses reads these
-  • No duplicate rent tracking in household records
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
+
+  Notes:
+    - formatting.js: escapeHtml required at load by modals-helper.js.
+    - icons.js: Icons used at call time by buildRoleOptions.
+    - collections.js: not used by household directly.
+    - ids.js: generateId required at load by household-commands.js,
+      household-type (residence-system.js).
+    - randomness.js: random required at load by household-economy.js.
+
+--------------------------------------------------------------------------------
+GROUP C3 — CORE TIME
+--------------------------------------------------------------------------------
+
+  js/core/time.js
+
+  Notes:
+    - getCurrentYear required at load by household-commands.js,
+      household-economy.js, household-queries.js,
+      residence-system.js.
+    - getCurrentYearSafe OR getCurrentYear required at load by
+      household-orchestration.js and modals-helper.js (via
+      currentYear). The guard accepts either.
+    - isValidYear required at call time by household-rules.js (falls
+      back to a finite-integer check when absent).
+    - calculateAge required at load by household-queries.js.
+
+--------------------------------------------------------------------------------
+GROUP C4 — CORE STORAGE
+--------------------------------------------------------------------------------
+
+  js/core/storage-schema.js
+    <- AFTER: js/core/time.js
+
+  js/core/storage.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage-schema.js
+
+  initializeStorage()               (function call)
+    <- AFTER: js/core/storage.js
+
+  js/core/accessors.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+
+  Notes:
+    - storage.js provides saveMasterData (HARD load-time guard of
+      household-commands.js, residence-system.js,
+      household-bootstrap.js) and markDataDirty (used at call time by
+      household-state.js).
+    - accessors.js provides getCharacterById (HARD load-time guard of
+      household-commands.js, household-queries.js,
+      household-economy.js, household-assignment.js,
+      household-servant.js, residence-system.js), getPlaceById (HARD
+      load-time guard of residence-system.js; used by
+      household-ui-list.js as well), getHouseholdById (indirect — the
+      accessors version is used by industry, not by household).
+    - initializeStorage() MUST run before any household file's first
+      hydrate.
+
+--------------------------------------------------------------------------------
+GROUP C5 — CORE UI PRIMITIVES
+--------------------------------------------------------------------------------
+
+  js/core/ui.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/modals-core.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+
+  js/core/ui/collapsible.js
+  js/core/responsive.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
+
+  Notes:
+    - ui.js provides showToast / _showToast. HARD load-time guard of
+      modals-helper.js.
+    - modals-core.js provides openModal, closeTopModal, confirmDialog.
+      HARD load-time guard of every modals-*.js file in the household
+      subsystem.
+
+--------------------------------------------------------------------------------
+GROUP C6 — CHARACTER PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/character/character-state.js
+  js/character/character-commands.js
+    <- AFTER: js/character/character-state.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/ids.js
+
+  js/character/character-queries.js
+  js/character/family-queries.js
+  js/character/family-commands.js
+
+  Notes:
+    - character-commands.js must expose updateCharacterFields (HARD
+      load-time guard of household-commands.js) and addProfession
+      (used by household-commands.js for addRoleIfMissing; checked at
+      call time).
+    - character-queries.js provides getCharacterById under the
+      documented projection load order. household-bootstrap verifies
+      CharacterQueries.getCharacterById.
+
+--------------------------------------------------------------------------------
+GROUP C7 — RELATIONSHIP PREREQUISITES
+--------------------------------------------------------------------------------
+
+  js/relationships/relationship-types.js
+  js/relationships/relationship-state.js
+  js/relationships/relationship-queries.js
+  js/relationships/relationship-commands.js
+  js/relationships/professional-commands.js
+
+  Notes:
+    - The six required functions — createRelationship, endRelationship,
+      updateRelationship, getRelationshipBetween,
+      getRelationshipsForCharacter, getRelationshipById — are HARD
+      load-time guards of household-servant.js and HARD verification
+      targets of household-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP C8 — INDUSTRY PREREQUISITES (OPTIONAL at load, hard at
+                                       bootstrap when present)
+--------------------------------------------------------------------------------
+
+  js/core/industry/industry-constants.js
+  js/core/industry/industry-economics.js
+  js/core/industry/industry-rules.js
+  js/core/industry/industry-state.js
+  js/core/industry/industry-types.js
+  js/core/industry/industry-type-init.js
+  js/core/industry/industry-type-defaults.js
+  js/core/industry/industry-migration.js
+  js/core/industry/industry-type-commands.js
+  js/core/industry/industry-commands.js
+  js/core/industry/industry-queries.js
+  js/core/industry/industry-processor.js
+  js/core/industry/industry-view-models.js
+  js/core/industry/industry-bootstrap.js
+
+  Notes:
+    - The household subsystem does NOT require industry at load time.
+      household-assignment.js checks IndustryCommands at call time
+      (only when enterprises actually need transferring).
+      household-economy.js uses IndustryQueries via
+      HouseholdQueries.getHouseholdEnterpriseSummaries at call time
+      (only when the household has enterprises).
+      household-queries.js uses IndustryState / IndustryQueries at
+      call time via getHouseholdEnterprises /
+      getHouseholdEnterpriseSummaries.
+    - household-bootstrap.js verifies IndustryCommands.updateEnterprise
+      and IndustryQueries.getEnterpriseSummary as OPTIONAL. If
+      present, the full surface must be present (missing method
+      throws). If absent entirely, the dependency is recorded as
+      false.
+    - LOAD POSITION: industry can load BEFORE the household subsystem
+      (which is the canonical order given industry's own bootstrapping)
+      or AFTER. The household bootstrap's verification is at call
+      time, so the ordering is free provided the modules exist at
+      init() time.
+
+--------------------------------------------------------------------------------
+GROUP H1 — HOUSEHOLD CONSTANTS
+--------------------------------------------------------------------------------
+
+  js/households/household-constants.js
+
+  Notes:
+    - Load FIRST in the household block.
+    - Load-time dependency of household-rules.js,
+      household-economy.js, household-servant.js,
+      residence-system.js, household-bootstrap.js.
+
+--------------------------------------------------------------------------------
+GROUP H2 — HOUSEHOLD RULES, VIEW MODELS, ORCHESTRATION
+--------------------------------------------------------------------------------
+
+  js/households/household-rules.js
+    <- AFTER: js/households/household-constants.js
+
+  js/households/household-view-models.js
+    <- after: js/households/household-constants.js
+        (call-time only; module loads without it)
+
+  js/households/household-orchestration.js
+    <- AFTER: js/core/time.js
+        (getCurrentYearSafe OR getCurrentYear)
+
+  Notes:
+    - All three are leaf modules for the household block. Order among
+      them is unimportant. They must all load before any STATE, QUERIES,
+      or COMMANDS file.
+
+--------------------------------------------------------------------------------
+GROUP H3 — HOUSEHOLD STATE
+--------------------------------------------------------------------------------
+
+  js/households/household-state.js
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+    <- AFTER: js/core/accessors.js
+
+  Notes:
+    - HARD dependency of household-queries.js and
+      household-commands.js.
+    - Collision guard: refuses to load if window.HouseholdState was
+      already defined by another module (the historical js/core/
+      household-state.js shim must be deleted, not loaded alongside).
+
+--------------------------------------------------------------------------------
+GROUP H4 — HOUSEHOLD QUERIES, COMMANDS
+--------------------------------------------------------------------------------
+
+  js/households/household-queries.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/households/household-rules.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/character/family-queries.js
+
+  js/households/household-commands.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/households/household-rules.js
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/storage.js
+
+  Notes:
+    - Both are leaf modules for the household subsystem's core
+      mutation/query API. Order between them is unimportant.
+    - household-commands.js's optional ResidenceSystem and
+      IndustryCommands dependencies are resolved at CALL time via
+      _residenceSystemAvailable and _industryCommandsAvailable.
+
+--------------------------------------------------------------------------------
+GROUP H5 — HOUSEHOLD ECONOMY, ASSIGNMENT, SERVANT
+--------------------------------------------------------------------------------
+
+  js/households/household-economy.js
+    <- AFTER: js/households/household-constants.js
+    <- AFTER: js/households/household-rules.js
+    <- AFTER: js/households/household-commands.js
+    <- AFTER: js/households/household-queries.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/randomness.js
+    <- AFTER: js/core/accessors.js
+
+  js/households/household-assignment.js
+    <- AFTER: js/households/household-orchestration.js
+    <- AFTER: js/households/household-commands.js
+    <- AFTER: js/households/household-queries.js
+    <- AFTER: js/core/accessors.js
+    <- after: js/core/industry/industry-commands.js
+        (call-time — required only when enterprises exist)
+
+  js/households/household-servant.js
+    <- AFTER: js/households/household-constants.js
+    <- AFTER: js/households/household-rules.js
+    <- AFTER: js/households/household-orchestration.js
+    <- AFTER: js/households/household-commands.js
+    <- AFTER: js/households/household-queries.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/relationships/relationship-commands.js
+        (createRelationship / endRelationship / updateRelationship /
+         getRelationshipBetween / getRelationshipsForCharacter /
+         getRelationshipById)
+
+  Notes:
+    - Order among economy, assignment, servant is unimportant. Each is
+      a separate orchestrator; none requires the others.
+    - assignment and servant both call HouseholdOrchestration.finish.
+
+--------------------------------------------------------------------------------
+GROUP H6 — RESIDENCE SYSTEM
+--------------------------------------------------------------------------------
+
+  js/households/residence-system.js
+    <- AFTER: js/households/household-constants.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/storage.js
+    <- after: js/households/household-commands.js
+        (call-time via _householdCommandsAvailable)
+    <- after: js/households/household-queries.js
+        (call-time via _householdQueriesAvailable)
+
+  Notes:
+    - The load-time dependency on household-commands.js /
+      household-queries.js is NOT enforced. Call-time presence checks
+      let residence-system.js load in isolation, matching the
+      convention established by household-commands.js's own
+      _residenceSystemAvailable.
+    - Under the documented HTML load order, HouseholdCommands and
+      HouseholdQueries are ALREADY loaded by the time residence-system
+      parses. This file's call-time helpers resolve them successfully.
+
+--------------------------------------------------------------------------------
+GROUP H7 — HOUSEHOLD BOOTSTRAP
+--------------------------------------------------------------------------------
+
+  js/households/household-bootstrap.js
+    <- AFTER: every other household module from H1..H6
+    <- AFTER: js/core/storage.js
+    <- AFTER: initializeStorage()
+    <- AFTER: js/core/ids.js
+    <- AFTER: js/core/time.js
+    <- AFTER: js/core/accessors.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/icons.js
+    <- AFTER: js/core/ui.js
+    <- AFTER: js/core/modals-core.js
+    <- AFTER: js/core/industry/industry-commands.js
+        (optional but recommended)
+    <- AFTER: js/core/industry/industry-queries.js
+        (optional but recommended)
+    <- AFTER: js/character/character-commands.js
+    <- AFTER: js/character/character-queries.js
+    <- AFTER: js/relationships/relationship-commands.js
+        (createRelationship / endRelationship / updateRelationship /
+         getRelationshipBetween / getRelationshipsForCharacter /
+         getRelationshipById)
+
+  Auto-init: if masterData.data exists at load time, init() runs
+  inside a try/catch. The loader calls init() explicitly otherwise.
+
+  Idempotent: init() returns { success: true,
+  alreadyInitialized: true } on subsequent calls.
+
+--------------------------------------------------------------------------------
+GROUP H8 — HOUSEHOLD UI LIST, MODAL HELPER
+--------------------------------------------------------------------------------
+
+  js/households/modals-helper.js
+    <- AFTER: js/core/formatting.js
+    <- AFTER: js/core/ui.js
+
+  js/households/household-ui-list.js
+    <- AFTER: js/households/household-queries.js
+    <- AFTER: js/households/household-state.js
+    <- AFTER: js/core/accessors.js
+
+  Notes:
+    - modals-helper.js is HARD load-time dependency of every
+      modals-*.js in the household subsystem. Load it BEFORE any
+      modal.
+    - household-ui-list.js is independent of the modal stack.
+
+--------------------------------------------------------------------------------
+GROUP H9 — HOUSEHOLD MODALS
+--------------------------------------------------------------------------------
+
+  js/households/modals-household.js
+  js/households/modals-household-economy.js
+  js/households/modals-household-snapshot.js
+  js/households/modals-household-staff.js
+  js/households/modals-residence.js
+  js/households/modals-residence-owner.js
+  js/households/modals-residence-rental.js
+  js/households/modals-residence-staff.js
+
+  Notes:
+    - Order among modal files is unimportant, EXCEPT that
+      modals-residence.js MUST load before modals-residence-history.js
+      and modals-residence-vacancy.js (which are shims).
+      modals-household-staff.js MUST load before
+      modals-assign-staff.js (a shim).
+      modals-household-snapshot.js MUST load before
+      modals-residence-snapshot.js (a deprecated stub).
+    - modals-residence-staff.js and modals-household-staff.js both
+      consume the shared candidate-list helpers. Neither depends on
+      the other.
+    - modals-residence*.js and modals-household*.js do not depend on
+      each other; they can load in any order among themselves.
+
+--------------------------------------------------------------------------------
+GROUP H10 — SHIMS
+--------------------------------------------------------------------------------
+
+  js/households/modals-assign-staff.js
+  js/households/modals-residence-history.js
+  js/households/modals-residence-vacancy.js
+  js/households/modals-residence-snapshot.js
+
+  Notes:
+    - Each shim verifies its canonical owner loaded first. A missing
+      canonical owner is a hard throw (except the deprecated snapshot
+      stub, which warns).
+    - Under the documented load order (canonical modules already
+      loaded), these shims succeed. They do nothing except expose a
+      diagnostic namespace and (for the deprecated stub) log a warning.
+    - These should eventually be removed from index.html once external
+      callers are audited. Until then, keeping them is cheaper than a
+      full migration.
+
+--------------------------------------------------------------------------------
+GROUP H11 — APPLICATION BOOTSTRAP (function calls)
+--------------------------------------------------------------------------------
+
+  window.HouseholdBootstrap.init()          (if not auto-invoked)
+  household-ui-list.mountHouseholdList(containerId, onSelect, options)
+  modals-*.js — opened by user actions; no explicit init required
+
 
 ================================================================================
-COMMAND RESULT CONTRACT
+PART 6 — FLAT LOAD SEQUENCE
 ================================================================================
 
-Every command returns one of:
+  -- Group C1: core constants --
+  js/core/constants/constants.js
+  js/core/constants/age-constants.js
+  js/core/constants/character-constants.js
+  js/core/constants/character-traits.js
+  js/core/constants/location-constants.js
+  js/core/constants/relationship-constants.js
 
-  { success: true,  data: <any> }
-  { success: false, code: 'SOME_CODE', reason: 'human-readable message' }
+  -- Group C2: core utilities --
+  js/core/formatting.js
+  js/core/icons.js
+  js/core/collections.js
+  js/core/ids.js
+  js/core/randomness.js
 
-Some commands add:
-  partial: true      when some but not all sub-operations succeeded
-  reverseIndexFailed: true    when a reverse-index update failed
-  roleWarning: {...}          when a required role was missing but the
-                              caller opted out of auto-adding
-  industryAvailable: false    when industry transfer couldn't run
-  householdPersisted / relationshipPersisted    on orchestrator
-                                                 cross-domain results
+  -- Group C3: core time --
+  js/core/time.js
 
-Common codes:
-  INVALID_INPUT, INVALID_NAME, INVALID_YEAR, INVALID_TYPE, INVALID_WAGE,
-  NOT_FOUND, ALREADY_MEMBER, NOT_MEMBER, CHARACTER_NOT_FOUND,
-  HOUSEHOLD_NOT_FOUND, POSITION_NOT_FOUND, ASSIGNMENT_NOT_FOUND,
-  RESIDENCE_NOT_FOUND, DUPLICATE_NAME, ALREADY_ASSIGNED, ALREADY_ENDED,
-  INVALID_YEAR_RANGE, OCCUPIED_UNITS, NO_VACANT_UNIT, NO_OWNER, NO_RENTER,
-  INSUFFICIENT_WEALTH, INSUFFICIENT_FOOD, INSUFFICIENT_GOODS,
-  DEMOLISHED, CANNOT_DELETE_LAST, SAME_NAME, SAME_CONDITION,
-  INDUSTRY_COMMANDS_UNAVAILABLE, ROLE_ADD_FAILED,
-  RELATIONSHIP_PERSIST_FAILED, PERSIST_FAILED, SAVE_FAILED
+  -- Group C4: core storage --
+  js/core/storage-schema.js
+  js/core/storage.js
+  initializeStorage()                          (function call)
+  js/core/accessors.js
 
-CROSS-DOMAIN CLEANUP RESULT SHAPE:
+  -- Group C5: core UI primitives --
+  js/core/ui.js
+  js/core/modals-core.js
+  js/core/ui/collapsible.js
+  js/core/responsive.js
+  js/core/tab-manager.js
+  js/core/exportUtils.js
 
-  Commands that emit a cross-domain sweep (removeCharacterReferences,
-  clearLocationReferences, and any future sweep hook) nest their
-  counts and affected-records list under `data`:
+  -- Group C6: character prerequisites --
+  js/character/character-state.js
+  js/character/character-commands.js
+  js/character/character-queries.js
+  js/character/family-queries.js
+  js/character/family-commands.js
 
-    {
-      success: true,
-      data: {
-        clearedCount: number,
-        households: Array<{ householdId, householdName, ... }>,
-        // or
-        removedCount: number,
-        households: Array<{ householdId, householdName, ... }>
-      }
-    }
+  -- Group C7: relationship prerequisites --
+  js/relationships/relationship-types.js
+  js/relationships/relationship-state.js
+  js/relationships/relationship-queries.js
+  js/relationships/relationship-commands.js
+  js/relationships/professional-commands.js
 
-  This matches the _ok convention used by the rest of the module.
-  Callers that need the count read `result.data.clearedCount` (not
-  `result.clearedCount`). Prior revisions returned the count at the
-  top level; location-commands.js's deletePlace cleanup report
-  silently reported 0 for every successful sweep as a result.
+  -- Group C8: industry prerequisites (optional here; required for
+                the industry integration paths) --
+  js/core/industry/industry-constants.js
+  js/core/industry/industry-economics.js
+  js/core/industry/industry-rules.js
+  js/core/industry/industry-state.js
+  js/core/industry/industry-types.js
+  js/core/industry/industry-type-init.js
+  js/core/industry/industry-type-defaults.js
+  js/core/industry/industry-migration.js
+  js/core/industry/industry-type-commands.js
+  js/core/industry/industry-commands.js
+  js/core/industry/industry-queries.js
+  js/core/industry/industry-processor.js
+  js/core/industry/industry-view-models.js
+  js/core/industry/industry-bootstrap.js
 
-Bulk operations:
-  { success: true, data: { succeeded: [...], failed: [...],
-                           warnings: [...] } }
-  with explicit per-item failure reasons.
+  -- Group H1: household constants --
+  js/households/household-constants.js
 
-================================================================================
-STORAGE SCHEMA (cross-reference)
-================================================================================
+  -- Group H2: household rules, view models, orchestration --
+  js/households/household-rules.js
+  js/households/household-view-models.js
+  js/households/household-orchestration.js
 
-The household domain's canonical collections live in masterData.data:
+  -- Group H3: household state --
+  js/households/household-state.js
 
-  households              array   (household records)
-  householdPositions      array   (staff position records)
-  householdAssignments    array   (staff assignment records)
+  -- Group H4: household queries, commands --
+  js/households/household-queries.js
+  js/households/household-commands.js
 
-All three are declared in storage-schema.js's factory
-(createDefaultMasterDataOverride) and in the normalization pass
-(normalizeMasterData's arrayKeys list). Prior to v6.1, only
-`households` was declared. See STORAGE SCHEMA in storage-schema.js
-and the character-doc.txt §4.3 for the full envelope shape.
+  -- Group H5: household economy, assignment, servant --
+  js/households/household-economy.js
+  js/households/household-assignment.js
+  js/households/household-servant.js
 
-Per-record sub-fields (enterprises, eventLog, nameHistory, units,
-history, timeline, etc.) are normalized by the respective state
-modules at hydrate time (household-state.js::_ensureHouseholdShape,
-residence-system.js::_ensureResidenceShape), not by storage-schema.js.
-This is consistent with how the character domain handles embedded
-domain containers.
+  -- Group H6: residence system --
+  js/households/residence-system.js
 
-================================================================================
-LOAD ORDER (index.html)
-================================================================================
+  -- Group H7: household bootstrap --
+  js/households/household-bootstrap.js
 
-The following order MUST be respected:
+  -- Group H8: household UI list, modal helper --
+  js/households/modals-helper.js
+  js/households/household-ui-list.js
 
-  <!-- Core -->
-  constants.js, randomness.js, collections.js, validation.js
-  formatting.js, ids.js, names.js, time.js, state.js, storage.js
-  accessors.js, query-helpers.js
-  icons.js, ui.js, collapsible.js, responsive.js, integrity.js
-  exportUtils.js, world.js, modals-core.js
+  -- Group H9: household modals --
+  js/households/modals-household.js
+  js/households/modals-household-economy.js
+  js/households/modals-household-snapshot.js
+  js/households/modals-household-staff.js
+  js/households/modals-residence.js
+  js/households/modals-residence-owner.js
+  js/households/modals-residence-rental.js
+  js/households/modals-residence-staff.js
 
-  NOTE: family-accessors.js is DELETED. query-helpers.js now loads
-        after accessors.js and time.js (it depends on FamilyQueries
-        at call time but not at load time, and family-queries.js is
-        further down).
+  -- Group H10: compatibility shims --
+  js/households/modals-assign-staff.js
+  js/households/modals-residence-history.js
+  js/households/modals-residence-vacancy.js
+  js/households/modals-residence-snapshot.js
 
-  <!-- Selectors -->
-  selector-base.js, locationDropdown.js,
-  modals-char-selector.js, modals-household-selector.js
+  -- Application bootstrap (function calls) --
+  window.HouseholdBootstrap.init()             (if not auto-invoked)
 
-  <!-- Role System -->
-  role-constants.js, role-state.js, role-queries.js, role-commands.js,
-  role-system.js, skill-utils.js, role-ui-list.js,
-  modals-role-select.js, modals-roles.js
-
-  <!-- Character System -->
-  character-constants.js, character-state.js, character-queries.js,
-  character-commands.js, character-factory.js,
-  character-creation-commands.js, character-deletion-commands.js,
-  character-generator.js, character-lifecycle.js,
-  character-ui-list.js, modals-character.js, modals-death.js
-
-  <!-- Family System (character-owned but separate module group) -->
-  family-rules.js, family-state.js, family-queries.js,
-  family-commands.js, family-statistics.js
-
-  <!-- Children/Pregnancy -->
-  children-state.js, children-queries.js, children-commands.js,
-  children-generator.js, children-statistics.js,
-  modals-children-adoption.js, modals-children-birth.js,
-  modals-children-surrogacy.js
-
-  <!-- Mortality -->
-  mortality-rules.js, mortality-queries.js, mortality-statistics.js
-
-  <!-- Character compatibility shim -->
-  character-system.js   ← loads LAST among character scripts
-
-  <!-- Location System -->
-  location-state.js, location-hierarchy.js, location-queries.js,
-  location-commands.js, location-movement.js, location-ui-list.js,
-  modals-location.js, modals-moves.js
-
-  <!-- Religion, Culture, Settlement -->
-  ... (unchanged)
-
-  <!-- Government -->
-  ... (unchanged)
-
-  <!-- Industry -->
-  ... (unchanged)
-
-  <!-- HOUSEHOLD SYSTEM - CORE -->
-  household-constants.js
-  household-rules.js
-  household-view-models.js
-  household-orchestration.js
-  household-state.js
-  household-queries.js
-  household-commands.js
-  household-economy.js
-  household-assignment.js
-  household-servant.js
-  residence-system.js
-
-  <!-- HOUSEHOLD SYSTEM - BOOTSTRAP -->
-  household-bootstrap.js
-
-  <!-- HOUSEHOLD SYSTEM - UI -->
-  household-modals-helper.js    ← modals-helper.js (shared UI helpers)
-  household-ui-list.js
-  modals-household.js
-  modals-household-economy.js
-  modals-household-snapshot.js
-  modals-household-staff.js
-  modals-residence.js
-  modals-residence-owner.js
-  modals-residence-rental.js
-  modals-residence-staff.js
-
-  NOTE: modals-assign-staff.js, modals-residence-history.js,
-        modals-residence-snapshot.js, modals-residence-vacancy.js
-        are DELETED (their functionality is consolidated into the
-        canonical files above).
-
-  <!-- Name System, Mortality, Crime, Ranks, Relationships, Events,
-       Apprenticeship, Education, Disaster, Tabs -->
-  ... (unchanged)
-
-LOAD-ORDER NOTES FOR OPTIONAL DEPENDENCIES:
-
-  household-commands.js loads BEFORE residence-system.js and BEFORE
-  industry-commands.js. Its optional-dependency checks therefore MUST
-  be call-time, not load-time. A load-time check freezes to false and
-  every optional-dependency-using command fails with a "not loaded"
-  error even though the module is loaded by command time. See
-  household-commands.js's CROSS-DOMAIN PRESENCE CHECKS section and
-  KEY DESIGN PRINCIPLES #9.
-
-  residence-system.js loads BEFORE household-bootstrap.js.
-  household-bootstrap.js::_verifyHouseholdModules therefore verifies
-  ResidenceSystem's surface successfully. No issue.
-
-  household-commands.js loads BEFORE household-bootstrap.js.
-  household-bootstrap.js's _verifyCommandsSurface verifies the full
-  command surface. No issue.
 
 ================================================================================
-FILES REMOVED OR CONSOLIDATED (v5.0 → v6.1)
+PART 7 — LOAD-ORDER INVARIANTS
 ================================================================================
 
-DELETED:
-  js/core/family-accessors.js               (parentage now lives in
-                                             family-* modules; no
-                                             FamilyAccessors shim
-                                             exists)
-  js/households/modals-assign-staff.js      (canonical is
-                                             modals-household-staff.js)
-  js/households/modals-residence-history.js (canonical is
-                                             modals-residence.js)
-  js/households/modals-residence-snapshot.js(deprecated stub)
-  js/households/modals-residence-vacancy.js (canonical is
-                                             modals-residence.js)
+Each invariant names the failure mode it prevents.
 
-NEW:
-  js/households/household-orchestration.js  (shared result/dispatch/
-                                             finish helpers)
-  js/households/modals-helper.js            (shared DOM scoping +
-                                             toast + persist wrappers;
-                                             exposed as
-                                             window.HouseholdModals)
+ 1.  household-constants.js before household-rules.js.
+     Failure without it: household-rules.js throws at load
+     ("household-constants.js must load first").
 
-RECLASSIFIED:
-  js/households/household-view-models.js    (promoted from "already
-                                             done" to "needs doing";
-                                             the file existed but was
-                                             bypassed by five call
-                                             sites that had their
-                                             own duplicated helpers)
+ 2.  household-constants.js before household-economy.js.
+     Failure without it: household-economy.js throws at load
+     ("HouseholdConstants.THRESHOLDS is missing").
+
+ 3.  household-constants.js before household-servant.js.
+     Failure without it: household-servant.js throws at load
+     ("HouseholdConstants.SERVICE_TYPES or SERVICE_QUALITY_ORDER is
+     missing").
+
+ 4.  household-constants.js before residence-system.js.
+     Failure without it: residence-system.js throws at load naming
+     the missing catalog.
+
+ 5.  household-constants.js before household-bootstrap.js (at init
+     time).
+     Failure without it: init() throws with
+     "HouseholdConstants.ECONOMIC_TIERS is required" or
+     "HouseholdConstants.SERVICE_QUALITY_ORDER is required" or
+     "HouseholdConstants.getEconomicEventDelta is required".
+
+ 6.  household-orchestration.js before household-assignment.js and
+     household-servant.js.
+     Failure without it: both throw at load naming the missing method
+     (ok, fail, resolveYear, dispatch, finish, hasId).
+
+ 7.  household-state.js before household-queries.js,
+     household-commands.js, household-bootstrap.js.
+     Failure without it: each throws at load
+     ("HouseholdState is required").
+
+ 8.  household-queries.js before household-commands.js,
+     household-economy.js, household-assignment.js,
+     household-servant.js, household-bootstrap.js.
+     Failure without it: each throws at load naming the missing
+     queries method.
+
+ 9.  household-commands.js before household-economy.js,
+     household-assignment.js, household-servant.js,
+     household-bootstrap.js.
+     Failure without it: each throws at load naming the missing
+     command method.
+
+10.  household-rules.js before household-queries.js and
+     household-commands.js.
+     Failure without it: each throws at load naming
+     pickSuccessor / applyHeadChange / isHouseholdVacant or
+     calculateHouseholdStatus / calculateDemographics /
+     filterEligibleHeirs.
+
+11.  character-commands.js's updateCharacterFields before
+     household-commands.js.
+     Failure without it: household-commands.js throws at load
+     ("CharacterCommands.updateCharacterFields is required").
+
+12.  character-queries.js's getCharacterById before
+     household-queries.js, household-economy.js,
+     household-assignment.js, household-servant.js,
+     residence-system.js.
+     Failure without it: each throws at load
+     ("getCharacterById is required").
+
+13.  family-queries.js's five methods before household-queries.js.
+     Failure without it: household-queries.js throws at load naming
+     the missing FamilyQueries method.
+
+14.  relationship-commands.js's six functions before
+     household-servant.js.
+     Failure without it: household-servant.js throws at load naming
+     the missing relationship function.
+
+15.  js/core/time.js's getCurrentYear before household-commands.js,
+     household-economy.js, household-queries.js,
+     residence-system.js.
+     Failure without it: each throws at load.
+
+16.  js/core/time.js's getCurrentYearSafe OR getCurrentYear before
+     household-orchestration.js and modals-helper.js.
+     Failure without either: each throws at load naming both.
+     This is the P3-1 migration mechanism: deleting the deprecated
+     getCurrentYearSafe alias from time.js is survivable because
+     both files fall back to the canonical getCurrentYear.
+
+17.  js/core/ids.js's generateId before household-commands.js and
+     residence-system.js.
+     Failure without it: each throws at load.
+
+18.  js/core/storage.js's saveMasterData before household-commands.js
+     and residence-system.js.
+     Failure without it: each throws at load.
+
+19.  js/core/randomness.js's random before household-economy.js.
+     Failure without it: household-economy.js throws at load.
+
+20.  js/core/accessors.js's getPlaceById before residence-system.js
+     and household-ui-list.js.
+     Failure without it: residence-system.js throws at load
+     ("getPlaceById is required"). household-ui-list.js throws at
+     load ("getPlaceById is required").
+
+21.  js/core/formatting.js's escapeHtml before modals-helper.js.
+     Failure without it: modals-helper.js throws at load.
+
+22.  js/core/ui.js's showToast OR _showToast before modals-helper.js.
+     Failure without it: modals-helper.js throws at load.
+
+23.  js/core/modals-core.js's openModal and closeTopModal before
+     every modals-*.js in the household subsystem.
+     Failure without either: the modal file throws at load.
+
+24.  js/households/modals-helper.js before every
+     js/households/modals-*.js (except the four shims and the
+     deprecated stub).
+     Failure without it: each modal throws at load
+     ("HouseholdModals is required").
+
+25.  js/households/modals-household-staff.js before
+     js/households/modals-assign-staff.js (shim).
+     Failure without it: modals-assign-staff.js throws at load.
+
+26.  js/households/modals-residence.js before
+     js/households/modals-residence-history.js and
+     js/households/modals-residence-vacancy.js (shims).
+     Failure without it: each shim throws at load.
+
+27.  js/households/modals-household-snapshot.js before
+     js/households/modals-residence-snapshot.js (deprecated stub).
+     Failure without it: the stub throws at load (it is the whole
+     point of the stub — verify the canonical module loaded first).
+
+28.  Every module in Groups H1..H6 before household-bootstrap.js
+     (at init time).
+     Failure without any: init() throws with a structured message
+     listing every missing module, method, or global.
+
+29.  Every cross-domain prerequisite (character, relationship,
+     industry — the latter OPTIONAL) before household-bootstrap.js
+     (at init time).
+     Failure without character or relationship: init() throws.
+     Failure without industry: init() succeeds; the dependency is
+     recorded as false in Household.dependencies.
+
+30.  initializeStorage() before every household file that touches
+     masterData at first use.
+     Failure without it: household-state.js throws at first
+     hydrate. household-economy.js throws at first calculation.
+
+31.  The IndustryCommands.updateEnterprise and
+     IndustryQueries.getEnterpriseSummary surfaces, WHEN PRESENT at
+     bootstrap verification, must be COMPLETE.
+     A present-but-incomplete surface is a hard throw from
+     _checkOptionalModule. Absent-entirely is a warn (records the
+     dependency as false).
+
+32.  modals-residence-staff.js and modals-household-staff.js both
+     consume HouseholdModals.renderStaffCandidates /
+     wireStaffCandidateSelection / buildRecentAssignmentHistory /
+     buildRoleOptions / getRoleById / getAllRoles.
+     These live in modals-helper.js, which is loaded before both.
+     Neither staff modal depends on the other; order between them is
+     unimportant.
+
+33.  THE HOUSEHOLD ↔ INDUSTRY HANDSHAKE:
+       - IndustryCommands.addEnterpriseToHousehold and
+         removeEnterpriseFromHousehold MUST exist before any
+         household-side enterprise reverse-index write is attempted
+         from industry. Failure without them surfaces as a hard
+         throw at industry-bootstrap.init() time.
+       - household.enterprises[] is written ONLY via
+         HouseholdCommands.addEnterpriseToHousehold /
+         removeEnterpriseFromHousehold / setHouseholdEnterprises.
+         Industry NEVER writes the array directly.
+       - enterprise.ownerType / ownerId is written ONLY via
+         IndustryCommands.updateEnterprise. Household NEVER writes
+         those fields.
+       - household.wealth is written ONLY via
+         HouseholdCommands.updateHousehold. Industry calls that
+         method; it does not reach into the record.
+
+34.  THE ACCESSOR CACHE CONTRACT:
+       Every mutation boundary that changes a canonical record
+       cached by accessors.js MUST call
+       window.invalidateAccessorCaches(). For the household domain:
+         household-commands.js::_commit does this
+         residence-system.js::_commit does this
+       Failure without it: getHouseholdById / getPlaceById return
+       stale data. For the specific case of industry-queries
+       resolving a household owner name, the stale name persisted
+       after a household rename. This was fixed in the current
+       revision by adding the call to _commit.
+       household-state.js does NOT invalidate the cache (it does not
+       cache; no household accessor exists). If a future revision
+       adds a household accessor to accessors.js, household-state.js
+       MUST gain the call in its _sync path.
+
+35.  THE STATE.HOUSEHOLDSTATE COLLISION GUARD:
+       js/core/household-state.js (the historical UI shim) MUST be
+       deleted, not loaded alongside js/households/household-state.js.
+       The collision guard throws if both are loaded. The facade
+       compatibility surface (selectedHouseholdId,
+       setSelectedHousehold, hasSelectedHousehold, reset) is provided
+       by js/households/household-state.js directly.
+
+36.  THE HOUSEHOLDSTATE._INTERNAL CONTRACT:
+       The following methods must be present when
+       household-commands.js, household-queries.js, or
+       household-bootstrap.js loads:
+         getHouseholdRecord, getAllHouseholdRecords,
+         replaceHouseholds
+         getPositionRecord, getAllPositionRecords,
+         replaceHouseholdPositions
+         getAssignmentRecord, getAllAssignmentRecords,
+         replaceHouseholdAssignments
+       Failure without any: the consuming module throws at load.
+
+37.  THE RESIDENCE↔HOUSEHOLD HANDSHAKE (PRECEDES THE INDUSTRY
+     HANDSHAKE IN PRACTICE):
+       ResidenceSystem.assignHouseholdToUnit calls
+       HouseholdCommands.associateWithResidence.
+       ResidenceSystem.markUnitVacant / markResidenceVacant /
+       demolishResidence / deleteResidence (force path) call
+       HouseholdCommands.disassociateFromResidence.
+       HouseholdCommands.deleteHousehold calls
+       ResidenceSystem.markUnitVacant / markResidenceVacant.
+       BOTH directions are guarded by call-time presence checks
+       (_residenceSystemAvailable / _householdCommandsAvailable).
+       A loop is impossible because the reverse-index updates do
+       NOT trigger reverse-direction writes.
+
+38.  THE PERSISTENCE BOUNDARY:
+       One persist() call per batch. No file may call
+       saveMasterData except:
+         household-commands.js::persist
+         residence-system.js::persist
+         industry-commands.js::persist         (industry's own)
+         industry-type-commands.js::persist    (industry's own)
+       No file may call another domain's persist() after its own
+       batch. The residence commands leave household state dirty; one
+       ResidenceSystem.persist() flushes BOTH. Calling
+       HouseholdCommands.persist() after a residence operation
+       produces a redundant second save with nothing new to write.
+
 
 ================================================================================
-KEY BUGS FIXED (v5.0 → v6.1)
+PART 8 — KNOWN HAZARDS
 ================================================================================
 
-1. Triple economic catalog
-   ECONOMIC_TIERS / INCOME_SOURCES / EXPENSE_CATEGORIES /
-   ECONOMIC_EVENTS existed in household-constants.js,
-   household-economy.js, and household-rules.js. Now: one copy in
-   household-constants.js.
+  1.  HOUSEHOLD-DOC.TXT AND THE CURRENT CODE DIVERGE ON ONE FACT:
+      household-doc.txt §1 Ownership Contract claims
+      "household.enterprises[] is the only household-owned field
+      industry mutates." That is FALSE: industry also writes
+      household.wealth via HouseholdCommands.updateHousehold during
+      annual processing. The code and the industry-bootstrap.js header
+      are authoritative. household-doc.txt should be updated to reflect
+      the two-fact contract (enterprises[] reverse index + wealth).
 
-2. SERVICE_TYPES window binding collision
-   household-servant.js unconditionally overwrote window.SERVICE_TYPES
-   with a mutable copy of its own catalog, silently disabling the
-   frozen guarantee. Now: guarded aliases.
+  2.  GETCURRENTYEARSAFE IS THE DEPRECATED ALIAS.
+      The household subsystem still uses getCurrentYearSafe in:
+        household-orchestration.js (via _resolveNowYear, with fallback
+                                    to getCurrentYear)
+        household-economy.js (via _getCurrentYearSafe)
+        modals-helper.js (via currentYear)
+        household-bootstrap.js (verification)
+      time.js marks the alias as @deprecated and plans to remove it.
+      When it is removed:
+        - household-orchestration.js silently falls back to
+          getCurrentYear (the fallback is built in).
+        - household-economy.js throws at load (no fallback in place).
+        - modals-helper.js throws at load (no fallback in place).
+        - household-bootstrap.js throws at init (the global is
+          required).
+      Fixing the last three requires:
+        - household-economy.js: rename _getCurrentYearSafe's
+          binding to prefer getCurrentYear, fall back to
+          getCurrentYearSafe.
+        - modals-helper.js: same fallback in currentYear.
+        - household-bootstrap.js: replace the required-global check
+          with "getCurrentYearSafe OR getCurrentYear".
 
-3. Math.random in economy and constants
-   ECONOMIC_EVENTS.*.delta() used Math.random(). Now: the catalog
-   carries minDelta/maxDelta; getEconomicEventDelta(eventId, randomFn)
-   takes a caller-supplied RNG.
+  3.  INDUSTRYSTATE IS NOT A DEPENDENCY OF HOUSEHOLD-STATE DIAGNOSTICS.
+      household-state.js::_checkEnterpriseReverseIndex reads
+      masterData.data.enterprises directly, not via IndustryState.
+      This is intentional: the diagnostics must work on a
+      household-only page. But it means the household diagnostics
+      cannot validate enterprise-side integrity (e.g. enterprise
+      referencing a deleted household in masterData.data.households).
+      For that check, use IndustryState.validateIntegrity (which
+      requires the industry domain to be loaded). The two checks are
+      complementary.
 
-4. Double-commit in _applyMutation
-   household-economy.js called updateHousehold(id, {}) as a "touch"
-   commit AND then published a domain-specific event. Now: it builds
-   a real patch and calls updateHousehold(householdId, patch) once.
+  4.  RESIDENCE SYSTEM HAS NO DEPENDENCY ON HOUSEHOLD COMMANDS AT LOAD.
+      Both files guard the OTHER direction at call time via
+      presence helpers. This means residence-system.js can load
+      without household-commands.js and vice versa. The bootstrap
+      then verifies both are present at init. A caller that loads
+      residence-system.js WITHOUT household-commands.js will find
+      that assignHouseholdToUnit returns
+      HOUSEHOLD_COMMANDS_UNAVAILABLE. A caller that loads
+      household-commands.js WITHOUT residence-system.js will find
+      that deleteHousehold returns
+      RESIDENCE_SYSTEM_UNAVAILABLE when the household has a
+      residenceId. This is by design; neither file is a hard
+      dependency of the other at load.
 
-5. Multi-year simulation clock drift
-   CharacterLifecycle.advanceMortality iterated currentYear + offset
-   but never advanced masterData.currentYear, so a second call replayed
-   the same years. HouseholdEconomy.processAnnualEconomy used
-   getCurrentYearSafe() internally, so every year's ledger landed on
-   the wall-clock year. Both now accept explicit years.
+  5.  THE RETRY IDEMPOTENCY PATTERN IS SPECIFIC TO MODALS-HOUSEHOLD.JS.
+      Only the create and edit household modals carry a
+      mutation-succeeded flag. modals-household-snapshot.js's
+      delete-name-period keeps the modal open on persist failure, but
+      does NOT carry a retry flag. A retry of delete-name-period
+      re-runs deleteNamePeriod on a NEW period (whatever lands at
+      the same index after the first splice). This is a separate
+      known issue — see the modals-household.js header.
 
-6. Silent reverse-index corruption
-   Reverse-index failures were reported as reverseIndexWarning but
-   universally ignored. Now: hard reverseIndexFailed field,
-   damageHistory audit entry, and household-state diagnostics that
-   surface drift through householdsWithMissingResidence and
-   residencesWithOrphanHouseholdOccupancy.
+  6.  DELETE HOUSEHOLD USES CONFIRMDIALOG AND CANNOT KEEP ITSELF
+      OPEN.
+      modals-household.js's openDeleteHouseholdModal uses
+      confirmDialog. If the confirm click's command succeeds but the
+      persist fails, the modal is already closed and cannot be
+      reopened by the same onConfirm. The mutation is in memory; the
+      persist failure is toasted. This is documented as a known
+      limitation of the confirm-dialog shape.
 
-7. Cadet branch head dangling membership
-   HouseholdAssignment.createCadetBranch added the head to the new
-   household via createHousehold(headId), then skipped the head in
-   the transfer loop, leaving the head as a member of BOTH the parent
-   and the new household. Now: the head is explicitly removed from
-   the parent before transferring the rest.
+  7.  CADET BRANCH ROLLBACK:
+      createCadetBranch explicitly removes the head from the parent,
+      then transfers the remaining members. If the head-removal fails,
+      the new household is rolled back (deleteHousehold(
+      removeFromCharacters: true)). If the ROLLBACK fails (e.g. the
+      new household was already written to masterData and its
+      deletion fails), the result carries
+      {newHouseholdId: null, parentHouseholdId} and the head is
+      duplicated. The rollback error is logged via console.error.
 
-8. setHead double-commit
-   household-commands.js setHead called addMember for non-member
-   characters, producing two commits (one for the add, one for the
-   head change) and two different events. Now: single commit, event
-   householdHeadSet, addedInline flag in the result.
+  8.  SPLIT HOUSEHOLD CARRIES THE SAME ROLLBACK HAZARD AS CADET
+      BRANCH.
+      splitHousehold applies the same head-removal pattern. The
+      rollback path is the same.
 
-9. Service relationship persistence gap
-   household-servant.js persisted only the household system; service-
-   relationship writes were left in the relationship domain's memory.
-   Now: _finish persists both, reports both save outcomes.
+  9.  ENTERPRISE TRANSFER IN MERGE / SPLIT / CADET IS
+      PARTIAL-TOLERANT.
+      mergeHouseholds, splitHousehold, and createCadetBranch report
+      enterpriseFailed: true, partial: true when the enterprise side
+      of the transfer fails. They do NOT roll back the household-side
+      changes (member transfers are legitimate and standalone). This
+      is documented in household-assignment.js's header.
 
-10. Dead parentage reads in query-helpers.js
-    getCharacterParents / getCharacterChildren / getCharacterHasChildren
-    read char.motherId / char.fatherId — dead fields. Every call
-    returned null/false on any post-refactor dataset. Now: delegated to
-    FamilyQueries.
+ 10.  HOUSEHOLD BUDGET DEFAULT UNIT COUNT:
+      residence-system.js::createResidence computes a default
+      unitCount from the residence type's capacity:
+        Math.min(10, Math.max(1, Math.floor(type.capacity / 3)))
+      This value comes from THRESHOLDS.DEFAULT_UNIT_COUNT_DIVISOR
+      (divided by 3) and MAX_DEFAULT_UNIT_COUNT (min 10). The inline
+      math here hard-codes 3 and 10 rather than reading the constants.
+      A future change to those thresholds would not take effect unless
+      the inline math is also updated. This is a known duplication; the
+      canonical home is HouseholdConstants.THRESHOLDS.
 
-11. Dead relationship reads in selector-base.js
-    isBloodRelativeBasic / isSpouseBasic read char.motherId /
-    char.fatherId / char.relationships. Every call returned false.
-    Now: delegated to FamilyQueries.isBloodRelated and
-    getRelationshipBetween.
+ 11.  MODALS-HELPER.JS'S currentYear PREFERS THE DEPRECATED ALIAS.
+      If time.js eventually deletes getCurrentYearSafe, this helper
+      returns null. See HAZARD 2 for the migration.
 
-12. FamilyAccessors references in modals-household-selector.js
-    The picker resolved "current household" and "relatives in this
-    household" via the deleted FamilyAccessors module. Now: reads
-    HouseholdQueries and FamilyQueries directly.
+ 12.  REVERSE-INDEX FAILURE POLICY IS HARD-BUT-NOT-ROLLED-BACK.
+      When residence commands disassociate a household from a unit
+      and the reverse-index update fails, the canonical unit
+      occupancy is STILL cleared. The household's residenceId may
+      remain stale. The failure is recorded in damageHistory and
+      surfaced as reverseIndexFailed: true on the result. The
+      corresponding integrity diagnostic (household-state's
+      householdsWithMissingResidence) reports the drift. There is no
+      automatic repair; a repair tool must walk the damageHistory
+      entries.
 
-13. Magic-depth caps in location hierarchy walkers
-    locationDropdown.js and query-helpers.js capped hierarchy walk
-    at 20 iterations, contradicting world.js's Set-based cycle
-    detection. Now: both use Set-based cycle detection.
+ 13.  HOUSEHOLD REFERENCES CLEANUP IS IDEMPOTENT BUT NOT
+      TRANSACTIONAL.
+      removeCharacterReferences and clearLocationReferences emit ONE
+      commit for the whole sweep. If a later household's mutation
+      throws mid-sweep, the earlier mutations are already in memory.
+      The results reflect that (removedCount / clearedCount reflect
+      the mutations that actually happened). Callers must check the
+      result, not assume all-or-nothing.
 
-14. getLocationCountry / getLocationDistrict used priority
-    Both read locationType.priority (legacy schema) instead of
-    locationType.locationScope (current schema). Now: prefer scope,
-    fall back to priority only when scope is undefined (legacy).
+ 14.  THE HOUSEHOLD ↔ RESIDENCE REVERSE-INDEX CROSS-CHECK IS
+      ONE-DIRECTIONAL AT EACH SIDE.
+      household-state.js walks households -> enterprises and
+      households -> residences (via residenceId). residence-system.js
+      does NOT walk residences -> households (unit occupancy is
+      canonical, and the walk is done by household-state's
+      residencesWithOrphanHouseholdOccupancy check). The household-side
+      check catches: dangling household.residenceId, and orphan unit
+      occupancy. The combined checks cover both directions. Do not
+      remove one without adding a symmetric check elsewhere.
 
-15. AGE_GROUPS_MAP phantom in query-helpers.js
-    getAgeGroupLabel read window.AGE_GROUPS_MAP, which doesn't exist
-    in the current tree. Every call fell through to the raw band-key
-    string. Now: walks LIFE_STAGES for a matching group when the map
-    is absent.
+ 15.  HOUSEHOLD.STATE AND HOUSEHOLDCOMMANDS BOTH HAVE _COMMIT-NAME
+      PRIMITIVES.
+      household-commands.js::_commit marks dirty, invalidates
+      accessor cache, and dispatches events. household-state.js's
+      mutation primitives (replaceHouseholds etc.) markDirty but do
+      NOT dispatch events. The calling command's _commit is the
+      dispatch boundary. This is the contract; do not add dispatch
+      to household-state's primitives.
 
-16. Residence inline catalog duplication (v6.1)
-    residence-system.js carried inline copies of RESIDENCE_TYPES,
-    RESIDENCE_STATUS, RENTAL_STATUS, RESIDENCE_CONDITIONS,
-    CONDITION_MULTIPLIER, and the history-cap thresholds. The copies
-    were byte-identical to household-constants.js at every revision
-    they existed, but the divergence risk was real: a policy change
-    in constants.js would silently not take effect in
-    residence-system.js, so a consumer reading the constants catalog
-    and a consumer reading ResidenceSystem's copies would see different
-    values. Now: household-constants.js is a HARD load-time dependency
-    of residence-system.js, every catalog read goes through it, and
-    the inline copies are gone.
+ 16.  THE HOUSEHOLD UI LIST USES LOCALSTORAGE FOR PREFERENCES.
+      Key 'household_list_state_v6'. Preferences are validated
+      against VALID_STATUS_FILTERS on read. A malformed status filter
+      falls back to 'all'. If localStorage throws (quota,
+      private-browsing mode), the preferences silently become
+      in-memory only. There is no isPersistent() reporting for this
+      component; callers that need to know can check whether
+      localStorage is writable independently.
 
-17. Storage schema household collections (v6.1)
-    storage-schema.js declared `households` but not
-    `householdPositions` or `householdAssignments`. household-bootstrap.js
-    requires all three to be arrays. Every fresh install and every
-    save that predated the household subdomain failed bootstrap with
-    "householdPositions must be an array". Now: all three declared in
-    the factory and in the normalization pass.
+ 17.  MODALS-RESIDENCE-SNAPSHOT.JS IS A DEPRECATED STUB.
+      It defines NO functions. It verifies modals-household-snapshot.js
+      loaded. Loading it AFTER that file produces a console.warn in
+      every build. The script tag should be removed from index.html.
+      Until it is, the warning is the intended behavior.
 
-18. Load-time optional dependency flags (v6.1)
-    household-commands.js froze _residenceSystemPresent and
-    _industryCommandsPresent at load time. Under the documented HTML
-    order, residence-system.js loads AFTER household-commands.js, so
-    the flag froze to false. Every deleteHousehold call that touched a
-    residence returned RESIDENCE_SYSTEM_UNAVAILABLE. Now: both are
-    call-time helpers (_residenceSystemAvailable,
-    _industryCommandsAvailable). See KEY DESIGN PRINCIPLES #9.
+ 18.  MODALS-ASSIGN-STAFF.JS, MODALS-RESIDENCE-HISTORY.JS, AND
+      MODALS-RESIDENCE-VACANCY.JS ARE COMPATIBILITY SHIMS.
+      Each verifies its canonical owner loaded first, then does
+      nothing but expose a diagnostic namespace. They should be
+      deleted from index.html once external callers are audited.
 
-19. Cross-domain cleanup result shape divergence (v6.1)
-    location-commands.js::_cleanupHouseholdsAtPlaces read
-    result.clearedCount from HouseholdCommands.clearLocationReferences.
-    But clearLocationReferences returns { success: true, data:
-    { clearedCount, households } } — the count is nested under `data`,
-    not at the top level. So every successful household cleanup
-    reported clearedCount: 0 in the deletePlace result. Now: the
-    nesting is documented at both ends of the contract. See COMMAND
-    RESULT CONTRACT.
+ 19.  THE HOUSEHOLD STAFF MODAL HAS AN ADD-ROLE-IF-MISSING CHECKBOX.
+      The residence staff modal DOES NOT. This is by design:
+      HouseholdCommands.assignCharacterToPosition supports
+      addRoleIfMissing, but ResidenceSystem.assignCharacterToStaffPosition
+      does not. Do not add the checkbox to the residence staff modal
+      without first adding the option to the residence command.
+
+ 20.  BULK ASSIGN ALWAYS PASSES addRoleIfMissing: true.
+      modals-household-staff.js's bulk-assign path passes
+      addRoleIfMissing: true to bulkAssign unconditionally. Per-entry
+      failures surface in result.data.failed with code
+      ROLE_ADD_FAILED. If a future revision changes bulkAssign's
+      default, this call site must be updated.
+
+ 21.  setHead IS SINGLE-COMMIT BUT addMember IS NOT.
+      setHead creates the member record inline (via _addMemberRecord,
+      no commit) when the character is not a member, then commits
+      once. addMember commits once per call. Callers that use
+      setHead on a non-member get the single-commit behavior; callers
+      that pre-add via addMember then call setHead get TWO commits.
+      Prefer setHead's single-commit path when you know the
+      character needs to become head AND become a member.
+
+ 22.  updateHousehold'S EMPTY-UPDATES CASE IS A VALID TOUCH.
+      updateHousehold({}) commits (marks dirty, invalidates accessor
+      cache, publishes 'householdUpdated') but changes no fields. The
+      intended use is signaling out-of-band mutations. Do not
+      "optimize" this into a no-op; callers depend on the event.
+
+ 23.  THE ACCESSOR CACHE CONTRACT IS NOT UNIFORM ACROSS FILES.
+      household-commands.js::_commit and residence-system.js::_commit
+      invalidate the accessor cache. household-state.js does NOT
+      (there is no household accessor). If a future revision adds
+      getHouseholdById to accessors.js, household-state.js's
+      _replace* primitives MUST gain the call. See the contract in
+      §2.5.
+
+ 24.  HOUSEHOLD-ECONOMY'S getHouseholdResources READS
+      HouseholdState._internal DIRECTLY.
+      household-economy.js's getHouseholdResources calls
+      HouseholdState._internal.getHouseholdRecord to read the raw
+      resources object, rather than going through
+      HouseholdQueries. The queries projection does not include a
+      resources snapshot (by design — the resources catalog is owned
+      by HouseholdConstants). This coupling is intentional but should
+      be noted: if household-queries is ever changed to include a
+      resources accessor, household-economy should prefer that.
+
+ 25.  INDUSTRY STATE AND HOUSEHOLD REVERSE-INDEX CROSS-CHECKS
+      DUPLICATE WORK IN PRODUCTION.
+      Both industry-state.validateIntegrity and household-state.
+      _diagnostics.getIntegrityReport perform the household ->
+      enterprises cross-check. Running both doubles the work. There is
+      no harm beyond performance; both are read-only. A future
+      consolidation could make one a consumer of the other, but the
+      current design (each domain reports on what it owns) is
+      defensible.
+
+ 26.  MODAL FILES DO NOT COORDINATE PERSIST WITH THE BOOTSTRAP.
+      Each modal's onConfirm calls HouseholdModals.persistOrFail or
+      persistResidenceOrFail. The bootstrap does NOT track per-modal
+      persist outcomes. A persist failure is toasted and stays open
+      for retry; a subsequent success adds a second event to the
+      event stream. This matches the modal-per-operation contract but
+      means a user who repeatedly clicks Save after persist failures
+      generates N events for what should be one logical operation. The
+      retry-idempotency flag on modals-household.js create/edit
+      prevents this for those two modals; other modals do not have
+      the guard.
+
+ 27.  HOUSEHOLD.ASSIGNMENT IS NOT ATOMIC ACROSS HOUSEHOLDS.
+      processHouseholdInheritanceOnDeath iterates households and
+      treats each as its own orchestration (each persists once). A
+      failure on household 2 does not roll back household 1. The
+      result reports partial: true and lists the processed array. The
+      caller must inspect per-household results.
+
+ 28.  HOUSEHOLD.SERVANT'S TRANSFER IS NOT ATOMIC.
+      transferServantToHousehold creates the new service FIRST, then
+      terminates the old. If termination fails, the new service is
+      best-effort rolled back. A rollback failure leaves the servant
+      in BOTH services' active lists (both have status: 'ongoing' but
+      the old one is stale). This is a documented hazard; the fix
+      would require a cross-domain transaction framework, which is out
+      of scope for the household subsystem.
+
+ 29.  MODALS-RESIDENCE-RENTAL.JS'S _persistOrFail DOES NOT DELEGATE TO
+      HouseholdModals.persistResidenceOrFail.
+      The residence-rental modal defines its OWN local
+      _persistOrFail. It should use HouseholdModals.
+      persistResidenceOrFail (as modals-residence.js,
+      modals-residence-owner.js, and modals-residence-staff.js do).
+      The behavior is currently identical, but this is a duplication
+      that must be removed. See the modals-residence-rental.js header
+      (this file has not yet been updated to the shared helper).
+
+ 30.  modals-residence-rental.js HAD TWO IIFEs IN A SINGLE FILE.
+      The on-disk version had a syntax error (two stacked IIFEs under
+      a shared header, second header commented out). The supplied file
+      is a single IIFE with all function definitions consolidated.
+      Confirm the on-disk copy was replaced with this version before
+      deploying.
+
+ 31.  MODALS-RESIDENCE-OWNER.JS'S setResidenceOwner PATH DOES NOT
+      VERIFY THE OWNER TYPE.
+      openTransferOwnershipModal and openSetResidenceOwnerModal call
+      ResidenceSystem.setResidenceOwner(residenceId, ownerType,
+      ownerId, ...). The command itself validates the owner type
+      (household or character). The modals do NOT pre-check; they rely
+      on the command's structured failure. This is intentional
+      layering but means the user can enter an invalid state and see
+      the failure after clicking Save.
+
+ 32.  RENTAL STATUS IS DERIVED, NOT WRITTEN DIRECTLY.
+      setResidenceRenter sets rentalStatus = RENTED.
+      endResidenceRental sets rentalStatus = VACANT.
+      setResidenceOwner sets rentalStatus = VACANT only when there is
+      no current renter. A future owner change with an active renter
+      leaves rentalStatus = RENTED. This is correct (the residence is
+      still rented) but means rentalStatus is NOT a simple
+      `ownerId != null && renterId != null` predicate. Do not derive
+      it yourself; read the field.
+
+ 33.  RESIDENCE-SYSTEM'S demoted _pushHistory / _pushTimeline
+      COEXIST WITH SUPERSEDED CONTRACTS.
+      _pushTimeline always accepted an explicit year. _pushHistory
+      now does (this revision). The year parameter is optional; when
+      omitted it falls back to getCurrentYear(). A multi-year
+      simulation driver must pass the explicit year, or every entry
+      in the batch will be tagged with wall-clock now. This matches
+      the processAnnualEconomy contract documented in
+      household-economy.js.
+
+ 34.  THE HOUSEHOLD SUBSYSTEM'S BOOTSTRAP DOES NOT DIAGNOSE
+      ENTERPRISE DRIFT DIRECTLY.
+      household-bootstrap.js does not run the enterprise reverse-index
+      check. That check lives on HouseholdState._diagnostics (which
+      bootstrap does not automatically call) and on
+      IndustryState.validateIntegrity (which requires the industry
+      domain to load and its bootstrap to run). A caller that wants
+      a complete integrity audit must run:
+        (1) HouseholdBootstrap.init()
+        (2) HouseholdState._diagnostics.getIntegrityReport()
+        (3) IndustryBootstrap.init()
+      A household-only page runs (1) and (2) and still gets
+      enterprise drift detection via (2)'s direct read of
+      masterData.data.enterprises.
+
+ 35.  REMOVE-CHARACTER-REFERENCES AND CLEAR-LOCATION-REFERENCES
+      RETURN COUNTS UNDER result.data, NOT result.
+      This is the _ok convention used by the rest of
+      household-commands.js. location-commands.js and
+      character-deletion-commands.js must read
+      result.data.clearedCount (or .removedCount), NOT
+      result.clearedCount. Prior revisions returned counts at the
+      top level, and deletePlace's cleanup report silently reported
+      clearedCount: 0 for every successful sweep. Do not reintroduce
+      the top-level shape.
+
+ 36.  HOUSEHOLD-DOC.TXT IS NARRATIVE, NOT AUTHORITATIVE.
+      The supplied household-doc.txt v6.1 describes the intended
+      contract. The supplied code is authoritative where they
+      diverge. Divergences:
+        - The v6.1 doc says "household.enterprises[] is the only
+          household-owned field industry mutates." That is stale
+          (wealth is also written). The code and the
+          industry-bootstrap.js header are correct.
+        - The v6.1 doc lists "modals-assign-staff.js,
+          modals-residence-history.js, modals-residence-snapshot.js,
+          modals-residence-vacancy.js" as DELETED. They are present
+          as shims or deprecated stubs. Confirm they are removed
+          from index.html; the shims throw only when their canonical
+          owner is missing, which is not the failure mode they were
+          meant to prevent.
+
+ 37.  THE HOUSEHOLD SUBSYSTEM'S MODALS-TESTED-VIA-BOOTSTRAP PATH IS
+      INCOMPLETE.
+      household-bootstrap.js verifies HouseholdModals with
+      _checkOptionalModule (only if present). It does NOT verify the
+      individual modals-*.js globals (openCreateHouseholdModal etc.).
+      A missing modal file produces a runtime missing-function error
+      when a user clicks the corresponding button, not a load-time
+      error. This is intentional layering (the modals layer is not
+      part of the domain's verified surface) but means modal-level
+      regressions are caught later. Adding a per-modal presence check
+      is a future improvement.
+
+ 38.  modals-residence.js AND modals-household.js BOTH EXPORT
+      openAssignResidenceModal. There is one function; both files
+      work with the same namespace when loaded together. No collision.
+
+ 39.  modals-residence-rental.js ALSO EXPORTS
+      openSetResidenceOwnerModal.
+      This OVERLAPS modals-residence-owner.js's owner modal surface.
+      modals-residence-owner.js exports openResidenceOwnerDetailsModal,
+      openManageOwnedPropertiesModal, openTransferOwnershipModal,
+      openOwnerStatsModal — different functions. There is no
+      collision. openSetResidenceOwnerModal is defined ONLY in
+      modals-residence-rental.js.
+
+ 40.  THE HOUSEHOLD LIST COMPONENT DOES NOT RESUBSCRIBE ON REMOUNT.
+      mountHouseholdList stores a single unsubscribe handle. Calling
+      mount twice replaces the previous handle (unmounting implicitly
+      the previous subscription). If a caller mounts a second time
+      without unmounting first, the first handle is orphaned. Do not
+      assume multiple simultaneous mounts on different containers.
+
 
 ================================================================================
-REMAINING ARCHITECTURAL DEBT
-================================================================================
-
-1. ResidenceSystem is still a single large file
-   It has not been split into ResidenceState / ResidenceQueries /
-   ResidenceCommands / ResidenceRules. That split is deferred until
-   either the file exceeds ~1500 lines or a second consumer forces it.
-
-2. household-view-models.js uses inline defaults for some catalogs
-   getResidenceConditionOptions and getResidenceTypeOptions fall back
-   to inline defaults when HouseholdConstants isn't loaded. The values
-   match the current catalog exactly. This is intentional so the file
-   can be tested in isolation; the fallbacks will be removed once the
-   constants are guaranteed to load.
-
-3. HouseholdRules does not model economic policy beyond what
-   HouseholdEconomy delegates. Complex policy (bracket rates, tier
-   progression over time, tax structures) is still inline in
-   HouseholdEconomy. Extraction is deferred until a second consumer
-   appears.
-
-4. Cross-domain atomicity in HouseholdAssignment and HouseholdServant
-   is not transactional. Failure in one subsystem can leave partial
-   state. Both modules report partial:true and their results carry
-   enough information for a caller to resume or report the failure.
-   A proper transaction framework is out of scope.
-
-5. The modals-*.js files still share some inline HTML helpers.
-   _buildOwnerDetailsContent, _buildSnapshotContent, etc. could be
-   extracted to a shared HTML-builder module. Currently they live
-   where they're used, which is a reasonable trade-off (the HTML is
-   tightly coupled to each modal's data shape).
-
-6. ResidenceSystem's _householdCommandsPresent and
-   _householdQueriesPresent flags are still load-time.
-   ResidenceSystem loads AFTER household-commands.js and
-   household-queries.js in the documented order, so the flags freeze
-   to true and no command fails. But the same fragility exists here as
-   in household-commands.js: a load-order change in either direction
-   would freeze the flags incorrectly. Converting them to call-time
-   helpers (matching the v6.1 fix in household-commands.js) is a
-   mechanical pass with no behavioural change today.
-
-7. History array caps (MAX_TIMELINE_ENTRIES, MAX_HISTORY_ENTRIES,
-   MAX_RENTAL_HISTORY, MAX_RENT_PAYMENTS, MAX_TRANSACTION_HISTORY,
-   MAX_RESOURCE_HISTORY, MAX_SALARY_HISTORY, MAX_TUITION_HISTORY,
-   MAX_SCHOOL_PROFIT_HISTORY, MAX_EVENT_LOG) are now sourced from
-   household-constants.js THRESHOLDS in both household-economy.js and
-   residence-system.js. The prior duplication is closed. Item #7 from
-   v6.0 is retired.
-
-================================================================================
-END OF DOCUMENTATION
-
-Version: 6.1 (post-consolidation)
-Date: 2026-10-28
-Supersedes: v6.0 (post-consolidation), v5.0 (post-refactor), v4.0
+END OF DOCUMENT
 ================================================================================
