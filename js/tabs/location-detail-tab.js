@@ -1,133 +1,117 @@
-// js/tabs/location-tab.js
+// js/tabs/location-details-tab.js
 /**
  * =============================================================================
  * LOCATION DETAILS & EDITING TAB
  * =============================================================================
- * 
- * UI for location management. Provides the Details view, Edit modal, and 
- * Delete modal.
- * 
- * Exports:
- *   - window.LocationDetailsTab.render(containerId, locationId, onRefresh)
- *   - window.openEditLocationModal(locationId, onComplete)
- *   - window.openDeleteLocationModal(locationId, onComplete)
+ *
+ * Renders the details view for a single location.
+ *
+ * SCOPE
+ * -----
+ * Read-only display of a location's core fields, key statistics,
+ * government assignment, and culture assignment. The Edit and Delete
+ * buttons delegate to the canonical modals from modals-location.js
+ * (window.openEditPlaceModal / window.openDeletePlaceModal), which own
+ * the form, the command invocation, and the persistence boundary.
+ *
+ * OUT OF SCOPE
+ * ------------
+ * - Building edit/delete forms (owned by modals-location.js).
+ * - Command wrappers (owned by LocationCommands).
+ * - Toast / modal plumbing (owned by core and modals-location.js).
+ * - Inline CSS. All styling comes from css/location-tabs.css.
+ *
+ * HARD DEPENDENCIES (load-time):
+ *   - js/core/formatting.js          (window.escapeHtml)
+ *   - js/core/icons.js               (window.getIcon)
+ *   - js/location/location-queries.js (window.LocationQueries)
+ *   - js/location/modals-location.js  (window.openEditPlaceModal,
+ *                                      window.openDeletePlaceModal)
+ *
+ * OPTIONAL DEPENDENCIES (call-time, guarded):
+ *   - window.GovernmentQueries.getGovernmentType
+ *   - window.CultureQueries.getCulture
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
-    // 1. DEPENDENCY WRAPPERS
+    // 1. LOAD-TIME DEPENDENCY CHECKS
     // =========================================================================
 
-    function _escapeHtml(str) {
-        if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    if (typeof window.escapeHtml !== 'function') {
+        throw new Error(
+            'location-details-tab.js requires core/formatting.js ' +
+            '(window.escapeHtml).'
+        );
     }
-
-    function _showToast(msg, type) {
-        if (typeof window.showToast === 'function') window.showToast(msg, type);
-        else if (typeof window._showToast === 'function') window._showToast(msg, type);
+    if (typeof window.getIcon !== 'function') {
+        throw new Error(
+            'location-details-tab.js requires core/icons.js ' +
+            '(window.getIcon).'
+        );
     }
-
-    function _openModal(options) {
-        if (typeof window.openModal === 'function') {
-            // Ensure titleHtml/contentHtml keys are used
-            if (!options.titleHtml && options.title) options.titleHtml = options.title;
-            if (!options.contentHtml && options.content) options.contentHtml = options.content;
-            return window.openModal(options);
-        }
-        return null;
-    }
-
-    function _closeTopModal() {
-        if (typeof window.closeTopModal === 'function') window.closeTopModal();
-    }
-
-    function _confirmDialog(message, title, onConfirm) {
-        if (typeof window.confirmDialog === 'function') {
-            window.confirmDialog(message, title, onConfirm);
-        } else {
-            if (confirm(message)) onConfirm();
-        }
-    }
-
-    function _getIcon(name) {
-        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '';
-    }
-
-    function _getPlaceById(id) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(id) : null;
-    }
-
-    function _getLocationTypeName(typeId) {
-        if (typeof window.LocationQueries !== 'undefined' && window.LocationQueries.getLocationTypeName) {
-            return window.LocationQueries.getLocationTypeName(typeId);
-        }
-        return 'Unknown';
-    }
-
-    function _getLocationStatistics(locationId) {
-        if (typeof window.LocationQueries !== 'undefined' && window.LocationQueries.getLocationStatistics) {
-            return window.LocationQueries.getLocationStatistics(locationId);
-        }
-        return null;
-    }
-
-    function _getGovernmentTypes() {
-        if (window.GovernmentQueries && typeof window.GovernmentQueries.getGovernmentTypes === 'function') {
-            return window.GovernmentQueries.getGovernmentTypes();
-        }
-        return [];
-    }
-
-    function _getCultures() {
-        if (window.CultureQueries && typeof window.CultureQueries.getAllCultures === 'function') {
-            return window.CultureQueries.getAllCultures();
-        }
-        return [];
-    }
-
-    function _updatePlace(placeId, updates) {
-        if (window.LocationCommands && window.LocationCommands.updatePlace) {
-            return window.LocationCommands.updatePlace(placeId, updates);
-        }
-        return { success: false, reason: 'LocationCommands unavailable' };
-    }
-
-    function _assignGovernment(placeId, typeId, style) {
-        if (window.LocationCommands && window.LocationCommands.assignGovernment) {
-            return window.LocationCommands.assignGovernment(placeId, typeId, style);
-        }
-        return { success: false, reason: 'LocationCommands unavailable' };
-    }
-
-    function _updatePlaceCulture(placeId, cultureId) {
-        if (window.LocationCommands && window.LocationCommands.updatePlaceCulture) {
-            return window.LocationCommands.updatePlaceCulture(placeId, cultureId);
-        }
-        return { success: false, reason: 'LocationCommands unavailable' };
-    }
-
-    function _deletePlace(placeId, options) {
-        if (window.LocationCommands && window.LocationCommands.deletePlace) {
-            return window.LocationCommands.deletePlace(placeId, options);
-        }
-        return { success: false, reason: 'LocationCommands unavailable' };
-    }
-
-    function _persist() {
-        if (window.LocationCommands && window.LocationCommands.persist) {
-            return window.LocationCommands.persist();
-        }
-        return { success: false, reason: 'persist unavailable' };
+    if (!window.LocationQueries || typeof window.LocationQueries.getPlace !== 'function') {
+        throw new Error(
+            'location-details-tab.js requires location-queries.js ' +
+            '(window.LocationQueries.getPlace).'
+        );
     }
 
     // =========================================================================
-    // 2. MAIN RENDER (Details Tab)
+    // 2. LOCAL ALIASES (no duplication — direct references)
+    // =========================================================================
+
+    var LQ = window.LocationQueries;
+
+    // =========================================================================
+    // 3. RESOLUTION HELPERS (thin — no logic the owning module lacks)
+    // =========================================================================
+
+    /**
+     * Resolve a government type's display name. The lookup lives in
+     * GovernmentQueries; the fallback 'None' is a presentation decision
+     * that belongs here, not in the domain module.
+     */
+    function _governmentTypeName(governmentTypeId) {
+        if (!governmentTypeId) return 'None';
+        if (!window.GovernmentQueries ||
+            typeof window.GovernmentQueries.getGovernmentType !== 'function') {
+            return 'None';
+        }
+        var gt = window.GovernmentQueries.getGovernmentType(governmentTypeId);
+        return gt && gt.name ? gt.name : 'None';
+    }
+
+    /**
+     * Resolve a culture's display name. CultureQueries owns the lookup;
+     * the fallback 'None' is a presentation decision.
+     */
+    function _cultureName(cultureId) {
+        if (!cultureId) return 'None';
+        if (!window.CultureQueries ||
+            typeof window.CultureQueries.getCulture !== 'function') {
+            return 'None';
+        }
+        var c = window.CultureQueries.getCulture(cultureId);
+        return c && c.name ? c.name : 'None';
+    }
+
+    /**
+     * Resolve a parent place's display name. Returns 'None' when the
+     * location has no parent or the parent record is missing.
+     */
+    function _parentName(place) {
+        if (!place || !place.parentId) return 'None';
+        var parent = LQ.getPlace(place.parentId);
+        return parent && parent.displayName ? parent.displayName : 'None';
+    }
+
+    // =========================================================================
+    // 4. RENDER
     // =========================================================================
 
     function render(containerId, locationId, onRefresh) {
@@ -135,318 +119,219 @@
         if (!container) return;
 
         if (!locationId) {
-            container.innerHTML = '<div class="empty-state">Select a location from the sidebar</div>';
+            container.innerHTML =
+                '<div class="empty-state">Select a location from the sidebar</div>';
             return;
         }
 
-        var place = _getPlaceById(locationId);
+        var place = LQ.getPlace(locationId);
         if (!place) {
-            container.innerHTML = '<div class="empty-state">Location not found</div>';
+            container.innerHTML =
+                '<div class="empty-state">Location not found</div>';
             return;
         }
 
-        var stats = _getLocationStatistics(locationId) || {};
-        var typeName = _getLocationTypeName(place.typeId);
-        
-        // Government Details
-        var govTypeName = 'None';
-        if (place.governmentTypeId && window.GovernmentQueries) {
-            var gt = window.GovernmentQueries.getGovernmentType(place.governmentTypeId);
-            if (gt) govTypeName = gt.name;
+        var stats = LQ.getLocationStatistics(locationId) || {};
+        var typeName = LQ.getLocationTypeName(place.typeId) || 'Unknown';
+        var parentName = _parentName(place);
+        var govName = _governmentTypeName(place.governmentTypeId);
+        var cultureName = _cultureName(place.cultureId);
+
+        var statusLine = [];
+        statusLine.push(window.escapeHtml(typeName));
+        if (place.isCapital) statusLine.push('Capital');
+        if (place.status && place.status !== 'active') {
+            statusLine.push(window.escapeHtml(place.status));
         }
 
-        // Culture Details
-        var cultureName = 'None';
-        if (place.cultureId && window.CultureQueries) {
-            var c = window.CultureQueries.getCulture(place.cultureId);
-            if (c) cultureName = c.name;
+        var html = '';
+
+        // ---- HEADER ----
+        html += '<div class="loc-tab-header">';
+        html +=   '<div class="loc-tab-header-text">';
+        html +=     '<div class="loc-tab-header-title">' +
+                        window.getIcon('LOCATION') + ' ' +
+                        window.escapeHtml(place.displayName) +
+                    '</div>';
+        html +=     '<div class="loc-tab-header-subtitle">' +
+                        statusLine.join(' · ') +
+                    '</div>';
+        html +=   '</div>';
+        html +=   '<div class="loc-tab-header-actions">';
+        html +=     '<button type="button" id="editLocationBtn" class="loc-tab-btn">' +
+                        window.getIcon('EDIT') + ' Edit' +
+                    '</button>';
+        html +=     '<button type="button" id="deleteLocationBtn" class="loc-tab-btn loc-tab-btn--danger">' +
+                        window.getIcon('TRASH') + ' Delete' +
+                    '</button>';
+        html +=   '</div>';
+        html += '</div>';
+
+        // ---- KEY STATS ----
+        html += '<div class="loc-tab-stats-grid">';
+
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-label">' +
+                        window.getIcon('HOME') + ' Type' +
+                    '</div>';
+        html +=     '<div class="loc-tab-stat-value">' +
+                        window.escapeHtml(typeName) +
+                    '</div>';
+        html +=   '</div>';
+
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-label">' +
+                        window.getIcon('PERSON') + ' Population' +
+                    '</div>';
+        html +=     '<div class="loc-tab-stat-value">' +
+                        (stats.totalPopulation || 0).toLocaleString() +
+                    '</div>';
+        html +=   '</div>';
+
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-label">Children</div>';
+        html +=     '<div class="loc-tab-stat-value">' +
+                        (stats.childCount || 0) +
+                    '</div>';
+        html +=   '</div>';
+
+        html +=   '<div class="loc-tab-stat">';
+        html +=     '<div class="loc-tab-stat-label">Depth</div>';
+        html +=     '<div class="loc-tab-stat-value">' +
+                        (stats.depth || 0) +
+                    '</div>';
+        html +=   '</div>';
+
+        html += '</div>';
+
+        // ---- LOCATION DETAILS ----
+        html += '<div class="loc-tab-section">';
+        html +=   '<div class="loc-tab-section-title">' +
+                    window.getIcon('LOCATION') + ' Location Details' +
+                  '</div>';
+        html +=   '<div class="loc-tab-grid-2">';
+
+        html +=     '<div>' +
+                        '<span class="loc-tab-label">ID:</span> ' +
+                        '<span class="loc-tab-mono">' +
+                            window.escapeHtml(place.id) +
+                        '</span>' +
+                    '</div>';
+
+        html +=     '<div>' +
+                        '<span class="loc-tab-label">Parent:</span> ' +
+                        '<span class="loc-tab-value">' +
+                            window.escapeHtml(parentName) +
+                        '</span>' +
+                    '</div>';
+
+        html +=     '<div>' +
+                        '<span class="loc-tab-label">Status:</span> ' +
+                        '<span class="loc-tab-value">' +
+                            window.escapeHtml(place.status || 'active') +
+                        '</span>' +
+                    '</div>';
+
+        html +=     '<div>' +
+                        '<span class="loc-tab-label">Capital:</span> ' +
+                        '<span class="loc-tab-value">' +
+                            (place.isCapital ? 'Yes' : 'No') +
+                        '</span>' +
+                    '</div>';
+
+        if (place.variableKey) {
+            html += '<div>' +
+                        '<span class="loc-tab-label">Key:</span> ' +
+                        '<span class="loc-tab-mono">' +
+                            window.escapeHtml(place.variableKey) +
+                        '</span>' +
+                    '</div>';
         }
 
-        var html = '<div style="padding: 4px;">';
+        html +=   '</div>';
 
-        // HEADER
-        html += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--border);">' +
-            '<div>' +
-            '<div style="font-size: 0.9rem; font-weight: bold; color: var(--accent-light); display: flex; align-items: center; gap: 6px;">' + _getIcon('LOCATION') + ' ' + _escapeHtml(place.displayName) + '</div>' +
-            '<div style="font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(typeName) + 
-            (place.isCapital ? ' · Capital' : '') +
-            (place.status && place.status !== 'active' ? ' · ' + _escapeHtml(place.status) : '') +
-            '</div>' +
-            '</div>' +
-            '<div style="display: flex; gap: 6px; flex-wrap: wrap;">' +
-            '<button id="editLocationBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; color: var(--accent-light);">' + _getIcon('EDIT') + ' Edit</button>' +
-            '<button id="deleteLocationBtn" class="btn" style="font-size: 0.6rem; padding: 4px 12px; background: var(--bg3); border: 1px solid var(--danger); border-radius: 4px; cursor: pointer; color: var(--danger-lt);">' + _getIcon('TRASH') + ' Delete</button>' +
-            '</div>' +
-            '</div>';
-
-        // KEY STATS
-        html += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px;">' +
-            '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.55rem; color: var(--dim);">' + _getIcon('HOME') + ' Type</div>' +
-            '<div style="font-size: 0.85rem; font-weight: bold; color: var(--text);">' + _escapeHtml(typeName) + '</div>' +
-            '</div>' +
-            '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.55rem; color: var(--dim);">' + _getIcon('PERSON') + ' Population</div>' +
-            '<div style="font-size: 0.85rem; font-weight: bold; color: var(--text);">' + (stats.totalPopulation || 0).toLocaleString() + '</div>' +
-            '</div>' +
-            '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.55rem; color: var(--dim);">Children</div>' +
-            '<div style="font-size: 0.85rem; font-weight: bold; color: var(--text);">' + (stats.childCount || 0) + '</div>' +
-            '</div>' +
-            '<div style="background: var(--bg2); padding: 12px; border-radius: 8px; text-align: center; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.55rem; color: var(--dim);">Depth</div>' +
-            '<div style="font-size: 0.85rem; font-weight: bold; color: var(--text);">' + (stats.depth || 0) + '</div>' +
-            '</div>' +
-            '</div>';
-
-        // DETAILS SECTION
-        var parentName = 'None';
-        if (place.parentId) {
-            var parent = _getPlaceById(place.parentId);
-            if (parent) parentName = parent.displayName;
+        if (place.notes) {
+            html += '<div class="loc-tab-notes">' +
+                        window.escapeHtml(place.notes) +
+                    '</div>';
         }
 
-        html += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + _getIcon('LOCATION') + ' Location Details</div>' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; font-size: 0.7rem;">' +
-            '<div><span style="color: var(--dim);">ID:</span> <span style="font-family: monospace; font-size: 0.6rem; color: var(--text);">' + _escapeHtml(place.id) + '</span></div>' +
-            '<div><span style="color: var(--dim);">Parent:</span> <span style="color: var(--text);">' + _escapeHtml(parentName) + '</span></div>' +
-            '<div><span style="color: var(--dim);">Status:</span> <span style="color: var(--text);">' + _escapeHtml(place.status || 'active') + '</span></div>' +
-            '<div><span style="color: var(--dim);">Capital:</span> <span style="color: var(--text);">' + (place.isCapital ? 'Yes' : 'No') + '</span></div>' +
-            (place.variableKey ? '<div><span style="color: var(--dim);">Key:</span> <span style="font-family: monospace; font-size: 0.6rem; color: var(--text);">' + _escapeHtml(place.variableKey) + '</span></div>' : '') +
-            '</div>' +
-            (place.notes ? '<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-light); font-size: 0.65rem; color: var(--dim);">' + _escapeHtml(place.notes) + '</div>' : '') +
-            '</div>';
+        html += '</div>';
 
-        // GOVERNMENT & CULTURE SECTION
-        html += '<div style="background: var(--bg2); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid var(--border);">' +
-            '<div style="font-size: 0.65rem; color: var(--accent-light); font-weight: bold; margin-bottom: 8px;">' + _getIcon('STAR_4') + ' Assignments</div>' +
-            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">' +
-            // Government
-            '<div style="background: var(--bg3); padding: 10px; border-radius: 6px;">' +
-            '<div style="font-size: 0.6rem; color: var(--dim); text-transform: uppercase; margin-bottom: 4px;">Government</div>' +
-            '<div style="font-size: 0.75rem; color: var(--text); font-weight: 500;">' + _escapeHtml(govTypeName) + '</div>' +
-            '<div style="font-size: 0.55rem; color: var(--dim); margin-top: 2px;">' + (place.governmentStyle || 'No style set') + '</div>' +
-            '</div>' +
-            // Culture
-            '<div style="background: var(--bg3); padding: 10px; border-radius: 6px;">' +
-            '<div style="font-size: 0.6rem; color: var(--dim); text-transform: uppercase; margin-bottom: 4px;">Culture</div>' +
-            '<div style="font-size: 0.75rem; color: var(--text); font-weight: 500;">' + _escapeHtml(cultureName) + '</div>' +
-            '</div>' +
-            '</div>' +
-            '</div>';
+        // ---- ASSIGNMENTS ----
+        html += '<div class="loc-tab-section">';
+        html +=   '<div class="loc-tab-section-title">' +
+                    window.getIcon('STAR_4') + ' Assignments' +
+                  '</div>';
+        html +=   '<div class="loc-tab-grid-2">';
 
+        html +=     '<div class="loc-tab-card">';
+        html +=       '<div class="loc-tab-card-label">Government</div>';
+        html +=       '<div class="loc-tab-card-value">' +
+                          window.escapeHtml(govName) +
+                      '</div>';
+        html +=       '<div class="loc-tab-card-sub">' +
+                          window.escapeHtml(place.governmentStyle || 'No style set') +
+                      '</div>';
+        html +=     '</div>';
+
+        html +=     '<div class="loc-tab-card">';
+        html +=       '<div class="loc-tab-card-label">Culture</div>';
+        html +=       '<div class="loc-tab-card-value">' +
+                          window.escapeHtml(cultureName) +
+                      '</div>';
+        html +=     '</div>';
+
+        html +=   '</div>';
         html += '</div>';
 
         container.innerHTML = html;
 
-        // Bind events
+        // ---- BIND EVENTS ----
+        // Both buttons delegate to the canonical modals. The modals own
+        // the form, the command invocation, and the persist boundary;
+        // the tab only decides "which location" and "what to do on
+        // completion".
         var editBtn = container.querySelector('#editLocationBtn');
         if (editBtn) {
-            editBtn.addEventListener('click', function() {
-                openEditModal(locationId, onRefresh);
+            editBtn.addEventListener('click', function () {
+                if (typeof window.openEditPlaceModal !== 'function') {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Edit modal unavailable', 'error');
+                    }
+                    return;
+                }
+                window.openEditPlaceModal(locationId, function () {
+                    if (typeof onRefresh === 'function') onRefresh();
+                });
             });
         }
 
         var deleteBtn = container.querySelector('#deleteLocationBtn');
         if (deleteBtn) {
-            deleteBtn.addEventListener('click', function() {
-                openDeleteModal(locationId, onRefresh);
+            deleteBtn.addEventListener('click', function () {
+                if (typeof window.openDeletePlaceModal !== 'function') {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast('Delete modal unavailable', 'error');
+                    }
+                    return;
+                }
+                window.openDeletePlaceModal(locationId, function () {
+                    if (typeof onRefresh === 'function') onRefresh();
+                });
             });
         }
-    }
-
-    // =========================================================================
-    // 3. EDIT MODAL
-    // =========================================================================
-
-    function openEditModal(locationId, onComplete) {
-        var place = _getPlaceById(locationId);
-        if (!place) {
-            _showToast('Location not found', 'error');
-            return;
-        }
-
-        var types = (window.LocationQueries && window.LocationQueries.getLocationTypes) ? window.LocationQueries.getLocationTypes() : [];
-        var places = (window.LocationQueries && window.LocationQueries.getAllPlaces) ? window.LocationQueries.getAllPlaces({}) : [];
-        var govTypes = _getGovernmentTypes();
-        var cultures = _getCultures();
-
-        var typeOptions = types.map(function(t) {
-            var sel = (t.id === place.typeId) ? ' selected' : '';
-            return '<option value="' + _escapeHtml(t.id) + '"' + sel + '>' + _escapeHtml(t.displayName) + '</option>';
-        }).join('');
-
-        var parentOptions = '<option value="">None (Root)</option>';
-        places.forEach(function(p) {
-            if (p.id === locationId) return; // Can't be own parent
-            var sel = (p.id === place.parentId) ? ' selected' : '';
-            parentOptions += '<option value="' + _escapeHtml(p.id) + '"' + sel + '>' + _escapeHtml(p.displayName) + '</option>';
-        });
-
-        var govOptions = '<option value="">None</option>';
-        govTypes.forEach(function(g) {
-            var sel = (g.id === place.governmentTypeId) ? ' selected' : '';
-            govOptions += '<option value="' + _escapeHtml(g.id) + '"' + sel + '>' + _escapeHtml(g.name) + '</option>';
-        });
-
-        var cultureOptions = '<option value="">None</option>';
-        cultures.forEach(function(c) {
-            var sel = (c.id === place.cultureId) ? ' selected' : '';
-            cultureOptions += '<option value="' + _escapeHtml(c.id) + '"' + sel + '>' + _escapeHtml(c.name) + '</option>';
-        });
-
-        var html = '<form class="location-form" style="display:flex; flex-direction:column; gap:12px;">' +
-            '<div class="form-group">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Name</label>' +
-            '<input type="text" id="editPlaceName" value="' + _escapeHtml(place.displayName) + '" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-            '</div>' +
-            
-            '<div class="form-row" style="display:flex; gap:12px;">' +
-            '<div class="form-group" style="flex:1;">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Type</label>' +
-            '<select id="editPlaceType" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + typeOptions + '</select>' +
-            '</div>' +
-            '<div class="form-group" style="flex:1;">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Parent</label>' +
-            '<select id="editPlaceParent" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + parentOptions + '</select>' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-row" style="display:flex; gap:12px;">' +
-            '<div class="form-group" style="flex:1;">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Government</label>' +
-            '<select id="editPlaceGov" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + govOptions + '</select>' +
-            '</div>' +
-            '<div class="form-group" style="flex:1;">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Culture</label>' +
-            '<select id="editPlaceCulture" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + cultureOptions + '</select>' +
-            '</div>' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Government Style</label>' +
-            '<input type="text" id="editPlaceGovStyle" value="' + _escapeHtml(place.governmentStyle || '') + '" placeholder="e.g. Absolute, Feudal" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' +
-            '</div>' +
-
-            '<div class="form-group">' +
-            '<label style="display:block; font-size:0.65rem; color:var(--accent-light); margin-bottom:4px;">Notes</label>' +
-            '<textarea id="editPlaceNotes" rows="2" style="width:100%; padding:8px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text);">' + _escapeHtml(place.notes || '') + '</textarea>' +
-            '</div>' +
-            '</form>';
-
-        _openModal({
-            title: 'Edit Location: ' + place.displayName,
-            content: html,
-            confirmText: 'Save Changes',
-            cancelText: 'Cancel',
-            onConfirm: function(root) {
-                var name = root.querySelector('#editPlaceName').value.trim();
-                if (!name) {
-                    _showToast('Name is required', 'error');
-                    return false;
-                }
-
-                var typeId = root.querySelector('#editPlaceType').value;
-                var parentId = root.querySelector('#editPlaceParent').value || null;
-                var govId = root.querySelector('#editPlaceGov').value || null;
-                var govStyle = root.querySelector('#editPlaceGovStyle').value.trim() || null;
-                var cultureId = root.querySelector('#editPlaceCulture').value || null;
-                var notes = root.querySelector('#editPlaceNotes').value.trim();
-
-                // 1. Update basic fields
-                var res = _updatePlace(locationId, {
-                    displayName: name,
-                    typeId: typeId,
-                    parentId: parentId,
-                    notes: notes
-                });
-
-                if (!res || res.success !== true) {
-                    _showToast(res && res.reason ? res.reason : 'Failed to update location', 'error');
-                    return false;
-                }
-
-                // 2. Assign Government
-                if (govId !== place.governmentTypeId || govStyle !== place.governmentStyle) {
-                    var govRes = _assignGovernment(locationId, govId, govStyle);
-                    if (!govRes || govRes.success !== true) {
-                        _showToast(govRes && govRes.reason ? govRes.reason : 'Failed to assign government', 'error');
-                        return false;
-                    }
-                }
-
-                // 3. Assign Culture
-                if (cultureId !== place.cultureId) {
-                    var cultRes = _updatePlaceCulture(locationId, cultureId);
-                    if (!cultRes || cultRes.success !== true) {
-                        _showToast(cultRes && cultRes.reason ? cultRes.reason : 'Failed to assign culture', 'error');
-                        return false;
-                    }
-                }
-
-                // 4. Persist
-                _persist();
-                _showToast('Location updated', 'success');
-                _closeTopModal();
-                if (typeof onComplete === 'function') onComplete();
-                return true;
-            }
-        });
-    }
-
-    // =========================================================================
-    // 4. DELETE MODAL
-    // =========================================================================
-
-    function openDeleteModal(locationId, onComplete) {
-        var place = _getPlaceById(locationId);
-        if (!place) {
-            _showToast('Location not found', 'error');
-            return;
-        }
-
-        var html = '<div class="location-delete-form">' +
-            '<p style="font-size:0.75rem; margin-bottom:12px;">Delete <strong>' + _escapeHtml(place.displayName) + '</strong>?</p>' +
-            '<p style="font-size:0.65rem; color:var(--dim); margin-bottom:12px;">This action cannot be undone. Sub-locations will be orphaned.</p>' +
-            '</div>';
-
-        _openModal({
-            title: 'Delete Location',
-            content: html,
-            confirmText: 'Delete',
-            cancelText: 'Cancel',
-            onConfirm: function() {
-                _confirmDialog(
-                    'Are you sure you want to delete ' + place.displayName + '?',
-                    'Confirm Deletion',
-                    function() {
-                        var res = _deletePlace(locationId, { mode: 'simple' });
-                        if (!res || res.success !== true) {
-                            _showToast(res && res.reason ? res.reason : 'Failed to delete', 'error');
-                            return;
-                        }
-                        _persist();
-                        _showToast('Location deleted', 'success');
-                        _closeTopModal();
-                        if (typeof onComplete === 'function') onComplete();
-                    }
-                );
-                return false; // Keep open until confirm
-            }
-        });
     }
 
     // =========================================================================
     // 5. EXPORTS
     // =========================================================================
 
-    window.LocationDetailsTab = {
-        render: render
-    };
+    window.LocationDetailsTab = { render: render };
     window.renderLocationDetails = render;
-    
-    window.openEditLocationModal = openEditModal;
-    window.openDeleteLocationModal = openDeleteModal;
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = window.LocationDetailsTab;
+    }
 
 })();
