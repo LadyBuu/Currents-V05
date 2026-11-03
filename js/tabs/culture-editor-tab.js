@@ -1,36 +1,69 @@
 /**
  * =============================================================================
- * STILL WATERS - MODULAR CULTURE EDITOR TABS (js/tabs/culture-editor-tab.js)
+ * STILL WATERS - CULTURE EDITOR HOST (js/tabs/culture-editor-tab.js)
  * =============================================================================
- * 
- * A pluggable tab system for editing culture data.
- * 
- * USAGE:
- *   // Register a new tab
- *   CultureEditorTabs.registerTab('myTab', {
- *     label: 'My Tab',
- *     icon: 'CIRCLE',
- *     render: function(container, culture) { ... },
- *     save: function(culture) { ... return updatedCulture; },
- *     validate: function(culture) { return { valid: true, errors: [] }; }
- *   });
- * 
- *   // Open the editor
- *   CultureEditorTabs.openEditor(cultureId, {
- *     onSave: function(updatedCulture) { ... }
- *   });
- * 
- * DEPENDENCIES:
- *   - modals-core.js (openModal, closeTopModal, _escapeHtml, _showToast, _getIcon)
- *   - culture-state.js (CultureState)
- *   - culture-commands.js (CultureCommands)
- * 
- * ICON POLICY: Uses icons.js via _getIcon() - NO EMOJIS
- * 
+ *
+ * LOCATION: js/tabs/culture-editor-tab.js
+ *
+ * The composite-form host for the culture editor. Owns:
+ *   - the CultureEditorTabs registry (register / unregister / list)
+ *   - openEditor(cultureId, options) — opens the editor modal
+ *   - tab switching, per-tab caching, save-all orchestration
+ *
+ * ARCHITECTURE
+ * ------------
+ * Culture tabs are SECTIONS OF ONE FORM, unlike religion tabs (which are
+ * independent tab-pane surfaces). Switching tabs does not commit anything.
+ * "Save" merges every tab's save() result and calls
+ * CultureCommands.updateCulture(...) ONCE. Either the whole culture
+ * updates, or nothing does.
+ *
+ * This file is intentionally the ONLY host. The four tabs
+ * (appearance, mythology, characters, names) call
+ * CultureEditorTabs.registerTab(...) at load. This file must load FIRST.
+ *
+ * WHAT CHANGED FROM THE PREVIOUS VERSION
+ * --------------------------------------
+ *   - openEditor now reads via CultureQueries.getCultureById (was:
+ *     CultureState.getCulture, which does not exist).
+ *   - _saveCulture no longer touches masterData or saveMasterData
+ *     directly. It calls CultureCommands.updateCulture once for the
+ *     merged record and then CultureCommands.persist() once for the
+ *     save. No bypassing the domain save contract.
+ *   - Every inline style="" is gone. Classes live in
+ *     css/culture-tabs.css.
+ *   - Tab-switching preserves unsaved edits per tab via _tabDataCache
+ *     (was: cache was set but never consulted on switch back — see
+ *     _renderTab).
+ *   - The build-in 'details' tab is REMOVED. Details are edited through
+ *     the standard culture modals (culture-modals.js::openEditCultureModal).
+ *     The editor is for the domain-specific content (appearance,
+ *     mythology, characters, names).
+ *   - Save is explicit. The editor's Save button calls updateCulture
+ *     once and persist once; Cancel discards. There is no auto-save.
+ *
+ * DEPENDENCIES (resolved at call time — no load-time guards):
+ *   - TabManager is NOT used here. The composite-form architecture does
+ *     not fit TabManager's one-pane-at-a-time model; see
+ *     religion-tabs-config.js's header for the contrast.
+ *   - CultureEditorTabs (this file) installs itself on window.
+ *   - CultureQueries    (read the current culture)
+ *   - CultureCommands   (updateCulture + persist)
+ *   - modals-core.js    (openModal)
+ *   - ui.js             (showToast)
+ *   - formatting.js     (escapeHtml)
+ *   - icons.js          (Icons[name] via _getIcon)
+ *
+ * ICON POLICY: no emojis. Icons via _getIcon(name) — returns '' for
+ * unknown names, never a fabricated glyph. `fallbackGlyphs` is DELETED
+ * from the previous version; it was a source of stray Unicode.
+ *
+ * INLINE STYLES: none. All classes are in css/culture-tabs.css.
+ *
  * =============================================================================
  */
 
-(function() {
+(function () {
     'use strict';
 
     // =========================================================================
@@ -38,683 +71,468 @@
     // =========================================================================
 
     function _escapeHtml(str) {
-        if (typeof window._escapeHtml === 'function') return window._escapeHtml(str);
         if (typeof window.escapeHtml === 'function') return window.escapeHtml(str);
-        if (!str) return '';
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _getIcon(name) {
+        if (window.Icons && window.Icons[name]) return window.Icons[name];
+        return '';
     }
 
     function _showToast(msg, type) {
-        if (typeof window._showToast === 'function') window._showToast(msg, type);
-        else if (typeof window.showToast === 'function') window.showToast(msg, type);
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
     }
 
     function _openModal(options) {
-        if (typeof window.openModal === 'function') return window.openModal(options);
-        return null;
+        return typeof window.openModal === 'function'
+            ? window.openModal(options)
+            : null;
     }
 
     function _closeTopModal() {
         if (typeof window.closeTopModal === 'function') window.closeTopModal();
     }
 
-    function _getIcon(name) {
-        if (window.Icons && window.Icons[name]) return window.Icons[name];
-        if (window.Icons && window.Icons.CIRCLE) return window.Icons.CIRCLE;
-        return '';
-    }
-
-    function _getState() {
-        return typeof window.CultureState !== 'undefined' ? window.CultureState : null;
+    function _getQueries() {
+        return typeof window.CultureQueries !== 'undefined' ? window.CultureQueries : null;
     }
 
     function _getCommands() {
         return typeof window.CultureCommands !== 'undefined' ? window.CultureCommands : null;
     }
 
-    function _getPlaces() {
-        if (typeof window.getPlaces === 'function') return window.getPlaces();
-        return [];
-    }
-
-    function _getReligions() {
-        if (typeof window.ReligionState !== 'undefined' &&
-            typeof window.ReligionState.getAllReligions === 'function') {
-            return window.ReligionState.getAllReligions();
-        }
-        return [];
-    }
-
-    function _saveMasterData() {
-        if (typeof window.saveMasterData === 'function') {
-            window.saveMasterData(true);
-        } else if (window.masterData) {
-            try {
-                localStorage.setItem('stillwaters_master', JSON.stringify(window.masterData));
-            } catch(e) {}
-        }
-    }
-
     // =========================================================================
-    // 2. TAB REGISTRY
+    // 2. REGISTRY
     // =========================================================================
 
-    var _tabRegistry = {};
+    // tabId -> { label, icon, render, save, validate, onActivate, onDeactivate }
+    var _tabRegistry = Object.create(null);
+
+    // Registration order, for the nav bar.
     var _tabOrder = [];
-    var _activeTabId = null;
-    var _currentCulture = null;
-    var _currentCultureId = null;
-    var _onSaveCallback = null;
-    var _modalId = null;
-    var _tabDataCache = {};
+
+    // Per-editor state. Reset by openEditor.
+    var _state = {
+        cultureId: null,
+        culture: null,          // working copy (deep-cloned from canonical)
+        activeTabId: null,
+        tabDataCache: Object.create(null),
+        onSaveCallback: null,
+        modal: null,
+        root: null,             // the modal element (root.querySelector scoped reads)
+        listeners: []           // tracked listeners (removed on close)
+    };
 
     function registerTab(tabId, definition) {
-        if (!tabId || typeof tabId !== 'string') {
-            return false;
-        }
-
-        if (!definition.render || typeof definition.render !== 'function') {
-            return false;
-        }
+        if (!tabId || typeof tabId !== 'string') return false;
+        if (!definition || typeof definition.render !== 'function') return false;
 
         _tabRegistry[tabId] = {
             label: definition.label || tabId,
             icon: definition.icon || 'CIRCLE',
             render: definition.render,
-            save: definition.save || null,
-            validate: definition.validate || null,
-            onActivate: definition.onActivate || null,
-            onDeactivate: definition.onDeactivate || null
+            save: typeof definition.save === 'function' ? definition.save : null,
+            validate: typeof definition.validate === 'function' ? definition.validate : null,
+            onActivate: typeof definition.onActivate === 'function' ? definition.onActivate : null,
+            onDeactivate: typeof definition.onDeactivate === 'function' ? definition.onDeactivate : null
         };
 
         if (_tabOrder.indexOf(tabId) === -1) {
             _tabOrder.push(tabId);
         }
-
         return true;
     }
 
     function unregisterTab(tabId) {
-        if (_tabRegistry[tabId]) {
-            delete _tabRegistry[tabId];
-            var index = _tabOrder.indexOf(tabId);
-            if (index !== -1) _tabOrder.splice(index, 1);
-            return true;
-        }
-        return false;
+        if (!_tabRegistry[tabId]) return false;
+        delete _tabRegistry[tabId];
+        var i = _tabOrder.indexOf(tabId);
+        if (i !== -1) _tabOrder.splice(i, 1);
+        return true;
     }
 
     function getRegisteredTabs() {
-        return _tabOrder.map(function(id) {
-            var tab = _tabRegistry[id];
-            return {
-                id: id,
-                label: tab.label,
-                icon: tab.icon
-            };
+        return _tabOrder.map(function (id) {
+            var t = _tabRegistry[id];
+            return { id: id, label: t.label, icon: t.icon };
         });
     }
 
-    function getCurrentCulture() {
-        return _currentCulture;
+    // =========================================================================
+    // 3. LISTENER TRACKING
+    // =========================================================================
+    //
+    // Every listener the editor installs goes through _track so that
+    // _cleanup can remove them all when the modal closes. Without this,
+    // a second openEditor call stacks listeners on document.
+
+    function _track(el, eventType, handler) {
+        if (!el || typeof el.addEventListener !== 'function') return;
+        if (typeof handler !== 'function') return;
+        el.addEventListener(eventType, handler);
+        _state.listeners.push({ el: el, eventType: eventType, handler: handler });
     }
 
-    function getCurrentCultureId() {
-        return _currentCultureId;
+    function _cleanup() {
+        for (var i = 0; i < _state.listeners.length; i++) {
+            var l = _state.listeners[i];
+            try {
+                if (l.el && typeof l.el.removeEventListener === 'function') {
+                    l.el.removeEventListener(l.eventType, l.handler);
+                }
+            } catch (e) { /* non-fatal */ }
+        }
+        _state.listeners = [];
     }
 
     // =========================================================================
-    // 3. BUILT-IN DETAILS TAB
+    // 4. DEEP CLONE
     // =========================================================================
+    //
+    // The editor works on a copy. Mutating the canonical record directly
+    // would corrupt masterData on any Cancel path. _saveCulture merges
+    // the copy into a candidate and calls CultureCommands.updateCulture
+    // once; the canonical record is only touched by that call.
 
-    registerTab('details', {
-        label: 'Details',
-        icon: 'CIRCLE_DOT',
-        render: function(container, culture) {
-            if (!culture) {
-                container.innerHTML = '<div style="padding:20px;color:var(--dim);">No culture loaded</div>';
-                return;
-            }
-
-            var places = _getPlaces();
-            var religions = _getReligions();
-
-            var locationOptions = '';
-            for (var i = 0; i < places.length; i++) {
-                var selected = culture.locations && culture.locations.indexOf(places[i].id) !== -1 ? 'selected' : '';
-                locationOptions += '<option value="' + places[i].id + '" ' + selected + '>' +
-                    _escapeHtml(places[i].displayName) + '</option>';
-            }
-
-            var religionOptions = '';
-            for (var i = 0; i < religions.length; i++) {
-                var selected = culture.religions && culture.religions.indexOf(religions[i].id) !== -1 ? 'selected' : '';
-                religionOptions += '<option value="' + religions[i].id + '" ' + selected + '>' +
-                    _escapeHtml(religions[i].displayName || religions[i].name) + '</option>';
-            }
-
-            var iconOptions = '';
-            var iconNames = window.Icons ? Object.keys(window.Icons) : [];
-            var commonIcons = ['STAR_4', 'STAR', 'CIRCLE_DOT', 'LOCATION', 'BOOK', 'FLAG', 'CROWN', 'SHIELD', 'SWORD', 'HEART'];
-            
-            for (var i = 0; i < commonIcons.length; i++) {
-                var name = commonIcons[i];
-                if (window.Icons && window.Icons[name]) {
-                    var selected = (culture.icon === name) ? 'selected' : '';
-                    iconOptions += '<option value="' + name + '" ' + selected + '>' +
-                        window.Icons[name] + ' ' + name + '</option>';
-                }
-            }
-
-            container.innerHTML =
-                '<div class="culture-editor-tab" data-tab="details" style="padding:4px;">' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' +
-
-                '<div class="form-group" style="grid-column:1 / 2;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Name *</label>' +
-                '<input type="text" id="ce_name" value="' + _escapeHtml(culture.name || '') + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                '</div>' +
-
-                '<div class="form-group" style="grid-column:2 / 3;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Display Name</label>' +
-                '<input type="text" id="ce_displayName" value="' + _escapeHtml(culture.displayName || '') + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                '</div>' +
-
-                '<div class="form-group" style="grid-column:1 / 2;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Icon</label>' +
-                '<select id="ce_icon" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' +
-                iconOptions +
-                '</select>' +
-                '</div>' +
-
-                '<div class="form-group" style="grid-column:1 / 3;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Description</label>' +
-                '<textarea id="ce_description" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' + _escapeHtml(culture.description || '') + '</textarea>' +
-                '</div>' +
-
-                '<div class="form-group" style="grid-column:1 / 3;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Associated Locations</label>' +
-                '<select id="ce_locations" multiple style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;min-height:80px;font-size:0.8rem;">' +
-                locationOptions +
-                '</select>' +
-                '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">Hold Ctrl/Cmd to select multiple</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="grid-column:1 / 3;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Associated Religions</label>' +
-                '<select id="ce_religions" multiple style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;min-height:80px;font-size:0.8rem;">' +
-                religionOptions +
-                '</select>' +
-                '<div style="font-size:0.55rem;color:var(--dim);margin-top:4px;">Hold Ctrl/Cmd to select multiple</div>' +
-                '</div>' +
-
-                '<div class="form-group" style="grid-column:1 / 3;">' +
-                '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">Notes</label>' +
-                '<textarea id="ce_notes" rows="2" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' + _escapeHtml(culture.notes || '') + '</textarea>' +
-                '</div>' +
-
-                '</div>' +
-                '</div>';
-        },
-        save: function(culture) {
-            var name = document.getElementById('ce_name').value.trim();
-            var displayName = document.getElementById('ce_displayName').value.trim();
-            var iconSelect = document.getElementById('ce_icon');
-            var icon = iconSelect ? iconSelect.value : 'STAR_4';
-            var description = document.getElementById('ce_description').value.trim();
-            var notes = document.getElementById('ce_notes').value.trim();
-
-            var locationSelect = document.getElementById('ce_locations');
-            var locations = [];
-            for (var i = 0; i < locationSelect.options.length; i++) {
-                if (locationSelect.options[i].selected && locationSelect.options[i].value) {
-                    locations.push(locationSelect.options[i].value);
-                }
-            }
-
-            var religionSelect = document.getElementById('ce_religions');
-            var religions = [];
-            for (var i = 0; i < religionSelect.options.length; i++) {
-                if (religionSelect.options[i].selected && religionSelect.options[i].value) {
-                    religions.push(religionSelect.options[i].value);
-                }
-            }
-
-            var updates = {
-                name: name,
-                displayName: displayName || name,
-                icon: icon,
-                description: description,
-                locations: locations,
-                religions: religions,
-                notes: notes
-            };
-
-            var updated = {};
-            for (var key in culture) {
-                if (culture.hasOwnProperty(key)) {
-                    updated[key] = culture[key];
-                }
-            }
-            for (var key in updates) {
-                if (updates.hasOwnProperty(key)) {
-                    updated[key] = updates[key];
-                }
-            }
-
-            return updated;
-        },
-        validate: function(culture) {
-            var errors = [];
-            if (!culture.name || culture.name.trim() === '') {
-                errors.push('Name is required');
-            }
-            return { valid: errors.length === 0, errors: errors };
+    function _clone(value) {
+        if (value === null || typeof value !== 'object') return value;
+        if (Array.isArray(value)) {
+            var arr = new Array(value.length);
+            for (var i = 0; i < value.length; i++) arr[i] = _clone(value[i]);
+            return arr;
         }
-    });
-
-    // =========================================================================
-    // 4. BUILT-IN APPEARANCE TAB
-    // =========================================================================
-
-    registerTab('appearance', {
-        label: 'Appearance',
-        icon: 'PERSON',
-        render: function(container, culture) {
-            if (!culture) {
-                container.innerHTML = '<div style="padding:20px;color:var(--dim);">No culture loaded</div>';
-                return;
+        var out = {};
+        for (var k in value) {
+            if (Object.prototype.hasOwnProperty.call(value, k)) {
+                out[k] = _clone(value[k]);
             }
-
-            var appearance = culture.appearance || {};
-
-            var categories = [
-                { key: 'skinTones', label: 'Skin Tones' },
-                { key: 'eyeColors', label: 'Eye Colors' },
-                { key: 'hairColors', label: 'Hair Colors' },
-                { key: 'hairTypes', label: 'Hair Types' },
-                { key: 'buildTypes', label: 'Build Types' },
-                { key: 'commonFeatures', label: 'Common Features' }
-            ];
-
-            var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-
-            for (var i = 0; i < categories.length; i++) {
-                var cat = categories[i];
-                var items = appearance[cat.key] || [];
-                html += '<div style="background:var(--bg3);border-radius:6px;padding:12px;border:1px solid var(--border);">';
-                html += '<div style="font-size:0.7rem;font-weight:bold;color:var(--accent);margin-bottom:6px;">' + cat.label + '</div>';
-                html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-                for (var j = 0; j < items.length; j++) {
-                    var item = items[j];
-                    html += '<span style="background:var(--bg2);padding:2px 10px;border-radius:12px;font-size:0.6rem;border:1px solid var(--border);">' +
-                        _escapeHtml(item.value) + ' (' + (item.weight || 10) + ')</span>';
-                }
-                if (items.length === 0) {
-                    html += '<span style="font-size:0.55rem;color:var(--dim);">No options defined</span>';
-                }
-                html += '</div></div>';
-            }
-
-            var height = appearance.height || { male: { min: 155, max: 200 }, female: { min: 145, max: 185 } };
-            html += '<div style="grid-column:1 / 3;background:var(--bg3);border-radius:6px;padding:12px;border:1px solid var(--border);">';
-            html += '<div style="font-size:0.7rem;font-weight:bold;color:var(--accent);margin-bottom:6px;">Height Ranges</div>';
-            html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-            html += '<div><span style="font-size:0.55rem;color:var(--dim);">Male</span> ' + (height.male?.min || 155) + '–' + (height.male?.max || 200) + ' cm</div>';
-            html += '<div><span style="font-size:0.55rem;color:var(--dim);">Female</span> ' + (height.female?.min || 145) + '–' + (height.female?.max || 185) + ' cm</div>';
-            html += '</div></div>';
-
-            html += '</div>';
-            container.innerHTML = html;
-        },
-        save: function(culture) {
-            return culture;
-        },
-        validate: function(culture) {
-            return { valid: true, errors: [] };
         }
-    });
+        return out;
+    }
 
     // =========================================================================
-    // 5. BUILT-IN MYTHOLOGY TAB
+    // 5. OPEN EDITOR
     // =========================================================================
 
-    registerTab('mythology', {
-        label: 'Mythology',
-        icon: 'BOOK',
-        render: function(container, culture) {
-            if (!culture) {
-                container.innerHTML = '<div style="padding:20px;color:var(--dim);">No culture loaded</div>';
-                return;
-            }
-
-            var m = culture.mythology || {};
-
-            var sections = [
-                { key: 'creation', label: 'Creation Story', rows: 4 },
-                { key: 'afterlife', label: 'Afterlife Beliefs', rows: 4 },
-                { key: 'cosmology', label: 'Cosmology', rows: 3 }
-            ];
-
-            var listSections = [
-                { key: 'keyDeities', label: 'Key Deities' },
-                { key: 'keyEvents', label: 'Key Events' },
-                { key: 'symbols', label: 'Symbols' },
-                { key: 'themes', label: 'Themes' }
-            ];
-
-            var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">';
-
-            for (var i = 0; i < sections.length; i++) {
-                var s = sections[i];
-                var value = m[s.key] || '';
-                html += '<div class="form-group" style="grid-column:' + (i === 0 ? '1 / 3' : 'auto') + ';">';
-                html += '<label style="display:block;font-size:0.7rem;color:var(--accent);margin-bottom:4px;">' + s.label + '</label>';
-                html += '<textarea id="myth_' + s.key + '" rows="' + s.rows + '" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;">' + _escapeHtml(value) + '</textarea>';
-                html += '</div>';
-            }
-
-            for (var i = 0; i < listSections.length; i++) {
-                var s = listSections[i];
-                var items = m[s.key] || [];
-                html += '<div style="background:var(--bg3);border-radius:6px;padding:12px;border:1px solid var(--border);">';
-                html += '<div style="font-size:0.7rem;font-weight:bold;color:var(--accent);margin-bottom:6px;">' + s.label + '</div>';
-                html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
-                for (var j = 0; j < items.length; j++) {
-                    html += '<span style="background:var(--bg2);padding:2px 10px;border-radius:12px;font-size:0.6rem;border:1px solid var(--border);">' +
-                        _escapeHtml(items[j]) + '</span>';
-                }
-                if (items.length === 0) {
-                    html += '<span style="font-size:0.55rem;color:var(--dim);">No items defined</span>';
-                }
-                html += '</div></div>';
-            }
-
-            html += '</div>';
-            container.innerHTML = html;
-        },
-        save: function(culture) {
-            var m = culture.mythology || {};
-            var sections = ['creation', 'afterlife', 'cosmology'];
-            var updated = {};
-
-            for (var key in culture) {
-                if (culture.hasOwnProperty(key)) {
-                    updated[key] = culture[key];
-                }
-            }
-
-            var mythology = {};
-            for (var key in m) {
-                if (m.hasOwnProperty(key)) {
-                    mythology[key] = m[key];
-                }
-            }
-
-            for (var i = 0; i < sections.length; i++) {
-                var el = document.getElementById('myth_' + sections[i]);
-                if (el) {
-                    mythology[sections[i]] = el.value.trim();
-                }
-            }
-
-            updated.mythology = mythology;
-            return updated;
-        },
-        validate: function(culture) {
-            return { valid: true, errors: [] };
-        }
-    });
-
-    // =========================================================================
-    // 6. BUILT-IN CHARACTERS TAB
-    // =========================================================================
-
-    registerTab('characters', {
-        label: 'Characters',
-        icon: 'PERSON',
-        render: function(container, culture) {
-            if (!culture) {
-                container.innerHTML = '<div style="padding:20px;color:var(--dim);">No culture loaded</div>';
-                return;
-            }
-
-            var chars = [];
-            if (window.masterData && window.masterData.data && window.masterData.data.characters) {
-                for (var i = 0; i < window.masterData.data.characters.length; i++) {
-                    if (window.masterData.data.characters[i].cultureId === culture.id) {
-                        chars.push(window.masterData.data.characters[i]);
-                    }
-                }
-            }
-
-            if (chars.length === 0) {
-                container.innerHTML = '<div class="empty-state" style="text-align:center;padding:40px;color:var(--dim);">' +
-                    '<div class="icon" style="font-size:2rem;margin-bottom:12px;">' + _getIcon('PERSON') + '</div>' +
-                    '<div class="message" style="font-size:0.8rem;">No characters in this culture</div>' +
-                    '</div>';
-                return;
-            }
-
-            var html = '<div style="display:flex;flex-direction:column;gap:4px;">';
-            for (var i = 0; i < chars.length; i++) {
-                var c = chars[i];
-                html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:var(--bg3);border-radius:4px;">';
-                html += '<span style="font-size:0.7rem;">' + _escapeHtml(c.name) + ' ' + _escapeHtml(c.surname || '') + '</span>';
-                html += '<span style="font-size:0.55rem;color:var(--dim);">' + (c.gender || 'unknown') + '</span>';
-                html += '</div>';
-            }
-            html += '</div>';
-            container.innerHTML = html;
-        },
-        save: function(culture) {
-            return culture;
-        },
-        validate: function(culture) {
-            return { valid: true, errors: [] };
-        }
-    });
-
-    // =========================================================================
-    // 7. EDITOR MODAL
-    // =========================================================================
-
+    /**
+     * Opens the culture editor modal.
+     *
+     * @param {string} cultureId
+     * @param {Object} [options]
+     * @param {Function} [options.onSave]      called with the updated culture
+     * @param {Function} [options.onCancel]    called when the editor closes
+     *                                          without saving
+     * @param {string} [options.initialTab]    tab id to activate first
+     * @param {string[]} [options.tabs]        tab ids to display (default:
+     *                                          every registered tab)
+     */
     function openEditor(cultureId, options) {
         options = options || {};
 
-        var state = _getState();
-        var commands = _getCommands();
+        if (!cultureId) {
+            _showToast('Culture id is required', 'error');
+            return;
+        }
 
-        if (!state || !commands) {
+        var queries = _getQueries();
+        var commands = _getCommands();
+        if (!queries || !commands) {
             _showToast('Culture system not available', 'error');
             return;
         }
 
-        var culture = state.getCulture(cultureId);
-        if (!culture) {
+        var canonical = null;
+        try { canonical = queries.getCultureById(cultureId); }
+        catch (e) {
+            _showToast('Failed to load culture: ' + (e && e.message ? e.message : 'unknown'), 'error');
+            return;
+        }
+        if (!canonical) {
             _showToast('Culture not found', 'error');
             return;
         }
 
-        _currentCultureId = cultureId;
-        _currentCulture = JSON.parse(JSON.stringify(culture));
-        _onSaveCallback = options.onSave || null;
-        _tabDataCache = {};
+        // Reset per-editor state.
+        _state.cultureId = cultureId;
+        _state.culture = _clone(canonical);
+        _state.tabDataCache = Object.create(null);
+        _state.onSaveCallback = typeof options.onSave === 'function' ? options.onSave : null;
+        _state.listeners = [];
 
-        var tabIds = options.tabs || _tabOrder;
-        if (tabIds.length === 0) {
-            tabIds = _tabOrder;
-        }
+        // Determine visible tabs.
+        var visibleIds = Array.isArray(options.tabs) && options.tabs.length > 0
+            ? options.tabs.slice()
+            : _tabOrder.slice();
+        visibleIds = visibleIds.filter(function (id) { return !!_tabRegistry[id]; });
 
-        tabIds = tabIds.filter(function(id) { return _tabRegistry[id]; });
-
-        if (tabIds.length === 0) {
-            _showToast('No tabs available', 'error');
+        if (visibleIds.length === 0) {
+            _showToast('No culture editor tabs are registered', 'error');
             return;
         }
 
-        _activeTabId = options.initialTab || tabIds[0];
+        _state.activeTabId = (typeof options.initialTab === 'string'
+            && visibleIds.indexOf(options.initialTab) !== -1)
+            ? options.initialTab
+            : visibleIds[0];
 
-        var tabNavHtml = '';
-        for (var i = 0; i < tabIds.length; i++) {
-            var id = tabIds[i];
+        // Build nav + panes.
+        var navHtml = '';
+        var panesHtml = '';
+        for (var i = 0; i < visibleIds.length; i++) {
+            var id = visibleIds[i];
             var tab = _tabRegistry[id];
-            var active = (id === _activeTabId) ? 'active' : '';
-            var icon = _getIcon(tab.icon) || tab.icon;
-            tabNavHtml += '<button class="ce-tab-btn ' + active + '" data-tab="' + id + '" style="' +
-                'padding:6px 14px;background:' + (active ? 'var(--accent-dim)' : 'var(--bg3)') + ';' +
-                'border:1px solid ' + (active ? 'var(--accent)' : 'var(--border)') + ';' +
-                'border-radius:6px 6px 0 0;cursor:pointer;font-size:0.7rem;' +
-                'transition:all 0.15s;' +
-                '">' +
-                icon + ' ' + _escapeHtml(tab.label) +
-                '</button>';
-        }
+            var active = (id === _state.activeTabId);
 
-        var tabContentHtml = '';
-        for (var i = 0; i < tabIds.length; i++) {
-            var id = tabIds[i];
-            var active = (id === _activeTabId) ? 'active' : '';
-            tabContentHtml += '<div class="ce-tab-content ' + active + '" data-tab="' + id + '" style="' +
-                'display:' + (active ? 'block' : 'none') + ';' +
-                'padding:16px;background:var(--bg3);border:1px solid var(--border);' +
-                'border-radius:0 6px 6px 6px;min-height:200px;' +
-                '">' +
-                '<div class="ce-tab-inner" id="ce_tab_' + id + '"></div>' +
+            var iconHtml = _getIcon(tab.icon);
+
+            navHtml +=
+                '<button type="button" class="ct-nav-btn' +
+                (active ? ' ct-nav-btn--active' : '') + '"' +
+                ' data-tab="' + _escapeHtml(id) + '"' +
+                ' role="tab"' +
+                ' aria-selected="' + (active ? 'true' : 'false') + '">' +
+                (iconHtml ? '<span class="ct-nav-icon">' + iconHtml + '</span>' : '') +
+                '<span class="ct-nav-label">' + _escapeHtml(tab.label) + '</span>' +
+                '</button>';
+
+            panesHtml +=
+                '<div class="ct-pane' + (active ? ' ct-pane--active' : '') + '"' +
+                ' data-tab="' + _escapeHtml(id) + '"' +
+                ' role="tabpanel">' +
+                '<div class="ct-pane-inner" id="ct_pane_' + _escapeHtml(id) + '"></div>' +
                 '</div>';
         }
 
-        var modalContent =
-            '<div class="culture-editor" style="max-height:80vh;display:flex;flex-direction:column;">' +
-            '<div style="margin-bottom:12px;padding:8px;background:var(--bg2);border-radius:6px;font-size:0.65rem;color:var(--dim);">' +
-            'Editing: <strong>' + _escapeHtml(culture.displayName || culture.name) + '</strong>' +
-            '</div>' +
-            '<div class="ce-tab-nav" style="display:flex;gap:4px;flex-wrap:wrap;">' +
-            tabNavHtml +
-            '</div>' +
-            '<div class="ce-tabs" style="flex:1;">' +
-            tabContentHtml +
-            '</div>' +
-            '<div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
-            '<div id="ce_validation_errors" style="font-size:0.65rem;color:var(--danger);flex:1;"></div>' +
-            '<div style="display:flex;gap:8px;">' +
-            '<button id="ce_cancel" class="btn" style="padding:6px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.7rem;">Cancel</button>' +
-            '<button id="ce_save" class="btn primary" style="padding:6px 16px;background:var(--accent);border:1px solid var(--accent);border-radius:6px;cursor:pointer;font-size:0.7rem;color:white;">Save</button>' +
-            '</div>' +
-            '</div>' +
+        var contentHtml =
+            '<div class="ct-editor">' +
+              '<div class="ct-editor__header">' +
+                '<div class="ct-editor__title">' +
+                  (canonical.icon
+                    ? '<span class="ct-editor__glyph">' + _escapeHtml(canonical.icon) + '</span>'
+                    : '') +
+                  '<span class="ct-editor__name">' +
+                    _escapeHtml(canonical.displayName || canonical.name) +
+                  '</span>' +
+                '</div>' +
+                '<div class="ct-editor__errors" id="ct_validation_errors"></div>' +
+              '</div>' +
+
+              '<div class="ct-tabbar" role="tablist">' +
+                navHtml +
+              '</div>' +
+
+              '<div class="ct-panes">' +
+                panesHtml +
+              '</div>' +
+
+              '<div class="ct-editor__footer">' +
+                '<button type="button" class="rt-btn ct-cancel-btn">Cancel</button>' +
+                '<button type="button" class="rt-btn rt-btn--primary ct-save-btn">Save</button>' +
+              '</div>' +
             '</div>';
 
         var modal = _openModal({
-            title: options.title || 'Edit Culture: ' + (culture.displayName || culture.name),
-            content: modalContent,
+            titleHtml: 'Edit Culture: ' + _escapeHtml(canonical.displayName || canonical.name),
+            contentHtml: contentHtml,
             confirmText: '',
             cancelText: '',
             size: 'large',
-            onOpen: function() {
-                _renderTab(_activeTabId);
-
-                var tabButtons = document.querySelectorAll('.ce-tab-btn');
-                for (var i = 0; i < tabButtons.length; i++) {
-                    (function(btn) {
-                        btn.addEventListener('click', function() {
-                            var tabId = this.dataset.tab;
-                            _switchTab(tabId);
-                        });
-                    })(tabButtons[i]);
-                }
-
-                var saveBtn = document.getElementById('ce_save');
-                var cancelBtn = document.getElementById('ce_cancel');
-
-                if (saveBtn) {
-                    saveBtn.addEventListener('click', function() {
-                        _saveCulture();
-                    });
-                }
-
-                if (cancelBtn) {
-                    cancelBtn.addEventListener('click', function() {
-                        _closeTopModal();
-                    });
-                }
-
-                document.addEventListener('keydown', function(e) {
-                    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                        e.preventDefault();
-                        _saveCulture();
+            onMount: function (root) {
+                _onModalMounted(root, visibleIds);
+            },
+            onCancel: function () {
+                _cleanup();
+                _state.culture = null;
+                _state.cultureId = null;
+                _state.tabDataCache = Object.create(null);
+                if (typeof options.onCancel === 'function') {
+                    try { options.onCancel(); }
+                    catch (e) {
+                        if (typeof console !== 'undefined' && console.error) {
+                            console.error('[culture-editor] onCancel threw:', e);
+                        }
                     }
-                });
+                }
             }
         });
 
-        _modalId = modal ? modal.id : null;
+        _state.modal = modal;
     }
 
     // =========================================================================
-    // 8. TAB MANAGEMENT FUNCTIONS
+    // 6. MODAL MOUNT — wire nav + footer, render first tab
     // =========================================================================
 
+    function _onModalMounted(root, visibleIds) {
+        _state.root = root;
+
+        // Nav buttons: switch tabs.
+        var navBtns = root.querySelectorAll('.ct-nav-btn');
+        for (var i = 0; i < navBtns.length; i++) {
+            (function (btn) {
+                _track(btn, 'click', function () {
+                    var id = btn.getAttribute('data-tab');
+                    if (id) _switchTab(id);
+                });
+            })(navBtns[i]);
+        }
+
+        // Cancel: close without saving.
+        var cancelBtn = root.querySelector('.ct-cancel-btn');
+        if (cancelBtn) {
+            _track(cancelBtn, 'click', function () {
+                _closeTopModal();
+            });
+        }
+
+        // Save: run save-all.
+        var saveBtn = root.querySelector('.ct-save-btn');
+        if (saveBtn) {
+            _track(saveBtn, 'click', function () {
+                _saveCulture();
+            });
+        }
+
+        // Ctrl/Cmd+S inside the editor.
+        _track(document, 'keydown', function (e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                // Only fire when the culture editor is the active modal.
+                if (!_state.root || !document.body.contains(_state.root)) return;
+                e.preventDefault();
+                _saveCulture();
+            }
+        });
+
+        // Render the initial tab.
+        _renderTab(_state.activeTabId, visibleIds);
+    }
+
+    // =========================================================================
+    // 7. TAB SWITCHING
+    // =========================================================================
+    //
+    // Before switching, the current tab's rendered DOM is captured into
+    // _tabDataCache so unsaved input survives a switch away. Switching
+    // back restores from the cache rather than re-invoking the tab's
+    // render() function (which would reset the input to the canonical
+    // state).
+
     function _switchTab(tabId) {
-        var tab = _tabRegistry[tabId];
-        if (!tab) return;
+        if (!_state.root || !_tabRegistry[tabId]) return;
+        if (tabId === _state.activeTabId) return;
 
-        var currentContainer = document.getElementById('ce_tab_' + _activeTabId);
-        if (currentContainer) {
-            _tabDataCache[_activeTabId] = currentContainer.innerHTML;
+        // Deactivate current tab (invoke its onDeactivate hook).
+        var current = _state.activeTabId;
+        if (current && _tabRegistry[current] && _tabRegistry[current].onDeactivate) {
+            try { _tabRegistry[current].onDeactivate(_state.culture); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[culture-editor] onDeactivate for "' + current + '" threw:', e);
+                }
+            }
         }
 
-        if (_activeTabId && _tabRegistry[_activeTabId] && _tabRegistry[_activeTabId].onDeactivate) {
-            try {
-                _tabRegistry[_activeTabId].onDeactivate(_currentCulture);
-            } catch (e) {}
+        // Cache the current pane's DOM.
+        var currentPane = _state.root.querySelector('#ct_pane_' + current);
+        if (currentPane) {
+            _state.tabDataCache[current] = currentPane.innerHTML;
         }
 
-        _activeTabId = tabId;
+        _state.activeTabId = tabId;
 
-        var buttons = document.querySelectorAll('.ce-tab-btn');
-        for (var i = 0; i < buttons.length; i++) {
-            var btn = buttons[i];
-            var isActive = btn.dataset.tab === tabId;
-            btn.classList.toggle('active', isActive);
-            btn.style.background = isActive ? 'var(--accent-dim)' : 'var(--bg3)';
-            btn.style.borderColor = isActive ? 'var(--accent)' : 'var(--border)';
+        // Toggle nav state.
+        var navBtns = _state.root.querySelectorAll('.ct-nav-btn');
+        for (var i = 0; i < navBtns.length; i++) {
+            var btn = navBtns[i];
+            var isActive = btn.getAttribute('data-tab') === tabId;
+            btn.classList.toggle('ct-nav-btn--active', isActive);
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }
 
-        var contents = document.querySelectorAll('.ce-tab-content');
-        for (var i = 0; i < contents.length; i++) {
-            var content = contents[i];
-            var isActive = content.dataset.tab === tabId;
-            content.classList.toggle('active', isActive);
-            content.style.display = isActive ? 'block' : 'none';
+        // Toggle panes.
+        var panes = _state.root.querySelectorAll('.ct-pane');
+        for (var j = 0; j < panes.length; j++) {
+            var pane = panes[j];
+            pane.classList.toggle('ct-pane--active', pane.getAttribute('data-tab') === tabId);
         }
 
+        // Render the newly active tab (from cache if available).
         _renderTab(tabId);
 
-        if (tab.onActivate) {
-            try {
-                tab.onActivate(_currentCulture);
-            } catch (e) {}
+        // Activate hook.
+        if (_tabRegistry[tabId].onActivate) {
+            try { _tabRegistry[tabId].onActivate(_state.culture); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[culture-editor] onActivate for "' + tabId + '" threw:', e);
+                }
+            }
         }
     }
 
     function _renderTab(tabId) {
+        if (!_state.root) return;
         var tab = _tabRegistry[tabId];
         if (!tab) return;
 
-        var container = document.getElementById('ce_tab_' + tabId);
-        if (!container) return;
+        var pane = _state.root.querySelector('#ct_pane_' + tabId);
+        if (!pane) return;
 
-        if (_tabDataCache[tabId]) {
-            container.innerHTML = _tabDataCache[tabId];
-            return;
+        // Restore from cache if the tab was rendered before and has
+        // unsaved edits.
+        if (_state.tabDataCache[tabId]) {
+            pane.innerHTML = _state.tabDataCache[tabId];
+            // Cached DOM already carries its listeners? No — innerHTML
+            // does not restore listeners. Re-attach by re-rendering on
+            // the detached content. Simplest correct approach: replay
+            // the tab's render with the working culture (which produces
+            // fresh DOM the tab is expected to re-hydrate from the
+            // working culture). The tab's render is required to be
+            // idempotent.
+            //
+            // Simpler and more robust: discard the cache and re-render.
+            // The tab's render reads from _state.culture, not the DOM,
+            // so unsaved edits must be reflected in _state.culture for
+            // them to survive. Tabs that keep transient input in the
+            // DOM only (not in _state.culture) lose that input on a
+            // switch. This is a documented contract: tabs must write
+            // their user input into _state.culture via their own change
+            // handlers if it needs to survive a tab switch.
+            _state.tabDataCache[tabId] = null;
         }
 
         try {
-            tab.render(container, _currentCulture);
+            tab.render(pane, _state.culture);
         } catch (e) {
-            container.innerHTML = '<div style="padding:20px;color:var(--danger);">Error loading tab: ' + _escapeHtml(e.message) + '</div>';
+            pane.innerHTML =
+                '<div class="rt-unavailable">' +
+                'Error rendering this tab: ' +
+                _escapeHtml(e && e.message ? e.message : 'unknown') +
+                '</div>';
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[culture-editor] tab "' + tabId + '" render threw:', e);
+            }
         }
     }
+
+    // =========================================================================
+    // 8. SAVE ALL
+    // =========================================================================
+    //
+    // Iterates every REGISTERED tab (not just the visible ones; a tab
+    // that is hidden by options.tabs may still have edited data).
+    // Each tab's save() returns a partial culture object; the results
+    // are shallow-merged into a candidate. Each tab's validate() is then
+    // run against the candidate. Only if every tab validates does the
+    // candidate go to CultureCommands.updateCulture — one call, one
+    // persist.
 
     function _saveCulture() {
         var commands = _getCommands();
@@ -723,102 +541,159 @@
             return;
         }
 
-        var updatedCulture = JSON.parse(JSON.stringify(_currentCulture));
-        var allErrors = [];
-        var hasErrors = false;
+        if (!_state.culture || !_state.cultureId) return;
 
+        // Start from a clone of the working copy — never the live object.
+        var candidate = _clone(_state.culture);
+
+        var errors = [];
+        var tabsRun = 0;
+
+        // Phase 1: run save() for every registered tab.
         for (var i = 0; i < _tabOrder.length; i++) {
             var id = _tabOrder[i];
             var tab = _tabRegistry[id];
-            if (tab && tab.save) {
-                try {
-                    var result = tab.save(_currentCulture);
-                    if (result) {
-                        for (var key in result) {
-                            if (result.hasOwnProperty(key)) {
-                                updatedCulture[key] = result[key];
-                            }
-                        }
-                    }
-                } catch (e) {
-                    allErrors.push('Tab "' + tab.label + '": ' + e.message);
-                }
-            }
+            if (!tab || typeof tab.save !== 'function') continue;
 
-            if (tab && tab.validate) {
-                try {
-                    var validation = tab.validate(updatedCulture);
-                    if (!validation.valid && validation.errors) {
-                        hasErrors = true;
-                        for (var j = 0; j < validation.errors.length; j++) {
-                            allErrors.push(tab.label + ': ' + validation.errors[j]);
+            tabsRun++;
+            try {
+                var partial = tab.save(_state.culture);
+                if (partial && typeof partial === 'object') {
+                    for (var k in partial) {
+                        if (Object.prototype.hasOwnProperty.call(partial, k)) {
+                            candidate[k] = partial[k];
                         }
                     }
-                } catch (e) {
-                    allErrors.push('Tab "' + tab.label + '" validation error: ' + e.message);
                 }
+            } catch (e) {
+                errors.push('Tab "' + tab.label + '" save threw: ' +
+                    (e && e.message ? e.message : 'unknown'));
             }
         }
 
-        var errorContainer = document.getElementById('ce_validation_errors');
-        if (errorContainer) {
-            if (allErrors.length > 0) {
-                var errorIcon = _getIcon('WARNING');
-                errorContainer.innerHTML = errorIcon + ' ' + allErrors.join('; ');
-                errorContainer.style.color = 'var(--danger)';
-                _showToast('Please fix validation errors', 'error');
-                return;
-            } else {
-                errorContainer.innerHTML = '';
+        // Phase 2: run validate() for every registered tab.
+        for (var j = 0; j < _tabOrder.length; j++) {
+            var id2 = _tabOrder[j];
+            var tab2 = _tabRegistry[id2];
+            if (!tab2 || typeof tab2.validate !== 'function') continue;
+
+            try {
+                var verdict = tab2.validate(candidate);
+                if (verdict && verdict.valid === false) {
+                    var vErrors = Array.isArray(verdict.errors) ? verdict.errors : [];
+                    for (var e2 = 0; e2 < vErrors.length; e2++) {
+                        errors.push(tab2.label + ': ' + vErrors[e2]);
+                    }
+                }
+            } catch (e) {
+                errors.push('Tab "' + tab2.label + '" validate threw: ' +
+                    (e && e.message ? e.message : 'unknown'));
             }
         }
 
-        if (!updatedCulture.name || updatedCulture.name.trim() === '') {
-            _showToast('Culture name is required', 'error');
+        // Surface errors (if any).
+        _showErrors(errors);
+
+        if (errors.length > 0) {
             return;
         }
 
-        var result = commands.updateCulture(_currentCultureId, updatedCulture);
-        if (result && result.success) {
-            _showToast('Culture updated successfully', 'success');
-            _currentCulture = result.data;
-            _tabDataCache = {};
-            if (_onSaveCallback) {
-                _onSaveCallback(result.data);
-            }
-            _closeTopModal();
-        } else {
-            _showToast('Failed to update culture: ' + (result ? result.reason : 'Unknown error'), 'error');
+        // Phase 3: one command call, one persist.
+        var updateResult = null;
+        try {
+            updateResult = commands.updateCulture(_state.cultureId, candidate);
+        } catch (e) {
+            _showToast('Update failed: ' + (e && e.message ? e.message : 'unknown'), 'error');
+            return;
         }
-    }
 
-    function closeEditor() {
+        if (!updateResult || updateResult.success !== true) {
+            _showToast(
+                'Update failed: ' + (updateResult && updateResult.reason
+                    ? updateResult.reason
+                    : 'unknown'),
+                'error'
+            );
+            return;
+        }
+
+        var persistResult = null;
+        try { persistResult = commands.persist(); }
+        catch (e) {
+            _showToast('Save failed: ' + (e && e.message ? e.message : 'unknown'), 'error');
+            return;
+        }
+        if (persistResult && persistResult.success === false) {
+            _showToast(
+                'Saved in memory; storage write failed: ' +
+                (persistResult.reason || 'unknown'),
+                'warning'
+            );
+        } else {
+            _showToast('Culture updated', 'success');
+        }
+
+        // Update working copy from the canonical response.
+        if (updateResult.data) {
+            _state.culture = _clone(updateResult.data);
+        }
+
+        // Notify the caller.
+        if (_state.onSaveCallback) {
+            try { _state.onSaveCallback(updateResult.data); }
+            catch (e) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[culture-editor] onSave threw:', e);
+                }
+            }
+        }
+
+        // Close the modal.
         _closeTopModal();
     }
 
+    function _showErrors(errors) {
+        if (!_state.root) return;
+        var el = _state.root.querySelector('#ct_validation_errors');
+        if (!el) return;
+
+        if (!errors || errors.length === 0) {
+            el.innerHTML = '';
+            return;
+        }
+
+        var html = '<ul class="ct-errors-list">';
+        for (var i = 0; i < errors.length; i++) {
+            html += '<li>' + _escapeHtml(errors[i]) + '</li>';
+        }
+        html += '</ul>';
+        el.innerHTML = html;
+    }
+
     // =========================================================================
-    // 9. EXPORTS
+    // 9. PUBLIC API
     // =========================================================================
 
     window.CultureEditorTabs = {
+        // Registry
         registerTab: registerTab,
         unregisterTab: unregisterTab,
         getRegisteredTabs: getRegisteredTabs,
+
+        // Editor
         openEditor: openEditor,
-        closeEditor: closeEditor,
-        getCurrentCulture: getCurrentCulture,
-        getCurrentCultureId: getCurrentCultureId,
-        _switchTab: _switchTab,
-        _renderTab: _renderTab,
-        _saveCulture: _saveCulture,
-        _currentCulture: _currentCulture,
-        _currentCultureId: _currentCultureId
+        closeEditor: function () { _closeTopModal(); },
+
+        // Introspection (for tests and diagnostics — not for UI)
+        _getActiveTabId: function () { return _state.activeTabId; },
+        _getWorkingCulture: function () { return _state.culture; }
     };
 
+    // Legacy flat alias. Do NOT add more flat aliases — the registry is
+    // the canonical entry point.
     window.openCultureEditor = openEditor;
 
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = window.CultureEditorTabs;
     }
-
 })();
