@@ -4,78 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Government Manager</title>
+    
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
+    
+    <!-- Stylesheets -->
     <link rel="stylesheet" href="css/themes.css">
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/worldManager.css">
     <link rel="stylesheet" href="css/selectors.css">
     <link rel="stylesheet" href="css/location-sidebar.css">
     <link rel="stylesheet" href="css/gov-manager.css">
-
-    <!-- ============================================================ -->
-    <!-- NEW: sub-tab strip styles for the Government page tab        -->
-    <!-- ============================================================ -->
-    <style>
-        .gov-subtabs {
-            display: flex;
-            gap: 2px;
-            padding: 0 4px;
-            margin-bottom: 14px;
-            border-bottom: 1px solid var(--border);
-            flex-wrap: wrap;
-        }
-
-        .gov-subtab {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 14px;
-            background: transparent;
-            border: 1px solid transparent;
-            border-bottom: 2px solid transparent;
-            border-radius: 4px 4px 0 0;
-            font-family: var(--f-display);
-            font-size: 0.68rem;
-            letter-spacing: 0.05em;
-            color: var(--dim);
-            cursor: pointer;
-            transition: color 0.15s ease,
-                        background-color 0.15s ease,
-                        border-color 0.15s ease;
-        }
-
-        .gov-subtab:hover {
-            color: var(--accent-light);
-            background: var(--accent-dim);
-        }
-
-        .gov-subtab.active {
-            color: var(--accent);
-            border-bottom-color: var(--accent);
-            background: var(--accent-dim);
-            font-weight: 600;
-        }
-
-        .gov-subtab .gov-subtab-icon {
-            display: inline-flex;
-            width: 1em;
-            height: 1em;
-            align-items: center;
-            justify-content: center;
-            color: currentColor;
-        }
-
-        .gov-subtab .gov-subtab-icon svg {
-            width: 100%;
-            height: 100%;
-            fill: currentColor;
-        }
-
-        .gov-subpanel {
-            min-height: 200px;
-        }
-    </style>
 </head>
 <body>
 
@@ -87,7 +28,8 @@
     </button>
     <div class="title" id="govManagerTitle"></div>
     <div class="spacer"></div>
-    <button id="addGovTypeBtn" class="tb-btn primary"></button>
+    
+    <!-- Removed #addGovTypeBtn as requested -->
     <button id="addDeptBtn" class="tb-btn primary"></button>
     <button id="importBtn" class="tb-btn"></button>
     <button id="exportBtn" class="tb-btn primary"></button>
@@ -95,7 +37,7 @@
 </div>
 
 <div class="world-app">
-    <!-- Location Sidebar -->
+    <!-- Location Sidebar (Left) -->
     <div class="locations-sidebar" id="locationsSidebar">
         <div class="sidebar-header">
             <h3 id="sidebarTitle"></h3>
@@ -106,17 +48,20 @@
     </div>
     <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
-    <!-- Main Panel -->
+    <!-- Main Panel (Flex Row: Content Left, Vertical Tabs Right) -->
     <div class="main-panel">
-        <!-- Tabs - Unified -->
-        <div class="panel-tabs" id="tabContainer">
+        
+        <!-- Tab Content (Left) -->
+        <div class="tab-content-wrapper" id="panelContent">
+            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
+        </div>
+        
+        <!-- Vertical Tabs (Right) -->
+        <div class="panel-tabs-vertical" id="tabContainer">
             <button class="tab-btn active" data-tab="government" id="tabGovernment"></button>
             <button class="tab-btn" data-tab="governmentOverview" id="tabOverview"></button>
             <button class="tab-btn" data-tab="governmentTypes" id="tabTypes"></button>
             <button class="tab-btn" data-tab="governmentStructure" id="tabStructure"></button>
-        </div>
-        <div class="panel-content" id="panelContent">
-            <div class="empty-state" id="emptyStateText">Select a location from the sidebar</div>
         </div>
     </div>
 </div>
@@ -147,7 +92,6 @@
 <script src="js/core/storage-schema.js"></script>
 <script src="js/core/storage.js"></script>
 <script>
-    /* ---- NEW ---- */
     /* initializeStorage() must run before any *-state.js module loads. */
     (function () {
         try {
@@ -297,15 +241,8 @@
 <script src="js/government/modals-government-economy.js"></script>
 
 <!-- ============================================================ -->
-<!-- NEW: GOVERNMENT LOCATION-SCOPED SUB-TABS                     -->
+<!-- GOVERNMENT LOCATION-SCOPED SUB-TABS                          -->
 <!-- ============================================================ -->
-<!--
-    The five files below render location-scoped Government views.
-    Each exports a render(containerId, locationId, onComplete)
-    function that paints one aspect of the currently selected
-    location. They are mounted inside the "Government" page tab
-    as sub-tabs (Details / Departments / History / Laws / Economy).
--->
 <script src="js/tabs/government-details-tab.js"></script>
 <script src="js/tabs/government-departments-tab.js"></script>
 <script src="js/tabs/government-history-tab.js"></script>
@@ -333,216 +270,78 @@
 <script src="js/events/annualProcessing.js"></script>
 
 <!-- ============================================================ -->
-<!-- NEW: GOVERNMENT SUB-TAB HOST                                 -->
+<!-- GOVERNMENT SUB-TAB HOST (Inline)                             -->
 <!-- ============================================================ -->
-<!--
-    Provides window.renderGovernmentTab(containerId, placeId,
-    onRefresh). Renders a sub-tab strip + the selected sub-tab's
-    module into a sub-panel. Persists the selected sub-tab in
-    module state so tab switches within the page keep the user on
-    the same sub-tab.
--->
 <script>
     (function () {
         'use strict';
 
-        // The sub-tabs inside the Government page tab. Order is the
-        // order they render in the strip.
         var GOV_SUBTABS = [
-            {
-                id: 'details',
-                label: 'Details',
-                icon: 'CROWN',
-                render: function (containerId, placeId, onRefresh) {
-                    if (window.GovernmentDetailsTab
-                        && typeof window.GovernmentDetailsTab.render === 'function') {
-                        window.GovernmentDetailsTab.render(containerId, placeId);
-                    } else {
-                        _notLoaded(containerId, 'GovernmentDetailsTab');
-                    }
-                }
-            },
-            {
-                id: 'departments',
-                label: 'Departments',
-                icon: 'HOUSEHOLD',
-                render: function (containerId, placeId, onRefresh) {
-                    if (window.DepartmentsTab
-                        && typeof window.DepartmentsTab.render === 'function') {
-                        window.DepartmentsTab.render(containerId, placeId);
-                    } else {
-                        _notLoaded(containerId, 'DepartmentsTab');
-                    }
-                }
-            },
-            {
-                id: 'history',
-                label: 'History',
-                icon: 'TIMELINE',
-                render: function (containerId, placeId, onRefresh) {
-                    if (window.GovernmentHistoryTab
-                        && typeof window.GovernmentHistoryTab.render === 'function') {
-                        window.GovernmentHistoryTab.render(containerId, placeId);
-                    } else {
-                        _notLoaded(containerId, 'GovernmentHistoryTab');
-                    }
-                }
-            },
-            {
-                id: 'laws',
-                label: 'Civil Laws',
-                icon: 'SHIELD',
-                render: function (containerId, placeId, onRefresh) {
-                    if (window.LawsTab
-                        && typeof window.LawsTab.render === 'function') {
-                        window.LawsTab.render(containerId, placeId);
-                    } else {
-                        _notLoaded(containerId, 'LawsTab');
-                    }
-                }
-            },
-            {
-                id: 'economy',
-                label: 'Economy',
-                icon: 'COIN',
-                render: function (containerId, placeId, onRefresh) {
-                    if (window.EconomyDetailsTab
-                        && typeof window.EconomyDetailsTab.render === 'function') {
-                        window.EconomyDetailsTab.render(containerId, placeId);
-                    } else {
-                        _notLoaded(containerId, 'EconomyDetailsTab');
-                    }
-                }
-            }
+            { id: 'details', label: 'Details', icon: 'CROWN', render: function (c, p, r) { if (window.GovernmentDetailsTab) window.GovernmentDetailsTab.render(c, p); } },
+            { id: 'departments', label: 'Departments', icon: 'HOUSEHOLD', render: function (c, p, r) { if (window.DepartmentsTab) window.DepartmentsTab.render(c, p); } },
+            { id: 'history', label: 'History', icon: 'TIMELINE', render: function (c, p, r) { if (window.GovernmentHistoryTab) window.GovernmentHistoryTab.render(c, p); } },
+            { id: 'laws', label: 'Civil Laws', icon: 'SHIELD', render: function (c, p, r) { if (window.LawsTab) window.LawsTab.render(c, p); } },
+            { id: 'economy', label: 'Economy', icon: 'COIN', render: function (c, p, r) { if (window.EconomyDetailsTab) window.EconomyDetailsTab.render(c, p); } }
         ];
 
         var _activeSubtabId = 'details';
 
-        function _icon(name) {
-            if (window.Icons && typeof window.Icons[name] === 'string') {
-                return window.Icons[name];
-            }
-            return '';
-        }
-
-        function _escapeHtml(s) {
-            if (typeof window.escapeHtml === 'function') {
-                return window.escapeHtml(s);
-            }
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        function _notLoaded(containerId, moduleName) {
-            var container = document.getElementById(containerId);
-            if (!container) return;
-            container.innerHTML =
-                '<div class="empty-state">' +
-                    'Sub-tab module not loaded: <code>' +
-                    _escapeHtml(moduleName) +
-                    '</code>' +
-                '</div>';
-        }
-
-        function _findSubtab(id) {
-            for (var i = 0; i < GOV_SUBTABS.length; i++) {
-                if (GOV_SUBTABS[i].id === id) return GOV_SUBTABS[i];
-            }
-            return null;
-        }
+        function _icon(name) { return (window.Icons && typeof window.Icons[name] === 'string') ? window.Icons[name] : ''; }
+        function _esc(s) { return typeof window.escapeHtml === 'function' ? window.escapeHtml(s) : String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
         function renderSubtabStrip(containerId, placeId, onRefresh) {
             var container = document.getElementById(containerId);
             if (!container) return;
 
-            // Build strip
             var stripHtml = '<div class="gov-subtabs" role="tablist">';
             for (var i = 0; i < GOV_SUBTABS.length; i++) {
                 var t = GOV_SUBTABS[i];
                 var active = t.id === _activeSubtabId ? ' active' : '';
-                var iconSvg = _icon(t.icon);
-                stripHtml +=
-                    '<button type="button" ' +
-                        'class="gov-subtab' + active + '" ' +
-                        'role="tab" ' +
-                        'aria-selected="' + (t.id === _activeSubtabId) + '" ' +
-                        'data-subtab-id="' + _escapeHtml(t.id) + '">' +
-                        (iconSvg
-                            ? '<span class="gov-subtab-icon">' +
-                                iconSvg + '</span>'
-                            : '') +
-                        '<span>' + _escapeHtml(t.label) + '</span>' +
-                    '</button>';
+                stripHtml += '<button type="button" class="gov-subtab' + active + '" data-subtab-id="' + _esc(t.id) + '">' +
+                    (_icon(t.icon) ? '<span class="gov-subtab-icon">' + _icon(t.icon) + '</span>' : '') +
+                    '<span>' + _esc(t.label) + '</span></button>';
             }
             stripHtml += '</div>';
-
-            // Sub-panel placeholder
-            var panelHtml =
-                '<div id="' + _escapeHtml(containerId) + '-subpanel" ' +
-                    'class="gov-subpanel" role="tabpanel"></div>';
+            
+            var panelHtml = '<div id="' + _esc(containerId) + '-subpanel" class="gov-subpanel" role="tabpanel"></div>';
 
             container.innerHTML = stripHtml + panelHtml;
 
-            // Wire strip clicks
             var buttons = container.querySelectorAll('.gov-subtab');
             for (var b = 0; b < buttons.length; b++) {
                 (function (btn) {
                     btn.addEventListener('click', function () {
                         var id = btn.getAttribute('data-subtab-id');
-                        if (!id || id === _activeSubtabId) return;
-                        _activeSubtabId = id;
-                        renderSubtabStrip(containerId, placeId, onRefresh);
+                        if (id && id !== _activeSubtabId) {
+                            _activeSubtabId = id;
+                            renderSubtabStrip(containerId, placeId, onRefresh);
+                        }
                     });
                 })(buttons[b]);
             }
 
-            // Render active sub-tab into the sub-panel
-            var activeTab = _findSubtab(_activeSubtabId);
-            var subpanelId = containerId + '-subpanel';
-            if (activeTab) {
-                activeTab.render(subpanelId, placeId, onRefresh);
+            var activeTab = null;
+            for (var j = 0; j < GOV_SUBTABS.length; j++) {
+                if (GOV_SUBTABS[j].id === _activeSubtabId) { activeTab = GOV_SUBTABS[j]; break; }
             }
+            if (activeTab) activeTab.render(containerId + '-subpanel', placeId, onRefresh);
         }
 
-        /**
-         * window.renderGovernmentTab(containerId, placeId, onRefresh)
-         *
-         * Mounts the Government page tab: sub-tab strip + the active
-         * sub-tab's module. This is what GovernmentManager.html's
-         * renderGovernmentTab() calls when the "Government" page tab
-         * is activated.
-         *
-         * Each sub-tab is a js/tabs/government-*-tab.js module, each
-         * of which exports render(containerId, locationId) — that is
-         * the module's public entry point. The onRefresh callback is
-         * invoked by the modules' own internal refresh() paths when
-         * they re-render, so the parent tab sees "still active".
-         */
         window.renderGovernmentTab = function (containerId, placeId, onRefresh) {
             renderSubtabStrip(containerId, placeId, onRefresh);
         };
-
-        /**
-         * window.renderGovernmentTabSubtab(subtabId, containerId, placeId)
-         *
-         * Programmatic sub-tab switch. Optional, but useful if the top
-         * bar gains a "Jump to Departments" button later.
-         */
+        
         window.renderGovernmentTabSubtab = function (subtabId, containerId, placeId) {
-            var found = _findSubtab(subtabId);
-            if (!found) return;
-            _activeSubtabId = subtabId;
-            renderSubtabStrip(containerId, placeId, null);
+            for(var i=0; i<GOV_SUBTABS.length; i++) {
+                if(GOV_SUBTABS[i].id === subtabId) {
+                    _activeSubtabId = subtabId;
+                    renderSubtabStrip(containerId, placeId, null);
+                    return;
+                }
+            }
         };
-
-        // Expose the current subtab for any caller that needs to know.
-        window.getActiveGovernmentSubtab = function () {
-            return _activeSubtabId;
-        };
+        
+        window.getActiveGovernmentSubtab = function () { return _activeSubtabId; };
     })();
 </script>
 
@@ -555,40 +354,26 @@
     'use strict';
 
     // =============================================================================
-    // ICON HELPERS - Uses icons.js
+    // ICON HELPERS
     // =============================================================================
-
     function getIcon(name) {
-        if (window.Icons && window.Icons[name]) {
-            return window.Icons[name];
-        }
-        return '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
+        return (window.Icons && window.Icons[name]) ? window.Icons[name] : '<svg viewBox="0 0 20 20" width="1em" height="1em" style="display:inline-block;fill:currentColor;stroke:currentColor;vertical-align:middle;"><circle cx="10" cy="10" r="5.71" fill="currentColor"/></svg>';
     }
-
     function iconWithText(icon, text) {
         if (!icon) return text || '';
         return '<span style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">' + icon + '<span>' + (text || '') + '</span></span>';
     }
 
     var ICONS = {
-        CROWN: getIcon('CROWN'),
-        LOCATION: getIcon('LOCATION'),
-        IMPORT: getIcon('ARROW_RIGHT'),
-        EXPORT: getIcon('ARROW_RIGHT'),
-        REFRESH: getIcon('REFRESH'),
-        PLUS: getIcon('PLUS'),
-        GEAR: getIcon('GEAR'),
-        CHECK: getIcon('CHECK_SIMPLE'),
-        WARNING: getIcon('WARNING'),
-        MENU: getIcon('CIRCLE_DOT'),
-        OVERVIEW: getIcon('PERSON'),
-        STRUCTURE: getIcon('CROWN')
+        CROWN: getIcon('CROWN'), LOCATION: getIcon('LOCATION'), IMPORT: getIcon('ARROW_RIGHT'), 
+        EXPORT: getIcon('ARROW_RIGHT'), REFRESH: getIcon('REFRESH'), PLUS: getIcon('PLUS'), 
+        GEAR: getIcon('GEAR'), CHECK: getIcon('CHECK_SIMPLE'), WARNING: getIcon('WARNING'), 
+        MENU: getIcon('CIRCLE_DOT'), OVERVIEW: getIcon('PERSON'), STRUCTURE: getIcon('CROWN')
     };
 
     // =============================================================================
     // STATE
     // =============================================================================
-
     var currentPlaceId = null;
     var currentTab = 'government';
     var isInitialized = false;
@@ -598,97 +383,58 @@
     // =============================================================================
     // HELPER FUNCTIONS
     // =============================================================================
-
     function showToast(msg, type) {
-        if (typeof window.showToast === 'function') {
-            window.showToast(msg, type);
-        } else if (typeof window.showToastMessage === 'function') {
-            window.showToastMessage(msg, type);
-        } else if (typeof window._showToast === 'function') {
-            window._showToast(msg, type);
-        }
+        if (typeof window.showToast === 'function') window.showToast(msg, type);
+        else if (typeof window.showToastMessage === 'function') window.showToastMessage(msg, type);
+        else if (typeof window._showToast === 'function') window._showToast(msg, type);
     }
-
-    function getPlaceById(placeId) {
-        return typeof window.getPlaceById === 'function' ? window.getPlaceById(placeId) : null;
-    }
-
-    function getPlaces() {
-        return typeof window.getPlaces === 'function' ? window.getPlaces() : [];
-    }
-
+    function getPlaceById(placeId) { return typeof window.getPlaceById === 'function' ? window.getPlaceById(placeId) : null; }
+    function getPlaces() { return typeof window.getPlaces === 'function' ? window.getPlaces() : []; }
     function cleanupEventListeners() {
-        if (currentAbortController) {
-            currentAbortController.abort();
-            currentAbortController = null;
-        }
+        if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
     }
-
     function bootstrapGovernment() {
-        if (!window.GovernmentBootstrap || typeof window.GovernmentBootstrap.init !== 'function') {
-            return;
-        }
-        try {
-            window.GovernmentBootstrap.init();
-        } catch (e) {
-            console.error('Government bootstrap failed:', e);
-        }
+        if (!window.GovernmentBootstrap || typeof window.GovernmentBootstrap.init !== 'function') return;
+        try { window.GovernmentBootstrap.init(); } catch (e) { console.error('Government bootstrap failed:', e); }
     }
-
     function reinitGovernment() {
         if (!window.GovernmentBootstrap) return;
         try {
-            if (typeof window.GovernmentBootstrap.reinit === 'function') {
-                window.GovernmentBootstrap.reinit();
-            } else if (typeof window.GovernmentBootstrap.init === 'function') {
-                window.GovernmentBootstrap.init();
-            }
-        } catch (e) {
-            console.error('Government bootstrap reinit failed:', e);
-        }
+            if (typeof window.GovernmentBootstrap.reinit === 'function') window.GovernmentBootstrap.reinit();
+            else if (typeof window.GovernmentBootstrap.init === 'function') window.GovernmentBootstrap.init();
+        } catch (e) { console.error('Government bootstrap reinit failed:', e); }
     }
 
     // =============================================================================
-    // SETUP UI TEXT WITH ICONS
+    // SETUP UI TEXT
     // =============================================================================
-
     function setupUIText() {
         var title = document.getElementById('govManagerTitle');
         if (title) title.innerHTML = iconWithText(ICONS.CROWN, ' GOVERNMENT MANAGER');
-
         var sidebarTitle = document.getElementById('sidebarTitle');
         if (sidebarTitle) sidebarTitle.innerHTML = iconWithText(ICONS.LOCATION, ' LOCATION HIERARCHY');
-
-        var addGovTypeBtn = document.getElementById('addGovTypeBtn');
-        if (addGovTypeBtn) addGovTypeBtn.innerHTML = iconWithText(ICONS.PLUS, ' Gov Type');
-
+        
         var addDeptBtn = document.getElementById('addDeptBtn');
         if (addDeptBtn) addDeptBtn.innerHTML = iconWithText(ICONS.PLUS, ' Department');
-
         var importBtn = document.getElementById('importBtn');
         if (importBtn) importBtn.innerHTML = iconWithText(ICONS.IMPORT, ' Import');
-
         var exportBtn = document.getElementById('exportBtn');
         if (exportBtn) exportBtn.innerHTML = iconWithText(ICONS.EXPORT, ' Export');
-
         var refreshBtn = document.getElementById('refreshBtn');
         if (refreshBtn) refreshBtn.innerHTML = iconWithText(ICONS.REFRESH, ' Refresh');
-
+        
         var loadingText = document.getElementById('loadingText');
         if (loadingText) loadingText.textContent = 'Loading locations...';
-
         var emptyState = document.getElementById('emptyStateText');
         if (emptyState) emptyState.textContent = 'Select a location from the sidebar';
-
+        
+        // Tab Button Text (Now vertical)
         var tabGovernment = document.getElementById('tabGovernment');
         if (tabGovernment) tabGovernment.innerHTML = iconWithText(ICONS.CROWN, ' Government');
-
         var tabOverview = document.getElementById('tabOverview');
         if (tabOverview) tabOverview.innerHTML = iconWithText(ICONS.OVERVIEW, ' Overview');
-
         var tabTypes = document.getElementById('tabTypes');
         if (tabTypes) tabTypes.innerHTML = iconWithText(ICONS.GEAR, ' Gov Types');
-
         var tabStructure = document.getElementById('tabStructure');
         if (tabStructure) tabStructure.innerHTML = iconWithText(ICONS.STRUCTURE, ' Structure');
     }
@@ -696,7 +442,6 @@
     // =============================================================================
     // LOCATION TREE
     // =============================================================================
-
     function setupLocationTree() {
         var container = document.getElementById('placeList');
         if (!container) return;
@@ -706,23 +451,16 @@
                 if (placeId) {
                     currentPlaceId = placeId;
                     renderCurrentTab();
-                    if (typeof window.selectPlaceInTree === 'function') {
-                        window.selectPlaceInTree(placeId);
-                    }
-                    if (window.innerWidth <= 768) {
-                        closeSidebar();
-                    }
+                    if (typeof window.selectPlaceInTree === 'function') window.selectPlaceInTree(placeId);
+                    if (window.innerWidth <= 768) closeSidebar();
                 }
             });
-        } else if (typeof window.LocationUI !== 'undefined' &&
-                   typeof window.LocationUI.renderLocationTree === 'function') {
+        } else if (typeof window.LocationUI !== 'undefined' && typeof window.LocationUI.renderLocationTree === 'function') {
             window.LocationUI.renderLocationTree('placeList', function(placeId) {
                 if (placeId) {
                     currentPlaceId = placeId;
                     renderCurrentTab();
-                    if (window.innerWidth <= 768) {
-                        closeSidebar();
-                    }
+                    if (window.innerWidth <= 768) closeSidebar();
                 }
             });
         } else {
@@ -732,13 +470,10 @@
                 for (var i = 0; i < places.length; i++) {
                     var p = places[i];
                     var isSelected = (p.id === currentPlaceId);
-                    html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:var(--accent-dim);' : '') + '">' +
-                        '<span>' + (p.displayName || p.name || 'Unknown') + '</span>' +
-                        '</div>';
+                    html += '<div class="place-item' + (isSelected ? ' selected' : '') + '" data-place-id="' + p.id + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);' + (isSelected ? 'background:var(--accent-dim);' : '') + '"><span>' + (p.displayName || p.name || 'Unknown') + '</span></div>';
                 }
                 html += '</div>';
                 container.innerHTML = html;
-
                 var items = container.querySelectorAll('.place-item');
                 for (var i = 0; i < items.length; i++) {
                     (function(item) {
@@ -747,9 +482,7 @@
                             if (placeId) {
                                 currentPlaceId = placeId;
                                 renderCurrentTab();
-                                if (window.innerWidth <= 768) {
-                                    closeSidebar();
-                                }
+                                if (window.innerWidth <= 768) closeSidebar();
                             }
                         });
                     })(items[i]);
@@ -768,8 +501,7 @@
                     renderCurrentTab();
                 }
             });
-        } else if (typeof window.LocationUI !== 'undefined' &&
-                   typeof window.LocationUI.refreshLocationTree === 'function') {
+        } else if (typeof window.LocationUI !== 'undefined' && typeof window.LocationUI.refreshLocationTree === 'function') {
             window.LocationUI.refreshLocationTree('placeList', function(placeId) {
                 if (placeId && placeId !== currentPlaceId) {
                     currentPlaceId = placeId;
@@ -784,7 +516,6 @@
     // =============================================================================
     // SIDEBAR TOGGLE (Mobile)
     // =============================================================================
-
     function closeSidebar() {
         var sidebar = document.getElementById('locationsSidebar');
         var overlay = document.getElementById('sidebarOverlay');
@@ -793,7 +524,6 @@
         document.body.style.overflow = '';
         isSidebarOpen = false;
     }
-
     function openSidebar() {
         var sidebar = document.getElementById('locationsSidebar');
         var overlay = document.getElementById('sidebarOverlay');
@@ -802,37 +532,18 @@
         document.body.style.overflow = 'hidden';
         isSidebarOpen = true;
     }
-
     function toggleSidebar() {
-        if (isSidebarOpen) {
-            closeSidebar();
-        } else {
-            openSidebar();
-        }
+        if (isSidebarOpen) closeSidebar(); else openSidebar();
     }
-
     function initMobileSidebar() {
         var menuToggle = document.getElementById('menuToggle');
         var sidebar = document.getElementById('locationsSidebar');
         var overlay = document.getElementById('sidebarOverlay');
-
         if (!menuToggle || !sidebar || !overlay) return;
 
-        menuToggle.addEventListener('click', function(e) {
-            e.stopPropagation();
-            toggleSidebar();
-        });
-
-        overlay.addEventListener('click', function() {
-            closeSidebar();
-        });
-
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeSidebar();
-            }
-        });
-
+        menuToggle.addEventListener('click', function(e) { e.stopPropagation(); toggleSidebar(); });
+        overlay.addEventListener('click', function() { closeSidebar(); });
+        document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeSidebar(); });
         window.addEventListener('resize', function() {
             if (window.innerWidth > 768) {
                 closeSidebar();
@@ -845,41 +556,27 @@
     // =============================================================================
     // TAB RENDERERS
     // =============================================================================
-
     function renderGovernmentTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-
         if (!placeId) placeId = currentPlaceId;
+        
         if (!placeId) {
             var places = getPlaces();
             if (places && places.length > 0) {
                 for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                        placeId = places[i].id;
-                        currentPlaceId = placeId;
-                        break;
-                    }
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') { placeId = places[i].id; currentPlaceId = placeId; break; }
                 }
-                if (!placeId && places.length > 0) {
-                    placeId = places[0].id;
-                    currentPlaceId = placeId;
-                }
+                if (!placeId && places.length > 0) { placeId = places[0].id; currentPlaceId = placeId; }
             }
         }
-
         if (!placeId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
         }
 
-        // window.renderGovernmentTab is provided by the sub-tab host
-        // above. It renders a sub-tab strip + the active sub-tab's
-        // module into the panel. If for any reason it isn't present
-        // (sub-tab host not loaded), the empty state falls through.
         if (typeof window.renderGovernmentTab === 'function') {
             window.renderGovernmentTab('panelContent', placeId, function() {
                 if (currentTab === 'government') renderCurrentTab();
@@ -892,28 +589,19 @@
     function renderGovernmentOverviewTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-
         if (!placeId) placeId = currentPlaceId;
+        
         if (!placeId) {
             var places = getPlaces();
             if (places && places.length > 0) {
                 for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                        placeId = places[i].id;
-                        currentPlaceId = placeId;
-                        break;
-                    }
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') { placeId = places[i].id; currentPlaceId = placeId; break; }
                 }
-                if (!placeId && places.length > 0) {
-                    placeId = places[0].id;
-                    currentPlaceId = placeId;
-                }
+                if (!placeId && places.length > 0) { placeId = places[0].id; currentPlaceId = placeId; }
             }
         }
-
         if (!placeId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
@@ -929,7 +617,6 @@
     function renderGovernmentTypesTab() {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-
         var panel = document.getElementById('panelContent');
         if (typeof window.renderGovernmentTypesTab === 'function') {
             window.renderGovernmentTypesTab('panelContent', function() {
@@ -943,28 +630,19 @@
     function renderGovernmentStructureTab(placeId) {
         cleanupEventListeners();
         currentAbortController = new AbortController();
-
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-
         if (!placeId) placeId = currentPlaceId;
+        
         if (!placeId) {
             var places = getPlaces();
             if (places && places.length > 0) {
                 for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                        placeId = places[i].id;
-                        currentPlaceId = placeId;
-                        break;
-                    }
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') { placeId = places[i].id; currentPlaceId = placeId; break; }
                 }
-                if (!placeId && places.length > 0) {
-                    placeId = places[0].id;
-                    currentPlaceId = placeId;
-                }
+                if (!placeId && places.length > 0) { placeId = places[0].id; currentPlaceId = placeId; }
             }
         }
-
         if (!placeId) {
             panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
             return;
@@ -982,25 +660,18 @@
     // =============================================================================
     // MAIN RENDER FUNCTION
     // =============================================================================
-
     function renderCurrentTab() {
         var panel = document.getElementById('panelContent');
         if (!panel) return;
-
         cleanupEventListeners();
 
         if (!currentPlaceId) {
             var places = getPlaces();
             if (places && places.length > 0) {
                 for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                        currentPlaceId = places[i].id;
-                        break;
-                    }
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') { currentPlaceId = places[i].id; break; }
                 }
-                if (!currentPlaceId && places.length > 0) {
-                    currentPlaceId = places[0].id;
-                }
+                if (!currentPlaceId && places.length > 0) currentPlaceId = places[0].id;
             }
         }
 
@@ -1013,49 +684,32 @@
         }
 
         switch (currentTab) {
-            case 'government':
-                renderGovernmentTab(currentPlaceId);
-                break;
-            case 'governmentOverview':
-                renderGovernmentOverviewTab(currentPlaceId);
-                break;
-            case 'governmentTypes':
-                renderGovernmentTypesTab();
-                break;
-            case 'governmentStructure':
-                renderGovernmentStructureTab(currentPlaceId);
-                break;
-            default:
-                panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a tab') + '</div>';
+            case 'government': renderGovernmentTab(currentPlaceId); break;
+            case 'governmentOverview': renderGovernmentOverviewTab(currentPlaceId); break;
+            case 'governmentTypes': renderGovernmentTypesTab(); break;
+            case 'governmentStructure': renderGovernmentStructureTab(currentPlaceId); break;
+            default: panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a tab') + '</div>';
         }
     }
 
     function switchTab(tabName) {
         var needsPlace = ['government', 'governmentOverview', 'governmentStructure'];
-
         currentTab = tabName;
 
         if (needsPlace.indexOf(tabName) !== -1 && !currentPlaceId) {
             var places = getPlaces();
             if (places && places.length > 0) {
                 for (var i = 0; i < places.length; i++) {
-                    if (places[i].variableKey && places[i].variableKey !== 'world_root') {
-                        currentPlaceId = places[i].id;
-                        break;
-                    }
+                    if (places[i].variableKey && places[i].variableKey !== 'world_root') { currentPlaceId = places[i].id; break; }
                 }
-                if (!currentPlaceId && places.length > 0) {
-                    currentPlaceId = places[0].id;
-                }
+                if (!currentPlaceId && places.length > 0) currentPlaceId = places[0].id;
             }
         }
 
-        document.querySelectorAll('.tab-btn').forEach(function(btn) {
-            if (btn.dataset.tab === tabName) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
+        // TARGETS VERTICAL TABS NOW
+        document.querySelectorAll('.panel-tabs-vertical .tab-btn').forEach(function(btn) {
+            if (btn.dataset.tab === tabName) btn.classList.add('active');
+            else btn.classList.remove('active');
         });
 
         renderCurrentTab();
@@ -1064,17 +718,14 @@
     // =============================================================================
     // SETUP TABS
     // =============================================================================
-
     function setupTabs() {
-        var tabButtons = document.querySelectorAll('.tab-btn');
+        var tabButtons = document.querySelectorAll('.panel-tabs-vertical .tab-btn');
         for (var i = 0; i < tabButtons.length; i++) {
             var btn = tabButtons[i];
             btn.onclick = null;
             btn.addEventListener('click', function(e) {
                 var tabId = this.dataset.tab;
-                if (tabId) {
-                    switchTab(tabId);
-                }
+                if (tabId) switchTab(tabId);
             });
         }
     }
@@ -1082,47 +733,25 @@
     // =============================================================================
     // TOP BAR ACTIONS
     // =============================================================================
-
     function setupTopBarActions() {
-        var addGovTypeBtn = document.getElementById('addGovTypeBtn');
         var addDeptBtn = document.getElementById('addDeptBtn');
         var importBtn = document.getElementById('importBtn');
         var exportBtn = document.getElementById('exportBtn');
         var refreshBtn = document.getElementById('refreshBtn');
 
-        if (addGovTypeBtn) {
-            addGovTypeBtn.onclick = function() {
-                if (typeof window.openAddGovernmentTypeModal === 'function') {
-                    window.openAddGovernmentTypeModal(function() {
-                        if (currentTab === 'governmentTypes') renderCurrentTab();
-                    });
-                } else {
-                    showToast(iconWithText(ICONS.WARNING, ' Add government type not available'), 'error');
-                }
-            };
-        }
-
         if (addDeptBtn) {
             addDeptBtn.onclick = function() {
                 var locationId = currentPlaceId;
-
                 if (!locationId) {
                     var places = getPlaces();
-                    var validPlaces = places.filter(function(p) {
-                        return p.variableKey && p.variableKey !== 'world_root';
-                    });
-                    if (validPlaces.length > 0) {
-                        locationId = validPlaces[0].id;
-                    } else if (places.length > 0) {
-                        locationId = places[0].id;
-                    }
+                    var validPlaces = places.filter(function(p) { return p.variableKey && p.variableKey !== 'world_root'; });
+                    if (validPlaces.length > 0) locationId = validPlaces[0].id;
+                    else if (places.length > 0) locationId = places[0].id;
                 }
-
                 if (!locationId) {
                     showToast(iconWithText(ICONS.WARNING, ' No location selected'), 'warning');
                     return;
                 }
-
                 if (typeof window.openCreateGovernmentDepartmentModal === 'function') {
                     window.openCreateGovernmentDepartmentModal(locationId, function(newDeptId) {
                         if (currentTab === 'governmentStructure') renderCurrentTab();
@@ -1144,10 +773,7 @@
                 if (typeof window.importData === 'function') {
                     try {
                         await window.importData();
-                        setTimeout(function() {
-                            refreshLocationTree();
-                            renderCurrentTab();
-                        }, 200);
+                        setTimeout(function() { refreshLocationTree(); renderCurrentTab(); }, 200);
                         showToast(iconWithText(ICONS.CHECK, ' Import successful'), 'success');
                     } catch (error) {
                         showToast(iconWithText(ICONS.WARNING, ' Import failed'), 'error');
@@ -1160,19 +786,14 @@
 
         if (exportBtn) {
             exportBtn.onclick = function() {
-                if (typeof window.exportData === 'function') {
-                    window.exportData();
-                } else {
-                    showToast(iconWithText(ICONS.WARNING, ' Export function not available'), 'error');
-                }
+                if (typeof window.exportData === 'function') window.exportData();
+                else showToast(iconWithText(ICONS.WARNING, ' Export function not available'), 'error');
             };
         }
 
         if (refreshBtn) {
             refreshBtn.onclick = function() {
-                if (typeof window.loadMasterData === 'function') {
-                    window.loadMasterData();
-                }
+                if (typeof window.loadMasterData === 'function') window.loadMasterData();
                 setTimeout(function() {
                     refreshLocationTree();
                     renderCurrentTab();
@@ -1185,44 +806,29 @@
     // =============================================================================
     // INITIALIZATION
     // =============================================================================
-
     function init() {
         if (isInitialized) return;
         isInitialized = true;
 
         setupUIText();
-
-        if (typeof window.loadMasterData === 'function') {
-            window.loadMasterData();
-        }
-
-        // Hydrate Government indexes now that masterData.data is available.
+        if (typeof window.loadMasterData === 'function') window.loadMasterData();
         bootstrapGovernment();
-
-        setTimeout(function() {
-            setupLocationTree();
-        }, 150);
-
+        
+        setTimeout(function() { setupLocationTree(); }, 150);
         setupTabs();
         setupTopBarActions();
         initMobileSidebar();
 
         currentTab = 'government';
-        document.querySelectorAll('.tab-btn').forEach(function(btn) {
-            if (btn.dataset.tab === 'government') {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
+        document.querySelectorAll('.panel-tabs-vertical .tab-btn').forEach(function(btn) {
+            if (btn.dataset.tab === 'government') btn.classList.add('active');
+            else btn.classList.remove('active');
         });
 
         var panel = document.getElementById('panelContent');
         if (panel) {
-            if (currentPlaceId) {
-                renderCurrentTab();
-            } else {
-                panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
-            }
+            if (currentPlaceId) renderCurrentTab();
+            else panel.innerHTML = '<div class="empty-state">' + iconWithText(ICONS.WARNING, ' Select a location from the sidebar') + '</div>';
         }
 
         window.addEventListener('masterDataUpdated', function() {
@@ -1237,30 +843,22 @@
     // =============================================================================
     // EXPORTS
     // =============================================================================
-
     window.switchGovTab = switchTab;
     window.renderCurrentGovTab = renderCurrentTab;
     window.refreshGovTree = refreshLocationTree;
     window.selectPlaceInGovTree = function(placeId) {
         currentPlaceId = placeId;
-        if (typeof window.selectPlaceInTree === 'function') {
-            window.selectPlaceInTree(placeId);
-        }
+        if (typeof window.selectPlaceInTree === 'function') window.selectPlaceInTree(placeId);
         refreshLocationTree();
     };
     window.closeMobileSidebar = closeSidebar;
     window.toggleMobileSidebar = toggleSidebar;
     window.getCurrentGovLocationId = function() { return currentPlaceId; };
 
-    window.addEventListener('beforeunload', function() {
-        cleanupEventListeners();
-    });
+    window.addEventListener('beforeunload', function() { cleanupEventListeners(); });
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
-    } else {
-        init();
-    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
 })();
 </script>
 
