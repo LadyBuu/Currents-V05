@@ -12,172 +12,205 @@
    The five government sub-tabs (js/tabs/government-*.js) used to
    apply inline style="" attributes. Every one of those inline
    styles now maps to a class below. Nothing visual was dropped.
-
-     Inline style in the tab              → class in this file
-     ──────────────────────────────────────────────────────────
-     Integration banner (laws, economy)   → .gov-integration-banner
-                                            .eco-integration-banner (alias)
-     Integration status container         → .gov-integration-status
-                                            .eco-integration-status (alias)
-     Integration status title             → .gov-integration-status-title
-     Integration status line              → .gov-integration-line
-                                            .eco-integration-line (alias)
-     Integration status glyph             → .gov-integration-glyph
-                                            + .is-ok / .is-missing
-                                            .eco-integration-glyph (alias)
-     Integration status label             → .gov-integration-label
-                                            .eco-integration-label (alias)
-     Integration status value             → .gov-integration-value
-                                            .eco-integration-value (alias)
-
-     Law item                             → .law-item
-     Law header                           → .law-header
-     Law title                            → .law-title
-     Law name                             → .law-name
-     Law status (active/inactive)         → .law-status / .is-active / .is-inactive
-     Law actions                          → .law-actions
-     Law button                           → .law-btn
-     Law button add/edit/delete           → .law-btn-add / -edit / -delete
-     Law details                          → .law-details
-     Law meta                             → .law-meta
-     Law category                         → .law-category
-     Law severity                         → .law-severity / .is-minor / -medium / -major / -severe / -capital
-     Law jurisdiction                     → .law-jurisdiction
-     Law description                      → .law-description
-     Law punishment                       → .law-punishment / -label / -type / -amount / -desc
-     Law exceptions                       → .law-exceptions / -label / -text
-     Law notes                            → .law-notes
-     Law meta-info                        → .law-meta-info
-     Law empty                            → .law-empty
-     Law section                          → .law-section
-     Law section header                   → .law-section-header
-     Law section toggle                   → .law-section-toggle
-     Law section body (collapsed)         → .law-section-body / .is-collapsed
-     Law toggle icon                      → .law-toggle-icon
-     Law stats summary                    → .law-stats-summary
-     Law stat                             → .law-stat / -label / -value
-                                            .law-stat-value.is-active / .is-inactive
-     Law form (modal body)                → .law-edit-form
-     Law form row                         → .law-edit-form .form-row
-     Law form group grow/shrink           → .law-edit-form .form-group.is-grow / .is-shrink
-     Law checkbox label                   → .law-checkbox-label
-
-     Dept card                            → .dept-card
-     Dept header                          → .dept-header
-     Dept title                           → .dept-title
-     Dept name                            → .dept-name
-     Dept badge                           → .dept-badge
-     Dept actions                         → .dept-actions
-     Dept button                          → .dept-btn
-     Dept button add/small                → .dept-btn-add / .dept-btn-small
-     Dept button edit/delete              → .dept-btn-edit / .dept-btn-delete
-     Dept stats / stat / label / value    → .dept-stats / .dept-stat / -label / -value
-     Dept positions                       → .dept-positions / -header / -list
-     Dept position                        → .dept-position / -header / -name / -status
-                                            .dept-position-status.filled / .vacant
-     Dept position desc / requirement     → .dept-position-desc / -requirement
-     Dept position staff / staff item     → .dept-position-staff / .dept-staff-item
-     Dept staff name / title / since      → .dept-staff-name / -title / -since
-     Dept position actions                → .dept-position-actions
-     Dept edit form (modal)               → .dept-edit-form
-     Dept empty / no positions            → .dept-empty / .dept-no-positions
-     Dept description                     → .dept-description
-     Dept budget summary / item / label   → .dept-budget-summary / -item / -label / -value
-     Dept budget shortfall/surplus        → .dept-budget-shortfall / .dept-budget-surplus
-     Dept budget unavailable              → .dept-budget-unavailable
-     Dept tab container / header / actions→ .dept-tab-container / .dept-tab-header / -actions
-     Dept details empty                   → .dept-details-empty
-
-     Gov details container                → .gov-details-container
-     Gov details header / actions / body  → .gov-details-header / -actions / -body
-     Gov details field / value / none     → .gov-details-field / -value / -none
-     Gov type icon / desc                 → .gov-type-icon / .gov-type-desc
-     Gov leader item / info / name        → .gov-leader-item / -info / -name
-     Gov leader title / status / since    → .gov-leader-title / -status / -since
-     Gov leader period                    → .gov-leader-period
-     Gov leader actions                   → .gov-leader-actions
-     Gov leadership section / header      → .gov-leadership-section / -header
-     Gov leadership value / empty         → .gov-leadership-value / -empty
-     Gov leadership active / subheader    → .gov-leadership-active / -subheader
-     Gov leadership ended / toggle        → .gov-leadership-ended / -toggle
-     Gov leadership toggle label / icon   → .gov-leadership-toggle-label / -icon
-     Gov leadership ended list            → .gov-leadership-ended-list
-     Gov dept list / badge                → .gov-dept-list / .gov-badge
-     Gov leader form (modal)              → .gov-leader-form
-     Gov modal note                       → .gov-modal-note
-     Gov edit form (modal)                → .gov-edit-form
-     Gov types help                       → .gov-types-help
-     Gov details empty                    → .gov-details-empty
-
-     History tab container / header       → .gh-tab-container / .gh-tab-header
-     History tab actions                  → .gh-tab-actions
-     History button add / end             → .gh-btn-add / .gh-btn-end
-     History stats summary / stat         → .gh-stats-summary / .gh-stat
-     History stat label / value           → .gh-stat-label / .gh-stat-value
-                                            .gh-stat-value.is-active / .is-ended / .is-officials
-     History section / header             → .gh-section / .gh-section-header
-     History subsection / header          → .gh-subsection / -header
-     History subsection ended             → .gh-subsection-ended
-     History subsection toggle / body     → .gh-subsection-toggle / -body
-                                            .gh-subsection-body.is-collapsed
-     History subsection label             → .gh-subsection-label
-     History toggle icon                  → .gh-toggle-icon
-     History leader card / number         → .gh-leader-card / .gh-leader-number
-     History leader info / name / title   → .gh-leader-info / -name / -title
-     History leader period                → .gh-leader-period
-     History leader start / arrow / end   → .gh-leader-start / -arrow / -end
-     History leader present / reason      → .gh-leader-present / -reason
-     History leader age / birth           → .gh-leader-age / .gh-leader-birth
-     History leader status                → .gh-leader-status / .active / .ended
-     History leader actions               → .gh-leader-actions
-     History leaders list                 → .gh-leaders-list
-     History official card / info         → .gh-official-card / -info
-     History official name / positions    → .gh-official-name / -positions
-     History official position            → .gh-official-position
-     History official departments / age   → .gh-official-departments / -age
-     History official status              → .gh-official-status / .active / .deceased
-     History officials grid               → .gh-officials-grid
-     History empty                        → .gh-empty
-     History leader form (modal)          → .gh-leader-form
-     History checkbox label               → .gh-checkbox-label
-     History details empty                → .gh-details-empty
-
-     Economy container                    → .eco-details-container
-     Economy header / actions             → .eco-details-header / -actions
-     Economy hierarchy info / label       → .eco-hierarchy-info / -label
-     Economy hierarchy count / children   → .eco-hierarchy-count / -children
-     Economy stats grid / stat card       → .eco-stats-grid / .eco-stat-card
-     Economy stat icon / content          → .eco-stat-icon / .eco-stat-content
-     Economy stat value / label / sub     → .eco-stat-value / -label / -sub
-     Economy settlement details           → .eco-settlement-details
-     Economy prosperity                   → .eco-prosperity / -label / -bar / -fill / -value
-                                            .eco-prosperity-fill.is-ok / .is-warning / .is-danger / .is-danger-strong
-     Economy crime                        → .eco-crime / -label / -value
-                                            .eco-crime-value.is-ok / .is-warning / .is-danger / .is-danger-strong
-     Economy justice                      → .eco-justice / -label / -value
-     Economy watch                        → .eco-watch / -label / -value / -size
-     Economy salary budget                → .eco-salary-budget / -label / -value
-     Economy location breakdown           → .eco-location-breakdown / -grid / -item / -name / -stats / -pop / -prosperity
-     Economy edit form                    → .eco-edit-form
-     Economy edit warning                 → .eco-edit-warning
-     Economy range display                → .eco-range-display
-     Economy watch toggle                 → .eco-watch-toggle
-     Economy details empty                → .eco-details-empty
-
-     Legacy (pre-refactor) selector names kept as aliases for any
-     historical page that still references them:
-       .gov-tab, .gov-section, .gov-stats-grid, .gov-type-card,
-       .rank-tag, .dept-node, .overview-node, .gov-leader-row
    ================================================================ */
 
 
 /* ================================================================
+   0. TOPBAR BUTTONS & LAYOUT OVERRIDES
+   ================================================================ */
+
+/* Topbar Buttons (Fixes empty buttons) */
+.tb-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 12px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--f-body);
+    font-size: 0.65rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.tb-btn:hover {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent-light);
+}
+
+.tb-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+}
+
+.tb-btn.primary:hover {
+    background: var(--accent-dark);
+    border-color: var(--accent-dark);
+}
+
+/* Layout: Main Panel becomes a flex row (Content Left, Tabs Right) */
+.main-panel {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Tab Content (Left) */
+.tab-content-wrapper {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    background: var(--bg);
+    min-width: 0;
+}
+
+/* Vertical Tab Strip (Right) */
+.panel-tabs-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 140px;
+    min-width: 140px;
+    background: var(--bg2);
+    border-left: 1px solid var(--accent);
+    padding: 12px 6px;
+    overflow-y: auto;
+}
+
+.panel-tabs-vertical .tab-btn {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    background: none;
+    border: none;
+    border-right: 2px solid transparent;
+    font-family: var(--f-display);
+    font-size: 0.65rem;
+    cursor: pointer;
+    color: var(--dim);
+    transition: all 0.2s ease;
+    text-align: left;
+    white-space: normal;
+    min-height: 44px;
+    border-radius: 4px 0 0 4px;
+}
+
+.panel-tabs-vertical .tab-btn:hover {
+    color: var(--accent-light);
+    background: var(--accent-dim);
+}
+
+.panel-tabs-vertical .tab-btn.active {
+    color: var(--accent);
+    border-right-color: var(--accent);
+    background: var(--accent-dim);
+    font-weight: 600;
+    box-shadow: -2px 0 8px var(--accent-glow);
+}
+
+/* Sub-Tabs (Inside the Government tab) */
+.gov-subtabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 4px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.gov-subtab {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: 2px solid transparent;
+    border-radius: 4px 4px 0 0;
+    font-family: var(--f-display);
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+    color: var(--dim);
+    cursor: pointer;
+    transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.gov-subtab:hover {
+    color: var(--accent-light);
+    background: var(--accent-dim);
+}
+
+.gov-subtab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: var(--accent-dim);
+    font-weight: 600;
+}
+
+.gov-subtab-icon {
+    display: inline-flex;
+    width: 1em;
+    height: 1em;
+    align-items: center;
+    justify-content: center;
+    color: currentColor;
+}
+
+.gov-subtab-icon svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.gov-subpanel {
+    min-height: 200px;
+}
+
+/* Mobile Layout Fallback */
+@media (max-width: 768px) {
+    .main-panel {
+        flex-direction: column;
+    }
+    .panel-tabs-vertical {
+        width: 100%;
+        min-width: unset;
+        flex-direction: row;
+        border-left: none;
+        border-top: 1px solid var(--accent);
+        padding: 6px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        justify-content: flex-start;
+        height: auto;
+        flex-shrink: 0;
+    }
+    .panel-tabs-vertical .tab-btn {
+        border-right: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 4px 4px 0 0;
+        padding: 8px 12px;
+        flex-shrink: 0;
+        min-height: 38px;
+    }
+    .panel-tabs-vertical .tab-btn.active {
+        border-bottom-color: var(--accent);
+        border-right-color: transparent;
+        box-shadow: none;
+    }
+}
+
+
+/* ================================================================
    1. LEGACY GOVERNMENT TAB SHELL
-   ================================================================
-   Kept for pages that still use the old .gov-tab container.
-   The new sub-tab host renders .gov-* classes only; this block
-   remains a no-op for those. Do not delete without auditing
-   any older HTML that still references .gov-tab.
    ================================================================ */
 
 .gov-tab {
@@ -603,11 +636,6 @@
 
 /* ================================================================
    5. INTEGRATION BANNER + STATUS (civil laws + economy)
-   ================================================================
-   Shared by government-civil-laws-tab.js and government-economy-tab.js.
-   The .eco-integration-* aliases exist so the economy tab can keep
-   its own class names; they resolve to the same rules. Both tabs are
-   driven by the same markup shape.
    ================================================================ */
 
 .gov-integration-banner,
@@ -740,9 +768,7 @@
     font-size: 0.65rem;
     font-weight: 500;
     cursor: pointer;
-    transition: border-color 0.15s ease,
-                background-color 0.15s ease,
-                color 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .law-btn:hover {
@@ -1231,9 +1257,7 @@
     font-size: 0.65rem;
     font-weight: 500;
     cursor: pointer;
-    transition: border-color 0.15s ease,
-                background-color 0.15s ease,
-                color 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .dept-btn:hover {
@@ -1672,9 +1696,7 @@
     font-size: 0.65rem;
     font-weight: 500;
     cursor: pointer;
-    transition: border-color 0.15s ease,
-                background-color 0.15s ease,
-                color 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .gov-details-actions .gov-btn:hover {
@@ -1876,8 +1898,7 @@
     font-family: var(--f-body);
     font-size: 0.55rem;
     cursor: pointer;
-    transition: border-color 0.15s ease,
-                background-color 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .gov-leader-actions .gov-btn:hover {
@@ -2118,9 +2139,7 @@
     font-size: 0.65rem;
     font-weight: 500;
     cursor: pointer;
-    transition: border-color 0.15s ease,
-                background-color 0.15s ease,
-                color 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .gh-btn:hover {
@@ -2610,9 +2629,7 @@
     font-size: 0.65rem;
     font-weight: 500;
     cursor: pointer;
-    transition: border-color 0.15s ease,
-                background-color 0.15s ease,
-                color 0.15s ease;
+    transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
 }
 
 .eco-btn:hover {
