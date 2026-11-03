@@ -3,7 +3,7 @@
  * STILL WATERS - RANK COMMANDS (rank-commands.js)
  * =============================================================================
  *
- * LOCATION: js/core/rank/rank-commands.js
+ * LOCATION: js/ranks/rank-commands.js
  *
  * The single write boundary for the rank domain.
  *
