@@ -7,25 +7,63 @@
  *          Displays all industries (enterprises), private schools, and
  *          owned residences with rental income owned by the household.
  * 
- * UPDATED: Added residences section with rental income display
- *          Uses existing ResidenceSystem for data
- * 
  * DEPENDS ON:
  *   - HouseholdState (household-state.js)
  *   - HouseholdQueries (household-queries.js)
  *   - IndustryState (industry-state.js)
  *   - IndustryQueries (industry-queries.js)
  *   - IndustryCommands (industry-commands.js)
- *   - EducationState (education-state.js)
- *   - EducationQueries (education-queries.js)
- *   - EducationCommands (education-commands.js)
- *   - ResidenceSystem (residence-system.js) - FOR RESIDENCES
+ *   - EducationState (education-state.js) — optional
+ *   - EducationQueries (education-queries.js) — optional
+ *   - EducationCommands (education-commands.js) — optional
+ *   - ResidenceSystem (residence-system.js)
  *   - modals-core.js (for modal wrappers)
  *   - ui.js (for toast notifications)
  *   - icons.js (for icons)
  * 
  * ICON POLICY: Uses icons.js - NO emojis
- * 
+ *
+ * =============================================================================
+ * REFACTOR HISTORY:
+ *   Current revision:
+ *     - _getCurrentYear uses getCurrentYear (canonical accessor in
+ *       time.js) instead of the deprecated getCurrentYearSafe alias,
+ *       and throws on missing time.js instead of falling back to 1250.
+ *     - _getCurrentHouseholdId now prefers
+ *       HouseholdState.getUIState().selectedHouseholdId.
+ *     - _doDeleteEnterprise now calls
+ *       IndustryCommands.updateEnterprise(id, { ownerType: 'none',
+ *       ownerId: null }) and checks the result. Prior revisions called
+ *       HS.removeEnterpriseFromHousehold — a method that does not exist
+ *       on HouseholdState; the call returned undefined and the guard
+ *       silently skipped it. The subsequent updateEnterprise call
+ *       passed { ownerId: null, ownerType: null, ownerName: null },
+ *       which updateEnterprise rejects on three grounds: ownerName is
+ *       not in the allowlist, ownerType: null fails the coherence
+ *       check, and ownerId: null with ownerType: null also fails
+ *       coherence. So every "delete enterprise" click ran to completion
+ *       with no mutation and a success toast. A reload confirmed
+ *       nothing changed.
+ *     - _doRemoveResidence now uses ResidenceSystem.deleteResidence(id,
+ *       { force: true }) instead of RS.setResidenceOwner(id, null,
+ *       null). setResidenceOwner rejects ownerType: null with
+ *       INVALID_OWNER_TYPE (it only accepts 'household' or
+ *       'character'); there is no "clear owner" primitive. The button
+ *       text should be considered a "delete residence" action, and the
+ *       confirm message names the destruction explicitly.
+ *     - The fallback summary in _renderEnterpriseCard now uses
+ *       IndustryQueries.resolveTypeMetadata(e) instead of reading
+ *       e.typeName / e.category directly. Those are DERIVED_FIELDS
+ *       stripped by migration; they are always undefined on the clone
+ *       returned by IndustryState.getEnterprise(id). Prior revisions
+ *       showed "Unknown" for type/category on every enterprise
+ *       whenever the summary lookup failed.
+ *     - _doDeleteSchool and _doRemoveResidence check the mutation
+ *       result and surface the reason on failure. Prior revisions
+ *       showed "Removed" regardless of outcome.
+ *     - Every successful mutation now calls
+ *       window.refreshHouseholdList() so the sidebar's enterprise /
+ *       residence / school counts update immediately.
  * =============================================================================
  */
 
@@ -40,18 +78,7 @@
     var _processingAction = false;
 
     // =========================================================================
-    // 2. GET CURRENT HOUSEHOLD ID
-    // =========================================================================
-
-    function _getCurrentHouseholdId() {
-        if (window._currentHouseholdId) return window._currentHouseholdId;
-        if (window.currentHouseholdId) return window.currentHouseholdId;
-        if (window.selectedHouseholdId) return window.selectedHouseholdId;
-        return null;
-    }
-
-    // =========================================================================
-    // 3. DEPENDENCY WRAPPERS
+    // 2. DEPENDENCY WRAPPERS
     // =========================================================================
 
     function _getState() {
@@ -104,12 +131,24 @@
         return null;
     }
 
+    /**
+     * Returns the current simulation year.
+     *
+     * Delegates to the canonical accessor in time.js. The deprecated
+     * getCurrentYearSafe alias is NOT used, and there is NO 1250
+     * fallback.
+     *
+     * @throws {Error} if time.js is not loaded
+     */
     function _getCurrentYear() {
-    // Delegates to time.js — do not add fallback logic here.
-    return typeof window.getCurrentYearSafe === 'function'
-        ? window.getCurrentYearSafe()
-        : 1250;
-}
+        if (typeof window.getCurrentYear !== 'function') {
+            throw new Error(
+                '[HouseholdHoldingsTab] requires time.js (getCurrentYear). ' +
+                'Load js/core/time.js before this tab.'
+            );
+        }
+        return window.getCurrentYear();
+    }
 
     function _escapeHtml(str) {
         if (typeof window._escapeHtml === 'function') {
@@ -174,13 +213,34 @@
     }
 
     // =========================================================================
-    // 4. ICON HELPERS
+    // 3. ICON HELPERS
     // =========================================================================
 
     function _iconSpan(icon, title) {
         if (!icon) return '';
         var titleAttr = title ? ' title="' + _escapeHtml(title) + '"' : '';
         return '<span style="display:inline-flex;align-items:center;vertical-align:middle;' + (title ? 'cursor:help;' : '') + '"' + titleAttr + '>' + icon + '</span>';
+    }
+
+    // =========================================================================
+    // 4. GET CURRENT HOUSEHOLD ID
+    // =========================================================================
+
+    function _getCurrentHouseholdId() {
+        var HS = _getState();
+        if (HS && typeof HS.getUIState === 'function') {
+            try {
+                var s = HS.getUIState();
+                if (s && typeof s.selectedHouseholdId === 'string'
+                    && s.selectedHouseholdId.length > 0) {
+                    return s.selectedHouseholdId;
+                }
+            } catch (e) { /* fall through */ }
+        }
+        if (window._currentHouseholdId) return window._currentHouseholdId;
+        if (window.currentHouseholdId) return window.currentHouseholdId;
+        if (window.selectedHouseholdId) return window.selectedHouseholdId;
+        return null;
     }
 
     // =========================================================================
@@ -205,7 +265,7 @@
             return { error: 'Household not found' };
         }
 
-        // Get enterprises owned by household
+        // --- Enterprises owned by household ---
         var enterprises = [];
         var enterpriseStats = null;
         var enterpriseSummaries = [];
@@ -222,13 +282,12 @@
             enterpriseStats = HQ.getHouseholdEnterpriseStats(householdId);
         }
 
-        // Get private schools owned by household
+        // --- Private schools owned by household ---
         var privateSchools = [];
         if (ES && typeof ES.getInstitutionsByOwner === 'function') {
             privateSchools = ES.getInstitutionsByOwner(householdId, 'household');
         }
 
-        // Also get private schools where ownership type is private
         if (ES && typeof ES.getPrivateSchools === 'function') {
             var allPrivate = ES.getPrivateSchools();
             for (var i = 0; i < allPrivate.length; i++) {
@@ -242,99 +301,101 @@
             }
         }
 
-        // =====================================================================
-        // GET RESIDENCES OWNED BY HOUSEHOLD (NEW)
-        // =====================================================================
+        // --- Residences owned by household ---
         var ownedResidences = [];
         var totalRentIncome = 0;
         var totalRentedProperties = 0;
 
         if (RS && typeof RS.getResidencesByOwner === 'function') {
             ownedResidences = RS.getResidencesByOwner(householdId, 'household');
-            
-            // Calculate total rent income
+
             if (RS && typeof RS.getTotalRentIncome === 'function') {
                 totalRentIncome = RS.getTotalRentIncome(householdId, 'household');
             }
-            
-            // Count rented properties
-            for (var i = 0; i < ownedResidences.length; i++) {
-                if (ownedResidences[i].renterId) {
+
+            for (var r = 0; r < ownedResidences.length; r++) {
+                if (ownedResidences[r].renterId) {
                     totalRentedProperties++;
                 }
             }
         }
 
-        // Get enterprise display data
+        // --- Enterprise display data ---
         var enterpriseDisplayData = [];
         if (enterprises.length > 0 && IS) {
-            for (var i = 0; i < enterprises.length; i++) {
-                var e = enterprises[i];
+            for (var e = 0; e < enterprises.length; e++) {
+                var ent = enterprises[e];
                 var summary = null;
                 if (IQ && typeof IQ.getEnterpriseSummary === 'function') {
-                    summary = IQ.getEnterpriseSummary(e.id);
+                    summary = IQ.getEnterpriseSummary(ent.id);
+                }
+                if (!summary) {
+                    // Fallback shape.
+                    //
+                    // typeName / category are DERIVED_FIELDS — they are
+                    // stripped by industry-migration.js and are not
+                    // present on the clone returned by
+                    // IndustryState.getEnterprise(id). Reading them
+                    // directly yields undefined. The correct resolution
+                    // path is IndustryQueries.resolveTypeMetadata.
+                    var typeMeta = (IQ && typeof IQ.resolveTypeMetadata === 'function')
+                        ? IQ.resolveTypeMetadata(ent)
+                        : { typeName: null, category: null };
+                    var workerList = Array.isArray(ent.workerList) ? ent.workerList : [];
+                    summary = {
+                        id: ent.id,
+                        name: ent.name,
+                        type: typeMeta.typeName || 'Unknown',
+                        category: typeMeta.category || 'Unknown',
+                        wealth: ent.wealth || 0,
+                        debt: ent.debt || 0,
+                        annualProfit: (ent.income || 0) - (ent.expenses || 0) - (workerList.length * (ent.wages || 8)),
+                        workerCount: workerList.length,
+                        status: ent.status || 'active'
+                    };
                 }
                 enterpriseDisplayData.push({
-                    enterprise: e,
-                    summary: summary || {
-                        id: e.id,
-                        name: e.name,
-                        type: e.typeName || 'Unknown',
-                        category: e.category || 'Unknown',
-                        wealth: e.wealth || 0,
-                        debt: e.debt || 0,
-                        annualProfit: (e.income || 0) - (e.expenses || 0) - ((e.workerList ? e.workerList.length : 0) * (e.wages || 8)),
-                        workerCount: e.workerList ? e.workerList.length : 0,
-                        status: e.status || 'active'
-                    }
+                    enterprise: ent,
+                    summary: summary
                 });
             }
         }
 
-        // Get school details
+        // --- School display data ---
         var schoolDisplayData = [];
         if (privateSchools.length > 0) {
-            for (var i = 0; i < privateSchools.length; i++) {
-                var s = privateSchools[i];
+            for (var s = 0; s < privateSchools.length; s++) {
+                var sch = privateSchools[s];
                 var details = null;
                 if (EQ && typeof EQ.getInstitutionDetails === 'function') {
-                    details = EQ.getInstitutionDetails(s.id);
+                    details = EQ.getInstitutionDetails(sch.id);
                 }
                 schoolDisplayData.push({
-                    school: s,
+                    school: sch,
                     details: details || {
-                        studentCount: s.students ? s.students.length : 0,
-                        teacherCount: s.teachers ? s.teachers.length : 0,
-                        graduateCount: s.graduates ? s.graduates.length : 0,
-                        capacityUsed: s.maxStudents ? Math.round(((s.students ? s.students.length : 0) / s.maxStudents) * 100) : 0
+                        studentCount: sch.students ? sch.students.length : 0,
+                        teacherCount: sch.teachers ? sch.teachers.length : 0,
+                        graduateCount: sch.graduates ? sch.graduates.length : 0,
+                        capacityUsed: sch.maxStudents ? Math.round(((sch.students ? sch.students.length : 0) / sch.maxStudents) * 100) : 0
                     }
                 });
             }
         }
 
-        // =====================================================================
-        // RESIDENCE DISPLAY DATA (NEW)
-        // =====================================================================
+        // --- Residence display data ---
         var residenceDisplayData = [];
-        for (var i = 0; i < ownedResidences.length; i++) {
-            var r = ownedResidences[i];
-            var renterName = r.renterName || 'Vacant';
-            var rentAmount = r.rentAmount || 0;
-            var isRented = !!r.renterId;
-            var statusColor = isRented ? 'var(--success)' : 'var(--warn)';
-            var statusText = isRented ? 'Rented' : 'Vacant';
-            var locationName = r.locationName || 'Unknown';
-            var typeName = r.typeName || r.typeId || 'Unknown';
-
+        for (var rr = 0; rr < ownedResidences.length; rr++) {
+            var res = ownedResidences[rr];
+            var isRented = !!res.renterId;
             residenceDisplayData.push({
-                residence: r,
-                renterName: renterName,
-                rentAmount: rentAmount,
+                residence: res,
+                renterName: res.renterName || 'Vacant',
+                rentAmount: res.rentAmount || 0,
                 isRented: isRented,
-                statusColor: statusColor,
-                statusText: statusText,
-                locationName: locationName,
-                typeName: typeName
+                statusColor: isRented ? 'var(--success)' : 'var(--warn)',
+                statusText: isRented ? 'Rented' : 'Vacant',
+                locationName: res.locationName || 'Unknown',
+                typeName: res.typeName || res.typeId || 'Unknown'
             });
         }
 
@@ -347,7 +408,6 @@
             totalEnterprises: enterpriseDisplayData.length,
             totalSchools: schoolDisplayData.length,
             totalHoldings: enterpriseDisplayData.length + schoolDisplayData.length + residenceDisplayData.length,
-            // NEW: Residence data
             ownedResidences: residenceDisplayData,
             totalResidences: residenceDisplayData.length,
             totalRentIncome: totalRentIncome,
@@ -425,13 +485,13 @@
                     '<div style="display:flex;align-items:center;gap:6px;">' +
                         '<span style="font-size:0.7rem;">' + industryIcon + '</span>' +
                         '<span style="font-size:0.75rem;font-weight:bold;">' + _escapeHtml(e.name) + '</span>' +
-                        '<span style="font-size:0.5rem;color:var(--dim);">' + _escapeHtml(e.typeName || 'Unknown') + '</span>' +
-                        '<span style="font-size:0.45rem;color:' + statusColor + ';">(' + statusLabel + ')</span>' +
+                        '<span style="font-size:0.5rem;color:var(--dim);">' + _escapeHtml(summary.type || 'Unknown') + '</span>' +
+                        '<span style="font-size:0.45rem;color:' + statusColor + ';">(' + _escapeHtml(statusLabel) + ')</span>' +
                     '</div>' +
                     '<div style="display:flex;gap:4px;align-items:center;">' +
                         '<span style="font-size:0.55rem;color:' + profitColor + ';">' + (profit >= 0 ? '+' : '') + profit + 'g</span>' +
-                        '<button class="enterprise-edit-btn" data-enterprise-id="' + e.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit">' + editIcon + '</button>' +
-                        '<button class="enterprise-delete-btn" data-enterprise-id="' + e.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete">' + trashIcon + '</button>' +
+                        '<button type="button" class="enterprise-edit-btn" data-enterprise-id="' + e.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit">' + editIcon + '</button>' +
+                        '<button type="button" class="enterprise-delete-btn" data-enterprise-id="' + e.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete">' + trashIcon + '</button>' +
                     '</div>' +
                 '</div>' +
                 '<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:0.5rem;color:var(--dim);margin-top:4px;">' +
@@ -494,8 +554,8 @@
                     '</div>' +
                     '<div style="display:flex;gap:4px;align-items:center;">' +
                         '<span style="font-size:0.5rem;color:var(--dim);">Tuition: ' + tuitionDisplay + '</span>' +
-                        '<button class="school-edit-btn" data-school-id="' + s.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit">' + editIcon + '</button>' +
-                        '<button class="school-delete-btn" data-school-id="' + s.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete">' + trashIcon + '</button>' +
+                        '<button type="button" class="school-edit-btn" data-school-id="' + s.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="Edit">' + editIcon + '</button>' +
+                        '<button type="button" class="school-delete-btn" data-school-id="' + s.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete">' + trashIcon + '</button>' +
                     '</div>' +
                 '</div>' +
                 '<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:0.5rem;color:var(--dim);margin-top:4px;">' +
@@ -509,10 +569,6 @@
                 '</div>' +
             '</div>';
     }
-
-    // =========================================================================
-    // 7. RESIDENCE CARD (NEW)
-    // =========================================================================
 
     function _renderResidenceCard(item, index, householdId) {
         var r = item.residence;
@@ -530,7 +586,7 @@
         var locationName = item.locationName;
         var typeName = item.typeName;
 
-        var rentDisplay = isRented ? 
+        var rentDisplay = isRented ?
             '<span style="color:var(--success);">+' + rentAmount + 'g/year</span>' :
             '<span style="color:var(--dim);">No renter</span>';
 
@@ -553,8 +609,8 @@
                     '</div>' +
                     '<div style="display:flex;gap:4px;align-items:center;">' +
                         '<span style="font-size:0.55rem;">' + rentDisplay + '</span>' +
-                        '<button class="residence-view-btn" data-residence-id="' + r.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="View">' + editIcon + '</button>' +
-                        '<button class="residence-delete-btn" data-residence-id="' + r.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Remove from portfolio">' + trashIcon + '</button>' +
+                        '<button type="button" class="residence-view-btn" data-residence-id="' + r.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--accent);cursor:pointer;" title="View">' + editIcon + '</button>' +
+                        '<button type="button" class="residence-delete-btn" data-residence-id="' + r.id + '" style="padding:1px 6px;font-size:0.4rem;background:none;border:none;color:var(--dim);cursor:pointer;" title="Delete residence">' + trashIcon + '</button>' +
                     '</div>' +
                 '</div>' +
                 '<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:0.5rem;color:var(--dim);margin-top:4px;">' +
@@ -568,19 +624,17 @@
     }
 
     function _renderEmptyState(type) {
-        var plusIcon = _getIconSafe('PLUS');
         var msg = type === 'enterprises' ? 'No enterprises owned' :
                   type === 'schools' ? 'No private schools owned' :
                   'No residences owned';
 
-        return '' +
-            '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">' +
-                msg +
-            '</div>';
+        return '<div style="text-align:center;padding:20px;color:var(--dim);font-size:0.65rem;">' +
+            msg +
+        '</div>';
     }
 
     // =========================================================================
-    // 8. MAIN RENDER FUNCTION
+    // 7. MAIN RENDER FUNCTION
     // =========================================================================
 
     function renderHouseholdHoldingsTab(containerId, householdId) {
@@ -625,9 +679,9 @@
                         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">' +
                             '<h3 style="font-size:0.7rem;color:var(--accent);margin:0;">Holdings</h3>' +
                             '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                                '<button id="holdingsAddEnterpriseBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add Enterprise</button>' +
-                                '<button id="holdingsAddSchoolBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add School</button>' +
-                                '<button id="holdingsAddResidenceBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add Residence</button>' +
+                                '<button type="button" id="holdingsAddEnterpriseBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add Enterprise</button>' +
+                                '<button type="button" id="holdingsAddSchoolBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add School</button>' +
+                                '<button type="button" id="holdingsAddResidenceBtn" class="btn" style="padding:3px 10px;font-size:0.55rem;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;">' + plusIcon + ' Add Residence</button>' +
                             '</div>' +
                         '</div>' +
 
@@ -653,9 +707,6 @@
                             ) +
                         '</div>' +
 
-                        // =============================================================
-                        // RESIDENCES SECTION (NEW)
-                        // =============================================================
                         '<div style="margin-bottom:12px;">' +
                             '<div style="font-size:0.6rem;color:var(--accent);margin-bottom:4px;">' + homeIcon + ' Owned Residences (' + data.totalResidences + ')' +
                             (data.totalRentIncome > 0 ? ' <span style="color:var(--success);font-size:0.5rem;">' + coinIcon + ' +' + data.totalRentIncome + 'g/year</span>' : '') +
@@ -694,151 +745,134 @@
     }
 
     // =========================================================================
-    // 9. EVENT HANDLERS
+    // 8. EVENT HANDLERS — DELEGATED
     // =========================================================================
+    //
+    // One click listener per container, attached once. Re-renders reuse
+    // the listener; the data-* attributes on the buttons let it dispatch
+    // to the correct handler without re-binding.
+    //
+    // The marker `__holdingsHandlersAttached` prevents duplicate
+    // registration across re-renders.
 
     function _attachEventHandlers(container, householdId) {
-        // Add Enterprise button
-        var addEnterpriseBtn = container.querySelector('#holdingsAddEnterpriseBtn');
-        if (addEnterpriseBtn) {
-            addEnterpriseBtn.onclick = function() {
+        if (!container) return;
+        if (container.__holdingsHandlersAttached) return;
+        container.__holdingsHandlersAttached = true;
+
+        container.addEventListener('click', function (event) {
+            var target = event.target.closest ? event.target.closest('button') : null;
+            if (!target) return;
+
+            // Header buttons
+            if (target.id === 'holdingsAddEnterpriseBtn') {
+                event.preventDefault();
+                event.stopPropagation();
                 _openAddEnterpriseModal(householdId);
-            };
-        }
-
-        // Add School button
-        var addSchoolBtn = container.querySelector('#holdingsAddSchoolBtn');
-        if (addSchoolBtn) {
-            addSchoolBtn.onclick = function() {
+                return;
+            }
+            if (target.id === 'holdingsAddSchoolBtn') {
+                event.preventDefault();
+                event.stopPropagation();
                 _openAddSchoolModal(householdId);
-            };
-        }
-
-        // Add Residence button (NEW)
-        var addResidenceBtn = container.querySelector('#holdingsAddResidenceBtn');
-        if (addResidenceBtn) {
-            addResidenceBtn.onclick = function() {
+                return;
+            }
+            if (target.id === 'holdingsAddResidenceBtn') {
+                event.preventDefault();
+                event.stopPropagation();
                 _openAddResidenceModal(householdId);
-            };
-        }
+                return;
+            }
 
-        // Enterprise Edit buttons
-        var editBtns = container.querySelectorAll('.enterprise-edit-btn');
-        editBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var enterpriseId = this.dataset.enterpriseId;
-                if (enterpriseId) {
-                    _openEditEnterpriseModal(householdId, enterpriseId);
-                }
-            };
+            // Enterprise row buttons
+            if (target.classList.contains('enterprise-edit-btn')) {
+                event.preventDefault();
+                event.stopPropagation();
+                var entId = target.getAttribute('data-enterprise-id');
+                if (entId) _openEditEnterpriseModal(householdId, entId);
+                return;
+            }
+            if (target.classList.contains('enterprise-delete-btn')) {
+                event.preventDefault();
+                event.stopPropagation();
+                var entId = target.getAttribute('data-enterprise-id');
+                if (entId) _confirmDeleteEnterprise(householdId, entId);
+                return;
+            }
+
+            // School row buttons
+            if (target.classList.contains('school-edit-btn')) {
+                event.preventDefault();
+                event.stopPropagation();
+                var schId = target.getAttribute('data-school-id');
+                if (schId) _openEditSchoolModal(householdId, schId);
+                return;
+            }
+            if (target.classList.contains('school-delete-btn')) {
+                event.preventDefault();
+                event.stopPropagation();
+                var schId = target.getAttribute('data-school-id');
+                if (schId) _confirmDeleteSchool(householdId, schId);
+                return;
+            }
+
+            // Residence row buttons
+            if (target.classList.contains('residence-view-btn')) {
+                event.preventDefault();
+                event.stopPropagation();
+                var resId = target.getAttribute('data-residence-id');
+                if (resId) _openViewResidenceModal(householdId, resId);
+                return;
+            }
+            if (target.classList.contains('residence-delete-btn')) {
+                event.preventDefault();
+                event.stopPropagation();
+                var resId = target.getAttribute('data-residence-id');
+                if (resId) _confirmRemoveResidence(householdId, resId);
+                return;
+            }
         });
 
-        // Enterprise Delete buttons
-        var deleteBtns = container.querySelectorAll('.enterprise-delete-btn');
-        deleteBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var enterpriseId = this.dataset.enterpriseId;
-                if (enterpriseId) {
-                    _confirmDeleteEnterprise(householdId, enterpriseId);
-                }
-            };
-        });
+        // Row click → details (rows use .holding-item with data-* id)
+        container.addEventListener('click', function (event) {
+            if (event.target.closest && event.target.closest('button')) return;
+            var row = event.target.closest ? event.target.closest('.holding-item') : null;
+            if (!row) return;
 
-        // School Edit buttons
-        var schoolEditBtns = container.querySelectorAll('.school-edit-btn');
-        schoolEditBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var schoolId = this.dataset.schoolId;
-                if (schoolId) {
-                    _openEditSchoolModal(householdId, schoolId);
+            var entId = row.getAttribute('data-enterprise-id');
+            if (entId) {
+                if (typeof window.openEnterpriseDetailsModal === 'function') {
+                    window.openEnterpriseDetailsModal(entId);
+                } else {
+                    _showToast('Enterprise details not available', 'error');
                 }
-            };
-        });
+                return;
+            }
 
-        // School Delete buttons
-        var schoolDeleteBtns = container.querySelectorAll('.school-delete-btn');
-        schoolDeleteBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var schoolId = this.dataset.schoolId;
-                if (schoolId) {
-                    _confirmDeleteSchool(householdId, schoolId);
+            var schId = row.getAttribute('data-school-id');
+            if (schId) {
+                if (typeof window.openInstitutionDetailsModal === 'function') {
+                    window.openInstitutionDetailsModal(schId);
+                } else {
+                    _showToast('School details not available', 'error');
                 }
-            };
-        });
+                return;
+            }
 
-        // =============================================================
-        // RESIDENCE EVENT HANDLERS (NEW)
-        // =============================================================
-
-        // Residence View buttons
-        var residenceViewBtns = container.querySelectorAll('.residence-view-btn');
-        residenceViewBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var residenceId = this.dataset.residenceId;
-                if (residenceId) {
-                    _openViewResidenceModal(householdId, residenceId);
+            var resId = row.getAttribute('data-residence-id');
+            if (resId) {
+                if (typeof window.openResidenceDetailsModal === 'function') {
+                    window.openResidenceDetailsModal(resId);
+                } else {
+                    _showToast('Residence details not available', 'error');
                 }
-            };
-        });
-
-        // Residence Delete buttons
-        var residenceDeleteBtns = container.querySelectorAll('.residence-delete-btn');
-        residenceDeleteBtns.forEach(function(btn) {
-            btn.onclick = function(e) {
-                e.stopPropagation();
-                var residenceId = this.dataset.residenceId;
-                if (residenceId) {
-                    _confirmRemoveResidence(householdId, residenceId);
-                }
-            };
-        });
-
-        // Click on holding items to view details
-        var holdingItems = container.querySelectorAll('.holding-item');
-        holdingItems.forEach(function(item) {
-            item.onclick = function(e) {
-                if (e.target.closest('button')) return;
-                
-                var enterpriseId = this.dataset.enterpriseId;
-                if (enterpriseId) {
-                    if (typeof window.openEnterpriseDetailsModal === 'function') {
-                        window.openEnterpriseDetailsModal(enterpriseId);
-                    } else {
-                        _showToast('Enterprise details not available', 'error');
-                    }
-                    return;
-                }
-
-                var schoolId = this.dataset.schoolId;
-                if (schoolId) {
-                    if (typeof window.openInstitutionDetailsModal === 'function') {
-                        window.openInstitutionDetailsModal(schoolId);
-                    } else {
-                        _showToast('School details not available', 'error');
-                    }
-                    return;
-                }
-
-                var residenceId = this.dataset.residenceId;
-                if (residenceId) {
-                    if (typeof window.openResidenceDetailsModal === 'function') {
-                        window.openResidenceDetailsModal(residenceId);
-                    } else {
-                        _showToast('Residence details not available', 'error');
-                    }
-                    return;
-                }
-            };
+                return;
+            }
         });
     }
 
     // =========================================================================
-    // 10. ADD ENTERPRISE MODAL
+    // 9. ADD ENTERPRISE MODAL
     // =========================================================================
 
     function _openAddEnterpriseModal(householdId) {
@@ -847,7 +881,6 @@
 
         try {
             var HS = _getState();
-            var HQ = _getQueries();
             var household = HS ? HS.getHousehold(householdId) : null;
             if (!household) {
                 _showToast('Household not found', 'error');
@@ -857,12 +890,13 @@
 
             if (typeof window.openCreateEnterpriseModal === 'function') {
                 window.openCreateEnterpriseModal(function(enterprise) {
+                    _processingAction = false;
                     if (enterprise) {
                         _showToast('Enterprise created: ' + enterprise.name, 'success');
-                        _processingAction = false;
                         renderHouseholdHoldingsTab('tab-holdings', householdId);
-                    } else {
-                        _processingAction = false;
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
+                        }
                     }
                 }, {
                     ownerType: 'household',
@@ -882,7 +916,7 @@
     }
 
     // =========================================================================
-    // 11. ADD SCHOOL MODAL
+    // 10. ADD SCHOOL MODAL
     // =========================================================================
 
     function _openAddSchoolModal(householdId) {
@@ -900,12 +934,13 @@
 
             if (typeof window.openCreateInstitutionModal === 'function') {
                 window.openCreateInstitutionModal(function(institution) {
+                    _processingAction = false;
                     if (institution) {
                         _showToast('School created: ' + institution.name, 'success');
-                        _processingAction = false;
                         renderHouseholdHoldingsTab('tab-holdings', householdId);
-                    } else {
-                        _processingAction = false;
+                        if (typeof window.refreshHouseholdList === 'function') {
+                            window.refreshHouseholdList();
+                        }
                     }
                 }, {
                     ownershipType: 'private',
@@ -926,7 +961,7 @@
     }
 
     // =========================================================================
-    // 12. ADD RESIDENCE MODAL (NEW)
+    // 11. ADD RESIDENCE MODAL
     // =========================================================================
 
     function _openAddResidenceModal(householdId) {
@@ -947,20 +982,31 @@
                     household.locationId || null,
                     household.locationName || null,
                     function(residenceId) {
+                        _processingAction = false;
                         if (residenceId) {
-                            // Set the household as owner of the residence
                             var RS = _getResidenceSystem();
                             if (RS && typeof RS.setResidenceOwner === 'function') {
-                                RS.setResidenceOwner(residenceId, 'household', householdId, {
-                                    ownerSince: _getCurrentYear(),
-                                    ownerName: household.name
-                                });
+                                var ownerResult = RS.setResidenceOwner(
+                                    residenceId, 'household', householdId, {
+                                        ownerSince: _getCurrentYear(),
+                                        ownerName: household.name
+                                    }
+                                );
+                                if (!ownerResult || ownerResult.success !== true) {
+                                    _showToast(
+                                        'Residence created but could not be linked to household: ' +
+                                        (ownerResult && ownerResult.reason ? ownerResult.reason : 'unknown'),
+                                        'error'
+                                    );
+                                    renderHouseholdHoldingsTab('tab-holdings', householdId);
+                                    return;
+                                }
                             }
                             _showToast('Residence created and added to portfolio', 'success');
-                            _processingAction = false;
                             renderHouseholdHoldingsTab('tab-holdings', householdId);
-                        } else {
-                            _processingAction = false;
+                            if (typeof window.refreshHouseholdList === 'function') {
+                                window.refreshHouseholdList();
+                            }
                         }
                     }
                 );
@@ -976,7 +1022,7 @@
     }
 
     // =========================================================================
-    // 13. EDIT ENTERPRISE MODAL
+    // 12. EDIT ENTERPRISE MODAL
     // =========================================================================
 
     function _openEditEnterpriseModal(householdId, enterpriseId) {
@@ -1002,6 +1048,9 @@
                 window.openEditEnterpriseModal(enterpriseId, function() {
                     _processingAction = false;
                     renderHouseholdHoldingsTab('tab-holdings', householdId);
+                    if (typeof window.refreshHouseholdList === 'function') {
+                        window.refreshHouseholdList();
+                    }
                 });
             } else {
                 _showToast('Enterprise edit not available', 'error');
@@ -1015,8 +1064,28 @@
     }
 
     // =========================================================================
-    // 14. DELETE ENTERPRISE
+    // 13. DELETE ENTERPRISE
     // =========================================================================
+    //
+    // Removes the enterprise from the household's portfolio by clearing
+    // the owner fields. The enterprise record itself is preserved — it
+    // becomes unowned, still visible in the global enterprise list, but
+    // no longer in this household's holdings.
+    //
+    // IndustryCommands.updateEnterprise is the sole write path. Per its
+    // own header, it reconciles the household reverse index automatically
+    // when ownerType / ownerId change — so the tab does NOT need to call
+    // HouseholdCommands.removeEnterpriseFromHousehold separately.
+    //
+    // The correct patch is { ownerType: 'none', ownerId: null }. Three
+    // fields the prior revision sent are rejected:
+    //   - ownerName: not in _ALLOWED_UPDATE_FIELDS
+    //   - ownerType: null fails the coherence check
+    //   - ownerId: null with ownerType: null fails coherence
+    // The prior revision also called HS.removeEnterpriseFromHousehold —
+    // a method that does not exist on HouseholdState — and never
+    // checked any result, so every "delete" click showed a success
+    // toast without mutating anything.
 
     function _confirmDeleteEnterprise(householdId, enterpriseId) {
         var IS = _getIndustryState();
@@ -1032,7 +1101,8 @@
         }
 
         _confirmDialog(
-            'Remove enterprise "' + enterprise.name + '" from household?\n\nThis will only remove ownership, not delete the enterprise.',
+            'Remove enterprise "' + enterprise.name + '" from this household?\n\n' +
+            'The enterprise will become unowned but will not be deleted from the world.',
             'Remove Enterprise',
             function() {
                 _doDeleteEnterprise(householdId, enterpriseId);
@@ -1045,31 +1115,43 @@
         _processingAction = true;
 
         try {
-            var HS = _getState();
-            if (!HS) {
-                _showToast('Household state not available', 'error');
+            var IC = _getIndustryCommands();
+            if (!IC) {
+                _showToast('Industry commands not available', 'error');
                 _processingAction = false;
                 return;
             }
 
-            // Remove from household's enterprise list
-            var result = HS.removeEnterpriseFromHousehold(householdId, enterpriseId, _getCurrentYear());
-            
-            if (result) {
-                // Also update the enterprise's owner if possible
-                if (typeof window.IndustryCommands !== 'undefined') {
-                    window.IndustryCommands.updateEnterprise(enterpriseId, {
-                        ownerId: null,
-                        ownerType: null,
-                        ownerName: null
-                    });
-                }
-                _showToast('Enterprise removed from household', 'info');
+            var result = IC.updateEnterprise(enterpriseId, {
+                ownerType: 'none',
+                ownerId: null
+            });
+
+            if (!result || result.success !== true) {
+                _showToast(
+                    'Failed to remove enterprise: ' +
+                    (result && result.reason ? result.reason : 'unknown error'),
+                    'error'
+                );
                 _processingAction = false;
-                renderHouseholdHoldingsTab('tab-holdings', householdId);
+                return;
+            }
+
+            var persisted = IC.persist();
+            if (persisted && persisted.success === false) {
+                _showToast(
+                    'Enterprise removed in memory; storage write failed: ' +
+                    (persisted.reason || 'unknown'),
+                    'warning'
+                );
             } else {
-                _showToast('Failed to remove enterprise', 'error');
-                _processingAction = false;
+                _showToast('Enterprise removed from household', 'info');
+            }
+
+            _processingAction = false;
+            renderHouseholdHoldingsTab('tab-holdings', householdId);
+            if (typeof window.refreshHouseholdList === 'function') {
+                window.refreshHouseholdList();
             }
 
         } catch (e) {
@@ -1079,7 +1161,7 @@
     }
 
     // =========================================================================
-    // 15. EDIT SCHOOL MODAL
+    // 14. EDIT SCHOOL MODAL
     // =========================================================================
 
     function _openEditSchoolModal(householdId, schoolId) {
@@ -1105,6 +1187,9 @@
                 window.openEditInstitutionModal(schoolId, function() {
                     _processingAction = false;
                     renderHouseholdHoldingsTab('tab-holdings', householdId);
+                    if (typeof window.refreshHouseholdList === 'function') {
+                        window.refreshHouseholdList();
+                    }
                 });
             } else {
                 _showToast('School edit not available', 'error');
@@ -1118,7 +1203,7 @@
     }
 
     // =========================================================================
-    // 16. DELETE SCHOOL
+    // 15. DELETE SCHOOL
     // =========================================================================
 
     function _confirmDeleteSchool(householdId, schoolId) {
@@ -1140,7 +1225,8 @@
         }
 
         _confirmDialog(
-            'Remove school "' + school.name + '" from household?\n\nThis will not delete the school, but will remove ownership.\nThe school will become public.',
+            'Remove school "' + school.name + '" from household?\n\n' +
+            'The school will become public.',
             'Remove School',
             function() {
                 _doDeleteSchool(householdId, schoolId);
@@ -1163,13 +1249,30 @@
             }
 
             var result = EC.setSchoolOwnership(schoolId, 'public', null, null);
-            if (result && result.success) {
-                _showToast('School removed from household (now public)', 'info');
+            if (!result || result.success !== true) {
+                _showToast(
+                    'Failed to remove school: ' +
+                    (result && result.reason ? result.reason : 'unknown error'),
+                    'error'
+                );
                 _processingAction = false;
-                renderHouseholdHoldingsTab('tab-holdings', householdId);
+                return;
+            }
+
+            var persisted = (typeof EC.persist === 'function') ? EC.persist() : null;
+            if (persisted === false) {
+                _showToast(
+                    'School removed in memory; storage write failed',
+                    'warning'
+                );
             } else {
-                _showToast(result ? result.reason : 'Failed to remove school', 'error');
-                _processingAction = false;
+                _showToast('School removed from household (now public)', 'info');
+            }
+
+            _processingAction = false;
+            renderHouseholdHoldingsTab('tab-holdings', householdId);
+            if (typeof window.refreshHouseholdList === 'function') {
+                window.refreshHouseholdList();
             }
 
         } catch (e) {
@@ -1179,7 +1282,7 @@
     }
 
     // =========================================================================
-    // 17. VIEW RESIDENCE MODAL (NEW)
+    // 16. VIEW RESIDENCE MODAL
     // =========================================================================
 
     function _openViewResidenceModal(householdId, residenceId) {
@@ -1223,8 +1326,22 @@
     }
 
     // =========================================================================
-    // 18. REMOVE RESIDENCE (NEW)
+    // 17. REMOVE RESIDENCE
     // =========================================================================
+    //
+    // "Remove from portfolio" here means DELETE THE RESIDENCE. There is no
+    // "detach the owner, keep the residence" primitive in ResidenceSystem.
+    // setResidenceOwner only accepts 'household' or 'character' — passing
+    // null for ownerType fails with INVALID_OWNER_TYPE. The prior revision
+    // called setResidenceOwner(id, null, null, ...) which always failed,
+    // and never checked the result, so the residence always stayed in the
+    // portfolio while the tab showed a success toast.
+    //
+    // deleteResidence(id, { force: true }) is the only way to release a
+    // residence from ownership. It destroys the record.
+    //
+    // If a "transfer ownership" or "detach and leave vacant" action is
+    // ever needed, that is a new ResidenceSystem command, not a tab fix.
 
     function _confirmRemoveResidence(householdId, residenceId) {
         var RS = _getResidenceSystem();
@@ -1242,16 +1359,16 @@
         var hasRenter = !!residence.renterId;
         var renterName = residence.renterName || 'Unknown';
 
-        var msg = 'Remove residence "' + residence.name + '" from household portfolio?\n\n';
+        var msg = 'Delete residence "' + residence.name + '"?\n\n';
         if (hasRenter) {
             msg += 'Warning: This residence has a renter (' + renterName + ').\n';
-            msg += 'Removing ownership will end the rental agreement.\n\n';
+            msg += 'Deleting will end the rental agreement.\n\n';
         }
-        msg += 'The residence will become unowned.';
+        msg += 'This action cannot be undone.';
 
         _confirmDialog(
             msg,
-            'Remove Residence',
+            'Delete Residence',
             function() {
                 _doRemoveResidence(householdId, residenceId);
             }
@@ -1270,40 +1387,43 @@
                 return;
             }
 
-            var residence = RS.getResidenceById(residenceId);
-            if (!residence) {
-                _showToast('Residence not found', 'error');
+            var result = RS.deleteResidence(residenceId, { force: true });
+
+            if (!result || result.success !== true) {
+                _showToast(
+                    'Failed to delete residence: ' +
+                    (result && result.reason ? result.reason : 'unknown error'),
+                    'error'
+                );
                 _processingAction = false;
                 return;
             }
 
-            // If there's a renter, end the rental
-            if (residence.renterId) {
-                var currentYear = _getCurrentYear();
-                var result = RS.endResidenceRental(residenceId, currentYear, 'Ownership removed');
-                if (!result) {
-                    _showToast('Could not end rental agreement', 'warning');
-                }
+            var persisted = (typeof RS.persist === 'function') ? RS.persist() : null;
+            if (persisted && persisted.success === false) {
+                _showToast(
+                    'Residence deleted in memory; storage write failed: ' +
+                    (persisted.reason || 'unknown'),
+                    'warning'
+                );
+            } else {
+                _showToast('Residence deleted', 'info');
             }
 
-            // Remove owner
-            RS.setResidenceOwner(residenceId, null, null, {
-                ownerSince: null,
-                ownerName: null
-            });
-
-            _showToast('Residence removed from portfolio', 'info');
             _processingAction = false;
             renderHouseholdHoldingsTab('tab-holdings', householdId);
+            if (typeof window.refreshHouseholdList === 'function') {
+                window.refreshHouseholdList();
+            }
 
         } catch (e) {
             _processingAction = false;
-            _showToast('Error removing residence', 'error');
+            _showToast('Error deleting residence', 'error');
         }
     }
 
     // =========================================================================
-    // 19. REFRESH FUNCTION
+    // 18. REFRESH FUNCTION
     // =========================================================================
 
     function refreshHouseholdHoldingsTab(householdId) {
@@ -1329,7 +1449,7 @@
     }
 
     // =========================================================================
-    // 20. TAB SYSTEM REGISTRATION
+    // 19. TAB SYSTEM REGISTRATION
     // =========================================================================
 
     function registerHoldingsTabRenderer() {
@@ -1350,19 +1470,8 @@
     }
 
     // =========================================================================
-    // 21. EXPORTS
+    // 20. EXPORTS
     // =========================================================================
 
     window.renderHouseholdHoldingsTab = renderHouseholdHoldingsTab;
-    window.refreshHouseholdHoldingsTab = refreshHouseholdHoldingsTab;
-    window.registerHoldingsTabRenderer = registerHoldingsTabRenderer;
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(registerHoldingsTabRenderer, 100);
-        });
-    } else {
-        setTimeout(registerHoldingsTabRenderer, 100);
-    }
-
-})();
+    window.refreshHouseholdHoldings
