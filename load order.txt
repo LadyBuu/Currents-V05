@@ -9,7 +9,7 @@ v3.0.
 
 Subsystems covered:
   - js/core/*                 (constants, utilities, state, UI primitives)
-  - js/core/rank/*            (rank subsystem)
+  - js/rank/*            (rank subsystem)
   - js/core/industry/*        (industry subsystem)
   - js/core/disaster/*        (disaster subsystem)
   - js/modules/names/*        (name subsystem)
