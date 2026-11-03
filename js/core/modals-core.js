@@ -32,67 +32,13 @@
  *     stays open.
  *
  *   onCancel(root)
- *     Called when the modal closes WITHOUT a confirmed outcome. This
- *     includes: cancel button click, overlay click (when enabled),
- *     Escape key, close (X) button click, and closeTopModal() /
- *     closeAllModals() called by external code. The confirm button does
- *     NOT trigger onCancel.
- *
- *     Exceptions thrown from onCancel are logged and swallowed. This is
- *     deliberate: cancel is a notification, not a step in the close
- *     sequence. A throwing onCancel must not prevent the modal from
- *     closing, and must not propagate to the caller that triggered the
- *     close.
- *
- *     onCancel is NOT invoked if the modal was closed because onConfirm
- *     returned true/undefined (that is a confirmed close). It is also
- *     NOT invoked when the modal closes itself programmatically via the
- *     returned handle's .close() — that is an explicit close, not a
- *     user cancel.
- *
- * DISTINGUISHING CANCEL FROM CONFIRM:
- *   - If the caller cares about the difference, it supplies both
- *     onConfirm and onCancel. Confirmed closes call onConfirm; every
- *     other close calls onCancel (or neither, if the close was
- *     programmatic).
- *   - If the caller only supplies onConfirm, an unconfirmed close
- *     looks like "the modal went away and onConfirm did not run." That
- *     is fine for simple dialogs (alertDialog, confirmDialog) where
- *     the caller already treats absence-of-confirm as the failure path.
- *   - If the caller only supplies onCancel, confirmed closes will look
- *     like "the modal went away and onCancel did not run." Also fine.
- *
- * TRUST:
- *   titleHtml and contentHtml are inserted as innerHTML. The caller is
- *   responsible for escaping any untrusted text. Icons from icons.js
- *   are the only trusted HTML this module inserts on its own behalf.
+ *     Called when the modal closes WITHOUT a confirmed outcome.
  *
  * DEPENDENCIES (REQUIRED):
  *   - formatting.js (escapeHtml)
  *   - icons.js      (Icons)
  *
  * ICON POLICY: Uses SVG from icons.js. No emojis.
- *
- * =============================================================================
- * REFACTOR HISTORY:
- *   Current revision:
- *     - Cancel button click path now routes through _closeAsCancelled,
- *       which fires onCancel via _fireCancel (contained). Previously
- *       the cancel button called onCancel directly, assigned the
- *       unused return to a local `result`, and then called
- *       _closeWithoutFiringCancel(result) which discarded it. Two
- *       problems:
- *         (a) The `result` variable was dead code.
- *         (b) A throwing onCancel propagated out of the click handler,
- *             which meant the modal did NOT close. This contradicted
- *             the documented contract ("A throwing onCancel must not
- *             prevent the modal from closing").
- *       The cancel button now behaves identically to the overlay and
- *       Escape paths: it fires onCancel through _fireCancel (which
- *       contains exceptions) and then closes as cancelled.
- *     - _closeWithoutFiringCancel removed; it existed only to support
- *       the old cancel-button path.
- *     - No other behavioural change.
  * =============================================================================
  */
 
@@ -130,31 +76,23 @@
     var _currentModalId = 0;
     var _VALID_SIZES = ['small', 'medium', 'large'];
 
-    /**
-     * Opens a modal dialog.
-     *
-     * @param {Object} [options]
-     * @param {string} [options.titleHtml]        trusted HTML
-     * @param {string} [options.contentHtml]      trusted HTML
-     * @param {Function} [options.onMount]        receives modal element
-     * @param {Function} [options.onOpen]         alias for onMount
-     * @param {Function} [options.onConfirm]      receives modal element; false keeps open
-     * @param {Function} [options.onCancel]       receives modal element; called on ANY non-confirmed close
-     * @param {string} [options.confirmText]      default 'Confirm'
-     * @param {string} [options.cancelText]       default 'Cancel'
-     * @param {boolean} [options.closeOnOverlay]  default true
-     * @param {boolean} [options.showCloseButton] default true
-     * @param {string} [options.size]             'small' | 'medium' | 'large'
-     * @returns {{ element: HTMLElement, close: Function }}
-     */
     function openModal(options) {
         if (_isMissing(options)) options = {};
         else if (typeof options !== 'object' || Array.isArray(options)) {
             throw new Error('openModal: options must be an object');
         }
 
-        var titleHtml = _isMissing(options.titleHtml) ? 'Modal' : options.titleHtml;
-        var contentHtml = _isMissing(options.contentHtml) ? '' : options.contentHtml;
+        // FIX: accept title/content as aliases for titleHtml/contentHtml.
+        // Every modals-government-*.js calls with `title` and `content`.
+        // Without this alias, the body is always empty and the modal
+        // renders as a shell with only the header and footer.
+        var titleHtml = !_isMissing(options.titleHtml)
+            ? options.titleHtml
+            : (!_isMissing(options.title) ? options.title : 'Modal');
+        var contentHtml = !_isMissing(options.contentHtml)
+            ? options.contentHtml
+            : (!_isMissing(options.content) ? options.content : '');
+
         var onMount = _isMissing(options.onMount) ? null : options.onMount;
         var onOpen = _isMissing(options.onOpen) ? null : options.onOpen;
         var onConfirm = _isMissing(options.onConfirm) ? null : options.onConfirm;
@@ -181,7 +119,6 @@
             throw new Error('openModal: onCancel must be a function');
         }
 
-        // onMount takes precedence; onOpen is a compatibility alias.
         var mountHook = onMount || onOpen;
 
         var modalId = 'modal_' + (++_currentModalId);
@@ -229,29 +166,6 @@
         var stackEntry = { id: modalId, element: modal, escapeHandler: null, close: null };
         _modalStack.push(stackEntry);
 
-        // ---------------------------------------------------------------------
-        // Close paths
-        // ---------------------------------------------------------------------
-        //
-        // Every close goes through _finishClose, which is the single place
-        // that (a) tears down listeners, (b) removes the DOM, (c) restores
-        // focus, and (d) optionally invokes onCancel.
-        //
-        // A close is either:
-        //   - CONFIRMED:  the confirm button was clicked and its
-        //                 onConfirm returned anything other than false.
-        //   - CANCELLED:  the user clicked cancel / overlay / close, pressed
-        //                 Escape, or external code called
-        //                 closeTopModal / closeAllModals.
-        //   - PROGRAMMATIC: the caller used the returned .close() handle.
-        //                 Programmatic close does NOT invoke onCancel;
-        //                 it is an explicit "make it go away" from code
-        //                 that already knows the outcome.
-        //
-        // onCancel fires only for CANCELLED closes. This is what callers
-        // rely on to distinguish "user backed out" from "the code closed
-        // this itself."
-
         function _teardownStackEntry() {
             if (stackEntry.escapeHandler) {
                 document.removeEventListener('keydown', stackEntry.escapeHandler);
@@ -283,34 +197,11 @@
             if (kind === 'cancelled') _fireCancel();
         }
 
-        function _closeAsConfirmed() {
-            _finishClose('confirmed');
-        }
-
-        function _closeAsCancelled() {
-            _finishClose('cancelled');
-        }
-
-        function _closeProgrammatically() {
-            _finishClose('programmatic');
-        }
+        function _closeAsConfirmed() { _finishClose('confirmed'); }
+        function _closeAsCancelled() { _finishClose('cancelled'); }
+        function _closeProgrammatically() { _finishClose('programmatic'); }
 
         stackEntry.close = _closeProgrammatically;
-
-        // ---------------------------------------------------------------------
-        // User-initiated closes
-        // ---------------------------------------------------------------------
-        //
-        // Every user-close path routes through the corresponding
-        // _closeAsX helper. The helpers contain onCancel via _fireCancel,
-        // so a throwing onCancel can never leave the modal open or
-        // propagate out of a DOM event handler.
-        //
-        // The cancel button, overlay click, close (X) button click, and
-        // Escape key all close as CANCELLED and therefore all fire
-        // onCancel — through _fireCancel, which contains exceptions.
-        // The confirm button closes as CONFIRMED, which does not fire
-        // onCancel.
 
         var closeBtn = modal.querySelector('.modal-close-btn');
         if (closeBtn) closeBtn.addEventListener('click', _closeAsCancelled);
@@ -334,7 +225,6 @@
             });
         }
 
-        // Escape closes the top modal, as a cancel.
         var escapeHandler = function(e) {
             if (e.key !== 'Escape') return;
             var top = _modalStack[_modalStack.length - 1];
@@ -343,7 +233,6 @@
         stackEntry.escapeHandler = escapeHandler;
         document.addEventListener('keydown', escapeHandler);
 
-        // Mount hook: exceptions logged and contained.
         if (mountHook) {
             try { mountHook(modal); }
             catch (err) { console.error('modals-core.js: mount hook threw:', err); }
@@ -358,11 +247,6 @@
         if (typeof top.close !== 'function') {
             throw new Error('modals-core.js: modal stack contains an invalid entry');
         }
-        // External closeTopModal is treated as a programmatic close:
-        // the caller is code, not the user, and it already knows why
-        // it is closing. If the caller wants the cancel semantics, it
-        // should click the cancel button by finding it in the modal, or
-        // it should call onCancel itself before calling closeTopModal.
         top.close();
     }
 
