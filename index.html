@@ -5,14 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Still Waters · Nexus of Tools</title>
 
+    <!-- Fonts named by themes.css (--f-display / --f-body / --f-mono).
+         Without these, small card text falls back to Georgia and becomes
+         hard to read — especially the card-title, card-desc, and badge. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,500&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
     <link rel="stylesheet" href="css/themes.css" />
     <link rel="stylesheet" href="css/common.css" />
     <link rel="stylesheet" href="css/nexus.css" />
 
     <!-- Defensive fallback: if nexus.css is missing or mis-ordered, this
-         block keeps the cards legible. Only applies when nexus.css is
-         absent — common.css and nexus.css normally win. -->
+         block keeps the cards legible and the page scrollable.
+         common.css and nexus.css normally win on specificity; the
+         scroll override here is a hard necessity because common.css
+         sets `overflow: hidden` for app-shell pages. -->
     <style>
+        /* common.css sets overflow:hidden on html/body for app-shell
+           managers. The Nexus is a scrolling document, not an app
+           shell — opt back in here. This must stay inline so the page
+           is scrollable even if nexus.css fails to load. */
+        html, body {
+            height: auto !important;
+            min-height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto !important;
+        }
+
         .tool-card {
             display: flex;
             flex-direction: column;
@@ -657,6 +677,29 @@
         }
     }
 
+    // Verify every card target resolves. A typo in a manager filename
+    // shows up as a console warning instead of a silent dead click.
+    // HEAD requests are cheap and same-origin only.
+    function verifyCardTargets() {
+        var cards = document.querySelectorAll('.tool-card[href]');
+        var seen = Object.create(null);
+        for (var i = 0; i < cards.length; i++) {
+            var href = cards[i].getAttribute('href');
+            if (!href || seen[href]) continue;
+            seen[href] = true;
+            if (/^(https?:)?\/\//.test(href)) continue; // external
+            fetch(href, { method: 'HEAD' })
+                .then(function (resp) {
+                    if (!resp.ok) {
+                        console.warn('[nexus] card target missing:', href, resp.status);
+                    }
+                })
+                .catch(function () {
+                    console.warn('[nexus] card target unreachable:', href);
+                });
+        }
+    }
+
     function applyCompactGrid(on) {
         document.body.classList.toggle('nexus-compact-grid', on);
     }
@@ -826,6 +869,7 @@
         renderRecent();
         attachCardHandlers();
         attachSettingsHandlers();
+        verifyCardTargets();
     }
 
     if (document.readyState === 'loading') {
